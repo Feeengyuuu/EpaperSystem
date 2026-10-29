@@ -1,0 +1,16 @@
+{
+  "logos": {
+    "jpl": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c6/Jet_Propulsion_Laboratory_logo.svg/500px-Jet_Propulsion_Laboratory_logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Jet_Propulsion_Laboratory_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "98bbdf8c0d8aecf8f79e09e93a2a331d5940a636c6ff9ce0ff284ecb7c04d2e2",
+      "processing": "the top 56% kept (the mark and letters, not the tagline)",
+      "size": [
+        217,
+        64
+      ],
+      "sha256": "fddaf5c33375da1b20264477b747be86f3e9bd081772978a76a5c7c44486823b"
+    }
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "earth.png": {
+    "generator": "OpenAI GPT Image 2.5 Sunburst via Creative Claw (transparent sheet)",
+    "job_id": "3276dafa-48f6-4a9b-b2b3-141c68769375",
+    "source_sha256": "5d7a2af8022f23e4f3b3f1431d7d992f6a94792aa54780758272ea6faee6f5e3",
+    "processing": "cut from the sheet at its clear columns, squared, 64 px",
+    "sha256": "120ffb55409e81d23dc5e78d86414d5dd99e385072a0611e1f40ef6a8cfa0e6c"
+  },
+  "moon.png": {
+    "generator": "OpenAI GPT Image 2.5 Sunburst via Creative Claw (transparent sheet)",
+    "job_id": "3276dafa-48f6-4a9b-b2b3-141c68769375",
+    "source_sha256": "5d7a2af8022f23e4f3b3f1431d7d992f6a94792aa54780758272ea6faee6f5e3",
+    "processing": "cut from the sheet at its clear columns, squared, 64 px",
+    "sha256": "d5e1dcdde0f561a1461b2fffeb4a950e5448abecb69c3eda3db64bdc0b07a3a7"
+  },
+  "asteroid.png": {
+    "generator": "OpenAI GPT Image 2.5 Sunburst via Creative Claw (transparent sheet)",
+    "job_id": "3276dafa-48f6-4a9b-b2b3-141c68769375",
+    "source_sha256": "5d7a2af8022f23e4f3b3f1431d7d992f6a94792aa54780758272ea6faee6f5e3",
+    "processing": "cut from the sheet at its clear columns, squared, 64 px",
+    "sha256": "01b74e8553e61762d78b1d1a8b67e6cbfe46df6faaa1ffd9f57f9ec82b0c3fa0"
+  },
+  "asteroid_near.png": {
+    "generator": "OpenAI GPT Image 2.5 Sunburst via Creative Claw (transparent sheet)",
+    "job_id": "3276dafa-48f6-4a9b-b2b3-141c68769375",
+    "source_sha256": "5d7a2af8022f23e4f3b3f1431d7d992f6a94792aa54780758272ea6faee6f5e3",
+    "processing": "cut from the sheet at its clear columns, squared, 64 px",
+    "sha256": "85df85c330dba47f56e779c17d054006184fd139136295a7041bdbc7a42e8c3f"
+  },
+  "mercury.png": {
+    "generator": "OpenAI GPT Image 2.5 Sunburst via Creative Claw (transparent sheet)",
+    "job_id": "22c4c8d4-d396-43ba-8ff2-85766a2e12a6",
+    "source_sha256": "05c742bb2b7435ab85015d2c99713a540758f5b1312d98f5f54c150872e5ece3",
+    "processing": "cut from the sheet at its clear columns, squared, 64 px",
+    "sha256": "e46591602c1422176f4e0ed60f5686d9a50e3b56d25e4b8897300578a4a6b66a"
+  },
+  "venus.png": {
+    "generator": "OpenAI GPT Image 2.5 Sunburst via Creative Claw (transparent sheet)",
+    "job_id": "22c4c8d4-d396-43ba-8ff2-85766a2e12a6",
+    "source_sha256": "05c742bb2b7435ab85015d2c99713a540758f5b1312d98f5f54c150872e5ece3",
+    "processing": "cut from the sheet at its clear columns, squared, 64 px",
+    "sha256": "c6d9137221ad27a4087fde4168244dc4fcbd75153266a6cd6f4a69929606f483"
+  },
+  "mars.png": {
+    "generator": "OpenAI GPT Image 2.5 Sunburst via Creative Claw (transparent sheet)",
+    "job_id": "22c4c8d4-d396-43ba-8ff2-85766a2e12a6",
+    "source_sha256": "05c742bb2b7435ab85015d2c99713a540758f5b1312d98f5f54c150872e5ece3",
+    "processing": "cut from the sheet at its clear columns, squared, 64 px",
+    "sha256": "0b7eae306c44bb191f5a4bdb4249e4acb1bcb603cb4c2e9b21495c53b691dbc7"
+  },
+  "jupiter.png": {
+    "generator": "OpenAI GPT Image 2.5 Sunburst via Creative Claw (transparent sheet)",
+    "job_id": "22c4c8d4-d396-43ba-8ff2-85766a2e12a6",
+    "source_sha256": "05c742bb2b7435ab85015d2c99713a540758f5b1312d98f5f54c150872e5ece3",
+    "processing": "cut from the sheet at its clear columns, squared, 64 px",
+    "sha256": "7e26bddf13b86454338ced5fda3f28b9656230f9734dda5653b32d345df2e80a"
+  },
+  "saturn.png": {
+    "generator": "OpenAI GPT Image 2.5 Sunburst via Creative Claw (transparent sheet)",
+    "job_id": "22c4c8d4-d396-43ba-8ff2-85766a2e12a6",
+    "source_sha256": "05c742bb2b7435ab85015d2c99713a540758f5b1312d98f5f54c150872e5ece3",
+    "processing": "cut from the sheet at its clear columns, squared, 64 px",
+    "sha256": "a5636cc20586a4ea7c20cf7c308a9f610cd3db352b135e3c51b0086b8f6d60aa"
+  }
+}

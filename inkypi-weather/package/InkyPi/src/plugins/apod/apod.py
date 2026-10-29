@@ -17,13 +17,16 @@ from plugins.apod.apod_page import (
     measure_apod_page,
     render_apod_page,
 )
+from plugins.apod import sky_watch
 from plugins.apod.apod_payload import normalize_official_payload
+from plugins.base_plugin.source_book import Source, SourceBook
 from plugins.apod.space_weather import (
     SpaceWeatherRepository, refresh_space_weather, require_current_core,
 )
 from runtime.long_task_executor import current_instance_identity, current_task_context
 from runtime.refresh_contracts import TaskCancelled, TaskContext, TaskDeadlineExceeded
 from utils.atomic_file import atomic_write_json
+from utils.cache_manager import CacheBudget
 from PIL import Image
 from utils.http_client import (
     HttpClient, HttpClientError, HttpDecodeError, HttpStatusError, ResponseTooLarge,
@@ -621,6 +624,38 @@ def _resolved_selection(
     )
     _persist_selection(paths, resolved, context=context)
     return resolved
+
+
+# JPL's sky watch beside the space weather: NEOs and tonight's planets, each cached for SKY_FRESH and
+# shown for SKY_USABLE when JPL is unreachable; neither can hold the page back.
+SKY_FRESH = 6 * 3600
+SKY_USABLE = 2 * 86400
+SKY_BUDGET = CacheBudget(7 * 86400, 8, 512 * 1024)
+
+
+def _sky_watch(paths, now, context) -> dict:
+    """{"neos": ..., "planets": ...} from JPL (each None when neither fetched nor cached)."""
+    book = SourceBook(paths.cache / "sky-watch", SKY_BUDGET, schema=1, max_bytes=128 * 1024)
+    night = sky_watch.tonight(now)[0].isoformat()
+    sources = {
+        "neos": Source("neos", {"days": sky_watch.NEO_DAYS, "lunar": sky_watch.NEO_LUNAR_DISTANCES},
+                       sky_watch.fetch_neos, fresh_seconds=SKY_FRESH, usable_seconds=SKY_USABLE,
+                       validate=sky_watch.valid_neos, timeout_seconds=8),
+        "planets": Source("planets", {"night": night, "site": sky_watch.SKY_SITE},
+                          lambda child: sky_watch.fetch_planets(now, child), fresh_seconds=SKY_FRESH,
+                          usable_seconds=SKY_USABLE, validate=sky_watch.valid_planets, timeout_seconds=12),
+    }
+    found = {}
+    for name, source in sources.items():
+        try:
+            result = book.load(source, now, allow_network=True, context=context)
+        except (TaskCancelled, TaskDeadlineExceeded):
+            raise
+        except Exception as exc:  # noqa: BLE001 - the sky watch is extra; the page draws without it.
+            logger.warning("APOD sky watch %s unavailable: %s", name, type(exc).__name__)
+            result = {}
+        found[name] = result.get("data") or None
+    return found
 
 
 def _utc_now() -> datetime:
@@ -1953,6 +1988,7 @@ class Apod(BasePlugin):
         )
         _task_checkpoint(context)
         require_current_core(weather.scales, weather.kp)
+        sky = _sky_watch(paths, rendered_at, context)
 
         if selection.mode == "random" and selection.provisional:
             (
@@ -2051,6 +2087,7 @@ class Apod(BasePlugin):
             rendered_at_utc=rendered_at,
             dimensions=dimensions,
             measurement=measurement,
+            sky=sky,
         )
         _task_checkpoint(context)
         provenance = weather.aggregate_state

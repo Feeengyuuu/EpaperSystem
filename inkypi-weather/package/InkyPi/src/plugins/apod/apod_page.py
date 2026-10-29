@@ -14,6 +14,8 @@ from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps
 from plugins.apod.space_weather import SpaceWeatherSnapshot
 from utils.space_typography import MixedDraw, space_font
 from utils.app_utils import get_base_ui_font
+from utils.local_wordmark import load_source_logo
+from zoneinfo import ZoneInfo
 
 if TYPE_CHECKING:
     from plugins.apod.apod import ApodRecord
@@ -44,6 +46,21 @@ ALERT_RECT = (16, 392, 352, 434)
 SOURCE_RECT = (16, 448, 352, 472)
 RIGHT_X = 368
 ICON_DIR = Path(__file__).resolve().parent / "assets" / "icons"
+# JPL's sky watch takes the storm-chance row (those chances move up beside the R and S lamps):
+# the NEOs passing within ten lunar distances on a square-root scale from Earth, the Moon marked
+# at one; the nearest one named at the right. JPL's logo names the source.
+NEO_RECT = PROBABILITIES_RECT
+JPL_LOGO_PATH = Path(__file__).resolve().parent / "assets" / "logos" / "jpl.png"
+NEO_SCALE_LD = 10.0
+EARTH_COLOR = (64, 140, 255)
+MOON_COLOR = (200, 206, 214)
+# Generated sky icons (assets/sky_icons): Earth, the Moon, an asteroid and the nearest one's
+# glowing form on the strip, and each planet before its name on tonight's line.
+SKY_ICON_DIR = Path(__file__).resolve().parent / "assets" / "sky_icons"
+NEO_ICON_SIZES = {"earth": 16, "moon": 11, "asteroid": 9, "asteroid_near": 15}
+PLANET_ICONS = {"水星": "mercury", "金星": "venus", "火星": "mars", "木星": "jupiter", "土星": "saturn"}
+PLANET_ICON_SIZE = 15
+PACIFIC = ZoneInfo("America/Los_Angeles")
 
 PAGE_SIZE = (800, 480)
 CAPTION_MIN_TOP = 300
@@ -660,10 +677,13 @@ def _fit_kp_state(draw, current_g, mode, *, max_width):
     raise ApodPageLayoutError("Kp state does not fit beside the number at 10px")
 
 
-def _draw_grs_panel(draw, snapshot, fonts) -> None:
-    """G, R and S as status lamps coloured by their NOAA level."""
+def _draw_grs_panel(draw, snapshot, fonts, *, chances=False) -> None:
+    """G, R and S as status lamps coloured by their NOAA level; with ``chances`` the R and S
+    lamps also carry the day's chance of an R1-R2 blackout and an S1+ storm at their right."""
     x1, y1, x2, y2 = GRS_RECT
     scales = snapshot.current_scales if isinstance(snapshot.current_scales, Mapping) else {}
+    probabilities = snapshot.probabilities if isinstance(snapshot.probabilities, Mapping) else {}
+    odds = {"R": ("R1-2", probabilities.get("r1_r2")), "S": ("S1+", probabilities.get("s1_plus"))}
     _tile(draw, GRS_RECT)
     cell_width = (x2 - x1) / 3
     middle = (y1 + y2) / 2
@@ -677,6 +697,16 @@ def _draw_grs_panel(draw, snapshot, fonts) -> None:
         draw.ellipse((cx - 7, middle - 7, cx + 7, middle + 7), fill=lamp, outline=_mix(lamp, (255, 255, 255), 0.4))
         _draw_text(draw, (left + 38, y1 + 4), _scale_value(scales, letter), font=fonts["grs_value"], fill=TEXT_COLOR)
         _draw_text(draw, (left + 38, y1 + 22), name, font=fonts["grs_name"], fill=LABEL_COLOR)
+        if chances and letter in odds:
+            label, value = odds[letter]
+            right = round(x1 + (index + 1) * cell_width) - 7
+            percent = "—" if value is None else f"{value}%"
+            _draw_right(draw, right, y1 + 4, percent, font=fonts["probability_value"], fill=_probability_color(value))
+            # The chance's name sits just left of it, when that leaves the lamp's level clear.
+            label_right = right - _text_width(draw, percent, fonts["probability_value"]) - 3
+            level_right = left + 38 + _text_width(draw, _scale_value(scales, letter), fonts["grs_value"])
+            if label_right - _text_width(draw, label, fonts["probability_label"]) >= level_right + 4:
+                _draw_right(draw, label_right, y1 + 6, label, font=fonts["probability_label"], fill=LABEL_COLOR)
 
 
 def _draw_metric_cell(canvas, draw, rect, icon, label, value, fonts) -> None:
@@ -767,7 +797,20 @@ def _draw_probabilities_panel(canvas, draw, snapshot, fonts) -> None:
                                    fill=_probability_color(value))
 
 
-def _alert_copy(snapshot) -> tuple[str, tuple[int, int, int]]:
+def planets_copy(sky) -> str:
+    """Tonight's planets, brightest first: "今夜可见 木星 东南 02时 · 土星 南 21时"; "" without any."""
+    planets = ((sky or {}).get("planets") or {}).get("planets") or []
+    parts = []
+    for planet in planets[:3]:
+        try:
+            hour = datetime.fromisoformat(planet["when"]).astimezone(PACIFIC).hour
+        except (KeyError, TypeError, ValueError):
+            continue
+        parts.append(f"{planet['name']} {planet['direction']} {hour:02d}时")
+    return "今夜可见 " + " · ".join(parts) if parts else ""
+
+
+def _alert_copy(snapshot, sky=None) -> tuple[str, tuple[int, int, int]]:
     alert = snapshot.alert if isinstance(snapshot.alert, Mapping) else None
     if alert:
         kind = str(alert.get("kind") or "ALERT")
@@ -791,6 +834,10 @@ def _alert_copy(snapshot) -> tuple[str, tuple[int, int, int]]:
         )
         return f"NASA DONKI{TEXT_SEPARATOR}{kind} {detail}", CYAN_COLOR
     if snapshot.alert_state == "confirmed_empty":
+        # No alert to raise: the row says so briefly and tells what is up in the sky tonight.
+        planets = planets_copy(sky)
+        if planets:
+            return f"NOAA 无告警{TEXT_SEPARATOR}{planets}", GREEN_COLOR
         return f"NOAA ALERTS{TEXT_SEPARATOR}no active items", GREEN_COLOR
     return f"NOAA ALERTS{TEXT_SEPARATOR}temporarily unavailable", TILE_OUTLINE
 
@@ -806,9 +853,47 @@ def _fit_alert_copy(draw, text, *, max_width, required_active=False):
     raise ApodPageLayoutError(f"complete {label} does not fit the fixed cell at 10px")
 
 
-def _draw_alert_panel(canvas, draw, snapshot, fonts) -> None:
+def _tonight_planets(snapshot, sky):
+    """Tonight's planets for the alert row when there is nothing to raise; [] otherwise."""
+    if isinstance(snapshot.alert, Mapping) or isinstance(snapshot.donki_event, Mapping):
+        return []
+    if snapshot.alert_state != "confirmed_empty":
+        return []
+    return [planet for planet in ((sky or {}).get("planets") or {}).get("planets") or []
+            if planet.get("name") in PLANET_ICONS][:3]
+
+
+def _draw_planets_row(canvas, draw, planets, fonts) -> None:
+    """No alert: a short all-clear, then tonight's planets, each led by its icon, with where and
+    when it stands highest."""
     x1, y1, x2, y2 = ALERT_RECT
-    text, color = _alert_copy(snapshot)
+    _tile(draw, ALERT_RECT, outline=GREEN_COLOR, fill=_mix(GREEN_COLOR, PAGE_COLOR, 0.82))
+    taken = _paste_icon(canvas, "source", x1 + 9, y1 + (y2 - y1 - 22) // 2, 22)
+    x = x1 + 12 + (taken + 6 if taken else 0)
+    _draw_text(draw, (x, y1 + 3), f"NOAA 无告警{TEXT_SEPARATOR}今夜可见", font=_font(11, bold=True), fill=TEXT_COLOR)
+    middle = y1 + 30
+    font = _font(11, bold=True)
+    for planet in planets:
+        try:
+            hour = datetime.fromisoformat(planet["when"]).astimezone(PACIFIC).hour
+        except (KeyError, TypeError, ValueError):
+            continue
+        label = f"{planet['name']} {planet['direction']} {hour:02d}时"
+        width = PLANET_ICON_SIZE + 3 + _text_width(draw, label, font)
+        if x + width > x2 - 8:
+            break
+        _paste_sky_icon(canvas, PLANET_ICONS[planet["name"]], (x + PLANET_ICON_SIZE / 2, middle), PLANET_ICON_SIZE)
+        _draw_text(draw, (x + PLANET_ICON_SIZE + 3, middle - 8), label, font=font, fill=TEXT_COLOR)
+        x += width + 10
+
+
+def _draw_alert_panel(canvas, draw, snapshot, fonts, sky=None) -> None:
+    planets = _tonight_planets(snapshot, sky)
+    if planets:
+        _draw_planets_row(canvas, draw, planets, fonts)
+        return
+    x1, y1, x2, y2 = ALERT_RECT
+    text, color = _alert_copy(snapshot, sky)
     _tile(draw, ALERT_RECT, outline=color, fill=_mix(color, PAGE_COLOR, 0.82))
     icon = "alert" if isinstance(snapshot.alert, Mapping) or isinstance(snapshot.donki_event, Mapping) else "source"
     taken = _paste_icon(canvas, icon, x1 + 9, y1 + (y2 - y1 - 22) // 2, 22)
@@ -821,6 +906,94 @@ def _draw_alert_panel(canvas, draw, snapshot, fonts) -> None:
     for line in lines:
         _draw_text(draw, (text_x, y), line, font=font, fill=TEXT_COLOR)
         y += line_height
+
+
+@lru_cache(maxsize=2)
+def _jpl_logo(height: int) -> Image.Image | None:
+    return load_source_logo(JPL_LOGO_PATH, height)
+
+
+@lru_cache(maxsize=24)
+def _sky_icon(name: str, size: int) -> Image.Image | None:
+    try:
+        with Image.open(SKY_ICON_DIR / f"{name}.png") as source:
+            return source.convert("RGBA").resize((size, size), Image.Resampling.LANCZOS)
+    except (OSError, ValueError):
+        return None
+
+
+def _paste_sky_icon(canvas, name, centre, size) -> bool:
+    icon = _sky_icon(name, size)
+    if icon is None:
+        return False
+    canvas.paste(icon, (round(centre[0] - size / 2), round(centre[1] - size / 2)), icon)
+    return True
+
+
+def _neo_x(left, right, lunar):
+    """Where ``lunar`` lunar distances sit on the strip: a square-root scale out to NEO_SCALE_LD."""
+    return left + (right - left) * math.sqrt(max(0.0, min(NEO_SCALE_LD, lunar)) / NEO_SCALE_LD)
+
+
+def neo_copy(neo) -> tuple[str, str]:
+    """The nearest NEO's two lines: its name, then "0.32 LD · 10/28 18:26 · ~7 m"."""
+    parts = [f"{neo['lunar']:.2f} LD"]
+    try:
+        when = datetime.fromisoformat(neo["when"]).astimezone(PACIFIC)
+        parts.append(f"{when.month}/{when.day} {when:%H:%M}")
+    except (KeyError, TypeError, ValueError):
+        pass
+    if neo.get("size_m"):
+        size = neo["size_m"]
+        parts.append(f"~{size:.0f} m" if size < 1000 else f"~{size / 1000:.1f} km")
+    return str(neo.get("name") or "—"), " · ".join(parts)
+
+
+def _draw_neo_panel(canvas, draw, neos, fonts) -> None:
+    """The NEOs passing within ten lunar distances in 30 days on a strip from Earth, the Moon at
+    one lunar distance, the nearest in red and named at the right; JPL's logo names the source."""
+    x1, y1, x2, y2 = NEO_RECT
+    _tile(draw, NEO_RECT)
+    objects = neos.get("objects") or []
+    _draw_text(draw, (x1 + 10, y1 + 4), f"近地天体{TEXT_SEPARATOR}NEO 30D", font=fonts["probability_label"],
+               fill=LABEL_COLOR)
+    logo = _jpl_logo(10)
+    right = x2 - 8
+    if logo is not None:
+        canvas.paste(logo, (right - logo.width, y1 + 6), logo)
+        right -= logo.width + 6
+    _draw_right(draw, right, y1 + 4, f"{neos.get('count', len(objects))} 颗 < 10 LD", font=_font(10, bold=True),
+                fill=TEXT_COLOR)
+    strip_left, strip_right, strip_y = x1 + 14, x1 + 164, y2 - 15
+    draw.line((strip_left, strip_y, strip_right, strip_y), fill=TILE_OUTLINE, width=1)
+    for lunar in (1, 5, 10):
+        x = _neo_x(strip_left, strip_right, lunar)
+        draw.line((x, strip_y - 3, x, strip_y + 3), fill=TILE_OUTLINE, width=1)
+    if not _paste_sky_icon(canvas, "earth", (strip_left, strip_y), NEO_ICON_SIZES["earth"]):
+        draw.ellipse((strip_left - 5, strip_y - 5, strip_left + 5, strip_y + 5), fill=EARTH_COLOR)
+    # The farther NEOs first, then the Moon over them, then the nearest one (glowing, larger) on top.
+    for neo in reversed(objects):
+        nearest = neo is objects[0]
+        if nearest:
+            moon = _neo_x(strip_left, strip_right, 1)
+            if not _paste_sky_icon(canvas, "moon", (moon, strip_y), NEO_ICON_SIZES["moon"]):
+                draw.ellipse((moon - 3, strip_y - 3, moon + 3, strip_y + 3), fill=MOON_COLOR)
+        x = _neo_x(strip_left, strip_right, neo["lunar"])
+        name = "asteroid_near" if nearest else "asteroid"
+        if not _paste_sky_icon(canvas, name, (x, strip_y), NEO_ICON_SIZES[name]):
+            radius = 3.5 if nearest else 2.2
+            draw.ellipse((x - radius, strip_y - radius, x + radius, strip_y + radius),
+                         fill=RED_COLOR if nearest else AMBER_COLOR)
+    if not objects:
+        moon = _neo_x(strip_left, strip_right, 1)
+        _paste_sky_icon(canvas, "moon", (moon, strip_y), NEO_ICON_SIZES["moon"])
+    text_x = strip_right + 14
+    if objects:
+        name, detail = neo_copy(objects[0])
+        _draw_text(draw, (text_x, y1 + 17), name, font=fonts["probability_value"], fill=RED_COLOR)
+        _draw_text(draw, (text_x, y1 + 32), detail, font=_font(9, bold=True), fill=TEXT_COLOR)
+    else:
+        _draw_text(draw, (text_x, y1 + 24), "30 天内无近距掠过", font=_font(10, bold=True), fill=TEXT_COLOR)
 
 
 def _as_utc(value) -> datetime | None:
@@ -1053,8 +1226,10 @@ def render_apod_page(
     rendered_at_utc: datetime,
     dimensions: tuple[int, int] = PAGE_SIZE,
     measurement: ApodPageMeasurement | None = None,
+    sky: Mapping | None = None,
 ) -> Image.Image:
-    """Render the mission-control page: instrument tiles on the left, the photo full-bleed on the right."""
+    """Render the mission-control page: instrument tiles on the left, the photo full-bleed on the right.
+    ``sky`` (JPL's NEOs and tonight's planets) takes the storm-chance row when it has NEOs."""
 
     if tuple(dimensions) != PAGE_SIZE:
         raise ValueError("APOD page requires the approved 800x480 dimensions")
@@ -1083,10 +1258,14 @@ def render_apod_page(
     _place_photo(canvas, fit_photo(source_image, measured.photo_size), layout.caption_top)
     _draw_header(canvas, draw, rendered_at_utc, fonts)
     _draw_kp_panel(canvas, draw, KP_RECT, weather, fonts)
-    _draw_grs_panel(draw, weather, fonts)
+    neos = sky.get("neos") if isinstance(sky, Mapping) else None
+    _draw_grs_panel(draw, weather, fonts, chances=bool(neos))
     _draw_metrics_panel(canvas, draw, weather, fonts)
-    _draw_probabilities_panel(canvas, draw, weather, fonts)
-    _draw_alert_panel(canvas, draw, weather, fonts)
+    if neos:
+        _draw_neo_panel(canvas, draw, neos, fonts)
+    else:
+        _draw_probabilities_panel(canvas, draw, weather, fonts)
+    _draw_alert_panel(canvas, draw, weather, fonts, sky)
     _draw_source_panel(canvas, draw, weather, fonts)
     _draw_caption(canvas, draw, layout)
     return canvas.convert("RGB")
