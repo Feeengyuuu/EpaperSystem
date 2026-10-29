@@ -59,6 +59,9 @@ FRIEND_PILE_NAMES = 14
 # each friend has a slot: a portrait this size with the name (this tall) under it.
 FRIEND_PILE_TWO_LINES = 4
 FRIEND_GRID_MAX_PER_LINE, FRIEND_GRID_AVATAR, FRIEND_GRID_NAME = 5, 26, 11
+# Under a single overlapping line each name sits under its own portrait in this small type; the
+# names of the small portraits after it run on to the right until the line is full.
+FRIEND_PILE_NAME_SIZE, FRIEND_PILE_NAME_MIN = 9, 7
 FRIEND_COLUMNS = 3
 FRIEND_TILE = (58, 55)
 FRIEND_GAP = 3
@@ -760,9 +763,27 @@ class _Console:
             self.text((tail, y, right, y + 2 * mini + 2), f"+{hidden}", 10, self.c["muted"], bold=True,
                       min_size=8, align="center")
         if names_h and friends:
-            names = "、".join(self.plugin._friend_display_id(friend) for friend in friends)
             name_top = start + used_lines * size + (used_lines - 1) * FRIEND_PILE_LINE_GAP + 4
+            if used_lines == 1 and big:
+                self._pile_names(big, small, left, right, name_top, names_h, step, size)
+                return
+            names = "、".join(self.plugin._friend_display_id(friend) for friend in friends)
             self.text((left, name_top, right, name_top + names_h), names, 10, self.c["muted"], min_size=9)
+
+    def _pile_names(self, big, small, left, right, top, height, step, size):
+        """Each portrait's name centred under it in a slot as wide as the portraits' spacing, then
+        the small portraits' names joined, from the last slot to the line's end."""
+        bottom = top + height
+        for index, friend in enumerate(big):
+            centre = left + index * step + size / 2
+            half = (min(step, size + 4) - 1) / 2
+            self.text((round(centre - half), top, round(centre + half), bottom), self.plugin._friend_display_id(friend),
+                      FRIEND_PILE_NAME_SIZE, self.c["muted"], min_size=FRIEND_PILE_NAME_MIN, align="center")
+        rest = round(left + (len(big) - 1) * step + size / 2 + min(step, size + 4) / 2 + 3)
+        if small and right - rest >= 14:
+            names = "、".join(self.plugin._friend_display_id(friend) for friend in small)
+            self.text((rest, top, right, bottom), names, FRIEND_PILE_NAME_SIZE, self.c["muted"],
+                      min_size=FRIEND_PILE_NAME_MIN)
 
     def _pile_portrait(self, friend, x, y, size, game_icons, portraits):
         """One pile portrait at (x, y): cut out by a dark collar, ringed in its presence colour, an

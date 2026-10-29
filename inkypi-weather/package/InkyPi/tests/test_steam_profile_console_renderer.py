@@ -925,3 +925,27 @@ def test_rail_lays_the_profile_background_blurred_and_dimmed_behind_the_rail(plu
     assert top[0] > top[2] + 20 and sum(bottom) < sum(top)
     assert top != plain.getpixel((10, 230))
     assert ImageChops.difference(image.crop((183, 0, 800, 480)), plain.crop((183, 0, 800, 480))).getbbox() is None
+
+
+def test_one_overlapping_line_names_each_friend_under_their_portrait(plugin, monkeypatch):
+    console = _Console(plugin, {})
+    friends = [{"personaname": f"Friend{index}", "personastate": 1} for index in range(13)]
+    rings, texts = [], []
+    original_ring, original_text = _Console._friend_ring, _Console.text
+    monkeypatch.setattr(_Console, "_friend_ring", lambda self, *args, **kwargs: (
+        rings.append(args[1:4]), original_ring(self, *args, **kwargs)))
+    monkeypatch.setattr(_Console, "text", lambda self, box, value, *args, **kwargs: (
+        texts.append((tuple(box), str(value))), original_text(self, box, value, *args, **kwargs)))
+    # Below two in-game cards: one overlapping line, the rest as small portraits.
+    top = console_renderer.FRIEND_LIST[1] + 2 * (console_renderer.FRIEND_PLAYING_H + console_renderer.FRIEND_GAP)
+    console._friend_pile(friends, len(friends), top, {}, {})
+    big = sorted(rings)
+    named = {value: box for box, value in texts}
+    assert 2 <= len(big) < len(friends)
+    for index, (x, _y, size) in enumerate(big):
+        box = named[f"Friend{index}"]
+        assert abs((box[0] + box[2]) / 2 - (x + size / 2)) <= 1
+    # The small portraits' names run on to the right of the last slot, in one joined run.
+    joined = [(box, value) for box, value in texts if "、" in value]
+    assert joined and joined[0][0][0] > big[-1][0] + big[-1][2] / 2
+    assert joined[0][1].startswith(f"Friend{len(big)}")
