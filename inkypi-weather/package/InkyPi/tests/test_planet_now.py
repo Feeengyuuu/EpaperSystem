@@ -331,3 +331,7 @@ def test_the_mars_feed_is_asked_again_every_two_hours():
     assert planet_now.MARS_REFRESH == 2 * planet_now.HOUR
     # Both the regular load and the single-photo cache upgrade use it; the photos stay usable 4 days.
     assert Path(planet_now.__file__).read_text(encoding="utf-8").count("MARS_REFRESH, 4 * DAY") == 2
+
+
+def test_the_iss_lines_always_fill_the_column_to_the_cards_foot():
+    assert render.ISS_LINE_SIZES[1] >= 16 and min(render.ISS_LINE_SIZES) >= 11

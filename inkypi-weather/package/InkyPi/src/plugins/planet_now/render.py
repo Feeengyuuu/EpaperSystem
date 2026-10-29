@@ -75,6 +75,9 @@ SOURCE_LOGOS = {"noaa": (18, "NOAA"), "caiso": (16, "CAISO"), "apple_music": (12
 SKY_PLACES = (("旧金山", 37.7793, -122.4193, "left"), ("奥克兰", 37.8044, -122.2712, "right"),
               ("圣何塞", 37.3382, -121.8863, "right"), ("太平洋", 37.36, -122.86, None))
 STATIONS = {"tiangong": "天宫", "iss": "国际空间站"}
+# The ISS lines under the map (state, place, height and speed, next sunrise or sunset), these
+# sizes, spread to the card's foot.
+ISS_LINE_SIZES = (13, 18, 11, 11)
 # Each station's official mark before its name (assets/logos): China Manned Space's emblem for
 # Tiangong, the ISS programme's emblem; this tall.
 STATION_LOGO_HEIGHT = 14
@@ -685,19 +688,30 @@ def _space(canvas, payload, images, now):
         country = str(iss.get("country") or "")
         place = (COUNTRY_NAMES.get(country, country) if country and country != "??" else
                  ocean_name(iss["lat"], iss["lon"]))
-        ty = my0 + mh + 6
-        logo = _station_logo("iss")
-        logo_w = _paste(canvas, logo, (mx0, ty - 1)) + 4 if logo is not None else 0
-        canvas.text((mx0 + logo_w, ty), f"国际空间站 · {'日照中' if iss.get('daylight') else '地影中'}", 12, "space",
-                    anchor="la")
-        canvas.text((mx0, ty + 17), f"{place}上空", 14, anchor="la", width=mw)
-        canvas.text((mx0, ty + 37), f"高度 {iss.get('altitude', 0):.0f} km · {iss.get('velocity', 0):,.0f} km/h", 10,
-                    "muted", anchor="la", bold=False, width=mw)
+        # Four lines spread from under the map to the card's foot: the state, where it is, its
+        # height and speed, then its next sunrise or sunset (its orbit when that is not near).
         switch = iss_next_switch(iss, fetched)
         if switch and switch[0] - elapsed >= 1:
             minutes, sunrise = switch[0] - elapsed, switch[1]
-            canvas.text((mx0, ty + 52), f"{minutes:.0f} 分钟后{'迎来日出' if sunrise else '进入地影'} · {ISS_PERIOD_MIN:.0f} 分钟一圈",
-                        10, anchor="la", bold=False, width=mw)
+            last = f"{minutes:.0f} 分钟后{'迎来日出' if sunrise else '进入地影'} · {ISS_PERIOD_MIN:.0f} 分钟一圈"
+        else:
+            last = f"约 {ISS_PERIOD_MIN:.0f} 分钟一圈 · 每天 {24 * 60 / ISS_PERIOD_MIN:.1f} 圈"
+        lines = (
+            (f"国际空间站 · {'日照中' if iss.get('daylight') else '地影中'}", ISS_LINE_SIZES[0], "space", True),
+            (f"{place}上空", ISS_LINE_SIZES[1], "ink", True),
+            (f"高度 {iss.get('altitude', 0):.0f} km · {iss.get('velocity', 0):,.0f} km/h", ISS_LINE_SIZES[2], "muted", False),
+            (last, ISS_LINE_SIZES[3], "ink", False),
+        )
+        ty, foot = my0 + mh + 6, bottom - 8
+        heights = [round(size * 1.15) for _text, size, _colour, _bold in lines]
+        gap = max(2.0, (foot - ty - sum(heights)) / (len(lines) - 1))
+        for index, (text, size, colour, bold) in enumerate(lines):
+            x = mx0
+            if index == 0:
+                logo = _station_logo("iss")
+                x += _paste(canvas, logo, (mx0, ty + (heights[0] - logo.height) // 2)) + 4 if logo is not None else 0
+            canvas.text((x, round(ty)), text, size, colour, anchor="la", bold=bold, width=mx0 + mw - x)
+            ty += heights[index] + gap
     _crew(canvas, payload.get("people", {}).get("data") or {}, images, now, (crew_left, my0, right - 8, bottom - 6))
 
 
