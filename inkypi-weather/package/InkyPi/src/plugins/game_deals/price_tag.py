@@ -1,5 +1,5 @@
-"""Sale prices set straight on the page (no tag behind them): a deeper green dollar sign and the
-digits in classic greenback green, with an optional device-only font."""
+"""Sale prices set straight on the page (no tag behind them): a champagne-gold dollar sign and
+the digits in classic greenback green, with an optional device-only font."""
 
 import os
 from pathlib import Path
@@ -15,13 +15,14 @@ REQUIRED_GLYPHS = "0123456789$.,"
 FALLBACK_FONT = Path(__file__).parents[1] / "stocktracker/assets/fonts/BodoniModa-Variable.ttf"
 # The fallback's weight and optical size (its axes), heavy enough to hold its colour on the page.
 FALLBACK_AXES = [800, 28]
-# Top-to-bottom gradients by theme: the digits in the classic greenback green of the bill's back,
-# the dollar sign a deeper green beside them; a bright mint by night on the dark page.
+# Top-to-bottom gradients by theme: the digits in the classic greenback green of the bill's back
+# (a bright mint by night on the dark page), the dollar sign in champagne gold beside them.
 SALE_GREEN = {"day": ((84, 150, 82), (28, 98, 52)), "night": ((132, 238, 128), (60, 208, 104))}
-DOLLAR_GREEN = {"day": ((60, 122, 66), (20, 82, 42)), "night": ((176, 242, 150), (100, 220, 118))}
-# By day an engraved face's hairlines would show the pale page through the digits: a deeper edge
-# a pixel wide round every stroke fills them as dark engraving (the dark page does that by night).
-ENGRAVING = {"day": ((14, 62, 32), (10, 50, 26)), "night": (None, None)}
+DOLLAR_GOLD = {"day": ((226, 190, 98), (160, 112, 30)), "night": ((250, 226, 156), (222, 176, 76))}
+# By day an engraved face's hairlines would show the pale page through the type: a deeper edge a
+# pixel wide round every stroke (digits, dollar sign) fills them as dark engraving (the dark page
+# does that by night).
+ENGRAVING = {"day": ((14, 62, 32), (104, 70, 14)), "night": (None, None)}
 # The room kept round the type inside its slot, at the working scale.
 MARGIN, HEADROOM = 2, 3
 SCALE = 4
@@ -77,7 +78,7 @@ class PriceTags:
         self._axes = FALLBACK_AXES if Path(getattr(self._face, "path", "") or "") == FALLBACK_FONT else None
         self._fonts = {}
         mode = "night" if night else "day"
-        self._colors = DOLLAR_GREEN[mode], SALE_GREEN[mode]
+        self._colors = DOLLAR_GOLD[mode], SALE_GREEN[mode]
         self._edges = ENGRAVING[mode]
 
     def _fit(self, amount, width, height):

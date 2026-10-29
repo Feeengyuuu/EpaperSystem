@@ -71,7 +71,7 @@ def test_long_prices_keep_every_character_and_fit_without_touching_the_rim(amoun
 
 
 @pytest.mark.parametrize("night", [False, True])
-def test_the_price_sits_on_the_page_without_a_tag_in_greenback_green(night):
+def test_the_price_sits_on_the_page_without_a_tag_in_greenback_green_and_gold(night):
     renderer = price_tag.PriceTags(night)
     first, second = renderer.render("1.99", (92, 31)), renderer.render("1.99", (92, 31))
     assert ImageChops.difference(first, second).getbbox() is None
@@ -82,7 +82,10 @@ def test_the_price_sits_on_the_page_without_a_tag_in_greenback_green(night):
     ink = [first.getpixel((x, y)) for x in range(92) for y in range(31) if first.getpixel((x, y))[3] == 255]
     # Orange digits (red high, green middling, blue low) and the amber dollar sign.
     assert sum(g > r + 30 and g > b + 20 for r, g, b, _a in ink) > 40
-    assert not any(r > 200 and 50 < g < 170 and b < 90 for r, g, b, _a in ink)
+    # The dollar sign at the left is gold: red over green over blue, warm and light.
+    left = int(first.info["price_ink_bounds"][0])
+    dollar = [first.getpixel((x, y)) for x in range(left, left + 9) for y in range(31) if first.getpixel((x, y))[3] == 255]
+    assert sum(r > g > b and r - b > 80 and g > 100 for r, g, b, _a in dollar) > 8
     assert result_is_left_aligned(renderer)
 
 
