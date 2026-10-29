@@ -21,7 +21,7 @@ from plugins.base_plugin.render_provenance import (
 )
 from plugins.ai_ecosystem_pulse.ai_ecosystem_pulse import AiEcosystemPulse
 from plugins.context_cache import write_context
-from plugins.tech_pulse import trends
+from plugins.tech_pulse import openrouter, trends
 from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import DEFAULT_FONT_FAMILY, bounded_int, coerce_bool, get_available_font_names, get_font
 from utils.flat_icons import draw_icon
@@ -60,7 +60,7 @@ AI_PLUGIN_ID = "ai_ecosystem_pulse"
 ASSET_DIR = Path(__file__).with_name("assets")
 # The header names the page's four sources by their official logos, this tall, where the
 # generated icon strip used to be.
-HEADER_SOURCE_LOGOS = ("hn", "skills", "huggingface", "github")
+HEADER_SOURCE_LOGOS = ("hn", "skills", "huggingface", "github", "openrouter_icon")
 HEADER_LOGO_SIZE = 26
 # A heartbeat trace runs from each source logo to the next in the live colour, so the four
 # read as one pulse: (share of the gap, height as a share of HEADER_PULSE_HEIGHT, up negative),
@@ -76,10 +76,31 @@ PANEL_DOODLES = {"hn": "hn", "skills": "skills", "huggingface": "models", "githu
 PANEL_DOODLE_STRENGTH = 0.2
 TRENDS_FILE = "trends.json"
 PAGE_SIZE = (800, 480)
-HN_BOX = (14, 62, 404, 458)
-SKILLS_BOX = (414, 62, 786, 208)
-MODELS_BOX = (414, 214, 786, 334)
-REPOS_BOX = (414, 340, 786, 458)
+HN_BOX = (14, 62, 404, 414)
+SKILLS_BOX = (414, 62, 786, 186)
+MODELS_BOX = (414, 192, 786, 302)
+REPOS_BOX = (414, 308, 786, 414)
+# OpenRouter's newest models run along the foot of the page, under both columns.
+OPENROUTER_BOX = (14, 420, 786, 474)
+OPENROUTER_FILE = "openrouter.json"
+OPENROUTER_FRESH_HOURS = 6
+OPENROUTER_CARDS = 3
+# Each model's maker in its own colour (its brand's), on the model's chip.
+PROVIDER_COLOURS = {
+    "openai": (16, 163, 127), "anthropic": (204, 120, 92), "google": (66, 133, 244), "meta-llama": (0, 100, 224),
+    "mistralai": (255, 112, 0), "deepseek": (77, 107, 254), "qwen": (98, 82, 255), "moonshotai": (22, 22, 22),
+    "x-ai": (40, 40, 40), "z-ai": (40, 90, 220), "minimax": (230, 60, 90), "amazon": (255, 153, 0),
+    "nvidia": (118, 185, 0), "cohere": (57, 89, 77), "microsoft": (0, 120, 212),
+}
+# A maker's short name on its chip, where its id is long ("moonshotai" -> "Moonshot").
+PROVIDER_NAMES = {
+    "openai": "OpenAI", "anthropic": "Anthropic", "google": "Google", "meta-llama": "Meta", "mistralai": "Mistral",
+    "deepseek": "DeepSeek", "qwen": "Qwen", "moonshotai": "Moonshot", "x-ai": "xAI", "z-ai": "Z.ai",
+    "minimax": "MiniMax", "amazon": "Amazon", "nvidia": "NVIDIA", "cohere": "Cohere", "microsoft": "Microsoft",
+}
+PROVIDER_MARK_HEIGHT, PROVIDER_MARK_WIDTH = 16, 46
+HN_LIST_ROWS = 3
+SKILL_ROWS = 5
 # The star trend on a repository's second line, just left of its 24-hour chip.
 REPO_TREND_W = 64
 FONT_SPECS = {
@@ -185,7 +206,8 @@ class TechPulse(BasePlugin):
         history = self._history(payload, ai, now, record=not theme_only)
         if not theme_only:
             self._write_context(payload, now, ai)
-        image = self._render_page(dimensions, payload, settings, now, ai, history)
+        models = self._openrouter(now, cache_only=theme_only)
+        image = self._render_page(dimensions, payload, settings, now, ai, history, models)
         return attach_source_provenance(
             image,
             payload.get("_source_provenance", SourceProvenance.LOCAL_FALLBACK),
@@ -523,7 +545,28 @@ class TechPulse(BasePlugin):
             },
         }
 
-    def _render_page(self, dimensions, payload, settings, now, ai=None, history=None):
+    def _openrouter(self, now, *, cache_only=False):
+        """OpenRouter's newest models: the cached list while it is fresh (or a theme render asks
+        for no network), else a new fetch; the last list when OpenRouter is down; None without one."""
+        path = self._cache_dir(create=not cache_only) / OPENROUTER_FILE
+        cached = self._read_json(path, {})
+        cached = cached if isinstance(cached, dict) and isinstance(cached.get("models"), list) else {}
+        fetched = self._parse_datetime(cached.get("fetched_at")) if cached else None
+        fresh = fetched is not None and 0 <= (self._to_utc(now) - fetched).total_seconds() < OPENROUTER_FRESH_HOURS * 3600
+        if cache_only or fresh:
+            return cached or None
+        try:
+            data = openrouter.fetch_models(now)
+            data["fetched_at"] = self._to_utc(now).isoformat()
+            self._write_json(path, data)
+            return data
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("Tech Pulse OpenRouter models unavailable: %s", exc)
+            return cached or None
+
+    def _render_page(self, dimensions, payload, settings, now, ai=None, history=None, models=None):
         palette = self._palette(settings)
         image = Image.new("RGB", PAGE_SIZE, palette["background"])
         draw = ImageDraw.Draw(image)
@@ -537,7 +580,7 @@ class TechPulse(BasePlugin):
         self._draw_skills(image, draw, SKILLS_BOX, ai, palette, fonts, history, now)
         self._draw_models(image, draw, MODELS_BOX, ai, palette, fonts, history, now)
         self._draw_repos(image, draw, REPOS_BOX, ai, palette, fonts, now)
-        self._draw_footer(draw, payload, palette, fonts)
+        self._draw_openrouter(image, draw, OPENROUTER_BOX, models, palette, fonts, now)
         if tuple(dimensions) != PAGE_SIZE:
             image = image.resize(tuple(dimensions), Image.LANCZOS)
         return image
@@ -634,8 +677,8 @@ class TechPulse(BasePlugin):
         lead_bottom = self._draw_lead(image, draw, (x0 + 12, y0 + 30, x1 - 12, y1), stories[0], settings, palette,
                                       fonts, board, now)
         draw.line((x0 + 12, lead_bottom + 6, x1 - 12, lead_bottom + 6), fill=palette["rule"], width=1)
-        self._draw_story_list(draw, (x0 + 12, lead_bottom + 8, x1 - 12, y1 - 4), stories[1:5], settings, palette,
-                              fonts, board, now)
+        self._draw_story_list(draw, (x0 + 12, lead_bottom + 8, x1 - 12, y1 - 4), stories[1:1 + HN_LIST_ROWS],
+                              settings, palette, fonts, board, now)
 
     def _draw_lead(self, image, draw, box, story, settings, palette, fonts, history, now):
         """The top story: title, meta, points trend and top comment; returns its bottom edge."""
@@ -676,7 +719,7 @@ class TechPulse(BasePlugin):
 
     def _draw_story_list(self, draw, box, stories, settings, palette, fonts, history, now):
         x0, y0, x1, y1 = box
-        row_h = (y1 - y0) / 4
+        row_h = (y1 - y0) / HN_LIST_ROWS
         for index, story in enumerate(stories):
             top = y0 + index * row_h
             self._story_row(draw, (x0, top, x1, top + row_h), story, settings, palette, fonts, history, now)
@@ -757,8 +800,8 @@ class TechPulse(BasePlugin):
         if rows is None:
             return self._board_offline(draw, box, palette, fonts)
         board = history.get("skills") or {}
-        row_h = (y1 - y0 - 32) / 6
-        for index, skill in enumerate(rows[:6]):
+        row_h = (y1 - y0 - 32) / SKILL_ROWS
+        for index, skill in enumerate(rows[:SKILL_ROWS]):
             middle = y0 + 29 + row_h * (index + 0.5)
             if index == 0:
                 draw.rounded_rectangle((x0 + 6, middle - row_h / 2, x1 - 6, middle + row_h / 2), radius=4,
@@ -937,13 +980,98 @@ class TechPulse(BasePlugin):
         for x in range(int(x0), int(x1), 4):
             draw.point((x, int(y)), fill=colour)
 
-    def _draw_footer(self, draw, payload, palette, fonts):
-        stats = payload.get("stats") or {}
-        left = (f"HN {stats.get('count', 0)} stories / {self._compact_number(stats.get('total_score', 0))} pts"
-                f" / {self._compact_number(stats.get('total_comments', 0))} comments")
-        self._draw_text(draw, (14, 469), left, fonts["small"], palette["muted"], anchor="lm")
-        self._draw_text(draw, (786, 469), "HN Firebase API / skills.sh / Hugging Face Hub / GitHub Search",
-                        fonts["tiny"], palette["cyan"], anchor="rm")
+    def _draw_openrouter(self, image, draw, box, models, palette, fonts, now):
+        """The strip of OpenRouter's newest models: its logo and how many arrived this week, then a
+        card per model with its maker's colour, name, the day it arrived, its context and prices."""
+        x0, y0, x1, y1 = box
+        self._panel(draw, box, palette, 1.0)
+        middle = (y0 + y1) / 2
+        logo = self._wordmark("openrouter", 15, palette["background"])
+        label_x = x0 + 12
+        if logo is not None:
+            image.paste(logo.convert("RGB"), (int(label_x), int(middle - 11 - logo.height / 2)), logo.getchannel("A"))
+        else:
+            self._draw_text(draw, (label_x, middle - 11), "OpenRouter", fonts["section"], palette["ink"], anchor="lm")
+        rows = (models or {}).get("models") or []
+        week = (models or {}).get("week")
+        caption = f"新模型上架 · 本周 {week} 个" if week else "新模型上架"
+        self._draw_text(draw, (label_x, middle + 10), caption, fonts["tiny_bold"], palette["muted"], anchor="lm")
+        cards_left = x0 + 148
+        if not rows:
+            self._draw_text(draw, ((cards_left + x1) / 2, middle), "暂时无法获取", fonts["small"], palette["muted"],
+                            anchor="mm")
+            return
+        width = (x1 - 8 - cards_left - 6 * (OPENROUTER_CARDS - 1)) / OPENROUTER_CARDS
+        for index, model in enumerate(rows[:OPENROUTER_CARDS]):
+            left = cards_left + index * (width + 6)
+            card = (left, y0 + 6, left + width, y1 - 6)
+            draw.rounded_rectangle(card, radius=8, fill=palette["row"])
+            colour = PROVIDER_COLOURS.get(model.get("provider"), palette["muted"])
+            if sum(colour) < 200 and sum(palette["background"]) < 240:
+                # A near-black maker colour would vanish on the night page: its chip takes the muted ink.
+                colour = palette["muted"]
+            draw.rounded_rectangle((card[0], card[1], card[0] + 4, card[3]), radius=2, fill=colour)
+            top, bottom = card[1] + 11, card[3] - 10
+            mark = self._provider_mark(model.get("provider"), palette["background"])
+            if mark is not None:
+                # The maker's own mark names it; the chip is for makers without one.
+                image.paste(mark.convert("RGB"), (int(card[0] + 10), int(top - mark.height / 2)), mark.getchannel("A"))
+                chip_w = mark.width
+            else:
+                provider = PROVIDER_NAMES.get(model.get("provider"),
+                                              str(model.get("provider") or "").split("-")[0].title())
+                chip_w = self._text_width(draw, provider, fonts["tiny_bold"]) + 10
+                draw.rounded_rectangle((card[0] + 10, top - 7, card[0] + 10 + chip_w, top + 7), radius=7, fill=colour)
+                self._draw_text(draw, (card[0] + 10 + chip_w / 2, top), provider, fonts["tiny_bold"], (255, 255, 255),
+                                anchor="mm")
+            added = self._parse_datetime(model.get("created"))
+            when = ""
+            if added is not None:
+                days = (self._to_utc(now) - added).days
+                when = "今天" if days <= 0 else (f"{days} 天前" if days < 7 else f"{added.month}/{added.day}")
+            name_x = card[0] + 16 + chip_w
+            right = card[2] - 8
+            if when:
+                right = self._draw_text(draw, (right, top), when, fonts["tiny_bold"],
+                                        palette["up"] if when == "今天" else palette["muted"], anchor="rm") - 6
+            self._draw_text(draw, (name_x, top), self._fit_text(draw, model.get("name") or "", fonts["name"],
+                                                                 right - name_x), fonts["name"], palette["ink"],
+                            anchor="lm")
+            # Context, then dollars per million tokens in and out, then whether it reads images.
+            facts = [part for part in (
+                f"{openrouter.context_text(model.get('context'))} 上下文" if model.get("context") else "",
+                openrouter.price_text(model) and f"{openrouter.price_text(model)}/M",
+                "识图" if model.get("vision") else "") if part]
+            self._draw_text(draw, (card[0] + 10, bottom), self._fit_text(draw, " · ".join(facts), fonts["tiny"],
+                                                                          card[2] - card[0] - 18),
+                            fonts["tiny"], palette["muted"], anchor="lm")
+
+    def _provider_mark(self, provider, background):
+        """A model maker's mark (assets/logos/provider-<id>.png) PROVIDER_MARK_HEIGHT tall and at most
+        PROVIDER_MARK_WIDTH wide; a dark mark turns light on a dark page. None without one."""
+        try:
+            with Image.open(ASSET_DIR / "logos" / f"provider-{provider}.png") as source:
+                mark = ImageOps.contain(source.convert("RGBA"), (PROVIDER_MARK_WIDTH, PROVIDER_MARK_HEIGHT),
+                                        method=Image.LANCZOS)
+        except (OSError, ValueError):
+            return None
+        if sum(background) < 240 and self._mark_luminance(mark) < 60:
+            red, green, blue, alpha = mark.split()
+            mark = Image.merge("RGBA", (*ImageOps.invert(Image.merge("RGB", (red, green, blue))).split(), alpha))
+        return mark
+
+    def _wordmark(self, key, height, background):
+        """A source's wide logo (assets/logos) ``height`` tall; its dark lettering turns light on a dark page."""
+        try:
+            with Image.open(ASSET_DIR / "logos" / f"{key}.png") as source:
+                logo = source.convert("RGBA")
+        except (OSError, ValueError):
+            return None
+        logo = logo.resize((max(1, round(logo.width * height / logo.height)), height), Image.LANCZOS)
+        if sum(background) < 240 and self._mark_luminance(logo) < 60:
+            red, green, blue, alpha = logo.split()
+            logo = Image.merge("RGBA", (*ImageOps.invert(Image.merge("RGB", (red, green, blue))).split(), alpha))
+        return logo
 
     def _paste_logo(self, image, key, xy, size, palette):
         logo = self._logo(key, size, palette["background"])
@@ -952,8 +1080,12 @@ class TechPulse(BasePlugin):
 
     def _logo(self, key, size, background):
         """A source's official logo; a dark mark turns to its light form on a dark page."""
+        path = ASSET_DIR / f"logo-{key}.png"
+        if not path.is_file():
+            # The logos built by tools/build_source_logos.py live in assets/logos.
+            path = ASSET_DIR / "logos" / f"{key}.png"
         try:
-            with Image.open(ASSET_DIR / f"logo-{key}.png") as source:
+            with Image.open(path) as source:
                 logo = ImageOps.contain(source.convert("RGBA"), (size, size), method=Image.LANCZOS)
         except (OSError, ValueError):
             return None

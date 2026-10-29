@@ -904,7 +904,8 @@ def test_boards_hide_demo_rows_and_say_they_are_unavailable(tmp_path, monkeypatc
     now = datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc)
     payload = plugin._local_sample_payload("topstories", 5, None, now, "key")
     plugin._render_page((800, 480), payload, {}, now, None, {})
-    assert drawn.count("暂时无法获取") == 3
+    # The three AI boards and the OpenRouter strip (no models in this test) each say so.
+    assert drawn.count("暂时无法获取") == 4
 
 
 def test_dark_source_marks_turn_light_on_the_night_page(tmp_path):

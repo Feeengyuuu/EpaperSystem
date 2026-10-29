@@ -1,0 +1,148 @@
+{
+  "logos": {
+    "openrouter": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/ca/OpenRouter_Logo.svg/500px-OpenRouter_Logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:OpenRouter_Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "5045452d481c3abc25256b53e2d7a7c98899479bafa306c2b60109107d0b9386",
+      "size": [
+        418,
+        64
+      ],
+      "sha256": "481287c79ac45554c431014ea32376d8b6f6ac03bb99d60d1a0fcf19ba306abf"
+    },
+    "openrouter_icon": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f8/OpenRouter_icon.svg/500px-OpenRouter_icon.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:OpenRouter_icon.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "f001d69585d939345db5bf74f968d43b561fde096e6d08f6891f463cbedc05e5",
+      "size": [
+        75,
+        64
+      ],
+      "sha256": "76c440ed53d5b9abae68913f7020a34c2b5de354d2603324069b45275243c53f"
+    },
+    "provider-openai": {
+      "source": "https://status.openai.com/favicon.ico",
+      "page": "https://status.openai.com/",
+      "licence": "OpenAI's site icon, shown to name the model's maker",
+      "source_sha256": "9dafb1f3475ee40a3e4b8b38c5aa4f67c4289de006617c523dc65c28153f4f86",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "f228deade96c30df7eaac611e3fa14c61448091562337b8985d0a124f73dc734"
+    },
+    "provider-anthropic": {
+      "source": "https://www.anthropic.com/images/icons/apple-touch-icon.png",
+      "page": "https://www.anthropic.com/",
+      "licence": "Anthropic's site icon, shown to name the model's maker",
+      "source_sha256": "40e3900fcb3ad237af6869dbd40e77efc8eb23549c478125b40e563ac74423cb",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "a76549dd202ec1c59302ad7fec2e05abc445a37b09cc36ec28a4fa17f516a5c6"
+    },
+    "provider-moonshotai": {
+      "source": "https://statics.moonshot.cn/kimi-chat/favicon.ico",
+      "page": "https://www.kimi.com/",
+      "licence": "Moonshot AI's Kimi site icon, shown to name the model's maker",
+      "source_sha256": "82dc4455113baa928b4eeb98f3ac17e4384811d8446ad831f3bd10581eff5e12",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "f44f807fc0c85789ba9e9089c321bc37a45034f5abba761e9ed19f6190c2fcec"
+    },
+    "provider-google": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3c/Google_Favicon_2025.svg/500px-Google_Favicon_2025.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Google_Favicon_2025.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "a167ff25cf2fe92fb4185c901de62589bd48196279899b8b1a206687f3cff0b8",
+      "size": [
+        63,
+        64
+      ],
+      "sha256": "a5122a75d0746c53053d6a32c408725d31a34f9117490b0c1327147d49da6243"
+    },
+    "provider-meta-llama": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/05/Meta_Platforms_Inc._logo_%28cropped%29.svg/500px-Meta_Platforms_Inc._logo_%28cropped%29.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Meta_Platforms_Inc._logo_(cropped).svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "c8ef1d0d9aa5e1f1b86a4afec4f3c7d1ea78e10254b2bf04f142032cb53f41d0",
+      "size": [
+        96,
+        64
+      ],
+      "sha256": "9486295a9f3c795f41d24d99133f24dd88f6e1c23d71df4d236a56204cbfd341"
+    },
+    "provider-mistralai": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e6/Mistral_AI_logo_%282025%E2%80%93%29.svg/500px-Mistral_AI_logo_%282025%E2%80%93%29.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Mistral_AI_logo_(2025\u2013).svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "c17a15515f7e99f5adf2f9b54906111cd49a4f6df0f92aed41d82e05c09d2177",
+      "size": [
+        90,
+        64
+      ],
+      "sha256": "2aa6ce6838dd3329f65b91fc9e36d73497a3ea9a1d544bb1e832ec3a2beccb2e"
+    },
+    "provider-deepseek": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/9/95/DeepSeek-icon.svg/500px-DeepSeek-icon.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:DeepSeek-icon.svg",
+      "licence": "MIT (Wikimedia Commons)",
+      "source_sha256": "d7406f5ee67d20061d66589a211e12b240c49a66d61b7a125f281abd46a275e1",
+      "size": [
+        87,
+        64
+      ],
+      "sha256": "9e08093eb9ecd18f8d49f0528c5aa3b4235950c5a8a7f7e1d2178169dae54bf9"
+    },
+    "provider-qwen": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/6/69/Qwen_logo.svg/500px-Qwen_logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Qwen_logo.svg",
+      "licence": "CC0 (Wikimedia Commons)",
+      "source_sha256": "58bd7be732d6f454a109d2f6229441ed209b87a03280e6d7f6f0baf73c44a100",
+      "size": [
+        65,
+        64
+      ],
+      "sha256": "0229fbc38be302f49eb9518851f95fc672aa2d87256e32c8dd5971eecd7f2021"
+    },
+    "provider-x-ai": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/9/93/XAI_Logo.svg/500px-XAI_Logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:XAI_Logo.svg",
+      "licence": "CC BY-SA 4.0 (Wikimedia Commons)",
+      "source_sha256": "1477bc698a99627916e8417ec5f9f22b576618c23a08934c0147c08f85bce921",
+      "size": [
+        58,
+        64
+      ],
+      "sha256": "7f46aa4ac80cf071aa2263db6157d97c776d4c302ebc743ab492a9872175823e"
+    },
+    "provider-minimax": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/08/Minimax_Logo.svg/500px-Minimax_Logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Minimax_Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "0557ec95eda10336bc0a3360b79934692b873e6874cd7b9c15237795e0577360",
+      "size": [
+        271,
+        64
+      ],
+      "sha256": "3f2b6d09b3101a57d9bd63cd774e13e4e41e7cefb297bb760fb29677fa671b72"
+    },
+    "provider-z-ai": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/6/62/Zhipu_AI.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Zhipu_AI.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "4decf48627da0847d08232184120affcef7893f52002dced8c24b5a6f3bee294",
+      "processing": "the white ground cleared",
+      "size": [
+        180,
+        64
+      ],
+      "sha256": "464f6f1f1c4c3ea0d6dedccf7a012329e414d4201d7c51aaf74246055d171fb3"
+    }
+  }
+}
