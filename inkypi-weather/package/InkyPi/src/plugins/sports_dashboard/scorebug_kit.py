@@ -43,10 +43,23 @@ KIT_LOGO_MIN_CONTRAST = 2.0
 # its left edge, so the tabs, rails and times line up from row to row.
 KIT_DAY_TAB_WIDTH = 26
 KIT_DAY_RAIL_OFFSET = 4
-# Football's leader categories by icon (assets/decor/nfl_stat_icons) instead of a PASS / RUSH / REC tag.
-KIT_LEADER_ICONS = {"PASS": "passing", "RUSH": "rushing", "REC": "receiving"}
-KIT_LEADER_ICON_DIR = os.path.join(LOCAL_DECOR_DIR, "nfl_stat_icons")
-KIT_LEADER_ICON_SIZE = 16
+# Leader categories by icon (assets/decor/<set>) instead of a tag: football's pass, run and catch,
+# basketball's basket, rebound and pass, hockey's goal, assist and point. A sport without its own
+# set reads football's (its PASS / RUSH / REC are no other sport's labels).
+FOOTBALL_STAT_ICONS = ("nfl_stat_icons", {"PASS": "passing", "RUSH": "rushing", "REC": "receiving"})
+BASKETBALL_STAT_ICONS = ("basketball_stat_icons", {"PTS": "points", "REB": "rebounds", "AST": "assists"})
+STAT_ICON_SETS = {"NBA": BASKETBALL_STAT_ICONS, "WNBA": BASKETBALL_STAT_ICONS,
+                  "NHL": ("nhl_stat_icons", {"G": "goals", "A": "assists", "PTS": "points"})}
+# A leader row's category icon fits this box; a large row's is wider, for basketball's pass.
+KIT_LEADER_ICON_SIZE, KIT_LEADER_ICON_BOX_LARGE = 16, (30, 22)
+# A large leader row's value says what it counts (basketball's "19 分", "11 篮板").
+STAT_UNITS = {sport: {"PTS": "分", "REB": "篮板", "AST": "助攻"} for sport in ("NBA", "WNBA")}
+
+
+def stat_icon_path(sport, label):
+    """The icon standing for ``sport``'s leader category ``label``, or None (it is then a tag)."""
+    folder, icons = STAT_ICON_SETS.get(sport, FOOTBALL_STAT_ICONS)
+    return os.path.join(LOCAL_DECOR_DIR, folder, f"{icons[label]}.png") if label in icons else None
 # Mascot art fills the room under a short list once it is at least this tall.
 KIT_SPARE_FILLER_MIN_HEIGHT = 50
 KIT_SPARE_STRIP_MIN_HEIGHT = 28
@@ -516,34 +529,51 @@ class ScorebugKitMixin:
         fallback = spec.hook("logo_fallback", event, side, default=event.get(f"team_{side}_code"))
         self._draw_team_logo(image, draw, event.get(f"team_{side}_logo"), x, y1 + (y2 - y1 - size) // 2, size, fallback)
 
-    def _draw_kit_leader_rows(self, image, draw, x1, y, x2, y_limit, event, leaders, spec, max_rows=3):
+    def _draw_kit_leader_rows(self, image, draw, x1, y, x2, y_limit, event, leaders, spec, max_rows=3, large=False):
+        """The leaders, a row each: the category's icon (else its tag), the team's logo, the name and
+        the value. ``large`` rows (for a card with room) set them bigger, the value bold with its unit."""
         label_font = self._font(8, True)
+        row_h, pitch, icon_box, logo_size, name_size = (24, 28, KIT_LEADER_ICON_BOX_LARGE, 16, 12) if large else \
+            (14, 17, (KIT_LEADER_ICON_SIZE, KIT_LEADER_ICON_SIZE), 12, 10)
+        units = STAT_UNITS.get(spec.sport, {}) if large else {}
         for leader in list(leaders or [])[:max_rows]:
-            if y + 14 > y_limit:
+            if y + row_h > y_limit:
                 break
             label = leader.get("label") or ""
-            icon = self._load_local_logo(os.path.join(KIT_LEADER_ICON_DIR, f"{KIT_LEADER_ICONS[label]}.png"),
-                                         (KIT_LEADER_ICON_SIZE, KIT_LEADER_ICON_SIZE),
-                                         alpha_threshold=8) if label in KIT_LEADER_ICONS else None
+            middle = y + row_h // 2
+            path = stat_icon_path(spec.sport, label)
+            icon = self._load_local_logo(path, icon_box, alpha_threshold=8) if path else None
             if icon:
-                # A football category reads as its icon: the pass, the run, the catch.
-                image.paste(icon, (x1 + (KIT_LEADER_ICON_SIZE - icon.width) // 2, y + 7 - icon.height // 2), icon)
-                name_x = x1 + KIT_LEADER_ICON_SIZE + 5
+                # A category reads as its icon: the pass, the run, the catch; the basket, the rebound.
+                image.paste(icon, (x1 + (icon_box[0] - icon.width) // 2, middle - icon.height // 2), icon)
+                name_x = x1 + icon_box[0] + 5
             else:
-                draw.rounded_rectangle((x1, y + 1, x1 + 30, y + 13), radius=3, fill=COLORS[spec.tag], outline=COLORS["border"], width=1)
-                self._draw_centered_in_box(draw, (x1, y + 1, x1 + 30, y + 13), label, label_font, COLORS["text"])
+                draw.rounded_rectangle((x1, middle - 6, x1 + 30, middle + 6), radius=3, fill=COLORS[spec.tag], outline=COLORS["border"], width=1)
+                self._draw_centered_in_box(draw, (x1, middle - 6, x1 + 30, middle + 6), label, label_font, COLORS["text"])
                 name_x = x1 + 36
             side = leader.get("side")
             if side in {"a", "b"}:
                 prefix = f"team_{side}"
-                self._draw_team_logo(image, draw, event.get(f"{prefix}_logo"), name_x, y + 1, 12, spec.hook("logo_fallback", event, side, default=event.get(f"{prefix}_code")))
-                name_x += 16
-            value, value_font = self._fit_text_ellipsis(draw, str(leader.get("value") or ""), (x2 - x1) // 2, 9, bold=False, min_size=8)
+                self._draw_team_logo(image, draw, event.get(f"{prefix}_logo"), name_x, middle - logo_size // 2, logo_size,
+                                     spec.hook("logo_fallback", event, side, default=event.get(f"{prefix}_code")))
+                name_x += logo_size + 4
+            value_right = x2
+            unit = units.get(label)
+            if unit:
+                unit_font = self._font(9, False)
+                unit_w = self._text_width(draw, unit, unit_font)
+                self._draw_text_in_box(draw, (x2 - unit_w, middle - 3, x2, middle + 8), unit, unit_font, COLORS["text"],
+                                       align="right")
+                value_right = x2 - unit_w - 2
+            value, value_font = self._fit_text_ellipsis(draw, str(leader.get("value") or ""), (x2 - x1) // 2,
+                                                        15 if large else 9, bold=large, min_size=8)
             value_w = self._text_width(draw, value, value_font)
-            self._draw_text_in_box(draw, (x2 - value_w, y, x2, y + 14), value, value_font, COLORS["text"], align="right")
-            name, name_font = self._fit_text_ellipsis(draw, leader.get("name") or "", x2 - value_w - 8 - name_x, 10, bold=True, min_size=8)
-            self._draw_text_in_box(draw, (name_x, y, x2 - value_w - 8, y + 14), name, name_font, COLORS["text"])
-            y += 17
+            self._draw_text_in_box(draw, (value_right - value_w, y, value_right, y + row_h), value, value_font,
+                                   COLORS["text"], align="right")
+            name, name_font = self._fit_text_ellipsis(draw, leader.get("name") or "", value_right - value_w - 8 - name_x,
+                                                      name_size, bold=True, min_size=8)
+            self._draw_text_in_box(draw, (name_x, y, value_right - value_w - 8, y + row_h), name, name_font, COLORS["text"])
+            y += pitch
         return y
 
     def _draw_kit_labeled_line(self, draw, box, label, text, bold=True):

@@ -18,7 +18,7 @@ The NBA offseason page is drawn by nba.py and is unchanged.
 
 from .common import *
 from .card_backdrops import card_backdrop_box, paint_card_backdrop, paint_list_backdrop
-from .scorebug_kit import KIT_TILE_HEIGHT, ScorebugSpec, _kit_inked_where_faint
+from .scorebug_kit import KIT_TILE_HEIGHT, ScorebugSpec, _kit_inked_where_faint, stat_icon_path
 from . import hockey
 
 SportsDashboard = None
@@ -31,11 +31,12 @@ BASKETBALL_SPEC_KEYS = {
 # Each sport's card art, and the leader categories its duel shows.
 FACEOFF_BACKDROPS = {"NHL": "hockey"}
 LEADER_DUEL_LABELS = {"NHL": hockey.LEADER_LABELS}
-# The NHL's duel names its categories by icon (assets/decor/nhl_stat_icons) and heads each side
-# with the team's logo and Chinese name; each leader carries the team's small logo on the outside.
-LEADER_DUEL_ICONS = {"NHL": {"G": "goals", "A": "assists", "PTS": "points"}}
-STAT_ICON_DIR = os.path.join(LOCAL_DECOR_DIR, "nhl_stat_icons")
-DUEL_ICON_SIZE, DUEL_TEAM_LOGO_SIZE, DUEL_ROW_LOGO_SIZE = 17, 13, 11
+# A duel names its categories by icon (scorebug_kit.STAT_ICON_SETS). The NHL's also heads each
+# side with the team's logo and Chinese name; each leader carries the team's small logo on the outside.
+LEADER_DUEL_TEAM_HEADS = ("NHL",)
+# A category's icon fits this box in the duel's middle column (a wide pass icon takes its width).
+DUEL_ICON_BOX = (24, 17)
+DUEL_TEAM_LOGO_SIZE, DUEL_ROW_LOGO_SIZE = 13, 11
 # A face-off's networks under its clock, as their logos this tall.
 FACEOFF_TV_LOGO_HEIGHT = 11
 # A live game this close in the fourth quarter or overtime is flagged.
@@ -335,9 +336,9 @@ class BasketballRenderMixin:
         x1, y1, x2, y2 = [int(value) for value in box]
         middle = (x1 + x2) // 2
         header_font = self._font(9, True)
-        icons = LEADER_DUEL_ICONS.get(spec.sport) if image is not None else None
+        heads = image is not None and spec.sport in LEADER_DUEL_TEAM_HEADS
         for side, align, left, right in (("a", "left", x1 + 2, middle - 20), ("b", "right", middle + 20, x2 - 2)):
-            if icons:
+            if heads:
                 # The team's logo at the outer edge, its Chinese name beside it.
                 logo_x = left if side == "a" else right - DUEL_TEAM_LOGO_SIZE
                 self._draw_team_logo(image, draw, event.get(f"team_{side}_logo"), logo_x, y1 - 1, DUEL_TEAM_LOGO_SIZE,
@@ -363,8 +364,8 @@ class BasketballRenderMixin:
             b = leaders["b"].get(label) or {}
             if not a and not b:
                 continue
-            icon = self._load_local_logo(os.path.join(STAT_ICON_DIR, f"{icons[label]}.png"), (DUEL_ICON_SIZE, DUEL_ICON_SIZE),
-                                         alpha_threshold=8) if icons and label in icons else None
+            path = stat_icon_path(spec.sport, label) if image is not None else None
+            icon = self._load_local_logo(path, DUEL_ICON_BOX, alpha_threshold=8) if path else None
             if icon:
                 image.paste(icon, (middle - icon.width // 2, y + 8 - icon.height // 2), icon)
             else:
@@ -381,8 +382,8 @@ class BasketballRenderMixin:
                 own = values[0] if side == "a" else values[1]
                 value_font = self._font(12, own is not None and (other is None or own >= other))
                 value_w = self._text_width(draw, value, value_font)
-                # With icons, each leader carries the team's small logo at the outer edge.
-                outer = DUEL_ROW_LOGO_SIZE + 4 if icons else 0
+                # Under team heads, each leader carries the team's small logo at the outer edge.
+                outer = DUEL_ROW_LOGO_SIZE + 4 if heads else 0
                 if side == "a":
                     value_box = (middle - 21 - value_w, y, middle - 21, y + 15)
                     name_box = (x1 + 2 + outer, y, value_box[0] - 6, y + 15)
@@ -738,7 +739,9 @@ class BasketballRenderMixin:
                                            str(event.get("broadcast") or "").strip(), WNBA_CARD_TV_LOGO_HEIGHT)
         else:
             leaders = list(event.get("leaders") or [])[:2]
-            self._draw_kit_leader_rows(image, draw, left, y + 4, right, y2 - 14, event, leaders, spec, max_rows=2)
+            # With room for them, the leaders are set large: icon, name and the value with its unit.
+            self._draw_kit_leader_rows(image, draw, left, y + 6, right, y2 - 14, event, leaders, spec, max_rows=2,
+                                       large=y2 - 14 - (y + 6) >= 2 * 28)
         self._draw_kit_venue(image, draw, (left, y2 - 14, right, y2 - 2), str(event.get("venue") or "").strip())
 
     # Labels ------------------------------------------------------------------

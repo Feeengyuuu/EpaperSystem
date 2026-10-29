@@ -1084,6 +1084,35 @@ def test_leaderless_game_fills_the_leader_area_with_team_jerseys(boxes):
     assert blue in art and tuple(DAY_COLORS["amber"]) in art
 
 
+def test_leader_categories_read_as_their_own_sports_icons():
+    path = scorebug_kit_module.stat_icon_path
+    folders = {(sport, label): Path(path(sport, label)).parent.name
+               for sport, label in (("WNBA", "PTS"), ("NBA", "AST"), ("NHL", "PTS"), ("NFL", "PASS"))}
+
+    assert folders == {("WNBA", "PTS"): "basketball_stat_icons", ("NBA", "AST"): "basketball_stat_icons",
+                       ("NHL", "PTS"): "nhl_stat_icons", ("NFL", "PASS"): "nfl_stat_icons"}
+    assert path("NBA", "STL") is None and path("NHL", "REB") is None
+    for name in ("points", "rebounds", "assists"):
+        assert (Path(path("NBA", "PTS")).parent / f"{name}.png").is_file()
+
+
+def test_large_basketball_leader_rows_put_the_value_with_its_unit(boxes):
+    leaders = [{"label": "PTS", "name": "R. Howard", "value": "19", "side": "b"},
+               {"label": "REB", "name": "A. Reese", "value": "11", "side": "b"}]
+    seen = {}
+
+    def draw(plugin, image, draw):
+        seen["end"] = plugin._draw_kit_leader_rows(image, draw, 20, 100, 240, 170, {}, leaders,
+                                                   plugin._basketball_spec("WNBA"), max_rows=2, large=True)
+
+    image, _draw = _render(draw)
+
+    assert seen["end"] == 100 + 2 * 28
+    assert [text for _box, text, _font in boxes] == ["分", "19", "R. Howard", "篮板", "11", "A. Reese"]
+    # The categories are icons, not tags: the rows' left edge holds the basket and the hands.
+    assert len(set(image.crop((20, 100, 50, 156)).get_flattened_data())) > 8
+
+
 def test_pending_art_stays_below_the_leader_header_and_inks_silver_teams_black():
     seen = {}
 

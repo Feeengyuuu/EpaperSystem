@@ -1,0 +1,20 @@
+{
+  "points.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job ccd99648-2fd7-4347-9357-a48a7a0da5a2",
+    "source_sha256": "d5f1146f7d6610f4daf941d44b6450ff933a566aef70fe7b6513a21b24342e84",
+    "processing": "haze under alpha 48 cleared, cut at clear columns, squared, 64 px with a 3 px white edge",
+    "sha256": "636eca83427faa401d7bd7fbe1bf785c01f3dcb53319107a8da25e1af0aafd4e"
+  },
+  "rebounds.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job ccd99648-2fd7-4347-9357-a48a7a0da5a2",
+    "source_sha256": "d5f1146f7d6610f4daf941d44b6450ff933a566aef70fe7b6513a21b24342e84",
+    "processing": "haze under alpha 48 cleared, cut at clear columns, squared, 64 px with a 3 px white edge",
+    "sha256": "77b9a38a9ecc819b3ebf348294ab9e21edf932456d3b4e076259bac4d66420c2"
+  },
+  "assists.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job ccd99648-2fd7-4347-9357-a48a7a0da5a2",
+    "source_sha256": "d5f1146f7d6610f4daf941d44b6450ff933a566aef70fe7b6513a21b24342e84",
+    "processing": "haze under alpha 48 cleared, cut at clear columns, squared, 64 px with a 3 px white edge",
+    "sha256": "0f8982ad910633cdbd832aa702c17254e846bfeb45a22bde589cb7b6f2013995"
+  }
+}
