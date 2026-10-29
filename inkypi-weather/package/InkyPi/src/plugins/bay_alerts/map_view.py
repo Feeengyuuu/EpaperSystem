@@ -40,6 +40,8 @@ SHOCK_MAGNITUDE = 3.0
 # The map legend's source logos (USGS, NWS), this tall.
 LEGEND_LOGO_HEIGHT = 13
 EDGE_GROUP_PX = 40
+# The headline quake beyond the map gets a larger edge arrow than the others (px from its centre).
+FOCUS_ARROW_SIZE, EDGE_ARROW_SIZE = 10, 6
 # Where the near-home box may go, in order: open ocean off the Peninsula, then the top-left corner.
 SUMMARY_CORNERS = tuple((4, top) for top in range(176, 300, 6)) + ((4, 4),)
 _RADIUS = 6378137.0
@@ -555,12 +557,29 @@ def _edge_corners(edge, side, width, height):
                                                                      (column, y - height / 2 + step * 12))]
 
 
-def _draw_arrow(draw, palette, edge, direction, fill):
+def _draw_arrow(draw, palette, edge, direction, fill, reach=EDGE_ARROW_SIZE):
     (x, y), (ux, uy) = edge, direction
-    tip, back = (x + ux * 6, y + uy * 6), (x - ux * 6, y - uy * 6)
-    draw.polygon([tip, (back[0] - uy * 6, back[1] + ux * 6), (back[0] + uy * 6, back[1] - ux * 6)],
-                 fill=fill, outline=palette["ink"])
-    return (x - 8, y - 8, x + 8, y + 8)
+    tip, back = (x + ux * reach, y + uy * reach), (x - ux * reach, y - uy * reach)
+    draw.polygon([tip, (back[0] - uy * reach, back[1] + ux * reach), (back[0] + uy * reach, back[1] - ux * reach)],
+                 fill=fill, outline=palette["ink"], width=2 if reach > EDGE_ARROW_SIZE else 1)
+    return (x - reach - 2, y - reach - 2, x + reach + 2, y + reach + 2)
+
+
+def _draw_distance(draw, palette, fonts, home, point, quake, beyond=False):
+    """The headline quake's distance from home ("79 km", "图外 79 km" when it lies beyond the map)
+    in a small ink-ringed label at the middle of the line between them; its box, or None when the
+    line is too short to carry it."""
+    distance = quake.get("distance_km") if quake else None
+    if distance is None or math.dist(home, point) < 60:
+        return None
+    text = f"{'图外 ' if beyond else ''}{float(distance):.0f} km"
+    font = fonts(11)
+    width, height = draw.textlength(text, font=font) + 10, 16
+    x, y = (home[0] + point[0]) / 2, (home[1] + point[1]) / 2
+    box = (round(x - width / 2), round(y - height / 2), round(x + width / 2), round(y + height / 2))
+    draw.rounded_rectangle(box, radius=4, fill=palette["paper"], outline=palette["ink"], width=1)
+    draw.text((x, y), text, font=font, fill=palette["ink"], anchor="mm")
+    return box
 
 
 def _chip_width(draw, font, quake):
@@ -714,8 +733,14 @@ def render_bay_map(size, palette, fonts, *, quakes, alerts, home, home_label, no
     groups = _edge_groups(quakes, manifest, size, rank)
     home_point = project(home[0], home[1], manifest, size)
     focus_point = project(focus_quake.get("lat"), focus_quake.get("lon"), manifest, size) if focus_quake else None
+    beyond = focus_point is None and focus_quake is not None
+    if beyond:
+        # Beyond the map, the line runs to the quake's edge arrow.
+        focus_point = next((group["edge"] for group in groups if focus_quake in group["quakes"]), None)
+    # The headline callout keeps off the line, so it can be followed from home to the quake.
+    line_boxes = []
     if home_point is not None and focus_point is not None:
-        # A dashed ink line from home to the headline quake: the distance its callout gives.
+        # A dashed ink line from home to the headline quake, its distance written on it.
         # (Ink, not the quake's colour: a red line would read as one more fault.)
         _dashed(draw, home_point, focus_point, palette["ink"])
 
@@ -760,6 +785,17 @@ def render_bay_map(size, palette, fonts, *, quakes, alerts, home, home_label, no
                       stroke_width=2, stroke_fill=palette["home_ink"])
             occupied.append(box)
 
+    if home_point is not None and focus_point is not None:
+        distance_box = _draw_distance(draw, palette, fonts, home_point, focus_point, focus_quake, beyond)
+        if distance_box is not None:
+            occupied.append(distance_box)
+        steps = max(1, int(math.dist(home_point, focus_point) // 10))
+        line_boxes = [(home_point[0] + (focus_point[0] - home_point[0]) * step / steps - 3,
+                       home_point[1] + (focus_point[1] - home_point[1]) * step / steps - 3,
+                       home_point[0] + (focus_point[0] - home_point[0]) * step / steps + 3,
+                       home_point[1] + (focus_point[1] - home_point[1]) * step / steps + 3)
+                      for step in range(2, steps - 1)]
+
     # Live data goes down before place names, which then avoid it: the near-home box, alert tags,
     # edge arrows, the headline callout and magnitude chips.
     summary_box = _draw_summary(draw, palette, fonts, summary, occupied + small_dots, frame) if summary else None
@@ -784,13 +820,18 @@ def render_bay_map(size, palette, fonts, *, quakes, alerts, home, home_label, no
     for group in groups:
         edge_ids.update(id(quake) for quake in group["quakes"])
         fill, _ink = quake_chip_colors(quake_age_class(group["quake"], now), palette)
-        occupied.append(_draw_arrow(draw, palette, group["edge"], group["direction"], fill))
+        reach = EDGE_ARROW_SIZE
+        if group["quake"] is focus_quake:
+            # The headline quake's arrow is larger and takes its callout's colour.
+            reach, fill = FOCUS_ARROW_SIZE, palette[focus["tone"]] if focus.get("tone") else fill
+        occupied.append(_draw_arrow(draw, palette, group["edge"], group["direction"], fill, reach))
     if focus_quake is not None and id(focus_quake) in dots:
         (x, y), radius = dots[id(focus_quake)]
         width, height = _callout_size(draw, fonts, focus_quake, focus)
         corners = _around(x, y, width, height, (radius + 12, radius + 32))
-        box = _free_box(width, height, corners, occupied + small_dots, frame) or _clamped(
-            corners[0], width, height, frame)
+        box = (_free_box(width, height, corners, occupied + small_dots + line_boxes, frame)
+               or _free_box(width, height, corners, occupied + small_dots, frame)
+               or _clamped(corners[0], width, height, frame))
         _leader(draw, (x, y), box, palette["ink"], gap=radius + 1)
         _draw_callout(draw, palette, fonts, box, focus_quake, focus)
         occupied.append(box)
@@ -806,8 +847,10 @@ def render_bay_map(size, palette, fonts, *, quakes, alerts, home, home_label, no
             width = _chip_width(draw, chip_font, lead) + 8 + draw.textlength(extra, font=fonts(10, False))
             height = 15
         corners = _edge_corners((x, y), group["side"], width, height)
-        box = _free_box(width, height, corners, occupied + small_dots, frame) or _clamped(
-            corners[0], width, height, frame)
+        avoid = line_boxes if lead is focus_quake else []
+        box = (_free_box(width, height, corners, occupied + small_dots + avoid, frame)
+               or _free_box(width, height, corners, occupied + small_dots, frame)
+               or _clamped(corners[0], width, height, frame))
         _leader(draw, (x, y), box, palette["ink"], gap=8)
         if lead is focus_quake:
             _draw_callout(draw, palette, fonts, box, lead, focus)

@@ -345,13 +345,26 @@ def test_the_callout_explains_the_weeks_strongest_quake():
     focus = render.focus_quake(quakes, NOW)
 
     assert focus["id"] == "big" and focus["tone"] == "alert" and focus["title"] == "7 天最大"
-    assert focus["lines"] == ["5 小时前 · 距家 15 km", "海沃德断层旁"]
+    # Where it struck (USGS's place, in Chinese), when and how far from home, the nearest fault.
+    assert focus["lines"] == [quakes[0]["place"] if quakes[0]["id"] == "big" else quakes[1]["place"],
+                              "5 小时前 · 距家 15 km", "海沃德断层旁"]
+    assert "Hayward" in focus["lines"][0]
     assert render.focus_quake([], NOW) is None
     image = render_page((800, 480), _payload(quakes=quakes), {"_inkypi_theme": {"mode": "day"}}, NOW)
     markers = {marker["id"]: marker for marker in image.info["map_markers"]}
     assert markers["big"]["visible"] and markers["big"]["chip"]
     left, top, right, bottom = image.info["map_callout"]
     assert 0 <= left and right <= 440 and 0 <= top and bottom <= 388
+    # A quake 15 km from home: the dashed line carries its distance in a small label.
+    from plugins.bay_alerts import map_view
+    drawn = []
+    real = map_view._draw_distance
+    map_view._draw_distance = lambda *args: drawn.append(args[5].get("distance_km")) or real(*args)
+    try:
+        render_page((800, 480), _payload(quakes=quakes), {"_inkypi_theme": {"mode": "day"}}, NOW)
+    finally:
+        map_view._draw_distance = real
+    assert drawn and round(drawn[0]) == 15
 
 
 def test_near_home_box_counts_quakes_inside_the_outer_ring():

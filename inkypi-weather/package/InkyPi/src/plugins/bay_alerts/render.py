@@ -301,7 +301,9 @@ def focus_quake(items, now):
     strongest = max(items, key=lambda item: item.get("mag", 0), default=None)
     if strongest is None:
         return None
-    lines = [f"{ago(parse_time(strongest['time']), now)} · 距家 {strongest.get('distance_km', 0):.0f} km"]
+    # Where it struck first (USGS's place, in Chinese), then when and how far from home.
+    lines = [str(strongest["place"])] if strongest.get("place") else []
+    lines.append(f"{ago(parse_time(strongest['time']), now)} · 距家 {strongest.get('distance_km', 0):.0f} km")
     fault = nearest_fault(strongest.get("lat"), strongest.get("lon"))
     if fault:
         name, km = fault
