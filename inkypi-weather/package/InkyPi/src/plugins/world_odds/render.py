@@ -57,6 +57,10 @@ ROW_MARKS = {"KXFEDDECISION": "fed", "KXRECSSNBER": "nber", "KXCPIYOY": "bls", "
 # BEA's chart mark, and the "S&P" of S&P Dow Jones Indices' wordmark.
 MARK_CROPS = {"bea": (0.0, 0.0, 0.27, 0.72), "spdji": (0.0, 0.0, 0.35, 0.44)}
 ICON = 22
+# The left side's cards carry quiet doodles of their subject in their colour (assets/doodles): the
+# lead the forecasting itself, each tile its category's.
+CATEGORY_DOODLES = {"政治": "politics", "地缘": "geopolitics", "经济": "economy", "科技": "tech", "加密": "crypto"}
+DOODLE_STRENGTH = 0.24
 
 
 def _rgb(value):
@@ -242,6 +246,8 @@ def _week_chart(canvas, box, series):
 def _lead(canvas, payload, images):
     left, top, right, bottom = LEAD
     canvas.draw.rounded_rectangle(LEAD, radius=8, fill=canvas.color("lead"))
+    paint_doodles(canvas.image, (left + 1, top + 1, right - 1, bottom - 1), ASSETS / "doodles" / "lead.png",
+                  POLYMARKET, strength=DOODLE_STRENGTH, radius=7, offset=(left, top))
     event = payload.get("lead")
     if not event:
         canvas.text(((left + right) / 2, (top + bottom) / 2), "Polymarket 数据暂不可用", 15, "muted", anchor="mm")
@@ -303,10 +309,66 @@ def _lead(canvas, payload, images):
         _change(canvas, rows_right, middle, outcome["change"])
 
 
+MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+          "November", "December")
+
+
+def _outcome_kind(name):
+    """How a tile draws an outcome with no picture of its own: "yes" / "no", ("date", day) for a
+    "October 28" deadline, "level" for a price level ("↑ 82,500"), else None."""
+    text = str(name or "").strip()
+    if text.lower() in ("yes", "no"):
+        return text.lower()
+    words = text.split()
+    if len(words) == 2 and words[0] in MONTHS and words[1].isdigit():
+        return ("date", int(words[1]))
+    if text[:1] in ("↑", "↓"):
+        return "level"
+    return None
+
+
+def _outcome_mark(canvas, event, outcome, images, x, middle, side, color):
+    """The outcome's mark before its name in a tile: its own picture (a party's or company's logo),
+    a ✓ / ✗ for Yes / No, a small calendar page for a date, the event's own picture (the coin) for a
+    price level. Returns the room it took, or 0 without one."""
+    top = int(middle - side / 2)
+    kind = _outcome_kind(outcome["name"])
+    picture = images.get(sources.safe_image_url(outcome.get("image")))
+    if picture is None and kind == "level":
+        picture = images.get(sources.safe_image_url(event.get("image")))
+    if picture is not None:
+        _picture(canvas, picture, (x, top, x + side, top + side), radius=side // 2)
+        return side + 5
+    if kind in ("yes", "no"):
+        canvas.draw.ellipse((x, top, x + side, top + side), fill=canvas.color("up" if kind == "yes" else "down"))
+        ink, inset, width = canvas.color("paper"), side * 0.28, max(2, side // 7)
+        if kind == "yes":
+            canvas.draw.line(((x + inset, top + side * 0.52), (x + side * 0.43, top + side - inset),
+                              (x + side - inset, top + inset * 1.1)), fill=ink, width=width, joint="curve")
+        else:
+            canvas.draw.line((x + inset, top + inset, x + side - inset, top + side - inset), fill=ink, width=width)
+            canvas.draw.line((x + inset, top + side - inset, x + side - inset, top + inset), fill=ink, width=width)
+        return side + 5
+    if isinstance(kind, tuple):
+        band = max(4, round(side * 0.3))
+        canvas.draw.rounded_rectangle((x, top, x + side, top + side), radius=3, fill=(255, 255, 255),
+                                      outline=color, width=1)
+        canvas.draw.rounded_rectangle((x, top, x + side, top + band), radius=3, fill=color)
+        canvas.draw.rectangle((x, top + band - 2, x + side, top + band), fill=color)
+        canvas.text((x + side / 2 + 0.5, top + band + (side - band) / 2), str(kind[1]), max(7, side - band - 3),
+                    (0x12, 0x1A, 0x20), anchor="mm")
+        return side + 5
+    return 0
+
+
 def _tile(canvas, box, event, images):
     left, top, right, bottom = box
     color = CATEGORY_COLORS.get(event["category"], POLYMARKET)
     canvas.draw.rounded_rectangle(box, radius=6, outline=canvas.color("rule"), width=1)
+    doodles = CATEGORY_DOODLES.get(event["category"])
+    if doodles:
+        paint_doodles(canvas.image, (left + 5, top + 1, right - 1, bottom - 1), ASSETS / "doodles" / f"{doodles}.png",
+                      color, strength=DOODLE_STRENGTH, radius=5, offset=(left, top))
     canvas.draw.rounded_rectangle((left, top, left + 4, bottom), radius=2, fill=color)
     picture_box = (left + 10, top + 8, left + 44, top + 42)
     if not _picture(canvas, images.get(sources.safe_image_url(event.get("image"))), picture_box, radius=5):
@@ -323,14 +385,17 @@ def _tile(canvas, box, event, images):
     outcomes = event["outcomes"]
     lead = outcomes[0]
     middle = bottom - 27
-    canvas.text((left + 10, middle), lead["name"], 12, anchor="lm", width=right - left - 104)
+    mark = _outcome_mark(canvas, event, lead, images, left + 10, middle, 17, color)
+    canvas.text((left + 10 + mark, middle), lead["name"], 12, anchor="lm", width=right - left - 104 - mark)
     canvas.text((right - 40, middle), chance_text(lead["chance"]), 17, color, anchor="rm")
     _change(canvas, right - 8, middle, lead["change"])
     if len(outcomes) > 1:
         second = outcomes[1]
         middle = bottom - 10
-        canvas.text((left + 10, middle), second["name"], 10, "muted", anchor="lm", bold=False,
-                    width=right - left - 104)
+        # The second outcome's mark sits under the first's, its name lined up with the first name.
+        mark = _outcome_mark(canvas, event, second, images, left + 11, middle, 14, color)
+        canvas.text((left + 10 + (mark + 3 if mark else 0), middle), second["name"], 10, "muted", anchor="lm", bold=False,
+                    width=right - left - 104 - mark)
         canvas.text((right - 40, middle), chance_text(second["chance"]), 11, "muted", anchor="rm")
         _change(canvas, right - 8, middle, second["change"], size=9)
 

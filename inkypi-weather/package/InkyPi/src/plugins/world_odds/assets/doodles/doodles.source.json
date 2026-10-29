@@ -1,0 +1,44 @@
+{
+  "lead.png": {
+    "theme": "forecasting",
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job bbc9884a-9031-41c9-b764-82e4732cab25",
+    "source_sha256": "8be26e3f154836c7818ae44d67da92d23c24d5b3abaac8511c674b72984952d6",
+    "processing": "greyscale, 360 px LANCZOS, values above 232 to white",
+    "sha256": "4f0bb8dcbef29008b4644a6fd316aeadd63843988ded493ece77f4b0e7683b3b"
+  },
+  "politics.png": {
+    "theme": "politics and elections",
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job 43e5715a-ba6b-48d0-9096-f51f34841f2b",
+    "source_sha256": "7c0ee982214702a677cac4a2fd7608f6fc653919ff513a5a36a9eeecb5a15a71",
+    "processing": "greyscale, 360 px LANCZOS, values above 232 to white",
+    "sha256": "96ca3f2f76dfb27b552d2444fce6d4327867eec9c61b5904483aa15d5661a179"
+  },
+  "geopolitics.png": {
+    "theme": "geopolitics",
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job a3b517de-3018-4975-bfee-c472048e81b1",
+    "source_sha256": "d62426ab6859b37ef0df28294ab8d76a4cba1a8d321ad75ec2e3d58a9eea80e7",
+    "processing": "greyscale, 360 px LANCZOS, values above 232 to white",
+    "sha256": "be626d53bf9b9c136a8cff7aa23502022e131b1e908c30653fea5e866d1d1d02"
+  },
+  "economy.png": {
+    "theme": "economy and trade",
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job 36c007eb-a607-4da2-9d46-7ccf01f15d74",
+    "source_sha256": "080d345b48af45734086461d15c3d974b777c77b068260c40249a4cb973be781",
+    "processing": "greyscale, 360 px LANCZOS, values above 232 to white",
+    "sha256": "9ad9279060751cf2d0175e896e4c55b687b744a054fb76f6e20d2591deefef9f"
+  },
+  "tech.png": {
+    "theme": "technology and AI",
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job faa21091-8332-481e-89fd-49ed5693d47e",
+    "source_sha256": "1a37e1021997c16dde50a1d04d0a57da4826ea101418592dce0310246fdad726",
+    "processing": "greyscale, 360 px LANCZOS, values above 232 to white",
+    "sha256": "f5bc856ba8a7726ccb1e4d9f45a075f5334fcb4acc70933d8f9c99cc2c808524"
+  },
+  "crypto.png": {
+    "theme": "crypto",
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job 6a397a7d-9311-4bdf-9818-576402b74165",
+    "source_sha256": "ec6761defc0010bea9ed7e4ece5977acaa646d5f6b001bed3fbe9115c37cc639",
+    "processing": "greyscale, 360 px LANCZOS, values above 232 to white",
+    "sha256": "46a32d8f36158ac924d444b30246ae9d76b0a74fd818a34a0e0965783cdfdf6a"
+  }
+}

@@ -90,9 +90,10 @@ class WorldOdds(BasePlugin):
                 "provenance": combined_provenance(results.values())}
 
     def _images(self, payload, *, allow_network, context):
-        """The events' pictures, and the lead's outcomes' own (a portrait, a party's mark)."""
+        """The events' pictures, and their shown outcomes' own (a portrait, a party's or company's mark)."""
         urls = [event.get("image") for event in [payload["lead"], *payload["tiles"]] if event]
         urls += [outcome.get("image") for outcome in ((payload["lead"] or {}).get("outcomes") or [])]
+        urls += [outcome.get("image") for tile in payload["tiles"] for outcome in tile["outcomes"][:2]]
         return load_thumbnails([url for url in urls if url], self._cache_subdir("pictures"),
                                cached_only=not allow_network, size=THUMB_PIXELS, http=get_http_client(),
                                context=context, safe_url=sources.safe_image_url, user_agent=sources.USER_AGENT)

@@ -98,3 +98,10 @@ def test_page_renders_with_and_without_data(mode):
     for data in (payload, {"lead": None, "tiles": [], "board": {}}):
         image = render_page((800, 480), data, {"_inkypi_theme": {"mode": mode}}, NOW, {})
         assert image.size == (800, 480)
+
+
+def test_tile_outcomes_without_a_picture_get_a_drawn_mark():
+    from plugins.world_odds.render import _outcome_kind
+
+    assert [_outcome_kind(name) for name in ("Yes", "no", "October 28", "↑ 82,500", "Google", "October")] == [
+        "yes", "no", ("date", 28), "level", None, None]
