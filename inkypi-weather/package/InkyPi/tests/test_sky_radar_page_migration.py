@@ -23,7 +23,7 @@ def _payload(*extra, live_radar_uuid=OWNER_UUID):
         "resolution": [800, 480],
         "runtime_migrations": {"aggregate_pages_playlist_v1": True, "ai_ecosystem_retired_v1": True,
                                "box_office_two_markets_v1": True, "pop_traffic_pages_playlist_v1": True,
-                               "planet_now_page_playlist_v1": True},
+                               "planet_now_page_playlist_v1": True, "hot_odds_pages_playlist_v1": True},
         "playlist_config": {
             "playlists": [{"name": "DailyDoseOfDay", "start_time": "00:00", "end_time": "24:00",
                            "plugins": [_instance("live_radar", "LiveRadar", live_radar_uuid), *extra]}],

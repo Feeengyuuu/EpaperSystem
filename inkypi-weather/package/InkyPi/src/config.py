@@ -270,6 +270,7 @@ class Config:
         self._add_pop_and_traffic_pages()
         self._add_planet_now_page()
         self._add_sky_radar_page()
+        self._add_hot_and_odds_pages()
 
     def _migrate_aggregate_pages_playlist(self):
         from aggregate_pages_migration import apply_aggregate_pages_playlist_migration
@@ -300,6 +301,11 @@ class Config:
         from sky_radar_page_migration import apply_sky_radar_page_migration
 
         apply_sky_radar_page_migration(self)
+
+    def _add_hot_and_odds_pages(self):
+        from hot_and_odds_pages_migration import apply_hot_and_odds_pages_migration
+
+        apply_hot_and_odds_pages_migration(self)
 
     def _add_starter_rotation(self):
         from starter_rotation_migration import apply_starter_rotation_migration

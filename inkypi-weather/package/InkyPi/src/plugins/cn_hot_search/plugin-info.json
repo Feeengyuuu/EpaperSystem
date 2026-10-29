@@ -4,7 +4,7 @@
   "class": "CnHotSearch",
   "display_name": "全网热搜",
   "refresh_on_display": false,
-  "recommended_refresh": {"interval": 1800},
+  "recommended_refresh": {"interval": 1200},
   "capabilities": {
     "supports_live_refresh": false,
     "supports_presentation_refresh": false,

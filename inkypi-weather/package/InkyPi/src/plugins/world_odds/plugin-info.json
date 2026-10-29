@@ -4,7 +4,7 @@
   "class": "WorldOdds",
   "display_name": "世界赔率榜",
   "refresh_on_display": false,
-  "recommended_refresh": {"interval": 3600},
+  "recommended_refresh": {"interval": 1800},
   "capabilities": {
     "supports_live_refresh": false,
     "supports_presentation_refresh": false,
