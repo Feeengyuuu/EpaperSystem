@@ -695,15 +695,15 @@ def test_scoreboard_groups_later_games_under_one_day_tab_and_each_kickoff_once(b
     games = [_ticker_game("SF", "ATL", 0, start=sunday), _ticker_game("CLE", "TEN", 0, start=sunday),
              _ticker_game("TB", "CAR", 0, start=sunday.replace(hour=13, minute=5)),
              _ticker_game("NYG", "HOU", 0, start=sunday + timedelta(days=1, hours=7, minutes=15))]
-    assert SportsDashboard._kit_day_slot(games[0], NOW) == ("SUN", "10AM")
+    assert SportsDashboard._kit_day_slot(games[0], NOW) == ("SUN", "10:00")
     assert SportsDashboard._kit_day_slot(_ticker_game("A", "B", 2), NOW) is None
     spec = _plugin()._football_spec("NFL")
     _render(lambda plugin, image, draw: plugin._draw_kit_scoreboard_column(image, draw, (300, 20, 540, 200), games, NOW, spec))
 
     texts = [text for _box, text, _font in boxes]
     _assert_fits(ImageDraw.Draw(Image.new("RGB", (1, 1))), boxes)
-    assert texts.count("SUN") == 1 and texts.count("10AM") == 1
-    assert "1:05PM" in texts and "MON" in texts and "5:15PM" in texts
+    assert texts.count("SUN") == 1 and texts.count("10:00") == 1
+    assert "13:05" in texts and "MON" in texts and "17:15" in texts
 
 
 @pytest.mark.parametrize("sport", ["MLB", "NBA", "WNBA", "NFL", "NCAA"])
@@ -764,7 +764,7 @@ def test_basketball_clutch_flag_and_ticker_clock():
     assert SportsDashboard._basketball_is_clutch({"period": 3, "wins_a": 100, "wins_b": 101}) is False
     spec = _plugin()._basketball_spec("NBA")
     later = {"state": "pre", "start": NOW + timedelta(days=1, hours=6, minutes=30)}
-    assert SportsDashboard._kit_ticker_clock(later, NOW, spec)[0] == "MON 6:30PM"
+    assert SportsDashboard._kit_ticker_clock(later, NOW, spec)[0] == "MON 18:30"
 
 
 def test_pga_parse_rounds_dates_and_calendar():

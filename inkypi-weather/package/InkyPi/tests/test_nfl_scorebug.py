@@ -402,7 +402,8 @@ def test_final_panel_marks_the_winner_and_lists_leaders(parsed, render):
 
     assert "FINAL/OT" in texts
     assert "OT" in texts  # fifth linescore column
-    assert {"PASS", "RUSH", "C. Williams", "16/18, 172 YDS, 1 TD"} <= set(texts)
+    # The leader categories are icons (the pass, the run), not PASS / RUSH tags.
+    assert {"C. Williams", "16/18, 172 YDS, 1 TD"} <= set(texts) and not {"PASS", "RUSH"} & set(texts)
     _assert_texts_fit(draw, render.boxes)
     # The winner triangle sits at the right edge of the home (DEN) row.
     card_right = 12 + 318 - 10

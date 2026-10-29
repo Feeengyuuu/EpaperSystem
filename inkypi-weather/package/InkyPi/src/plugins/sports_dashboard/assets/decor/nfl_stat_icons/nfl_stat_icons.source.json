@@ -1,0 +1,20 @@
+{
+  "passing.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job be654b95-c881-415f-abdb-69b113a9a425",
+    "source_sha256": "e9793f78170559a6789133e42b90fa4af44fdbc18e41f20b7f8b21d5840b33ed",
+    "processing": "cut at clear columns, squared, 64 px",
+    "sha256": "fe886697783ae19e48ccf8e91952958ec65b6fc7b3a672f2627387f1620e9b41"
+  },
+  "rushing.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job be654b95-c881-415f-abdb-69b113a9a425",
+    "source_sha256": "e9793f78170559a6789133e42b90fa4af44fdbc18e41f20b7f8b21d5840b33ed",
+    "processing": "cut at clear columns, squared, 64 px",
+    "sha256": "247c5ebe099b6604da2caa0079d8c495898df1866f6549e333e2c90fdb7f6912"
+  },
+  "receiving.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job be654b95-c881-415f-abdb-69b113a9a425",
+    "source_sha256": "e9793f78170559a6789133e42b90fa4af44fdbc18e41f20b7f8b21d5840b33ed",
+    "processing": "cut at clear columns, squared, 64 px",
+    "sha256": "08e6287b3ac22ea2b6f0808f7021fbf856c2fe9a1d4db6bb65a4b1222b704890"
+  }
+}

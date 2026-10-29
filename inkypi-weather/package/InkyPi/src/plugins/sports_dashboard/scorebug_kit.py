@@ -43,6 +43,10 @@ KIT_LOGO_MIN_CONTRAST = 2.0
 # its left edge, so the tabs, rails and times line up from row to row.
 KIT_DAY_TAB_WIDTH = 26
 KIT_DAY_RAIL_OFFSET = 4
+# Football's leader categories by icon (assets/decor/nfl_stat_icons) instead of a PASS / RUSH / REC tag.
+KIT_LEADER_ICONS = {"PASS": "passing", "RUSH": "rushing", "REC": "receiving"}
+KIT_LEADER_ICON_DIR = os.path.join(LOCAL_DECOR_DIR, "nfl_stat_icons")
+KIT_LEADER_ICON_SIZE = 16
 # Mascot art fills the room under a short list once it is at least this tall.
 KIT_SPARE_FILLER_MIN_HEIGHT = 50
 KIT_SPARE_STRIP_MIN_HEIGHT = 28
@@ -517,10 +521,19 @@ class ScorebugKitMixin:
         for leader in list(leaders or [])[:max_rows]:
             if y + 14 > y_limit:
                 break
-            draw.rounded_rectangle((x1, y + 1, x1 + 30, y + 13), radius=3, fill=COLORS[spec.tag], outline=COLORS["border"], width=1)
-            self._draw_centered_in_box(draw, (x1, y + 1, x1 + 30, y + 13), leader.get("label") or "", label_font, COLORS["text"])
+            label = leader.get("label") or ""
+            icon = self._load_local_logo(os.path.join(KIT_LEADER_ICON_DIR, f"{KIT_LEADER_ICONS[label]}.png"),
+                                         (KIT_LEADER_ICON_SIZE, KIT_LEADER_ICON_SIZE),
+                                         alpha_threshold=8) if label in KIT_LEADER_ICONS else None
+            if icon:
+                # A football category reads as its icon: the pass, the run, the catch.
+                image.paste(icon, (x1 + (KIT_LEADER_ICON_SIZE - icon.width) // 2, y + 7 - icon.height // 2), icon)
+                name_x = x1 + KIT_LEADER_ICON_SIZE + 5
+            else:
+                draw.rounded_rectangle((x1, y + 1, x1 + 30, y + 13), radius=3, fill=COLORS[spec.tag], outline=COLORS["border"], width=1)
+                self._draw_centered_in_box(draw, (x1, y + 1, x1 + 30, y + 13), label, label_font, COLORS["text"])
+                name_x = x1 + 36
             side = leader.get("side")
-            name_x = x1 + 36
             if side in {"a", "b"}:
                 prefix = f"team_{side}"
                 self._draw_team_logo(image, draw, event.get(f"{prefix}_logo"), name_x, y + 1, 12, spec.hook("logo_fallback", event, side, default=event.get(f"{prefix}_code")))
@@ -684,7 +697,7 @@ class ScorebugKitMixin:
             self._draw_kit_day_tab(draw, x, top + 2, day, accent)
             if continues:
                 draw.line((rail_x, top + 13, rail_x, bottom), fill=accent, width=2)
-        self._draw_kit_slot_time(draw, (x + KIT_DAY_TAB_WIDTH + 3, top, x + 54, top + 15), time)
+        self._draw_kit_slot_time(draw, (x + KIT_DAY_TAB_WIDTH + 3, top, x + 58, top + 15), time)
 
     def _draw_kit_spare_filler(self, image, box, spec):
         """The sport's mascot spot art, centred in the room a short ticker or
@@ -706,7 +719,7 @@ class ScorebugKitMixin:
         self._draw_centered_in_box(draw, (x, y, x + KIT_DAY_TAB_WIDTH, y + 10), day, self._font(8, True), _kit_ink_on(fill))
 
     def _draw_kit_slot_time(self, draw, box, time):
-        text, font = self._fit_text(draw, time, box[2] - box[0], 9, bold=True, min_size=7)
+        text, font = self._fit_text(draw, time, box[2] - box[0], 10, bold=True, min_size=8)
         self._draw_text_in_box(draw, box, text, font, COLORS["text"])
 
     def _kit_team_name(self, draw, spec, event, side, budget, size, bold, min_size=None):
@@ -797,15 +810,16 @@ class ScorebugKitMixin:
 
     @staticmethod
     def _kit_day_slot(event, now):
-        """('SUN', '10AM') for a game still to come on a later day, else None."""
+        """('SUN', '10:00') for a game still to come on a later day, else None. Schedule columns
+        give every start on the 24-hour clock, so the times line up as one column."""
         start = (event or {}).get("start")
         if SportsDashboard._hub_event_state(event) != "scheduled" or not isinstance(start, datetime) or start.date() == now.date():
             return None
-        return start.strftime("%a").upper(), SportsDashboard._format_time(start).replace(":00", "").replace(" ", "")
+        return start.strftime("%a").upper(), SportsDashboard._format_time_24h(start)
 
     @staticmethod
     def _kit_ticker_clock(event, now, spec):
-        """One-line clock: 'Q4 2:31', 'FINAL', '4:00 PM' today, 'TUE 6:30PM' later."""
+        """One-line clock: 'Q4 2:31', 'FINAL', '16:00' today, 'TUE 18:30' later."""
         state = SportsDashboard._hub_event_state(event)
         top, bottom, key = spec.hook("state_labels", event, now)
         if state == "live":
@@ -815,10 +829,10 @@ class ScorebugKitMixin:
         start = (event or {}).get("start")
         if not isinstance(start, datetime):
             return "TBD", key
-        time_text = SportsDashboard._format_time(start)
+        time_text = SportsDashboard._format_time_24h(start)
         if start.date() == now.date():
             return time_text, key
-        return f"{start.strftime('%a').upper()} {time_text.replace(':00', '').replace(' ', '')}", key
+        return f"{start.strftime('%a').upper()} {time_text}", key
 
 
     @staticmethod
