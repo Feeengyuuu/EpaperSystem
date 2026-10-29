@@ -42,7 +42,7 @@ DEFAULT_ROOMS_TEXT = "\n".join(
         "twitch|xqc",
         "douyu|60937|fav",
         "twitch|shroud",
-        "bilibili|22747736",
+        "bilibili|22747736|fav",
         "douyu|12306|fav",
         "twitch|hasanabi",
         "douyu|1126960",
@@ -307,6 +307,7 @@ FAVORITE_PRIORITY = {
     ("douyu", "10639765"): 8,
     ("douyu", "3507497"): 9,
     ("bilibili", "733"): 10,
+    ("bilibili", "22747736"): 11,  # 不死鸟总监
 }
 
 

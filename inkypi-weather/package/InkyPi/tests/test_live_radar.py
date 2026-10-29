@@ -557,6 +557,7 @@ def test_default_rooms_match_latest_backup_and_favorite_order():
         ("bilibili", "545318"),
         ("douyu", "6979222"),
         ("douyu", "60937"),
+        ("bilibili", "22747736"),
         ("douyu", "12306"),
         ("douyu", "57321"),
         ("bilibili", "5229"),
@@ -565,6 +566,8 @@ def test_default_rooms_match_latest_backup_and_favorite_order():
         ("douyu", "3507497"),
         ("bilibili", "733"),
     ]
+    # 不死鸟总监 joined the favourites last, so it sorts after the earlier ones.
+    assert LiveRadar._favorite_priority("bilibili", "22747736") == 11
     assert ("bilibili", "7586498") not in favorite_keys
     assert ("bilibili", "173551") not in favorite_keys
 
