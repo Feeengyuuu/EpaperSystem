@@ -209,11 +209,15 @@ def compose(images, labels, dimensions, *, title, subtitle="", date_text="", acc
             sources=sources, span=span)
     fillers = list(fillers)
     for index, (image, label, (image_box, label_box)) in enumerate(zip(images, labels, boxes), start=1):
-        frame = _framed(page, image, image_box, colors)
-        gap = (image_box[0], image_box[1], image_box[2], frame[1] - FILLER_GAP)
-        if fillers and gap[3] - gap[1] >= FILLER_MIN_H:
+        # A wide work stands on its foot when more works fill the room above it; otherwise it is
+        # centred in its slot rather than leaving that room empty.
+        room = image_box[3] - image_box[1] - SHADOW - _contained_size(image, image_box)[1] - FILLER_GAP
+        filled = bool(fillers) and room >= FILLER_MIN_H
+        frame = _framed(page, image, image_box, colors, centre=not filled)
+        if filled:
             taken, fillers = fillers[:FILLER_PER_GAP], fillers[FILLER_PER_GAP:]
-            _fill_gap(page, draw, gap, taken, filler_heading, accent, colors)
+            _fill_gap(page, draw, (image_box[0], image_box[1], image_box[2], frame[1] - FILLER_GAP), taken,
+                      filler_heading, accent, colors)
         label_box = _under(frame, label_box)
         swatch_w = _swatches(draw, image, (label_box[2], label_box[1] + TITLE_ROW + 4), colors)
         _label(draw, label, label_box, index, accent, colors, numbered=timeline, reserve=swatch_w + 6, page=page,
@@ -286,14 +290,23 @@ def _header_art(page, art, box):
     page.paste(fitted, (left + (room_w - fitted.width) // 2, top + (room_h - fitted.height) // 2), fitted)
 
 
-def _framed(page, image, box, colors):
-    """The work contained in ``box``, standing on its foot, with a hairline frame and soft shadow."""
+def _contained_size(image, box):
+    """The (width, height) a work takes when contained in ``box`` beside its shadow."""
+    left, top, right, bottom = box
+    room_w, room_h = right - left - SHADOW, bottom - top - SHADOW
+    scale = min(room_w / max(1, image.width), room_h / max(1, image.height))
+    return round(image.width * scale), round(image.height * scale)
+
+
+def _framed(page, image, box, colors, centre=False):
+    """The work contained in ``box``, standing on its foot (or ``centre``d in the box's height),
+    with a hairline frame and soft shadow."""
     left, top, right, bottom = box
     # A bank image already resized to art_sizes() comes back unchanged.
     art = ImageOps.contain(image.convert("RGB"), (right - left - SHADOW, bottom - top - SHADOW),
                            method=Image.Resampling.LANCZOS)
     x = left + (right - left - SHADOW - art.width) // 2
-    y = bottom - SHADOW - art.height
+    y = (top + (bottom - top - SHADOW - art.height) // 2) if centre else bottom - SHADOW - art.height
     shadow = Image.new("L", (art.width + 4 * SHADOW, art.height + 4 * SHADOW), 0)
     ImageDraw.Draw(shadow).rectangle((SHADOW, SHADOW, shadow.width - SHADOW, shadow.height - SHADOW), fill=120)
     shadow = shadow.filter(ImageFilter.GaussianBlur(SHADOW / 1.5))

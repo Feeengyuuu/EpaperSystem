@@ -3392,3 +3392,35 @@ def test_a_two_fact_row_gallery_gives_each_label_a_second_line():
     assert label_one[1] - label_two[1] == cover_gallery.FACT_ROW
     assert cover_gallery.art_sizes(3, (800, 480), fact_rows=2)[0][1] == cover_gallery.art_sizes(3, (800, 480))[0][1] \
         - cover_gallery.FACT_ROW
+
+
+def test_a_wide_cover_is_centred_in_its_slot_unless_more_covers_fill_the_room_above_it():
+    from PIL import Image as PILImage
+
+    from plugins.base_plugin import cover_gallery
+
+    tall = PILImage.new("RGB", (200, 600), (200, 30, 30))
+    # A landscape-leaning cover (ESPN The Magazine's spread) is shorter than its slot.
+    wide = PILImage.new("RGB", (400, 420), (30, 60, 200))
+    labels = [cover_gallery.Label(title=name) for name in ("A", "B", "C")]
+    boxes = cover_gallery.columns(3, (800, 480))
+
+    def rows_of(page, colour, box):
+        left, top, right, bottom = box
+        rows = [y for y in range(top, bottom) for x in ((left + right) // 2,) if page.getpixel((x, y)) == colour]
+        return min(rows), max(rows)
+
+    page = cover_gallery.compose([tall, tall, wide], labels, (800, 480), title="MAGAZINES", style="newsstand")
+    (left, top, right, bottom), _label = boxes[2]
+    first, last = rows_of(page, (30, 60, 200), (left, top, right, bottom))
+    # Equal room above and below it (within a pixel), not all of it above.
+    assert abs((first - top) - (bottom - cover_gallery.SHADOW - 1 - last)) <= 2 and first - top > 10
+    # A cover that fills its slot's height still stands on its foot.
+    _tall_first, tall_last = rows_of(page, (200, 30, 30), boxes[0][0])
+    assert boxes[0][0][3] - cover_gallery.SHADOW - 1 - tall_last <= 1
+    # With covers to fill the room above, a wide enough work stands on its foot under them.
+    wider = PILImage.new("RGB", (600, 300), (30, 60, 200))
+    page = cover_gallery.compose([tall, tall, wider], labels, (800, 480), title="MAGAZINES", style="newsstand",
+                                 fillers=[(tall, labels[0]), (tall, labels[1])], filler_heading="MORE")
+    _first, last = rows_of(page, (30, 60, 200), (left, top, right, bottom))
+    assert bottom - cover_gallery.SHADOW - 1 - last <= 1
