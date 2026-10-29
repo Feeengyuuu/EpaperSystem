@@ -749,14 +749,15 @@ def render_bay_map(size, palette, fonts, *, quakes, alerts, home, home_label, no
 
     if home_point is not None:
         x, y = home_point
-        draw.ellipse((x - 11, y - 11, x + 11, y + 11), fill=palette["paper"], outline=palette["home"], width=2)
-        draw_icon(draw, "home", (x - 7, y - 8), 14, palette["home"], palette["paper"])
-        occupied.append((x - 12, y - 12, x + 12, y + 12))
+        # Home stands out in gold: a gold disc ringed in ink with a dark house on it, its label gold.
+        draw.ellipse((x - 12, y - 12, x + 12, y + 12), fill=palette["home"], outline=palette["ink"], width=2)
+        draw_icon(draw, "home", (x - 7, y - 8), 14, palette["home_ink"], palette["home"])
+        occupied.append((x - 13, y - 13, x + 13, y + 13))
         if home_label:
-            font = fonts(12)
-            box = draw.textbbox((x + 14, y - 8), home_label, font=font, stroke_width=2)
-            draw.text((x + 14, y - 8), home_label, font=font, fill=palette["home"],
-                      stroke_width=2, stroke_fill=palette["paper"])
+            font = fonts(13)
+            box = draw.textbbox((x + 15, y - 9), home_label, font=font, stroke_width=2)
+            draw.text((x + 15, y - 9), home_label, font=font, fill=palette["home"],
+                      stroke_width=2, stroke_fill=palette["home_ink"])
             occupied.append(box)
 
     # Live data goes down before place names, which then avoid it: the near-home box, alert tags,

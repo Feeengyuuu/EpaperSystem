@@ -30,15 +30,18 @@ DAY = {
     "water": "#eef3fb", "water_line": "#2554c7", "relief": "#141c22", "relief_density": 0.42,
     "contour": "#ddd0b4", "contour_index": "#a8875a",
     "fault": "#c81e32", "alert": "#c81e32", "quake_day": "#c81e32", "quake_recent": "#e8a90c",
-    # Refined crimson, cobalt, emerald and gold rather than the panel's pure inks (owner's choice).
-    "home": "#2554c7", "ok": "#059669", "minor": "#2554c7", "moderate": "#e8a90c", "badge_ink": "#ffffff",
+    # Refined crimson, cobalt, emerald and gold rather than the panel's pure inks (owner's choice);
+    # home is a metallic gold (the owner's choice) with a dark house on it.
+    "home": "#d4a017", "home_ink": "#1f1600", "ok": "#059669", "minor": "#2554c7", "moderate": "#e8a90c",
+    "badge_ink": "#ffffff",
 }
 NIGHT = {
     "paper": "#000000", "panel": "#182730", "ink": "#eef2ea", "muted": "#c3cdd2", "rule": "#5a5a5a",
     "water": "#14304a", "water_line": "#7aa2ff", "relief": "#eef2ea", "relief_density": 0.26,
     "contour": "#3a3428", "contour_index": "#6e5f44",
     "fault": "#ff6b78", "alert": "#ff6b78", "quake_day": "#ff6b78", "quake_recent": "#fbbf24",
-    "home": "#7aa2ff", "ok": "#34d399", "minor": "#7aa2ff", "moderate": "#fbbf24", "badge_ink": "#000000",
+    "home": "#ffd24a", "home_ink": "#1f1600", "ok": "#34d399", "minor": "#7aa2ff", "moderate": "#fbbf24",
+    "badge_ink": "#000000",
 }
 TITLE_WORDMARK = Path(__file__).resolve().parent / "assets" / "title_wordmark.png"
 # Quiet technical doodles in each card's colour under its rows, by the card's icon: weather-map
