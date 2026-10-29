@@ -12,6 +12,7 @@ from utils.flat_icons import draw_icon
 from utils.local_wordmark import load_source_logo, paste_local_wordmark, paste_source_logos
 from utils.page_canvas import PageCanvas
 from utils.safe_image import ImageLimits, safe_open_image
+from utils.theme_utils import relative_luminance
 
 from .sources import (
     CURVE_POINTS, EARNINGS_HOURS, FORM_NAMES, ITEM_NAMES, days_until, local_now, parse_time, upcoming_earnings,
@@ -46,6 +47,8 @@ SOURCE_LOGO_GAP = 6
 # Logos whose black lettering takes the night ink (True: every dark part, as Yahoo prints its
 # wordmark white on dark grounds); the seals and emblems keep their printed colours.
 SOURCE_LOGO_INKED = {"fred": False, "coingecko": False, "yahoo_finance": True}
+# A macro tile names its source (BLS, FRED) by the official logo this tall at its top right.
+TILE_SOURCE_LOGOS, TILE_SOURCE_LOGO_HEIGHT = {"BLS": "bls", "FRED": "fred"}, 16
 MACRO_ICON_SIZE = 18
 EARNINGS_ROWS = 2
 # Each earnings row leads with the company's mark: the same files the stock tracker's Robinhood
@@ -420,17 +423,17 @@ def _macro_tiles(canvas, payload):
         item = macro.get(key)
         if item and finite(item.get("value")) is not None:
             tiles.append((key, label, f"{item['value']:.1f}{unit}", item.get("previous"), item["value"],
-                          f"{str(item.get('period'))[-2:].lstrip('0')} 月 · {macro.get('source', '')}"))
+                          (f"{str(item.get('period'))[-2:].lstrip('0')} 月", macro.get("source", ""))))
     if macro.get("fed_funds") or macro.get("mortgage30"):
         for key, label in (("fed_funds", "联邦基金利率"), ("mortgage30", "30 年房贷利率")):
             item = macro.get(key)
             if item and finite(item.get("value")) is not None:
-                tiles.append((key, label, f"{item['value']:.2f}%", item.get("previous"), item["value"], "FRED"))
+                tiles.append((key, label, f"{item['value']:.2f}%", item.get("previous"), item["value"], ("", "FRED")))
     else:
         for key, symbol, label, fmt in (("dxy", "DX-Y.NYB", "美元指数", "{:.1f}"), ("gold", "GC=F", "黄金", "${:,.0f}")):
             quote = quotes.get(symbol)
             if quote and finite(quote.get("last")) is not None:
-                tiles.append((key, label, fmt.format(quote["last"]), quote.get("month_ago"), quote["last"], "比1月前"))
+                tiles.append((key, label, fmt.format(quote["last"]), quote.get("month_ago"), quote["last"], ("比1月前", "")))
     for index, (key, label, value, previous, current, note) in enumerate(tiles[:4]):
         column, row = index % 2, index // 2
         left = 400 + column * 197
@@ -442,7 +445,7 @@ def _macro_tiles(canvas, payload):
         icon = _asset(f"macro-{key}", MACRO_ICON_SIZE)
         label_x = left + 10 + (_paste(canvas, icon, (left + 9, top + 18 - icon.height // 2)) + 5 if icon else 0)
         canvas.text((label_x, top + 18), label, 13, anchor="lm", width=left + 118 - label_x)
-        canvas.text((left + 181, top + 18), note, 11, "muted", anchor="rm", bold=False, width=80)
+        _tile_note(canvas, left + 181, top + 18, *note)
         change = delta(current, previous)
         icon, tone = _direction(change)
         _number(canvas, (left + 10, top + 41), value, 22, 102, tone)
@@ -461,6 +464,22 @@ def _macro_tiles(canvas, payload):
                         7, "muted", anchor="mm", bold=False)
     if not tiles:
         canvas.text((594, 268), "宏观数据暂不可用", 14, "muted", anchor="mm")
+
+
+def _tile_note(canvas, right, middle, text, source):
+    """A tile's note right-aligned at ``right``: its words, then its source's official logo (the
+    source's name in text where there is no logo)."""
+    key = TILE_SOURCE_LOGOS.get(str(source or "").upper())
+    night = relative_luminance(canvas.color("paper")) < 0.3
+    logo = load_source_logo(ASSETS / "logos" / f"{key}.png", TILE_SOURCE_LOGO_HEIGHT,
+                            canvas.color("ink") if night else None, dark_parts=night) if key else None
+    if logo is not None:
+        _paste(canvas, logo, (right - logo.width, middle - logo.height // 2))
+        right -= logo.width + 4
+    elif source:
+        text = " · ".join(part for part in (text, source) if part)
+    if text:
+        canvas.text((right, middle), text, 11, "muted", anchor="rm", bold=False, width=80)
 
 
 def chip_style(canvas, symbol):

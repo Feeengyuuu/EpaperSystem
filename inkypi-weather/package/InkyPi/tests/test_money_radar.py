@@ -399,3 +399,24 @@ def test_earnings_rows_lead_with_the_holdings_mark():
     # Apple's black mark takes the night ink.
     assert night.color("ink") in {pixel[:3] for pixel in apple.get_flattened_data() if pixel[3] == 255}
     assert money_render._holding_logo(day, "ZZZZ", money_render.HOLDING_LOGO_SIZE) is None
+
+
+@pytest.mark.parametrize("night", [False, True])
+def test_macro_tiles_name_bls_by_its_official_logo(monkeypatch, night):
+    canvas = PageCanvas(money_render._palette({"_inkypi_theme": {"mode": "night" if night else "day"}}),
+                        family="Microsoft YaHei")
+    drawn = []
+    original = canvas.text
+    monkeypatch.setattr(canvas, "text", lambda xy, text, *args, **kwargs: drawn.append(text) or original(xy, text, *args, **kwargs))
+    payload = {"macro": {"data": {"cpi": {"value": 3.7, "previous": 3.4, "period": "2026-09"}, "source": "BLS"}},
+               "markets": {"data": {"quotes": {}}}}
+    money_render._macro_tiles(canvas, payload)
+    # "9 月" stays words; the source is the BLS seal (its red stripes) at the tile's top right.
+    assert "9 月" in drawn and not any("BLS" in str(text) for text in drawn)
+    seal = canvas.image.crop((565, 208, 584, 226)).convert("RGB")
+    assert any(r > 170 and g < 90 and b < 90 for r, g, b in seal.get_flattened_data())
+    # A source without a logo keeps its name.
+    drawn.clear()
+    payload["macro"]["data"]["source"] = "OECD"
+    money_render._macro_tiles(canvas, payload)
+    assert "9 月 · OECD" in drawn
