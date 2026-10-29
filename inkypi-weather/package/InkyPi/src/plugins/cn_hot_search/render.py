@@ -58,6 +58,7 @@ MOVE_ROOM = 28
 # Each card's doodles (its platform's own theme: chatter, search, news, questions, video, the shared
 # card's network) show this much of their strokes, under the rows.
 DOODLE_STRENGTH = 0.26
+LEAD_DOODLE_STRENGTH = 0.18
 
 
 def _rgb(value):
@@ -267,6 +268,14 @@ def _picture_for(images, rows):
 def _lead(canvas, payload, images, platforms, now):
     left, top, right, bottom = LEAD
     canvas.draw.rounded_rectangle(LEAD, radius=8, fill=canvas.color("lead"))
+    columns = 2 if len(platforms) <= 4 else 3
+    cell_w = 92 if columns == 2 else 84
+    # (Baidu's logo height, the others', the rank's size): the 3-column grid's cells are narrower.
+    logo_h, rank_size = ((15, 13), 16) if columns == 2 else ((12, 10), 13)
+    grid_left = right - 8 - columns * cell_w - (columns - 1) * 6
+    # Headline doodles, fainter than the cards', under the story's words (the picture fades over them).
+    paint_doodles(canvas.image, (left + 1, top + 1, grid_left - 6, bottom - 1), ASSETS / "doodles" / "lead.png",
+                  SHARED, strength=LEAD_DOODLE_STRENGTH, radius=7, offset=(left, top))
     story = _lead_story(payload)
     if story is None:
         canvas.text(((left + right) / 2, (top + bottom) / 2), "热搜榜单暂不可用", 16, "muted", anchor="mm")
@@ -277,11 +286,6 @@ def _lead(canvas, payload, images, platforms, now):
     if picture is not None:
         _fade_right(canvas, picture, (left, top, left + LEAD_PICTURE_W, bottom), fade_from=LEAD_FADE, radius=8)
         x = left + LEAD_PICTURE_W - 4
-    columns = 2 if len(platforms) <= 4 else 3
-    cell_w = 92 if columns == 2 else 84
-    # (Baidu's logo height, the others', the rank's size): the 3-column grid's cells are narrower.
-    logo_h, rank_size = ((15, 13), 16) if columns == 2 else ((12, 10), 13)
-    grid_left = right - 8 - columns * cell_w - (columns - 1) * 6
     width = grid_left - 12 - x
     # The chip says how widely the story runs: on how many of the lists.
     shared = len(story["ranks"])

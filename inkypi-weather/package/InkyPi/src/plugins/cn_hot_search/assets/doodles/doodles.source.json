@@ -40,5 +40,12 @@
     "source_sha256": "693ef4c517e51d514803f9458f1483a9a1451dca3a9f47517494ea135a51bf9c",
     "processing": "greyscale, 360 px LANCZOS, values above 232 to white",
     "sha256": "2d205146e41a8ef655580f60348e009238c0b3b2c009877d544fd0aa85e25305"
+  },
+  "lead.png": {
+    "theme": "the top headline",
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job 968b4de8-8f0b-436a-b618-d7bd2e26cb7e",
+    "source_sha256": "b93240d22d4a57292d7c2746c2954e34921f664a845cf9a2e0567b744ae90310",
+    "processing": "greyscale, 220 px LANCZOS, values above 232 to white",
+    "sha256": "f0269fb1f62b1cacb9528bb4f4202f7856d5f60a46cd14b974d7efeeeab905d5"
   }
 }
