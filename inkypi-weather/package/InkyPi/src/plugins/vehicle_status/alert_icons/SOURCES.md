@@ -18,3 +18,9 @@ canvas. The working sheet is not part of the release.
 
 At runtime the plugin uses only each glyph's alpha channel and recolours it: muted on a
 quiet tile, knocked out of a lit red, amber, blue or green tile.
+
+`pin.png`, the map pin before the location's address, was generated on 2026-10-29 on its own
+with GPT Image 2.5 (job `01d725c5-3651-4fff-b760-b961b7e75963`): a solid black location pin on a
+transparent 1232x1232 background, source SHA-256
+`f5e7bfae7c7f102431879e185af02230d204a2770da65eb3eb4e71146d560b62`. It went through the same
+clean-up and fitting as the sheet's cells and is drawn in the page's alert red.

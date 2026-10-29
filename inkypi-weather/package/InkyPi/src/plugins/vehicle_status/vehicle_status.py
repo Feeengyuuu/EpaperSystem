@@ -71,6 +71,8 @@ LOCATION_MAP_SIZE = (
 LOCATION_MAP_FADE_TOP = 18
 LOCATION_MAP_FADE_SIDE = 18
 LOCATION_MAP_ATTRIBUTION_H = 22
+# The pin glyph before the address (alert_icons/pin.png in a square this wide).
+ADDRESS_PIN_SIZE = 18
 LOCATION_MAP_LIMITS = ImageLimits(
     max_bytes=LOCATION_MAP_MAX_BYTES,
     max_width=LOCATION_MAP_SIZE[0],
@@ -102,7 +104,7 @@ ALERT_ICON_DIR_NAME = "alert_icons"
 ALERT_ICON_NAMES = frozenset({
     "signal", "asleep", "stale", "battery_low", "plug", "charge_port", "locked", "unlocked", "door_open",
     "window_open", "trunk_open", "frunk_open", "tpms", "cabin_hot", "update", "sentry", "service", "pet", "ok",
-    "warning",
+    "warning", "pin",
 })
 DASHBOARD_ICON_LIMITS = ImageLimits(
     max_bytes=64 * 1024,
@@ -3896,19 +3898,22 @@ def _draw_location_column(canvas, draw, location_presentation, colors, language)
     # A rule parts the map (and Google's attribution) from the address under it.
     draw.line((left, map_bottom + 4, right, map_bottom + 4), fill=colors["rule"], width=1)
     address_font = _font(13, True)
-    lines = _address_lines(draw, location_presentation["formatted_address"], address_font, right - left)
+    address_top = map_bottom + 9
+    # The map's red pin leads the address, the lines aligned after it.
+    text_left = left + (ADDRESS_PIN_SIZE + 1 if _draw_alert_glyph(canvas, "pin", left - 3, address_top - 1,
+                                                                  ADDRESS_PIN_SIZE, colors["alert_crit"]) else 0)
+    lines = _address_lines(draw, location_presentation["formatted_address"], address_font, right - text_left)
     age = max(0, location_presentation.get("age_seconds", 0))
     stale = age > 900
-    address_top = map_bottom + 9
     for index, line in enumerate(lines):
         # The street leads in ink; the city and postcode follow smaller and muted.
         font, fill = (address_font, colors["ink"]) if index == 0 else (_font(11, True), colors["muted"])
-        draw.text((left, address_top + index * 16), line.rstrip(",，") if len(lines) > 1 else line, font=font,
+        draw.text((text_left, address_top + index * 16), line.rstrip(",，") if len(lines) > 1 else line, font=font,
                   fill=fill)
     if stale:
-        draw.text((left, address_top + len(lines) * 16 - 1),
+        draw.text((text_left, address_top + len(lines) * 16 - 1),
                   _ellipsize_text(draw, _t(language, "location_last_known", age=_age_text(age, language)),
-                                  _font(9, True), right - left),
+                                  _font(9, True), right - text_left),
                   font=_font(9, True), fill=colors["muted"])
 
 

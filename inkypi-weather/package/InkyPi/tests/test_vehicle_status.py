@@ -2776,3 +2776,18 @@ def test_a_broken_alert_icon_leaves_its_lamp_tile_without_failing_the_page(tmp_p
 
     assert read_source_provenance(image) is SourceProvenance.LIVE
     assert image.size == (800, 480)
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_the_address_is_led_by_a_red_pin(tmp_path, mode):
+    plugin = _plugin(tmp_path)
+    summary = vehicle_module.sanitize_summary(_summary_v3())
+    presentation = {"map_image": Image.new("RGB", vehicle_module.LOCATION_MAP_SIZE, (230, 232, 236)),
+                    "formatted_address": "Owens Street Garage, Owens St, San Francisco, CA 94158", "age_seconds": 0}
+    image = plugin._render_summary(summary, (800, 480), {"mode": mode}, {"language": "zh-CN"},
+                                   location_presentation=presentation)
+    red = vehicle_module._render_colors({"mode": mode})["alert_crit"]
+    left, _top, _right, bottom = vehicle_module.LOCATION_MAP_BOX
+    pin = (left - 3, bottom + 8, left - 3 + vehicle_module.ADDRESS_PIN_SIZE, bottom + 8 + vehicle_module.ADDRESS_PIN_SIZE)
+
+    assert _visible_color_bbox(image, pin, red) is not None
