@@ -90,6 +90,30 @@
     367,
     64
    ]
+  },
+  "tiangong": {
+   "file": "File:中国载人航天工程英文标识.png",
+   "page": "https://zh.wikipedia.org/wiki/File:%E4%B8%AD%E5%9B%BD%E8%BD%BD%E4%BA%BA%E8%88%AA%E5%A4%A9%E5%B7%A5%E7%A8%8B%E8%8B%B1%E6%96%87%E6%A0%87%E8%AF%86.png",
+   "licence": "China Manned Space's emblem (the programme that runs Tiangong), from Chinese Wikipedia (non-free logo); shown to name the station",
+   "source_sha256": "0ce8b575ac33b0d171a7868d9ae583d93f0bc417f3bac8d4485cdf78ac55bf0e",
+   "modified": "cropped and scaled only",
+   "sha256": "8a0623efdfab6f7fbc5c8eacdd6c059c7349b2f0eb87b1564e678b45bff0ed0b",
+   "size": [
+    70,
+    64
+   ]
+  },
+  "iss": {
+   "file": "File:ISS emblem.png",
+   "page": "https://commons.wikimedia.org/wiki/File:ISS_emblem.png",
+   "licence": "Public domain",
+   "source_sha256": "ba9387741034a5dffa14a7ba39c8278962490e892d2d9b0e4aceccd634b7e984",
+   "modified": "cropped and scaled only",
+   "sha256": "36a84b93d09cb1403f28f2c45ad98d843140f58eb623b38efc53ad4bbcc39741",
+   "size": [
+    64,
+    64
+   ]
   }
  }
 }

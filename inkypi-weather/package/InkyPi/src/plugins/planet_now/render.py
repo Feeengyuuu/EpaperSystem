@@ -25,6 +25,7 @@ from utils.local_wordmark import paste_header_art, paste_local_wordmark
 from utils.page_canvas import PageCanvas
 from utils.safe_image import ImageLimits, safe_open_image
 from utils.space_typography import SpaceCanvas
+from utils.theme_utils import relative_luminance
 
 from .sources import (
     HOME, ISS_PERIOD_MIN, LIGHT_KM_S, PACIFIC, RAIN_RADIUS_KM, decode_image, iss_ascending, iss_ground_track,
@@ -74,6 +75,15 @@ SOURCE_LOGOS = {"noaa": (18, "NOAA"), "caiso": (16, "CAISO"), "apple_music": (12
 SKY_PLACES = (("旧金山", 37.7793, -122.4193, "left"), ("奥克兰", 37.8044, -122.2712, "right"),
               ("圣何塞", 37.3382, -121.8863, "right"), ("太平洋", 37.36, -122.86, None))
 STATIONS = {"tiangong": "天宫", "iss": "国际空间站"}
+# Each station's official mark before its name (assets/logos): China Manned Space's emblem for
+# Tiangong, the ISS programme's emblem; this tall.
+STATION_LOGO_HEIGHT = 14
+# Each source's icon in the grid table (assets/fuel_icons, white masks tinted with its colour),
+# this tall, in place of a plain colour swatch.
+FUEL_ICON_DIR = Path(__file__).resolve().parent / "assets" / "fuel_icons"
+FUEL_ICON_HEIGHT = 13
+# An icon whose source colour is this close to the page is moved toward the ink until it reads.
+FUEL_ICON_MIN_CONTRAST = 2.4
 COUNTRY_NAMES = {
     "US": "美国", "CA": "加拿大", "MX": "墨西哥", "BR": "巴西", "AR": "阿根廷", "CL": "智利", "PE": "秘鲁", "CO": "哥伦比亚",
     "GB": "英国", "FR": "法国", "DE": "德国", "ES": "西班牙", "IT": "意大利", "RU": "俄罗斯", "UA": "乌克兰", "TR": "土耳其",
@@ -137,6 +147,44 @@ def _logo(name, night):
             return image.resize((max(1, round(image.width * height / image.height)), height),
                                 Image.Resampling.LANCZOS)
     return None
+
+
+def _station_logo(station):
+    """A space station's official mark STATION_LOGO_HEIGHT tall, or None without one."""
+    path = ASSETS / "logos" / f"{station}.png"
+    if station not in STATIONS or not path.is_file():
+        return None
+    with safe_open_image(path, limits=_LIMITS) as source:
+        image = source.convert("RGBA")
+    return image.resize((max(1, round(image.width * STATION_LOGO_HEIGHT / image.height)), STATION_LOGO_HEIGHT),
+                        Image.Resampling.LANCZOS)
+
+
+def _legible(colour, paper, ink, minimum=FUEL_ICON_MIN_CONTRAST):
+    """``colour``, or as little of it moved toward ``ink`` as reaches ``minimum`` contrast on ``paper``
+    (a small icon in a pale grey by day, or a dark grey by night, would vanish)."""
+    def contrast(first, second):
+        light, dark = sorted((relative_luminance(first), relative_luminance(second)), reverse=True)
+        return (light + 0.05) / (dark + 0.05)
+    colour = tuple(colour)[:3]
+    for step in range(0, 11):
+        mixed = tuple(round(c + (i - c) * step / 10) for c, i in zip(colour, tuple(ink)[:3]))
+        if contrast(mixed, paper) >= minimum:
+            return mixed
+    return tuple(ink)[:3]
+
+
+def _fuel_icon(name, colour, height):
+    """A grid source's icon ``height`` tall in ``colour`` (its white mask tinted), or None."""
+    path = FUEL_ICON_DIR / f"{name}.png"
+    if not path.is_file():
+        return None
+    with safe_open_image(path, limits=_LIMITS) as source:
+        mask = source.convert("RGBA").getchannel("A")
+    mask = mask.resize((max(1, round(mask.width * height / mask.height)), height), Image.Resampling.LANCZOS)
+    icon = Image.new("RGBA", mask.size, tuple(colour)[:3] + (255,))
+    icon.putalpha(mask)
+    return icon
 
 
 def _paste(canvas, image, xy, mask=None):
@@ -315,7 +363,12 @@ def _grid(canvas, payload):
     pitch = min(19.0, (bottom - 6 - row_y) / max(1, len(shown)))
     for name, mw in shown:
         portion, middle = mw / supply, round(row_y + pitch / 2)
-        canvas.draw.rectangle((x, middle - 5, x + 10, middle + 5), fill=canvas.palette["fuels"][name])
+        icon = _fuel_icon(name, _legible(canvas.palette["fuels"][name], canvas.color("paper"), canvas.color("ink")),
+                          FUEL_ICON_HEIGHT if pitch >= 15 else FUEL_ICON_HEIGHT - 2)
+        if icon is not None:
+            _paste(canvas, icon, (x + 6 - icon.width // 2, middle - icon.height // 2))
+        else:
+            canvas.draw.rectangle((x, middle - 5, x + 10, middle + 5), fill=canvas.palette["fuels"][name])
         canvas.text((x + 15, middle), FUEL_LABELS[name], 12 if pitch >= 15 else 11, anchor="lm")
         bar_x0, bar_x1 = x + 56, x + 104
         canvas.draw.rectangle((bar_x0, middle - 3, bar_x1, middle + 3), fill=canvas.color("panel"))
@@ -609,7 +662,10 @@ def _space(canvas, payload, images, now):
         place = (COUNTRY_NAMES.get(country, country) if country and country != "??" else
                  ocean_name(iss["lat"], iss["lon"]))
         ty = my0 + mh + 6
-        canvas.text((mx0, ty), f"国际空间站 · {'日照中' if iss.get('daylight') else '地影中'}", 12, "space", anchor="la")
+        logo = _station_logo("iss")
+        logo_w = _paste(canvas, logo, (mx0, ty - 1)) + 4 if logo is not None else 0
+        canvas.text((mx0 + logo_w, ty), f"国际空间站 · {'日照中' if iss.get('daylight') else '地影中'}", 12, "space",
+                    anchor="la")
         canvas.text((mx0, ty + 17), f"{place}上空", 14, anchor="la", width=mw)
         canvas.text((mx0, ty + 37), f"高度 {iss.get('altitude', 0):.0f} km · {iss.get('velocity', 0):,.0f} km/h", 10,
                     "muted", anchor="la", bold=False, width=mw)
@@ -674,7 +730,9 @@ def _crew(canvas, people, images, now, box):
         note = (f"远征 {expedition}" if expedition else
                 " · ".join(part for part in (crafts[0] if len(crafts) == 1 else "", f"第{days}天" if days > 0 else "")
                            if part) or f"{len(crew)} 人")
-        name_w = canvas.text((x0, y + 6), name, 11, anchor="lm")
+        logo = _station_logo(station.get("station"))
+        logo_w = _paste(canvas, logo, (x0, y + 6 - logo.height // 2)) + 3 if logo is not None else 0
+        name_w = logo_w + canvas.text((x0 + logo_w, y + 6), name, 11, anchor="lm")
         canvas.text((x1, y + 6), note, 10, "muted", anchor="rm", bold=False, width=x1 - x0 - name_w - 6)
         y += 14
         for index, person in enumerate(crew):

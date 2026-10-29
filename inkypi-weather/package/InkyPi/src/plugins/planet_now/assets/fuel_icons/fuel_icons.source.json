@@ -1,0 +1,65 @@
+{
+ "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+ "generated": "2026-10-28",
+ "job_id": "279af57c-95c3-44be-972f-28852ed37269",
+ "source_sha256": "56d199227e9fb56faf3ebc49a1e77b1c3cb86f94eb360a1acf193bb0ad858a27",
+ "processing": "a 1728x864 transparent sheet of 8 white silhouettes (4 x 2): each cell cropped to its alpha bounds and scaled to 64 px high; kept as white masks the page tints with the source colour",
+ "icons": {
+  "gas": {
+   "size": [
+    45,
+    64
+   ],
+   "sha256": "fd4dac23e85ce9f3db7bc9b2bcdca2ae68fca20713617261d5a1149981ec2124"
+  },
+  "batteries": {
+   "size": [
+    37,
+    64
+   ],
+   "sha256": "a5eef6873b64dbe15d805f64717140137c48c59fde9927e5ab590fd60f745950"
+  },
+  "hydro": {
+   "size": [
+    46,
+    64
+   ],
+   "sha256": "f0a251cd2f8685445170479a2e61ca9861954de4c185e89dd1b844a81df88037"
+  },
+  "imports": {
+   "size": [
+    66,
+    64
+   ],
+   "sha256": "344c3a31311396b4a6c86541bc7dbbec67cbba0a05aa08efdbc8d2c0dae2c4f6"
+  },
+  "nuclear": {
+   "size": [
+    58,
+    64
+   ],
+   "sha256": "f5f6cffdd1b4cacf68fd28c32d5ca7ffd3330c846cd055bee6e527573ee9f60a"
+  },
+  "other": {
+   "size": [
+    49,
+    64
+   ],
+   "sha256": "c6214656dd5b2c073e87575371e205c1308f1f77bc6c113751c5733e8684cafa"
+  },
+  "wind": {
+   "size": [
+    49,
+    64
+   ],
+   "sha256": "d006db7357d1547530e959b273eec9fdb358c142d665ef5a99bf4ba57206478d"
+  },
+  "solar": {
+   "size": [
+    64,
+    64
+   ],
+   "sha256": "8fde30b0141e73334ae2b41b3ece0aa82da6fc1386a79045f6f8a3ff04895596"
+  }
+ }
+}

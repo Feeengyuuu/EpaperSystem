@@ -308,3 +308,18 @@ def test_mars_distance_the_sun_and_the_iss_orbit():
     iss = {"lat": 0.0, "lon": -150.0, "altitude": 420, "ascending": True}
     switch = sources.iss_next_switch(iss, datetime(2026, 6, 21, 12, 0, tzinfo=timezone.utc))
     assert switch is not None and 1 <= switch[0] <= 60
+
+
+def test_each_grid_source_has_an_icon_in_its_colour_and_each_station_its_mark():
+    for name in render.FUEL_ORDER:
+        icon = render._fuel_icon(name, (37, 99, 235), 13)
+        assert icon is not None and icon.height == 13, name
+        opaque = [pixel for pixel in icon.get_flattened_data() if pixel[3] > 200]
+        assert opaque and all(pixel[:3] == (37, 99, 235) for pixel in opaque), name
+    # A source colour too close to the page is moved toward the ink until it reads.
+    assert render._legible((203, 213, 225), (255, 255, 255), (20, 28, 34)) != (203, 213, 225)
+    assert render._legible((37, 99, 235), (255, 255, 255), (20, 28, 34)) == (37, 99, 235)
+    for station in render.STATIONS:
+        logo = render._station_logo(station)
+        assert logo is not None and logo.height == render.STATION_LOGO_HEIGHT
+    assert render._station_logo("mir") is None
