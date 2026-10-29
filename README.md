@@ -18,13 +18,13 @@ Raspberry Pi + 六色墨水屏 · 69 个插件自动轮播 · 局域网网页管
 
 | 主题 | 内容 |
 |---|---|
-| 🌤 **天气与日历** | 现代天气页：插画随天气和昼夜变化，每张卡片有自己的底纹，“明天”的时间直接写明天；节假日、个人日程与发布会日历 |
-| ⚽ **体育与电竞** | 足球、NFL、MLB、NBA / WNBA、F1、PGA 各有专属版式和球场插画，直播优先、多场同时进行时变成比分墙；LoL / CS2 / Dota 赛事与赔率 |
-| 📰 **资讯与科技** | AI 摘要新闻、Hacker News 与 AI 榜单、Telegram 精选、今日热榜（B 站 / 新番 / 维基 / 热歌 / 棋题 / NASA 地球） |
-| 🎮 **游戏与影视** | Steam 资料与好友、Steam 排行与每日美图、游戏优惠、直播雷达、全球票房双城榜 |
-| 🚀 **太空与天空** | NASA 每日天文图、火箭发射倒计时与预测市场、卫星云图与空间站、机场航班雷达 |
-| 🎨 **艺术与知识** | 每日名画、历史海报、杂志与漫画封面、维基每日、每日一词 |
-| 📍 **生活与本地** | 湾区预警、路况摄像头、出行与潮汐、本地活动、3D 打印监控、车辆状态、理财看板 |
+| 🌤 **天气与日历** | 现代天气页：插画随天气和昼夜变化，夜里换成星空，每张卡片有自己的底纹，“明天”的时间直接写明天；节假日、个人日程与发布会日历 |
+| ⚽ **体育与电竞** | 足球、NFL、MLB、NBA / WNBA、F1、PGA 各有专属版式和球场插画，直播优先、多场同时进行时变成比分墙；比赛场馆用官方 logo（近 180 座），季后赛和总决赛有系列赛进度；LoL / CS2 / Dota 赛事与赔率，LoL / CS2 职业选手轮播 |
+| 📰 **资讯与科技** | 整点新闻（AI 摘要，国内 / 国际双栏）、Hacker News 与 AI 榜单、Telegram 精选、科技与游戏、今日热榜（B 站 / 新番 / 维基 / 热歌 / 棋题 / NASA 地球） |
+| 🎮 **游戏与影视** | Steam 资料与好友（好友在玩的游戏截图）、Steam 排行与每日美图、游戏优惠（Steam 简体中文名）、直播雷达、全球票房双城榜 |
+| 🚀 **太空与天空** | NASA 每日天文图与空间天气、火箭发射倒计时与预测市场、环球此刻（卫星云图、加州电网、火星照片、空间站与在轨航天员）、机场航班雷达 |
+| 🎨 **艺术与知识** | 每日名画、历史海报、杂志与漫画封面、今日报纸头版、维基每日、每日一词 |
+| 📍 **生活与本地** | 湾区预警地图、路况摄像头、出行与潮汐、身边物种、本地活动、3D 打印监控、车辆状态、资金雷达与持仓看板 |
 
 ## 为什么好用
 
@@ -32,7 +32,7 @@ Raspberry Pi + 六色墨水屏 · 69 个插件自动轮播 · 局域网网页管
 - **装好就有内容**：新设备首次启动自带 9 页无需 API Key、也不依赖位置的入门轮播。
 - **好看**：数据来源用官方 logo，每个版块有按内容生成的低调底纹和插画，小字保持纯黑，墨水屏上也清楚。
 - **网页管理**：局域网打开即可管理插件和播放列表，首页实时显示当前画面，iPhone 可加到主屏幕。
-- **稳定**：数据源不可用时先显示缓存再自动重试；断网自恢复；更新失败会回到上一版本。
+- **稳定**：数据源不可用时先显示缓存再自动重试；内存紧张时较重的刷新自动让路，轮播照常；断网自恢复；更新失败会回到上一版本。
 
 ## 从零装好：照着做，不用想
 
@@ -177,6 +177,7 @@ SSH 连上后，把第 4 步那行命令**原样再跑一次**就是更新到最
 | `f1` | Formula1 Display Bold | F1 积分与计时 |
 | `esports-dota` / `esports-dota-regular` | Radiance Bold / Semibold | Dota 2 |
 | `esports-riot-heading` | Riot Sans Bold | LoL 赛事标题 |
+| `lol_pro_heavy` / `lol_pro_bold` / `lol_pro_medium` | Beaufort for LOL Heavy / Bold / Medium | LoL 职业选手页 |
 | `esports-esl-heading` / `esports-iem-heading` | ESL Legendary / ESL Legend Bold | ESL / IEM 标题 |
 
 **版权方待确认**：`ligue1`（Insatiable Display，法甲比分）、`esports-blast-heading`（Radion A，BLAST 标题）、`esports-gear-event`（Gear，电竞世界杯）、`game_deals_price`（Banknote，游戏优惠价签，仅 TTF）。没找到公开授权渠道，只有你自己持有授权文件时才用 `add` 安装。
@@ -199,7 +200,7 @@ sudo bash install.sh --lang zh-CN
 
 - [从零安装](inkypi-weather/package/InkyPi/docs/install_from_zero.zh-CN.md) · [Installation guide](inkypi-weather/package/InkyPi/docs/install_from_zero.md) · [API Key 获取](inkypi-weather/package/InkyPi/docs/api_keys.zh-CN.md) · [API keys](inkypi-weather/package/InkyPi/docs/api_keys.md)
 - [开发与本地测试](docs/development.md) · [编写插件](inkypi-weather/package/InkyPi/docs/building_plugins.md)
-- 应用、插件和测试在 `inkypi-weather/package/InkyPi`（Python 3.11，六千多项测试用模拟硬件运行），手机简报页 Worker 在 `cloudflare/`。
+- 应用、插件和测试在 `inkypi-weather/package/InkyPi`（开发与 CI 用 Python 3.11，九千多项测试用模拟硬件运行；设备上用 Raspberry Pi OS 自带的 Python），手机简报页与车辆授权 Worker 在 `cloudflare/`。
 
 </details>
 
