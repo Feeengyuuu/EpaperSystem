@@ -2455,10 +2455,10 @@ class EsportsRenderMixin:
         time_text, time_font = self._fit_text(draw, self._format_time(event["start"]), 76, 12, bold=True, min_size=9)
         self._draw_esports_match_text(draw, (row_x2 - 86, y + 1, row_x2 - 10, y + 14), time_text, time_font, COLORS["text"], align="right")
         if league_key == "WORLDS":
-            # The ground's logo between the date and the time.
+            # The ground's logo right after the date.
             date_right = row_x1 + 12 + self._text_width(draw, date_text, date_font)
             time_left = row_x2 - 10 - self._text_width(draw, time_text, time_font)
-            self._draw_worlds_venue(image, (date_right + 8, y + 1, time_left - 8, y + 15), event)
+            self._draw_worlds_venue(image, (date_right + 6, y + 1, time_left - 8, y + 15), event, align="left")
 
         # The logos stand 26 px tall beside the names and odds, under the date.
         logo_size = 26
@@ -2498,8 +2498,9 @@ class EsportsRenderMixin:
         day = start.date().isoformat()
         return next((venue for first, last, venue in WORLDS_VENUES.get(start.year, ()) if first <= day <= last), None)
 
-    def _draw_worlds_venue(self, image, box, event):
-        """A Worlds match's venue logo centred in ``box``; the logo's box, or None without one."""
+    def _draw_worlds_venue(self, image, box, event, align="center"):
+        """A Worlds match's venue logo in ``box`` (centred, or from its left); the logo's box, or None
+        without one."""
         x1, y1, x2, y2 = [int(value) for value in box]
         venue = self._worlds_venue(event)
         if not venue or x2 - x1 < 20 or y2 - y1 < 8:
@@ -2507,7 +2508,8 @@ class EsportsRenderMixin:
         logo = self._kit_venue_logo(venue, (x2 - x1, y2 - y1))
         if logo is None:
             return None
-        x, top = x1 + (x2 - x1 - logo.width) // 2, y1 + (y2 - y1 - logo.height) // 2
+        x = x1 if align == "left" else x1 + (x2 - x1 - logo.width) // 2
+        top = y1 + (y2 - y1 - logo.height) // 2
         image.paste(logo, (x, top), logo)
         return x, top, x + logo.width, top + logo.height
 
