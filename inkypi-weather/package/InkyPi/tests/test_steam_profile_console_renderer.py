@@ -390,24 +390,21 @@ def test_compact_playing_cover_stays_inside_its_own_column(plugin):
     cover.close()
 
 
-def test_playing_friend_name_is_outlined_but_game_name_is_plain_white(plugin):
+def test_playing_friend_name_and_game_are_both_outlined_white(plugin):
     console = _Console(plugin, {})
     x, y, right, _ = FRIEND_LIST
     cover = Image.new("RGB", (right - x, console_renderer.FRIEND_PLAYING_H), (245, 245, 235))
     friend = {"personaname": "Bright Friend", "gameid": "570", "gameextrainfo": "Dota 2"}
     console._playing_friend(friend, y, {}, {"570": cover}, {})
-    for box, outlined in (((x + 43, y + 1, right - 5, y + 19), True),
-                          ((x + 43, y + 20, right - 4, y + 36), False)):
+    # The friend's name (bold) and the game (regular) both carry a dark stroke over the cover.
+    for box, least_white in (((x + 43, y + 1, right - 5, y + 19), 10), ((x + 43, y + 20, right - 4, y + 36), 3)):
         pixels = dict((color, count) for count, color in console.image.crop(box).getcolors(1 << 16))
-        # A 10 px regular face can have just one fully opaque glyph pixel. Count
+        # A 10 px regular face inside a stroke keeps only a thin white core. Count
         # near-white antialiasing too; the shaded cover is outside this tolerance.
         white_ink = sum(count for color, count in pixels.items()
                         if max(abs(value - target) for value, target in zip(color, console_renderer.WHITE)) <= 12)
-        assert white_ink > 10
-        if outlined:
-            assert pixels.get(console.c["canvas"], 0) > 10
-        else:
-            assert pixels.get(console.c["canvas"], 0) == 0
+        assert white_ink > least_white
+        assert pixels.get(console.c["canvas"], 0) > 10
     cover.close()
 
 

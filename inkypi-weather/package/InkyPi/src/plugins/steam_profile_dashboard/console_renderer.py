@@ -971,10 +971,10 @@ class _Console:
             with icon.resize((icon_size, icon_size), Image.Resampling.LANCZOS) as small:
                 self.image.paste(small, (text_x, game_y + 1), small if small.mode == "RGBA" else None)
             text_x += icon_size + 4
-        self._playing_friend_label((text_x, game_y, right - 4, y + height - 2), name or "游戏中", 10, outline=0)
+        self._playing_friend_label((text_x, game_y, right - 4, y + height - 2), name or "游戏中", 10)
 
     def _playing_friend_label(self, box, value, size, *, bold=False, outline=1):
-        """White row text: outlined friend identity, plain game name."""
+        """White row text, outlined so the friend and their game read over the cover art."""
         # Dense rows keep their existing glyph size instead of clipping a new stroke.
         outline = outline if box[3] - box[1] >= 12 else 0
         with self._text_bitmap(value, box[2] - box[0], box[3] - box[1], size, WHITE,
