@@ -9,7 +9,8 @@
     "*_spare_filler.png": "full colour mascot spot art for the space under a short ticker or scoreboard column",
     "*_wall_slot_filler.png": "full colour mascot scene for an empty live-wall tile or a short, wide spare band",
     "club_supporters_strip.png": "fills the room between a club or CSL page's fixtures and results, contained and standing on its floor",
-    "*_band_*_filler.png": "full colour mascot scenes laid side by side with the wall slot filler to fill a wide spare band"
+    "*_band_*_filler.png": "full colour mascot scenes laid side by side with the wall slot filler to fill a wide spare band",
+    "mlb_wall_band_strip.png": "full colour, transparent, drawn frameless at the live wall spare band size (in place of the mascot scenes)"
   },
   "assets": {
     "club_pl_header_cutout.png": {
@@ -181,6 +182,18 @@
       "size": [
         514,
         160
+      ]
+    },
+    "mlb_wall_band_strip.png": {
+      "scene": "two baseball game strips joined end to end: pitcher, batter swinging, catcher and umpire; a runner sliding into second, the tag and the umpire signalling safe",
+      "job_id": "17b8801c-77e2-4fbf-9ba4-f992b4050662",
+      "generated": "2026-10-28",
+      "source_sha256": "1419b25fdce5a69381eb61fff554e7c074a758650ca9af152fea8b82507c49f1",
+      "processing": "a 2112x704 transparent sheet of three stacked strips cut apart at their transparent (or emptiest) rows, the first two cropped to their alpha bounds, scaled to 72 px high and joined 10 px apart (outputs/mlb-band-strip-20261028/build_strip.py)",
+      "sha256": "62241c4b1c49110cfc9c3a82be8f6c17068f70bdd65446c36170c0dbe0e50b92",
+      "size": [
+        1293,
+        72
       ]
     }
   },

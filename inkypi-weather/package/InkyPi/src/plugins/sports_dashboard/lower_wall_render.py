@@ -22,6 +22,9 @@ WALL_FEATURE_HEIGHT = 56
 WALL_COLUMN_GAP = 8
 # A spare band's scenes may shrink to this share of its height to fit one more across it.
 WALL_BAND_MIN_SCALE = 0.72
+# A league's long scene strip takes the band when, fitted to it, it spans at least this share of
+# the band's width (a much taller band keeps the mascot scenes).
+WALL_BAND_STRIP_MIN_SPAN = 0.8
 # Below this width the control-room strip in the header is left out rather than shrunk.
 WALL_CONTROL_ROOM_MIN_WIDTH = 170
 # Up to six remaining games get a small card each (three per row); more use rows.
@@ -368,6 +371,8 @@ class LowerWallRenderMixin:
         as many as fit while they stay at least WALL_BAND_MIN_SCALE of the band's height, spread
         evenly; one centred scene otherwise."""
         x1, y1, x2, y2 = [int(value) for value in box]
+        if self._draw_wall_band_strip(image, (x1, y1, x2, y2), sport):
+            return
         height, room = max(1, y2 - y1 - 10), x2 - x1 - 12
         loaded = []
         for path in LOCAL_WALL_BAND_ART_PATHS.get(str(sport or "").upper(), ()):
@@ -393,6 +398,17 @@ class LowerWallRenderMixin:
         for scene in scenes:
             image.paste(scene, (round(x), y1 + (y2 - y1 - scene.height) // 2), scene)
             x += scene.width + gap
+
+    def _draw_wall_band_strip(self, image, box, sport):
+        """The league's long game-scene strip fitted to the band (no frame: its transparent ground is
+        the page), centred; False, with nothing drawn, without one that spans the band."""
+        x1, y1, x2, y2 = box
+        path = LOCAL_WALL_BAND_STRIP_PATHS.get(str(sport or "").upper())
+        strip = self._load_local_logo(path, (x2 - x1, y2 - y1), alpha_threshold=8) if path and os.path.exists(path) else None
+        if strip is None or strip.width < (x2 - x1) * WALL_BAND_STRIP_MIN_SPAN:
+            return False
+        image.paste(strip, (x1 + (x2 - x1 - strip.width) // 2, y1 + (y2 - y1 - strip.height) // 2), strip)
+        return True
 
     def _draw_wall_placeholder(self, image, draw, box, sport):
         """A quiet slot with the league's player art, so an empty space still reads as sport."""

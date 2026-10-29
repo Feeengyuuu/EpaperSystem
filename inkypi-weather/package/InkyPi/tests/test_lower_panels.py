@@ -1551,3 +1551,19 @@ def test_worlds_matches_are_billed_by_their_stages_venue_logo():
     pixels = image.crop(image.info["texas"]).get_flattened_data()
     assert any(red > 180 and green < 80 and blue < 80 for red, green, blue in pixels)
     assert set(esports_render.WORLDS_VENUES) == {2026}
+
+
+def test_a_baseball_wall_band_is_the_long_game_strip_with_no_frame():
+    from plugins.sports_dashboard.common import LOCAL_WALL_BAND_STRIP_PATHS
+
+    assert Path(LOCAL_WALL_BAND_STRIP_PATHS["MLB"]).is_file()
+    with Image.open(LOCAL_WALL_BAND_STRIP_PATHS["MLB"]) as strip:
+        assert strip.mode == "RGBA" and strip.width / strip.height >= 15
+        assert strip.getchannel("A").getextrema()[0] == 0
+    # The live wall's band (531 x 33 on 2026-10-28): the strip spans it, drawn on the page itself.
+    image, _draw = _render(lambda plugin, image, draw: plugin._draw_wall_band(image, draw, (12, 200, 543, 233), "MLB"))
+    band = image.crop((12, 200, 544, 234))
+    filled = band.getchannel("R").point(lambda value: 255 if value != COLORS["paper"][0] else 0).getbbox()
+    assert filled is not None and filled[2] - filled[0] >= 0.8 * 531
+    # No frame: the band's corners stay the page's colour.
+    assert band.getpixel((0, 0)) == band.getpixel((531, 33)) == tuple(COLORS["paper"])

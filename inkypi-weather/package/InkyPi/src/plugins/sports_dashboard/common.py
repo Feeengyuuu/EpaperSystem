@@ -455,6 +455,9 @@ LOCAL_WALL_BAND_ART_PATHS = {
         ("WNBA", ("wnba_wall_slot_filler.png", "basketball_spare_filler.png")),
     )
 }
+# A league's long, transparent game-scene strip for the live wall's wide spare band: drawn at the
+# band's own size with no frame, so it blends into the page (in place of the mascot scenes).
+LOCAL_WALL_BAND_STRIP_PATHS = {"MLB": os.path.join(LOCAL_DECOR_DIR, "mlb_wall_band_strip.png")}
 # The live wall's generated header: its LIVE NOW wordmark and the control-room strip beside it.
 LOCAL_LIVE_NOW_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "live_now_wordmark.png")
 LOCAL_LIVE_WALL_CONTROL_ROOM_PATH = os.path.join(LOCAL_DECOR_DIR, "live_wall_control_room.png")
