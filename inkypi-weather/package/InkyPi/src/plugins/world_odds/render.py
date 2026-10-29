@@ -42,6 +42,7 @@ WEEKDAYS = "一二三四五六日"
 BAR = 6
 LEFT = (12, 58, 520, 470)
 LEAD = (12, 58, 520, 266)
+LEAD_EDGE = 2
 BOARD = (528, 58, 788, 470)
 LEAD_OUTCOMES = 4
 LEAD_CHART_W = 160
@@ -245,9 +246,14 @@ def _week_chart(canvas, box, series):
 
 def _lead(canvas, payload, images):
     left, top, right, bottom = LEAD
-    canvas.draw.rounded_rectangle(LEAD, radius=8, fill=canvas.color("lead"))
-    paint_doodles(canvas.image, (left + 1, top + 1, right - 1, bottom - 1), ASSETS / "doodles" / "lead.png",
-                  POLYMARKET, strength=DOODLE_STRENGTH, radius=7, offset=(left, top))
+    # Polymarket's card: framed in its blue under a band of it, as the board is in Kalshi's green.
+    canvas.draw.rounded_rectangle(LEAD, radius=6, fill=canvas.color("lead"), outline=POLYMARKET, width=LEAD_EDGE)
+    canvas.draw.rounded_rectangle((left, top, right, top + BAR), radius=6, fill=POLYMARKET,
+                                  corners=(True, True, False, False))
+    paint_doodles(canvas.image, (left + LEAD_EDGE, top + BAR, right - LEAD_EDGE, bottom - LEAD_EDGE),
+                  ASSETS / "doodles" / "lead.png", POLYMARKET, strength=DOODLE_STRENGTH, radius=4, offset=(left, top))
+    # The contents sit under the band.
+    top += BAR - 2
     event = payload.get("lead")
     if not event:
         canvas.text(((left + right) / 2, (top + bottom) / 2), "Polymarket 数据暂不可用", 15, "muted", anchor="mm")

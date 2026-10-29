@@ -105,3 +105,16 @@ def test_tile_outcomes_without_a_picture_get_a_drawn_mark():
 
     assert [_outcome_kind(name) for name in ("Yes", "no", "October 28", "↑ 82,500", "Google", "October")] == [
         "yes", "no", ("date", 28), "level", None, None]
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_the_lead_card_is_framed_in_polymarket_blue_under_a_band(mode):
+    from plugins.world_odds.render import LEAD, POLYMARKET
+
+    image = render_page((800, 480), {"lead": None, "tiles": [], "board": {}}, {"_inkypi_theme": {"mode": mode}}, NOW, {})
+    left, top, right, bottom = LEAD
+    middle = (top + bottom) // 2
+
+    assert image.getpixel(((left + right) // 2, top + 3)) == POLYMARKET
+    assert image.getpixel((left, middle)) == image.getpixel((right, middle)) == POLYMARKET
+    assert image.getpixel(((left + right) // 2, bottom)) == POLYMARKET
