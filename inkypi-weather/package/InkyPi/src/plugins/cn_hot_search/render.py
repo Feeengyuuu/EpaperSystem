@@ -55,6 +55,9 @@ GRID_TOP, GRID_BOTTOM, GRID_GAP = 164, 470, 8
 # first line, the heat, labels and the platform's own words on the second.
 THUMB_RATIO = 1.5
 MOVE_ROOM = 28
+# Each card's doodles (its platform's own theme: chatter, search, news, questions, video, the shared
+# card's network) show this much of their strokes, under the rows.
+DOODLE_STRENGTH = 0.26
 
 
 def _rgb(value):
@@ -308,12 +311,14 @@ def _shared_marks(payload):
     return marks
 
 
-def _frame(canvas, box, tint, title_drawer):
+def _frame(canvas, box, tint, title_drawer, pattern):
+    """A card's frame under its colour bar, its own doodles (``pattern``, assets/doodles) laid
+    quietly in its colour across the body; returns the first row's top and the rows' height."""
     left, top, right, bottom = box
     canvas.draw.rounded_rectangle(box, radius=6, width=1, outline=canvas.color("rule"))
     canvas.draw.rounded_rectangle((left, top, right, top + BAR), radius=6, fill=tint, corners=(True, True, False, False))
-    paint_doodles(canvas.image, (left + 2, top + BAR + 22, right - 2, bottom - 2), ASSETS / "doodles" / "trends.png",
-                  tint, radius=4, offset=(left, top))
+    paint_doodles(canvas.image, (left + 2, top + BAR + 2, right - 2, bottom - 2), ASSETS / "doodles" / f"{pattern}.png",
+                  tint, strength=DOODLE_STRENGTH, radius=4, offset=(left, top))
     title_drawer(top + BAR + 11)
     row_top = top + BAR + 23
     return row_top, (bottom - 3 - row_top) / ROWS_SHOWN
@@ -350,7 +355,7 @@ def _platform_card(canvas, box, platform, payload, images, marks, now):
         _paste_logo(canvas, platform, left + 9, middle)
         canvas.text((right - 9, middle), NOTES[platform], 10, "muted", anchor="rm", bold=False)
 
-    row_top, row_h = _frame(canvas, box, BRANDS[platform], title)
+    row_top, row_h = _frame(canvas, box, BRANDS[platform], title, platform)
     if not rows:
         canvas.text(((left + right) / 2, (row_top + bottom) / 2), f"{NAMES[platform]}榜单暂不可用", 12, "muted", anchor="mm")
         return
@@ -391,7 +396,7 @@ def _shared_card(canvas, box, payload, images):
         canvas.text((left + 9, middle), "全网同上", 14, anchor="lm")
         canvas.text((right - 9, middle), "多个榜单同时在榜", 10, "muted", anchor="rm", bold=False)
 
-    row_top, row_h = _frame(canvas, box, SHARED, title)
+    row_top, row_h = _frame(canvas, box, SHARED, title, "shared")
     if not topics:
         canvas.text(((left + right) / 2, (row_top + bottom) / 2), "暂无多榜同上的话题", 12, "muted", anchor="mm")
         return

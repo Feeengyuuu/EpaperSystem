@@ -1,0 +1,44 @@
+{
+  "weibo.png": {
+    "theme": "social chatter",
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job 44513580-e9fe-4437-92d4-933ef611559b",
+    "source_sha256": "c8723d218804d361fa6ac9bd937a250c291ddc56b60217360a637e74d72c8858",
+    "processing": "greyscale, 360 px LANCZOS, values above 232 to white",
+    "sha256": "3daaa3388cbb9241f90104801f84135ea25eb8e8dc81123706cf6f62c8bdf06f"
+  },
+  "baidu.png": {
+    "theme": "web search",
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job 7a07bc89-f206-4ab6-a6d6-e5689eb681bd",
+    "source_sha256": "2093259a1452041bbf3a34047772dad52e7aaf13a37aa803a16c38cd08d1a5b6",
+    "processing": "greyscale, 360 px LANCZOS, values above 232 to white",
+    "sha256": "e0ce2c38066cec0a9549d64582e50752f6859be101c6481594826ccae93f2422"
+  },
+  "toutiao.png": {
+    "theme": "breaking news",
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job 5fa9ee22-ece7-4045-8bd0-ad2dabca303c",
+    "source_sha256": "e41aaac34b17767f32f12485e1aa78b5f63ef57cbd94a7c035626d651ef41481",
+    "processing": "greyscale, 360 px LANCZOS, values above 232 to white",
+    "sha256": "e0572060bf8499c10dbd31efb3aa9676804d3e936e3038cd0b79907c593a787e"
+  },
+  "zhihu.png": {
+    "theme": "questions and knowledge",
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job 5f022c2b-22c5-44f1-abcc-6b3b7a2057f4",
+    "source_sha256": "878eb94e67b8b73f5907fc6a387387166373434ee5353838d0c207a75128d83c",
+    "processing": "greyscale, 360 px LANCZOS, values above 232 to white",
+    "sha256": "83842dc72d3974f74dd72c407eb2efad768a84b91b5c9ee1e7c6ce1d507339f1"
+  },
+  "douyin.png": {
+    "theme": "short videos and music",
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job 06d4111e-8a94-4c0d-b2c2-c71dab1331e1",
+    "source_sha256": "05a623090ae300a6e69add34ad61b36b7885648b963cbed9e69578b654a73689",
+    "processing": "greyscale, 360 px LANCZOS, values above 232 to white",
+    "sha256": "017345705c9f0f6c483953a01ebd87ea772ab5b32ad0dab47331802efd577ff7"
+  },
+  "shared.png": {
+    "theme": "trending everywhere",
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job 395bf9fd-a0b3-4eeb-81fe-33145d0d0a04",
+    "source_sha256": "693ef4c517e51d514803f9458f1483a9a1451dca3a9f47517494ea135a51bf9c",
+    "processing": "greyscale, 360 px LANCZOS, values above 232 to white",
+    "sha256": "2d205146e41a8ef655580f60348e009238c0b3b2c009877d544fd0aa85e25305"
+  }
+}
