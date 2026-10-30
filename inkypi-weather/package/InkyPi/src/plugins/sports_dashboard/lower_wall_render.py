@@ -518,8 +518,10 @@ class LowerWallRenderMixin:
         clock, clock_font = self._fit_text_ellipsis(draw, clock, inner_x2 - inner_x1 - 40, 10, bold=True, min_size=8)
         clock_w = self._text_width(draw, clock, clock_font)
         clock_left = inner_x2 - clock_w - 5
-        draw.rounded_rectangle((clock_left, y1 + 3, inner_x2 + 3, y1 + 18), radius=4, fill=COLORS["panel"])
-        self._draw_text_in_box(draw, (inner_x1 + 30, y1 + 3, inner_x2, y1 + 18), clock, clock_font, COLORS["text"], align="right")
+        # The clock sits straight on the band, white on a dark band or ink on a light one.
+        ground = ImageStat.Stat(image.convert("RGB").crop((clock_left, y1 + 3, inner_x2 + 3, y1 + 18))).median
+        clock_ink = (255, 255, 255) if _kit_luminance(ground) < 0.4 else (20, 22, 28)
+        self._draw_text_in_box(draw, (inner_x1 + 30, y1 + 3, inner_x2, y1 + 18), clock, clock_font, clock_ink, align="right")
         # The venue fills the band between the league's logo and the clock: its logo, else its name.
         venue_box = (x1 + WALL_TILE_VENUE_LEFT, y1 + 3, clock_left - 6, y1 + 18)
         if self._draw_wall_venue_chip(image, draw, venue_box, event) is None:
