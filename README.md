@@ -10,9 +10,9 @@ Raspberry Pi + 六色墨水屏 · 71 个插件自动轮播 · 局域网网页管
 
 </div>
 
-![设备在 2026 年 10 月 28 日的实机画面：体育看板（美职联、WNBA 总决赛、英雄联盟世界赛）、现代天气、技术圈与 AI 脉搏、轨道信号、今日热榜、环球此刻、LiveRadar 直播雷达、Sky Radar 航班雷达、游戏优惠、全球票房双城榜、NASA 天文图、每日名画。](docs/images/epaper-system-screens-20261028-night.jpg)
+![设备在 2026 年 10 月 29 日的实机画面：体育看板（法甲、LIVE NOW 比分墙、英雄联盟世界赛）、现代天气、技术圈与 AI 脉搏、轨道信号、今日热榜、环球此刻、LiveRadar 直播雷达、Sky Radar 航班雷达、游戏优惠、全球票房双城榜、NASA 天文图、每日名画。](docs/images/epaper-system-screens-20261029-night.jpg)
 
-<p align="center"><sub>以上都是设备 2026 年 10 月 28 日刚刷新的实机画面（800 × 480，六色墨水屏），个人信息已打码。</sub></p>
+<p align="center"><sub>以上都是设备 2026 年 10 月 29 日刚刷新的实机画面（800 × 480，六色墨水屏），个人信息已打码。</sub></p>
 
 ## 它会显示什么
 
@@ -110,6 +110,14 @@ sudo reboot
 ```
 
 几分钟后屏幕开始显示入门轮播。**墨水屏换一页要几十秒、会闪几下，这是正常的。**以后在 **http://epaper.local** 管理插件和播放列表。
+
+### 可选：给插件填 API Key
+
+大部分插件不用 Key。下面这些点链接注册（大多免费），拿到后粘贴到 **http://epaper.local/api-keys**：
+
+[资金雷达 · Finnhub](https://finnhub.io/dashboard) · [资金雷达 · FRED](https://fredaccount.stlouisfed.org/apikeys) · [湾区德鲁伊 · eBird](https://ebird.org/api/keygen) · [湾区要紧事 · NASA FIRMS](https://firms.modaps.eosdis.nasa.gov/api/map_key/) · [科技与游戏 / LiveRadar · Twitch](https://dev.twitch.tv/console/apps) · [Sky Radar · FlightAware](https://flightaware.com/aeroapi/portal/) · [全球票房 · TMDB](https://www.themoviedb.org/settings/api) · [本地活动 · Ticketmaster](https://developer.ticketmaster.com/products-and-docs/apis/getting-started/) · [漫画封面 · Comic Vine](https://comicvine.gamespot.com/api/) · [CS2 赛事 · PandaScore](https://app.pandascore.co/signup) · [天气 · OpenWeather](https://home.openweathermap.org/api_keys) · [整点新闻 · Groq](https://console.groq.com/keys)
+
+全网热搜的微博榜填登录 [weibo.com](https://weibo.com/) 后的 `SUB` Cookie。全部 Key 见 [API Key 获取](inkypi-weather/package/InkyPi/docs/api_keys.zh-CN.md)。
 
 ### 以后想更新
 
