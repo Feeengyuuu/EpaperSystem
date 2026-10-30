@@ -44,6 +44,10 @@
 - The sports page's NHL panel: the league's shield from Commons (public domain).
 - Tech Pulse: OpenRouter's logo and icon from Commons (public domain), for the newest models, and
   their makers' marks: Commons where it has one, else the maker's own site icon.
+- LiveRadar's footer, the platforms it follows: bilibili直播's logo (the PNG its live site's navbar
+  script carries), Douyu's (the SVG symbol its site header script carries), Douyin's, Twitch's and
+  Kick's wordmarks from Commons (public domain), Picarto's mark (its header's year-round one, not the
+  October or December one; white, kept as a black mask) and SOOP's logo from their own sites.
 - The cover pages' publishers and magazines (base_plugin/assets/publisher_logos, PUBLISHER_LOGOS):
   each one's logo as Wikidata names it on Commons (Marvel, DC, Kodansha, Rolling Stone, TIME, ...),
   else the one its own site's header serves (BOOM!, Oni, Yen Press, DC Thomson, ...), white lettering
@@ -59,6 +63,7 @@ logos.source.json beside each records where it came from.
 from __future__ import annotations
 
 import base64
+import gzip
 import hashlib
 import io
 import json
@@ -85,6 +90,7 @@ ODDS = PLUGINS / "world_odds" / "assets" / "logos"
 TECH_LOGOS = PLUGINS / "tech_pulse" / "assets" / "logos"
 ORGANISERS = PLUGINS / "lol_info" / "assets" / "cs2_organisers"
 PAPERS = PLUGINS / "ai_papers" / "assets" / "logos"
+PLATFORM_LOGOS = PLUGINS / "live_radar" / "platform_logos"
 SPACE_NEWS = PLUGINS / "orbital_signal" / "assets" / "news"
 COMMONS_FILE = "https://commons.wikimedia.org/wiki/File:{name}"
 CALTRANS = ("https://dot.ca.gov/-/media/dot-media/images/logos/caltrans/caltranslogo.png", "https://dot.ca.gov/",
@@ -175,7 +181,13 @@ LOGOS = {
     "zhihu": ((COMMONS.format(path="a/ad/Zhihu_logo.svg", name="Zhihu_logo.svg"),
                COMMONS_FILE.format(name="Zhihu_logo.svg"), PUBLIC_DOMAIN), [HOT_SEARCH], 1.0),
     "douyin": ((COMMONS.format(path="1/1a/Douyin_wordmark.svg", name="Douyin_wordmark.svg"),
-                COMMONS_FILE.format(name="Douyin_wordmark.svg"), PUBLIC_DOMAIN), [HOT_SEARCH], 1.0),
+                COMMONS_FILE.format(name="Douyin_wordmark.svg"), PUBLIC_DOMAIN), [HOT_SEARCH, PLATFORM_LOGOS], 1.0),
+    "twitch": ((COMMONS.format(path="c/ce/Twitch_logo_2019.svg", name="Twitch_logo_2019.svg"),
+                COMMONS_FILE.format(name="Twitch_logo_2019.svg"), PUBLIC_DOMAIN), [PLATFORM_LOGOS], 1.0),
+    "kick": ((COMMONS.format(path="d/dd/Kick_logo.svg", name="Kick_logo.svg"),
+              COMMONS_FILE.format(name="Kick_logo.svg"), PUBLIC_DOMAIN), [PLATFORM_LOGOS], 1.0),
+    "soop": (("https://res.sooplive.com/images/svg/soop_logo.svg", "https://www.sooplive.com/",
+              "SOOP's logo from its own site header, shown to name the stream's platform"), [PLATFORM_LOGOS], 1.0),
     "kalshi": ((COMMONS.format(path="b/b8/Kalshi-logo-2026.svg", name="Kalshi-logo-2026.svg"),
                 COMMONS_FILE.format(name="Kalshi-logo-2026.svg"), PUBLIC_DOMAIN), [ODDS], 1.0),
     "polymarket": ((COMMONS.format(path="e/ec/Polymarket.svg", name="Polymarket.svg"),
@@ -524,7 +536,62 @@ def _smk(records):
         "source_sha256": hashlib.sha256(svg).hexdigest(), "processing": "the symbol drawn in black, cropped, 64 px tall"})
 
 
-COMPOSED = {"wikipedia_zh": _wikipedia_zh, "chineseposters": _chineseposters, "smk": _smk}
+BILIBILI_NAVBAR = "https://s1.hdslb.com/bfs/live-pkg/blive/bilili-page-component-navbar-top-v3/navbar-v3.js"
+DOUYU_HEADER = "https://shark2.douyucdn.cn/front-publish/header-master/js/header.umd._f090791.js"
+
+
+def _script(url):
+    """A site script's text (some CDNs send it gzipped whatever the request says)."""
+    content = _fetch_site(url)
+    if content[:2] == b"\x1f\x8b":
+        content = gzip.decompress(content)
+    return content
+
+
+def _bilibili(records):
+    """bilibili直播's logo: the 200 x 52 PNG its live site's navbar draws (a data URI in the navbar script)."""
+    script = _script(BILIBILI_NAVBAR)
+    # The navbar's .live-logo::before image, the only 200 x 52 PNG in the script.
+    match = re.search(rb"data:image/png;base64,(iVBORw0KGgoAAAANSUhEUgAAAMgAAAA0[A-Za-z0-9+/=]+)", script)
+    content = base64.b64decode(match.group(1))
+    _write(records, PLATFORM_LOGOS, "bilibili", _fit(_visible(_art("logo.png", content))), {
+        "source": BILIBILI_NAVBAR + " (the navbar's .live-logo image)", "page": "https://live.bilibili.com/",
+        "licence": "bilibili直播's logo from its own site header, shown to name the stream's platform",
+        "source_sha256": hashlib.sha256(content).hexdigest()})
+
+
+def _douyu(records):
+    """Douyu's logo: the logo symbol its site header script draws, as an SVG."""
+    script = _script(DOUYU_HEADER)
+    symbol = re.search(rb'<symbol viewBox="0 0 694 243"[^>]*id="logo_[0-9a-f]+">(.*?)</symbol>', script, re.S)
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 694 243">' + symbol.group(1) + b"</svg>"
+    _write(records, PLATFORM_LOGOS, "douyu", _fit(_visible(_rasterize(svg))), {
+        "source": DOUYU_HEADER + " (the header's logo symbol)", "page": "https://www.douyu.com/",
+        "licence": "Douyu's logo from its own site header, shown to name the stream's platform",
+        "source_sha256": hashlib.sha256(svg).hexdigest()})
+
+
+def _picarto(records):
+    """Picarto's mark: the white one its header shows outside October and December (a data URI in the
+    site's main script), kept as a black mask the page tints."""
+    page = _fetch_site("https://picarto.tv/")
+    main = "https://picarto.tv" + re.search(rb'src="(/static/js/main\.[0-9a-f]+\.js)"', page).group(1).decode()
+    script = _script(main)
+    # The header picks an October or a December logo by the month, else this module's.
+    default = re.search(rb"getMonth\(\);return 9===e\?\w+:11===e\?\w+:(\w+)\}", script).group(1)
+    module = re.search(rb"[,{]" + default + rb"=\w+\((\d+)\)", script).group(1)
+    data = re.search(module + rb':function\(e\)\{"use strict";e\.exports="data:image/png;base64,([A-Za-z0-9+/=]+)"',
+                     script).group(1)
+    content = base64.b64decode(data)
+    process, note = PROCESSING["knockout"]
+    _write(records, PLATFORM_LOGOS, "picarto", _fit(_visible(process(_art("logo.png", content)))), {
+        "source": main + f" (module {module.decode()}, the header's year-round logo)", "page": "https://picarto.tv/",
+        "licence": "Picarto's mark from its own site header, shown to name the stream's platform",
+        "source_sha256": hashlib.sha256(content).hexdigest(), "processing": note})
+
+
+COMPOSED = {"wikipedia_zh": _wikipedia_zh, "chineseposters": _chineseposters, "smk": _smk,
+            "bilibili": _bilibili, "douyu": _douyu, "picarto": _picarto}
 
 
 def _edge_ground(image):

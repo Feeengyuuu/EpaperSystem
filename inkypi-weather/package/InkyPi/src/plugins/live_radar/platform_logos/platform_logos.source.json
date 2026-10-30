@@ -1,0 +1,82 @@
+{
+  "logos": {
+    "douyin": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1a/Douyin_wordmark.svg/500px-Douyin_wordmark.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Douyin_wordmark.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "3a70c3a08972b0f3df9cf80cec436bbd6f16874d151f773d821edcd31b5a5839",
+      "size": [
+        140,
+        64
+      ],
+      "sha256": "e01197c640e178608e07843f711778c75e21e40dc642f56bbc522c95ef42b2b4"
+    },
+    "twitch": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/ce/Twitch_logo_2019.svg/500px-Twitch_logo_2019.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Twitch_logo_2019.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "2d4d665e99f708c424c316d0758f3c3f9be87d59a3ca7f6061fb608de5e4567d",
+      "size": [
+        192,
+        64
+      ],
+      "sha256": "78ec5f5fd08f190033754beae758dcb01673d9a82916ed871cbd23a2347dc397"
+    },
+    "kick": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Kick_logo.svg/500px-Kick_logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Kick_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "d8c1bbe5363022d3598ebf3003ef15030d6532eac2557f7d7828e315550ac4bb",
+      "size": [
+        199,
+        64
+      ],
+      "sha256": "1ffd4032c7fd3daac65dfd4c6ebdcf8490a97d4eb404296bb3ba2105e5182cbe"
+    },
+    "picarto": {
+      "source": "https://picarto.tv/static/js/main.d543fe27.js (module 66949, the header's year-round logo)",
+      "page": "https://picarto.tv/",
+      "licence": "Picarto's mark from its own site header, shown to name the stream's platform",
+      "source_sha256": "fc60396f0d9bd631e16cafaf0e63fad5134b06150d93b398e0d8f37c82a5a208",
+      "processing": "white artwork kept as a black mask the page tints",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "0309e32eb610c9cfaff88a6bf241148bf8a40ea5423f2a877a6c4587ab690c3e"
+    },
+    "soop": {
+      "source": "https://res.sooplive.com/images/svg/soop_logo.svg",
+      "page": "https://www.sooplive.com/",
+      "licence": "SOOP's logo from its own site header, shown to name the stream's platform",
+      "source_sha256": "55b3fc7c8a330e5583e8e98266f796f4d0e1c6cd6e5b1719244d5d580720126d",
+      "size": [
+        219,
+        64
+      ],
+      "sha256": "8cb44d13f49c334e3a3775770a2dc8ea81624c0cbc034422d0c1fb85e6860d9c"
+    },
+    "bilibili": {
+      "source": "https://s1.hdslb.com/bfs/live-pkg/blive/bilili-page-component-navbar-top-v3/navbar-v3.js (the navbar's .live-logo image)",
+      "page": "https://live.bilibili.com/",
+      "licence": "bilibili\u76f4\u64ad's logo from its own site header, shown to name the stream's platform",
+      "source_sha256": "d8345a6c4bfc5bfad1e9346f37bfb0ca812ee4183a8eb82427f61e02f28a9fa3",
+      "size": [
+        200,
+        52
+      ],
+      "sha256": "70f2ac6c390d64afc38b56dea43d00e9a8fc95ffbc03987c750981c607e52c71"
+    },
+    "douyu": {
+      "source": "https://shark2.douyucdn.cn/front-publish/header-master/js/header.umd._f090791.js (the header's logo symbol)",
+      "page": "https://www.douyu.com/",
+      "licence": "Douyu's logo from its own site header, shown to name the stream's platform",
+      "source_sha256": "0eba734caff655c272b35230fabd604716d13ed604624571aeccefed612f422d",
+      "size": [
+        183,
+        64
+      ],
+      "sha256": "45018fcbfe7b63a18658fec3c6bcbdbd58a7dad899fab6d9289435a4e0e02575"
+    }
+  }
+}

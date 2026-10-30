@@ -28,6 +28,7 @@ from utils.doodle_backdrop import paint_doodles
 from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import get_base_ui_font
 from utils.http_client import get_http_session
+from utils.picture_grounds import readable_on
 from utils.safe_image import ImageLimits
 
 logger = logging.getLogger(__name__)
@@ -203,6 +204,14 @@ PLATFORM_DOODLE_FILES = {
     for platform in ("douyu", "bilibili", "douyin", "twitch", "kick")
 }
 PLATFORM_DOODLE_STRENGTH = 0.28
+# The footer names every platform LiveRadar follows by its official logo, transparent and in its own
+# colours (tools/build_source_logos.py; platform_logos.source.json), this tall and at most this far apart.
+FOOTER_PLATFORMS = ("bilibili", "douyu", "douyin", "twitch", "kick", "soop", "picarto")
+PLATFORM_LOGO_FILES = {
+    platform: os.path.join(PLUGIN_DIR, "platform_logos", f"{platform}.png") for platform in FOOTER_PLATFORMS
+}
+FOOTER_LOGO_HEIGHT = 15
+FOOTER_LOGO_GAP = (10, 26)
 STATUS_ICON_FILES = {
     kind: os.path.join(PLUGIN_DIR, "status_icons", f"{kind}.png")
     for kind in ("live", "fav")
@@ -1739,7 +1748,49 @@ class LiveRadar(BasePlugin):
             comic_art.highlighter(draw, footer_box[0], footer_box[2], footer_box[3], comic_art.roles(theme)["marker"])
         draw.text((margin, footer_y), "FOR LEARNING & RESEARCH ONLY", fill=theme["muted"], font=small_font)
         self._draw_text_right(draw, footer, width - margin, footer_y, small_font, theme["muted"])
+        notice = draw.textbbox((margin, footer_y), "FOR LEARNING & RESEARCH ONLY", font=small_font)
+        clock_left = width - margin - draw.textlength(footer, font=small_font)
+        self._draw_footer_platforms(image, notice[2], clock_left, (notice[1] + notice[3]) / 2, theme)
         return image
+
+    @staticmethod
+    @lru_cache(maxsize=16)
+    def _load_platform_logo_asset(platform_key):
+        path = PLATFORM_LOGO_FILES.get(platform_key)
+        if not path or not os.path.isfile(path):
+            return None
+        try:
+            with Image.open(path) as source:
+                return source.convert("RGBA").copy()
+        except OSError as exc:
+            logger.warning("LiveRadar platform logo unavailable for %s: %s", platform_key, exc)
+            return None
+
+    def _draw_footer_platforms(self, image, left, right, middle, theme):
+        """The platforms LiveRadar follows, by their official logos, centred between the footer's notice
+        and its clock: each in its own colours, a part too close to the page in the page's ink (a black
+        wordmark by night); smaller when they would not fit."""
+        logos = []
+        for platform in FOOTER_PLATFORMS:
+            logo = self._load_platform_logo_asset(platform)
+            if logo is not None:
+                scale = FOOTER_LOGO_HEIGHT / logo.height
+                logos.append(logo.resize((max(1, round(logo.width * scale)), FOOTER_LOGO_HEIGHT), Image.Resampling.LANCZOS))
+        if not logos:
+            return
+        room = right - left - 2 * FOOTER_LOGO_GAP[0]
+        total = sum(logo.width for logo in logos)
+        gap = min(FOOTER_LOGO_GAP[1], (room - total) / (len(logos) + 1))
+        if gap < FOOTER_LOGO_GAP[0]:
+            shrink = max(0.4, (room - FOOTER_LOGO_GAP[0] * (len(logos) + 1)) / total)
+            logos = [logo.resize((max(1, round(logo.width * shrink)), max(1, round(logo.height * shrink))),
+                                 Image.Resampling.LANCZOS) for logo in logos]
+            total, gap = sum(logo.width for logo in logos), FOOTER_LOGO_GAP[0]
+        x = left + FOOTER_LOGO_GAP[0] + (room - total - gap * (len(logos) - 1)) / 2
+        for logo in logos:
+            logo = readable_on(logo, theme["bg"], theme["ink"])
+            image.paste(logo, (round(x), round(middle - logo.height / 2)), logo)
+            x += logo.width + gap
 
     def _render_failure_dashboard(self, dimensions, theme, generated_at, exc):
         width, height = dimensions
