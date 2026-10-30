@@ -19,6 +19,8 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 from utils.doodle_backdrop import paint_doodles
+
+from .venue_logos import paste_venue_logo
 from utils.theme_utils import contrast_ratio, relative_luminance
 
 WEEKDAYS = "一二三四五六日"
@@ -111,6 +113,8 @@ LIST = (336, CARD_TOP, 800 - MARGIN, CARD_BOTTOM)
 ROW_H, LIST_ROWS = 47, 7
 SLIP_TOP, SLIP_H = 28, 45
 THUMB = (52, 29)
+# A venue's official logo leads its place: within these boxes on a list row and in the lead card.
+SLIP_VENUE_LOGO, HERO_VENUE_LOGO = (34, 13), (44, 16)
 STICKER = 21
 SLIP_PLACE_MIN, SLIP_FACT_GAP = 72, 8
 WEEK_BAND = (MARGIN, 428, 800 - MARGIN, 474)
@@ -508,6 +512,8 @@ class WeekPageMixin:
             draw.text((px1 - distance_w, y), distance, fill=colors["muted"], font=meta_font)
         self._draw_pin(draw, (px0 + 5, y + 8), colors["accent"], colors["paper"])
         place_x = px0 + 14
+        logo_w = paste_venue_logo(image, event.venue_name, place_x, y + 8, HERO_VENUE_LOGO, colors["ink"], colors["paper"])
+        place_x += logo_w + 5 if logo_w else 0
         draw.text((place_x, y), self._fit_text(draw, self._place_line(event), meta_font,
                                                 px1 - place_x - (distance_w + 10 if distance else 0)),
                   fill=colors["ink"], font=meta_font)
@@ -725,14 +731,17 @@ class WeekPageMixin:
                 break
             shown.append((text, alarm, fact_w))
             facts_w += SLIP_FACT_GAP + fact_w
-        room = right - text_x - distance_w - facts_w
+        y = sy0 + 25
+        place_x = text_x
+        logo_w = paste_venue_logo(image, event.venue_name, place_x, y + 7, SLIP_VENUE_LOGO, colors["ink"], colors["paper"])
+        place_x += logo_w + 4 if logo_w else 0
+        room = right - place_x - distance_w - facts_w
         place = self._place_line(event)
         if draw.textlength(place, font=meta_font) > room:
             place = event.venue_name or place
         location = self._fit_text(draw, place, meta_font, max(room, 10)) + distance
-        y = sy0 + 25
-        draw.text((text_x, y), location, fill=colors["muted"], font=meta_font)
-        x = text_x + draw.textlength(location, font=meta_font) + SLIP_FACT_GAP
+        draw.text((place_x, y), location, fill=colors["muted"], font=meta_font)
+        x = place_x + draw.textlength(location, font=meta_font) + SLIP_FACT_GAP
         for text, alarm, fact_w in shown:
             fill = colors["accent"] if alarm else self._blend(colors["paper"], kind_colour, 0.12)
             fact_ink = chip_ink(fill, colors)

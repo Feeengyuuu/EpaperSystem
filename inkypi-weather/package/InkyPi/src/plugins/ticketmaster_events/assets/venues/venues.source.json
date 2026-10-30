@@ -1,0 +1,480 @@
+{
+ "logos": {
+  "bill_graham_civic": {
+   "names": [
+    "Bill Graham Civic Auditorium"
+   ],
+   "site": "https://www.billgrahamcivic.com/",
+   "source": "https://billgrahamcivic.com/wp-content/themes/bgcachild/assets/favicon/apple-touch-icon.png",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    52,
+    64
+   ],
+   "sha256": "1cdbecfcedea829d0710578e0eba39ce04ccc017b4949ba90321decd70e5f0e1"
+  },
+  "the_fillmore": {
+   "names": [
+    "The Fillmore",
+    "Fillmore"
+   ],
+   "site": "https://www.thefillmore.com/",
+   "source": "https://assets.livenationcdn.com/uploads/301b3b06-b79c-496f-89dc-7ef234013e03.png",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    64,
+    64
+   ],
+   "sha256": "67b8951fb6e0de7c2203d0667f013f8b2f6056dae94ee820c7f9de52efda4ca5"
+  },
+  "the_warfield": {
+   "names": [
+    "The Warfield",
+    "Warfield Theatre"
+   ],
+   "site": "https://www.thewarfieldtheatre.com/",
+   "source": "http://aeglive-theregencyballroom.s3.amazonaws.com/img/small-logo.png",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    92,
+    55
+   ],
+   "sha256": "f7dcd1ba8b94eab7b70dc97b70656046a36d3e1c16beebf4549571b9587e2b50"
+  },
+  "the_masonic": {
+   "names": [
+    "The Masonic",
+    "Masonic Auditorium",
+    "SF Masonic"
+   ],
+   "site": "https://sfmasonic.com/",
+   "source": "https://assets.livenationcdn.com/uploads/c2d03398-67cd-4206-8cd2-6a3d10e79df7.png",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    84,
+    64
+   ],
+   "sha256": "899e8829ced99447b0c94022b7174c302b61cce36271f3ed125e12bf258cdcaa"
+  },
+  "great_american_music_hall": {
+   "names": [
+    "Great American Music Hall",
+    "Great American"
+   ],
+   "site": "https://gamh.com/",
+   "source": "https://gamh.com/wp-content/uploads/2021/08/cropped-favicon-1-192x192.png",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    52,
+    64
+   ],
+   "sha256": "edad17649633e1338eb25050775e7179ec1fc420c56fc9514e40c46bb9ac234f"
+  },
+  "regency_ballroom": {
+   "names": [
+    "The Regency Ballroom",
+    "Regency Ballroom"
+   ],
+   "site": "https://www.theregencyballroom.com/",
+   "source": "https://aegwebprod.blob.core.windows.net/content/logo_images/541/wlMhpxtiDXlyindCvVdeva9kZEKfixK4RkVlD5eM.png",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    64,
+    64
+   ],
+   "sha256": "e6fb4985c8217a327d836b1d85e7d135697f1e66a92693415db10259690c91c2"
+  },
+  "august_hall": {
+   "names": [
+    "August Hall"
+   ],
+   "site": "https://www.augusthallsf.com/",
+   "source": "https://www.augusthallsf.com/wp-content/uploads/2018/06/august-hall-logo-mai.png",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    117,
+    64
+   ],
+   "sha256": "77406269b19837e1b46aed343a2de0dc43e25de8a3bb075716560e3d6f0013e6"
+  },
+  "the_independent": {
+   "names": [
+    "The Independent"
+   ],
+   "site": "https://www.theindependentsf.com/",
+   "source": "https://www.theindependentsf.com/wp-content/uploads/2019/09/cropped-independentsf-logo-high-res-1.png",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    217,
+    64
+   ],
+   "sha256": "98e3c698cda36880c7cc2bd7c34f1178c159baf4268310db96b81e9eb6931227"
+  },
+  "1015_folsom": {
+   "names": [
+    "1015 Folsom",
+    "1015 Folsom Street"
+   ],
+   "site": "https://1015.com/",
+   "source": "https://1015.com/media/editorial/site-icon/256.png",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    64,
+    64
+   ],
+   "sha256": "ca3c573480d1350d843d6f0adfe13f909890935ea2c28033f33a1efcca5209ed"
+  },
+  "the_midway": {
+   "names": [
+    "The Midway",
+    "Midway SF"
+   ],
+   "site": "https://themidwaysf.com/",
+   "source": "https://themidwaysf.com/wp-content/uploads/2024/04/Home-Hero-Logo-300x75-2-1.png",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    256,
+    64
+   ],
+   "sha256": "6ff1dc0f076b85e28418188d2ffaadfef76f82fb9d99de8ee2f5c11961e31371"
+  },
+  "cobbs_comedy_club": {
+   "names": [
+    "Cobb's Comedy Club",
+    "Cobbs Comedy Club"
+   ],
+   "site": "https://www.cobbscomedy.com/",
+   "source": "https://assets.livenationcdn.com/uploads/b3948806-3335-4537-9aab-460f4d61ecc2.png",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    129,
+    64
+   ],
+   "sha256": "22579dd2c17658b4bea39997b3f31123265b2a7980ceeed52590b738fbb0c035"
+  },
+  "punch_line_sf": {
+   "names": [
+    "Punch Line San Francisco",
+    "Punch Line",
+    "The Punch Line"
+   ],
+   "site": "https://www.punchlinecomedyclub.com/",
+   "source": "https://assets.livenationcdn.com/uploads/f5044596-1bd1-4548-85ae-68d4b7aa83ae.png",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    83,
+    64
+   ],
+   "sha256": "46d5c39bb4f7426c57748ffd6a38ec5446161ed81a57ef5e8d1995178a54202f"
+  },
+  "bimbos_365": {
+   "names": [
+    "Bimbo's 365 Club",
+    "Bimbos 365 Club"
+   ],
+   "site": "https://bimbos365club.com/",
+   "source": "https://bimbos365club.com/wp-content/uploads/2021/06/cropped-temp-favicon-192x192.png",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    107,
+    64
+   ],
+   "sha256": "a10cfcd86cac233219f0b1792d2cc04f1b63bd98ef58888a38fe5d3c3f3fa8ad"
+  },
+  "the_chapel": {
+   "names": [
+    "The Chapel"
+   ],
+   "site": "https://thechapelsf.com/",
+   "source": "https://thechapelsf.com/wp-content/uploads/2017/04/logo2.png",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    91,
+    64
+   ],
+   "sha256": "015f413da46c2dbfe3c03c3d8e8ae713f6155b2c99c0c5c3b66060438b3891aa"
+  },
+  "cow_palace": {
+   "names": [
+    "Cow Palace"
+   ],
+   "site": "https://www.cowpalace.com/",
+   "source": "https://www.cowpalace.com/wp-content/uploads/2024/05/CowPalace-New-Logo-Color-w-transparent-back-1.png",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    93,
+    64
+   ],
+   "sha256": "1e5243644dfbc8ad929b641d512ed566a504dd42bb94238b47ca17cbfff6985d"
+  },
+  "fox_theater_oakland": {
+   "names": [
+    "Fox Theater - Oakland",
+    "Fox Oakland Theatre",
+    "Fox Theater"
+   ],
+   "site": "https://thefoxoakland.com/",
+   "source": "https://thefoxoakland.com/wp-content/themes/foxchild/assets/img/fox-oakland-logo-x2.png",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    81,
+    64
+   ],
+   "sha256": "5ce52e4c2cda8b48f90c2e54ae9539eabcf650dc3106cd9f7fbc95fa4eeae96a"
+  },
+  "paramount_oakland": {
+   "names": [
+    "Paramount Theatre",
+    "Paramount Theatre Oakland"
+   ],
+   "site": "https://www.paramountoakland.org/",
+   "source": "https://www.paramountoakland.org/assets/production/66c3d88376//images/header-logo.png",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    310,
+    64
+   ],
+   "sha256": "5ee4283c0378c96b041f9d5801a5d0aa556775e56ceb47d9ef6bfa4f1b426f97"
+  },
+  "oakland_arena": {
+   "names": [
+    "Oakland Arena"
+   ],
+   "site": "https://www.theoaklandarena.com/",
+   "source": "inline svg",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    328,
+    64
+   ],
+   "sha256": "d4c5e0750bf1ddd0d0724329be32c797d722c6f837518bf2b585880f4e39ad89"
+  },
+  "greek_theatre_berkeley": {
+   "names": [
+    "Greek Theatre-U.C. Berkeley",
+    "Greek Theatre",
+    "The Greek Theatre"
+   ],
+   "site": "https://thegreekberkeley.com/",
+   "source": "https://thegreekberkeley.com/wp-content/themes/greekchild/assets/favicon/apple-touch-icon.png",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    47,
+    64
+   ],
+   "sha256": "95e09fb96971d4b1541cec49284172eed3b03d6447794966ff43a5f69aec13b6"
+  },
+  "uc_theatre": {
+   "names": [
+    "UC Theatre",
+    "The UC Theatre"
+   ],
+   "site": "https://www.theuctheatre.org/",
+   "source": "https://cdn.prod.website-files.com/68b755d7b21daac24102392e/68b755d7b21daac241023a04_the-uc-theatre-mobile.svg",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    192,
+    64
+   ],
+   "sha256": "dcddc306d0256ac7763612fd65fb96bb26b4ab4202e6a536bf9dd680d214a054"
+  },
+  "cornerstone_berkeley": {
+   "names": [
+    "Cornerstone",
+    "Cornerstone Berkeley"
+   ],
+   "site": "https://cornerstoneberkeley.com/",
+   "source": "https://cdn.prod.website-files.com/641f3cda6fa885c157d195c6/6429db84972b9e3b01da66d0_Cornerstone_Logo_RGB.png",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    73,
+    64
+   ],
+   "sha256": "072be6ed14be5299aef63db64ee435ce69d7b2d14375bc6db600a1f877059793"
+  },
+  "frost_amphitheater": {
+   "names": [
+    "Frost Amphitheater"
+   ],
+   "site": "https://live.stanford.edu/",
+   "source": "https://live.stanford.edu/assets/images/apple-touch-icon.png",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    63,
+    64
+   ],
+   "sha256": "9b8a87c47b7dce734e77af611156d3b82ab1b4de61aa52d5bff773906e3f83a0"
+  },
+  "sweetwater": {
+   "names": [
+    "Sweetwater Music Hall"
+   ],
+   "site": "https://sweetwatermusichall.com/",
+   "source": "https://sweetwatermusichall.org/wp-content/uploads/2021/04/Sweetwater-Music-Hall-Favicon-150x150.png",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    44,
+    64
+   ],
+   "sha256": "9010ea70bdc7efafdc6e9334125eabad3aeca25fedb8bbf0e92d1b42d65947fc"
+  },
+  "guild_theatre": {
+   "names": [
+    "Guild Theatre",
+    "The Guild Theatre"
+   ],
+   "site": "https://guildtheatre.com/",
+   "source": "https://cdn.prod.website-files.com/6912623ff991feeedc827e3e/69175fa49b2fbe68c59b014b_63d1916c540b134bc4f05406_19-1205-Guild_MenloPark_Blue_NoBKG.png",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    67,
+    64
+   ],
+   "sha256": "269c13eaac4db5c1bcbbdc445654d09cc4945210a67590da88c5d295eece31e0"
+  },
+  "shoreline": {
+   "names": [
+    "Shoreline Amphitheatre"
+   ],
+   "site": "https://www.shorelineamphitheatre.com/",
+   "source": "https://assets.livenationcdn.com/uploads/cc59bb9b-be51-4951-a029-48ee0ed88453.png",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    64,
+    64
+   ],
+   "sha256": "4cfdaf62f747b6ca5a71c9b7ae17aedf8e4dc7f01dc9ec19659ee9776c8ebd9e"
+  },
+  "tech_cu_arena": {
+   "names": [
+    "Tech CU Arena"
+   ],
+   "site": "https://www.techcuarena.com/",
+   "source": "https://www.techcuarena.com/assets/img/Chomping-Cuda-SJ-Logo_Teal-SJ-0fd6754713.png",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    46,
+    40
+   ],
+   "sha256": "876ba6e2f07df36f8eb555eba208a56a197e1d671ad020429b58976441af5d68"
+  },
+  "stanford_athletics": {
+   "names": [
+    "Maples Pavilion",
+    "Stanford Stadium",
+    "Sunken Diamond",
+    "Burnham Pavilion"
+   ],
+   "site": "https://gostanford.com/",
+   "source": "https://gostanford.com/imgproxy/8MLnX-EwqcJJTzmCXAp9kkxh6IrPynVdbQBnQJIbBfo/rs:fit:1980:0:0:0/g:ce:0:0/q:90/aHR0cHM6Ly9zdG9yYWdlLmdvb2dsZWFwaXMuY29tL3N0YW5mb3JkLXByb2QvMjAyNC8wMy8yMC9hVXJvSkRQeEVBQzFBRE53M3M2YjBRQWNlcmd2WW9EOXRabHVsZHRrLnBuZw.ico",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    42,
+    64
+   ],
+   "sha256": "6440348f56fb631b82f41c329b5093be2bb2bfc08c2915f76b5753446b4885df"
+  },
+  "san_jose_improv": {
+   "names": [
+    "San Jose Improv",
+    "Improv - San Jose"
+   ],
+   "site": "https://improv.com/sanjose/",
+   "source": "https://improv.com/wp-content/themes/improv-combined/logo-notag.svg",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    389,
+    64
+   ],
+   "sha256": "695565b85f40be32bc6b7156b88394d9d87f08ed6b1a14ce2c3de37fbece4aea"
+  },
+  "sj_california_theatre": {
+   "names": [
+    "California Theatre",
+    "California Theatre San Jose"
+   ],
+   "site": "https://sanjosetheaters.org/",
+   "source": "https://www.sanjose.org/sites/default/files/styles/campaign_sidebar_image_484_x_484/public/2026-07/SJTheaters_California_LogoOnly_thumbnail.png.webp?itok=7X6Lx_BC",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    64,
+    64
+   ],
+   "sha256": "cf85bd1924899ba006d10ee82b909129a1d6e63d203df66a75cdb98472d93b33"
+  },
+  "sj_civic": {
+   "names": [
+    "San Jose Civic",
+    "City National Civic"
+   ],
+   "site": "https://sanjosetheaters.org/",
+   "source": "https://www.sanjose.org/sites/default/files/styles/campaign_sidebar_image_484_x_484/public/2026-07/SJTheaters_Civic_LogoOnly_thumbnail_1.png.webp?itok=SgE_-ln-",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    64,
+    64
+   ],
+   "sha256": "3f568c4e21006eaab2b3f808e416ee70fc680ca73d1e5b6341d8328e09ba961a"
+  },
+  "sj_center_performing_arts": {
+   "names": [
+    "San Jose Center for the Performing Arts",
+    "Center for the Performing Arts"
+   ],
+   "site": "https://sanjosetheaters.org/",
+   "source": "https://www.sanjose.org/sites/default/files/styles/campaign_sidebar_image_484_x_484/public/2026-07/SJTheaters_CPA_LogoOnly_thumbnail_0.png.webp?itok=js3In-MG",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    64,
+    64
+   ],
+   "sha256": "31536ea356f5267405c2c43b07875070ed478b09b3318ed64a734153e7ddef46"
+  },
+  "sj_montgomery_theater": {
+   "names": [
+    "Montgomery Theater",
+    "Montgomery Theater San Jose"
+   ],
+   "site": "https://sanjosetheaters.org/",
+   "source": "https://www.sanjose.org/sites/default/files/styles/campaign_sidebar_image_484_x_484/public/2026-07/SJTheaters_Montgomery_LogoOnly_thumbnail_0.png.webp?itok=MLCyE2qB",
+   "licence": "the venue's own logo from its site, shown to name the venue",
+   "processing": "a white ground reaching the edge cleared, cropped, at most 64 px tall",
+   "size": [
+    64,
+    64
+   ],
+   "sha256": "5b7fd3163a5d74d607cc1c32d5e7ce9a5951d7ee3e166d184eebfca04ab04113"
+  }
+ }
+}
