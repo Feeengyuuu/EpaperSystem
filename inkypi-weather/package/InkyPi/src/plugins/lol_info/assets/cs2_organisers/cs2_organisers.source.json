@@ -1,0 +1,124 @@
+{
+  "logos": {
+    "iem": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a5/IEM_v2019_logo.svg/960px-IEM_v2019_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:IEM_v2019_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "a1633bd318f1ec8498cfc2b2f2f82d96eb4ac27ec4dc083a220c5c34c07045a4",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        157,
+        64
+      ],
+      "sha256": "f24c4b49df92f42f8b2bf8242494b7f0ff5c9a203d64d76d3813d972593403c3"
+    },
+    "esl_pro_league": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6f/ESL_Pro_League_logo.svg/960px-ESL_Pro_League_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:ESL_Pro_League_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "5afcf9382a5e4117bfaef2fca772f7685b89d91411fd33426c8f17265d9cff64",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        53,
+        64
+      ],
+      "sha256": "8ca06e844f50bbe97e7fda5038b27aa779bdaa84dfdc23f45e1928cf47a853a8"
+    },
+    "esl": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7e/ESL_Horizontal_Logo_2019.svg/960px-ESL_Horizontal_Logo_2019.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:ESL_Horizontal_Logo_2019.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "0a93eea9be7a5e98429875fe18bbbf9eddd1101e17f3206726f6aa8633091c30",
+      "processing": "a white ground reaching the edge cleared; its black drawn white for a dark page",
+      "size": [
+        210,
+        64
+      ],
+      "sha256": "625e8619cd3169210631c592a8dfee45ef5ad7ba6f1d61e8ca2a710d932d9897"
+    },
+    "perfect_world": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9b/Perfect_World_Logo.svg/960px-Perfect_World_Logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Perfect_World_Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "0079f6d09872d52bcf75611ec92fb71aeff3678ac7f73c4ee27309ffea3c9d46",
+      "processing": "a white ground reaching the edge cleared; its black drawn white for a dark page",
+      "size": [
+        156,
+        64
+      ],
+      "sha256": "d9256709de0f5a8bcf9f2061dedcaaf1186d35efa2a12ddb3b469b7ec3afea95"
+    },
+    "ewc": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b4/Esports_World_Cup_logo.svg/960px-Esports_World_Cup_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Esports_World_Cup_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "fd2fc30e33499b488bfa7b877733b539212b57f75e3a6feefc1e32ea2babf0ba",
+      "processing": "a white ground reaching the edge cleared; its black drawn white for a dark page",
+      "size": [
+        338,
+        64
+      ],
+      "sha256": "f201451f5cdfb46e1138bdfd8754e152d252883b83f092d90a699196e25b74e6"
+    },
+    "dreamhack": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e1/DreamHack_logo.png/960px-DreamHack_logo.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:DreamHack_logo.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "b0fe278a1091c71b3b72d22a1cc518744318d4615508c580d9501f27140e9145",
+      "processing": "a white ground reaching the edge cleared; its black drawn white for a dark page",
+      "size": [
+        759,
+        64
+      ],
+      "sha256": "a3a9d4572cb7c42ac0b4a455948ca2fd311e3fa3d451be7db4b8a9eec3aaa819"
+    },
+    "blast": {
+      "source": "https://blast.tv/ (the page's inline SVG logo)",
+      "page": "https://blast.tv/",
+      "licence": "blast's logo from its own site's header",
+      "source_sha256": "dfefb8a6f31d3874a00a7dbb3f14e18283309252e49dd0437da2075138d60e15",
+      "processing": "a white ground reaching the edge cleared; its black drawn white for a dark page",
+      "size": [
+        54,
+        64
+      ],
+      "sha256": "77bb7070df340d7c4704457cb28276ef63403269c1dbae7941cc19ac77809ec2"
+    },
+    "starladder": {
+      "source": "https://starladder.com/ (the page's inline SVG logo)",
+      "page": "https://starladder.com/",
+      "licence": "starladder's logo from its own site's header",
+      "source_sha256": "272f38649822cbadbfaf6d3829e7a62b49b4c14d98a6b592c4143e0e376adebe",
+      "processing": "a white ground reaching the edge cleared; its black drawn white for a dark page",
+      "size": [
+        309,
+        64
+      ],
+      "sha256": "951e6355feea25aed4bc1a7385af7557b79089c3b560ef258ed69a923a254e71"
+    },
+    "pgl": {
+      "source": "https://www.pglesports.com/images/logo.webp",
+      "page": "https://www.pglesports.com/",
+      "licence": "pgl's logo from its own site, shown to name the publisher",
+      "source_sha256": "6635ad8cf9b246e06458b1fa40941e0d0e1e66ed888cbad780b0b5d6b59e7594",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        110,
+        45
+      ],
+      "sha256": "1cfcd1ab08426d17ab31a3e03010818b3730313a3a13aafdc622ec11ae9adcf5"
+    },
+    "cct": {
+      "source": "https://cctour.gg/wp-content/uploads/2024/06/CCT-Logo-Favicon.svg",
+      "page": "https://cctour.gg/",
+      "licence": "cct's logo from its own site, shown to name the publisher",
+      "source_sha256": "f019c31ea1f8952e1657905dcb6ce9c9ced48cad97ec5f0ef36880685093c85e",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        45,
+        64
+      ],
+      "sha256": "293c8a3616f40a6f0e6d154daa9abac1d42ebd83d43588befdf738b30aff181d"
+    }
+  }
+}

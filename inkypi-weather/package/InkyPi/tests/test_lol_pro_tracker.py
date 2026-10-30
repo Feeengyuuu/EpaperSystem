@@ -881,3 +881,24 @@ def test_every_team_in_the_cs2_schedule_has_a_mark_before_its_name(plugin):
     # "vs", then the badge right before the upcoming opponent's name; and in the result's opponent slot.
     assert fills & {colour for _count, colour in image.crop((240, 201, 272, 217)).getcolors(maxcolors=1 << 16)}
     assert fills & {colour for _count, colour in image.crop((300, 236, 330, 252)).getcolors(maxcolors=1 << 16)}
+
+
+def test_an_upcoming_event_without_its_own_logo_shows_its_organisers_or_a_badge(plugin):
+    iem = plugin._cs2_event_logo("IEM Chengdu 2026", None)
+    assert iem is not None and iem.height <= pro_render.CS2_EVENT_LOGO[1]
+    assert pro_render._organiser_logo("ESL Pro League Season 25") is not None
+    assert pro_render._organiser_logo("Eslbet Cup 2026") is None
+    badge = plugin._cs2_event_logo("Skyesports Masters 2026", None)
+    assert badge.size[1] == pro_render.CS2_EVENT_LOGO[1] and badge.size[0] <= pro_render.CS2_EVENT_LOGO[0]
+    # A result's row keeps its room for the opponent's name: no stand-in there.
+    assert plugin._cs2_event_logo("Skyesports Masters 2026", None, box=pro_render.CS2_RESULT_EVENT_LOGO,
+                                  fallback=False) is None
+
+
+def test_every_organiser_logo_has_its_source_recorded():
+    import json as _json
+
+    folder = Path(pro_render.CS2_ORGANISER_DIR)
+    records = _json.loads((folder / "cs2_organisers.source.json").read_text(encoding="utf-8"))["logos"]
+    keys = {key for _prefix, key in pro_render.CS2_ORGANISERS}
+    assert keys == {path.stem for path in folder.glob("*.png")} == set(records)

@@ -76,6 +76,7 @@ POSTERS = PLUGINS / "backtothedate" / "assets" / "logos"
 HOT_SEARCH = PLUGINS / "cn_hot_search" / "assets" / "logos"
 ODDS = PLUGINS / "world_odds" / "assets" / "logos"
 TECH_LOGOS = PLUGINS / "tech_pulse" / "assets" / "logos"
+ORGANISERS = PLUGINS / "lol_info" / "assets" / "cs2_organisers"
 COMMONS_FILE = "https://commons.wikimedia.org/wiki/File:{name}"
 CALTRANS = ("https://dot.ca.gov/-/media/dot-media/images/logos/caltrans/caltranslogo.png", "https://dot.ca.gov/",
             "Caltrans' official logo from its own site header, shown to name the source")
@@ -311,6 +312,18 @@ PUBLISHER_LOGOS = {
     "womans_world": "inline:https://www.womansworld.com/|aria-label=\"Woman's World\"",
     "robb_report": "inline:https://robbreport.com/|<title>Robb Report</title>",
 }
+# The Pro Tracker's CS2 page names an event no logo is found for by its organiser's logo
+# (lol_info/pro_render.CS2_ORGANISERS): Commons' as Wikidata names it, else the organiser's site's.
+# The page is dark in both modes, so black marks are drawn white.
+ORGANISER_LOGOS = {
+    "iem": "IEM v2019 logo.svg", "esl_pro_league": "ESL Pro League logo.svg",
+    "esl": ("ESL Horizontal Logo 2019.svg", "white_mark"), "perfect_world": ("Perfect World Logo.svg", "white_mark"),
+    "ewc": ("Esports World Cup logo.svg", "white_mark"), "dreamhack": ("DreamHack logo.png", "white_mark"),
+    "blast": ('inline:https://blast.tv/|viewBox="0 0 26 30"', "white_mark"),
+    "starladder": ("inline:https://starladder.com/|header-sl-logo", "white_mark"),
+    "pgl": "https://www.pglesports.com/images/logo.webp",
+    "cct": "https://cctour.gg/wp-content/uploads/2024/06/CCT-Logo-Favicon.svg",
+}
 COMMONS_API = "https://commons.wikimedia.org/w/api.php"
 SITE_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
                               "Chrome/130.0 Safari/537.36"}
@@ -354,9 +367,21 @@ def _white_ground(image):
     return image
 
 
+def _white_mark(image):
+    """A black mark (one drawn in the page's text colour) set white, for a dark page."""
+    pixels = image.load()
+    for y in range(image.height):
+        for x in range(image.width):
+            red, green, blue, alpha = pixels[x, y]
+            if alpha and max(red, green, blue) < 110 and max(red, green, blue) - min(red, green, blue) < 40:
+                pixels[x, y] = (255, 255, 255, alpha)
+    return image
+
+
 PROCESSING = {"knockout": (_knockout, "white artwork kept as a black mask the page tints"),
               "white_lettering": (_white_lettering, "white lettering (for a dark header) set near-black"),
-              "white_ground": (_white_ground, "the white ground cleared")}
+              "white_ground": (_white_ground, "the white ground cleared"),
+              "white_mark": (_white_mark, "its black drawn white for a dark page")}
 
 
 def _visible(image):
@@ -498,8 +523,8 @@ def _fetch_site(url):
     return response.content
 
 
-def _publisher(records, key, spec):
-    """One publisher's or magazine's logo into PUBLISHERS."""
+def _publisher(records, key, spec, folder=PUBLISHERS):
+    """One publisher's or magazine's logo (or a CS2 organiser's) into ``folder``."""
     spec, step = spec if isinstance(spec, tuple) else (spec, None)
     url, page, licence, content = _publisher_source(key, spec)
     vector = spec.startswith("inline:") or url.split("?")[0].endswith(".svg")
@@ -509,9 +534,9 @@ def _publisher(records, key, spec):
         process, note = PROCESSING[step]
         art = _visible(process(art))
         steps.append(note)
-    _write(records, PUBLISHERS, key, _fit(art), {"source": url, "page": page, "licence": licence,
-                                                  "source_sha256": hashlib.sha256(content).hexdigest(),
-                                                  "processing": "; ".join(steps)})
+    _write(records, folder, key, _fit(art), {"source": url, "page": page, "licence": licence,
+                                             "source_sha256": hashlib.sha256(content).hexdigest(),
+                                             "processing": "; ".join(steps)})
 
 
 def main(keys=()):
@@ -537,6 +562,9 @@ def main(keys=()):
     for key, spec in PUBLISHER_LOGOS.items():
         if not keys or key in keys:
             _publisher(records, key, spec)
+    for key, spec in ORGANISER_LOGOS.items():
+        if not keys or key in keys:
+            _publisher(records, key, spec, ORGANISERS)
     for folder, logos in records.items():
         path = folder / ("logos.source.json" if folder.name == "logos" else f"{folder.name}.source.json")
         existing = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}

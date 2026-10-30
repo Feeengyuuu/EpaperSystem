@@ -96,6 +96,13 @@ LOL_STAGE_DAYS = 45
 # A match's event logo fits this box before an upcoming match's event name, and the narrower
 # one at a result's end, which leaves the opponent's name its room.
 CS2_EVENT_LOGO, CS2_RESULT_EVENT_LOGO = (30, 15), (24, 15)
+# An event no logo is found for shows its organiser's (assets/cs2_organisers, from
+# tools/build_source_logos.py), found by the words its name begins with; else a badge of its first word.
+CS2_ORGANISER_DIR = os.path.join(os.path.dirname(__file__), "assets", "cs2_organisers")
+CS2_ORGANISERS = (("intel extreme masters", "iem"), ("iem", "iem"), ("esl pro league", "esl_pro_league"),
+                  ("esl", "esl"), ("blast", "blast"), ("pgl", "pgl"), ("cct", "cct"),
+                  ("champion of champions", "cct"), ("starladder", "starladder"), ("perfect world", "perfect_world"),
+                  ("esports world cup", "ewc"), ("ewc", "ewc"), ("dreamhack", "dreamhack"))
 # The CS2 page's matches in one scoreboard family (the sports dashboard's open Barlow faces):
 # Condensed for scores, times and figures, Semi Condensed for team names and labels.
 MATCH_FACES = {"score": "BarlowCondensed-Bold.ttf", "figure": "BarlowCondensed-SemiBold.ttf",
@@ -143,6 +150,46 @@ def _team_key(name):
     plain = unicodedata.normalize("NFKD", str(name or "")).encode("ascii", "ignore").decode("ascii")
     key = "".join(word for word in re.findall(r"[a-z0-9]+", plain.lower()) if word not in TEAM_NAME_NOISE)
     return TEAM_ALIASES.get(key, key)
+
+
+def _organiser_logo(event):
+    """The logo of the organiser whose name ``event`` begins with (IEM Cologne 2026 -> IEM), or None."""
+    words = " ".join(re.findall(r"[a-z0-9]+", str(event or "").lower()))
+    key = next((key for prefix, key in CS2_ORGANISERS if words == prefix or words.startswith(prefix + " ")), None)
+    if key is None:
+        return None
+    try:
+        with safe_open_image(os.path.join(CS2_ORGANISER_DIR, f"{key}.png")) as source:
+            return source.convert("RGBA")
+    except (OSError, ValueError):
+        return None
+
+
+@lru_cache(maxsize=64)
+def _event_badge(name, box):
+    """An event no logo is found for: its first word (its organiser, mostly) in white on a rounded
+    tag of a colour its name picks, as tall as ``box`` and no wider."""
+    word = next((word for word in re.findall(r"[A-Za-z0-9]+", unicodedata.normalize("NFKD", name)
+                                              .encode("ascii", "ignore").decode("ascii")) if not word.isdigit()), "")
+    if not word:
+        return None
+    label = word.upper()
+    fill = TEAM_BADGE_FILLS[sum((index + 1) * ord(char) for index, char in enumerate(name)) % len(TEAM_BADGE_FILLS)]
+    scale = 4
+    height = box[1] * scale
+    measure = ImageDraw.Draw(Image.new("L", (1, 1)))
+    for points in range(round(height * 0.72), 6, -2):
+        font = get_base_ui_font(points, bold=True)
+        if measure.textlength(label, font=font) + height * 0.5 <= box[0] * scale:
+            break
+    else:
+        label = label[:3]
+    width = min(box[0] * scale, round(measure.textlength(label, font=font) + height * 0.5))
+    badge = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(badge)
+    draw.rounded_rectangle((0, 0, width - 1, height - 1), radius=height // 4, fill=(*fill, 255))
+    draw.text((width / 2, height / 2), label, font=font, fill=(255, 255, 255, 255), anchor="mm")
+    return badge.resize((max(1, width // scale), box[1]), Image.Resampling.LANCZOS)
 
 
 @lru_cache(maxsize=64)
@@ -1346,7 +1393,8 @@ class ProRenderMixin:
         # The latest win takes the slot's room, so one result fewer is listed above it.
         for match in (player.get("recent") or [])[:3 if win else 4]:
             self._draw_cs2_result(image, draw, match, own_logo, (x0, y, x1), colors, fonts,
-                                  event_logo=self._cs2_event_logo(match.get("event"), None, links, CS2_RESULT_EVENT_LOGO))
+                                  event_logo=self._cs2_event_logo(match.get("event"), None, links, CS2_RESULT_EVENT_LOGO,
+                                                                 fallback=False))
             y += 24
             if y > y1 - 20:
                 break
@@ -1524,9 +1572,10 @@ class ProRenderMixin:
             paths = cs2_branding.local_event_branding(card) or cs2_branding.local_family_branding(card)
         return str(paths.get("event_logo_path_dark") or paths.get("event_logo_path") or "")
 
-    def _cs2_event_logo(self, name, when, links=None, box=CS2_EVENT_LOGO):
+    def _cs2_event_logo(self, name, when, links=None, box=CS2_EVENT_LOGO, fallback=True):
         """The event's logo contained in ``box``: the bundled one, else the one HLTV's event lists gave
-        for that name (``links``); None when neither has one."""
+        for that name (``links``); with ``fallback`` (an upcoming match's own event line), else its
+        organiser's, else a badge of its first word. None when none applies."""
         if not name:
             return None
         logo = None
@@ -1539,8 +1588,10 @@ class ProRenderMixin:
                 logo = None
         if logo is None and (links or {}).get(name):
             logo = self._image_from_url(links[name], name)
+        if logo is None and fallback:
+            logo = _organiser_logo(str(name))
         if logo is None:
-            return None
+            return _event_badge(str(name), box) if fallback else None
         logo = self._trim_alpha(logo.convert("RGBA"))
         return ImageOps.contain(logo, box, method=Image.Resampling.LANCZOS) if logo.width > 1 else None
 
