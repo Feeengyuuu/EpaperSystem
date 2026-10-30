@@ -36,7 +36,7 @@
 - NASA Pics × Space Weather: JPL's logo from Commons (public domain), for the near-Earth objects.
 - AI 论文日报 (ai_papers): Hugging Face's logo, with and without its name, and arXiv's, from Commons.
 - 资金雷达's Fear & Greed gauge: CNN's logo from Commons (public domain).
-- 湾区交通观测's BART departures: BART's logo from Commons (public domain).
+- 湾区交通观测's BART departures: BART's logo and its five lines' lettered bullets from Commons (public domain).
 - 环球此刻's fireballs: JPL's logo (as for NASA Pics) beside NASA's.
 - Orbital Signal's space-news line: each news site's own mark (NASA's, ESA's and Ars Technica's from
   Commons; SpaceNews', NASASpaceflight's, Spaceflight Now's and European Spaceflight's from their own
@@ -245,6 +245,21 @@ LOGOS = {
             [MONEY], 1.0),
     "bart": ((COMMONS.format(path="2/26/Bart-logo.svg", name="Bart-logo.svg"), COMMONS_FILE.format(name="Bart-logo.svg"),
               PUBLIC_DOMAIN), [PLUGINS / "bay_commute" / "assets" / "logos"], 1.0),
+    "bart-orange": ((COMMONS.format(path="7/71/Orange_Line_%28BART%29.svg", name="Orange_Line_%28BART%29.svg"),
+                      COMMONS_FILE.format(name="Orange_Line_(BART).svg"), PUBLIC_DOMAIN),
+                     [PLUGINS / "bay_commute" / "assets" / "logos"], 1.0),
+    "bart-red": ((COMMONS.format(path="c/c1/Red_Line_%28BART%29.svg", name="Red_Line_%28BART%29.svg"),
+                      COMMONS_FILE.format(name="Red_Line_(BART).svg"), PUBLIC_DOMAIN),
+                     [PLUGINS / "bay_commute" / "assets" / "logos"], 1.0),
+    "bart-yellow": ((COMMONS.format(path="4/4e/Yellow_Line_%28BART%29.svg", name="Yellow_Line_%28BART%29.svg"),
+                      COMMONS_FILE.format(name="Yellow_Line_(BART).svg"), PUBLIC_DOMAIN),
+                     [PLUGINS / "bay_commute" / "assets" / "logos"], 1.0),
+    "bart-blue": ((COMMONS.format(path="8/8f/Blue_Line_%28BART%29.svg", name="Blue_Line_%28BART%29.svg"),
+                      COMMONS_FILE.format(name="Blue_Line_(BART).svg"), PUBLIC_DOMAIN),
+                     [PLUGINS / "bay_commute" / "assets" / "logos"], 1.0),
+    "bart-green": ((COMMONS.format(path="e/ed/Green_Line_%28BART%29.svg", name="Green_Line_%28BART%29.svg"),
+                      COMMONS_FILE.format(name="Green_Line_(BART).svg"), PUBLIC_DOMAIN),
+                     [PLUGINS / "bay_commute" / "assets" / "logos"], 1.0),
     "news-nasa": ((COMMONS.format(path="e/e5/NASA_logo.svg", name="NASA_logo.svg"),
                    COMMONS_FILE.format(name="NASA_logo.svg"), PUBLIC_DOMAIN), [SPACE_NEWS], 1.0),
     "news-esa": ((COMMONS.format(path="b/bd/European_Space_Agency_logo.svg", name="European_Space_Agency_logo.svg"),

@@ -44,6 +44,61 @@
         64
       ],
       "sha256": "dfdcdebad7f6050f688729a9cb9c335882196c2d3e86ce883fbeae0c625ec43f"
+    },
+    "bart-orange": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/71/Orange_Line_%28BART%29.svg/500px-Orange_Line_%28BART%29.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Orange_Line_(BART).svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "a0249d864bf96c5184f97605a233ee282ea27a7c62e8aa51d36111ed279e1f6a",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "91f2a02b8f5fae629a8c686c1f1537f8617bf685d6e4880b62ff110f52aab4d0"
+    },
+    "bart-red": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Red_Line_%28BART%29.svg/500px-Red_Line_%28BART%29.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Red_Line_(BART).svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "38c862be4e5c0f7f4db2eb4cfc0a44e912fcbf5c11be5146909d1f5f4b81f516",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "7398e4f8b29381e6d8f53aa6d762afa81864fd2923c697ffcbf9ed8dc282f5c4"
+    },
+    "bart-yellow": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4e/Yellow_Line_%28BART%29.svg/500px-Yellow_Line_%28BART%29.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Yellow_Line_(BART).svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "560616c1ce897ed12828c7fee23fe48073e40df303c1baaef17ac999db6ece4a",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "7ab587ca1c05afc725e758c036fb4c2e9439cd446fc2d1311a6263775330e686"
+    },
+    "bart-blue": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8f/Blue_Line_%28BART%29.svg/500px-Blue_Line_%28BART%29.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Blue_Line_(BART).svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "7f8fc4543e4fd883638a4fbbe933ac6a408559bfc6753b9870f3c498f31561ae",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "1a2d20c75250e52d78d685c55ad9f14d7e96a4fcb59b71a268dd419d63060565"
+    },
+    "bart-green": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ed/Green_Line_%28BART%29.svg/500px-Green_Line_%28BART%29.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Green_Line_(BART).svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "f3e56a250a94405be955dfe89e0dc0bf3dda9bc1681c5ba3715c291a9864c4b5",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "cf3394e72da91f345bb131e74e616e98578b67088314cdab6688322c2e93ec29"
     }
   }
 }

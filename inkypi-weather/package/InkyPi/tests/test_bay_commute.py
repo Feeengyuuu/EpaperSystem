@@ -101,13 +101,13 @@ def quiet_buoy(monkeypatch):
 
 BART_PAYLOAD = {"root": {"station": [{"name": "Warm Springs/South Fremont", "abbr": "WARM", "etd": [
     {"destination": "Berryessa", "abbreviation": "BERY", "estimate": [
-        {"minutes": "13", "direction": "South", "hexcolor": "#ff9933", "cancelflag": "0"},
+        {"minutes": "13", "direction": "South", "color": "ORANGE", "hexcolor": "#ff9933", "cancelflag": "0"},
         {"minutes": "33", "direction": "South", "hexcolor": "#ff9933", "cancelflag": "0"}]},
     {"destination": "Richmond", "abbreviation": "RICH", "estimate": [
-        {"minutes": "Leaving", "direction": "North", "hexcolor": "#ff9933", "cancelflag": "0"},
+        {"minutes": "Leaving", "direction": "North", "color": "ORANGE", "hexcolor": "#ff9933", "cancelflag": "0"},
         {"minutes": "28", "direction": "North", "hexcolor": "#ff9933", "cancelflag": "1"}]},
     {"destination": "Daly City", "abbreviation": "DALY", "estimate": [
-        {"minutes": "5", "direction": "North", "hexcolor": "#339933", "cancelflag": "0"}]}]}]}}
+        {"minutes": "5", "direction": "North", "color": "GREEN", "hexcolor": "#339933", "cancelflag": "0"}]}]}]}}
 
 
 @pytest.fixture(autouse=True)
@@ -124,6 +124,9 @@ def test_bart_departures_become_clock_times_and_drop_cancelled_and_departed_trai
 
     assert data["station"] == "Warm Springs/South Fremont" and sources.valid_bart(data)
     assert [len(line["departures"]) for line in data["lines"]] == [2, 1, 1]  # the cancelled train is gone
+    assert [line["line"] for line in data["lines"]] == ["orange", "orange", "green"]
+    from plugins.bay_commute.map_view import source_logo
+    assert all(source_logo(f"bart-{name}", 12) is not None for name in sources.BART_LINES)
     lines = sources.coming_trains(data, NOW + timedelta(minutes=6))
     assert [(line["destination"], [stamp.strftime("%H:%M") for stamp in line["departures"]]) for line in lines] == [
         ("Berryessa", ["22:43", "23:03"])]

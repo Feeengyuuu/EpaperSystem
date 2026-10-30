@@ -429,11 +429,18 @@ def bart(page, payload, now):
     step = (band_bottom - band_top) / len(lines)
     for index, line in enumerate(lines):
         y = round(band_top + index * step + (step - BART_ROW_STEP) / 2)
-        page.draw.ellipse((512, y + 2, 520, y + 10), fill=line["colour"])
+        # The line's lettered bullet, as BART prints it (its colours stay by night); a dot in the
+        # line's colour for one without (the airport shuttle).
+        bullet = source_logo(f"bart-{line['line']}", 12) if line.get("line") else None
+        if bullet is not None:
+            page.image.paste(bullet, (512, y + 1), bullet)
+            bullet.close()
+        else:
+            page.draw.ellipse((514, y + 3, 522, y + 11), fill=line["colour"])
         times = " · ".join(stamp.astimezone(PACIFIC).strftime("%H:%M") for stamp in line["departures"][:3])
         times_w = page.draw.textlength(times, font=font(12, "bart"))
         page.text((784, y), times, 12, "blue", role="bart", align="right")
-        page.text((525, y), line["destination"], 12, role="bart", width=272 - 27 - times_w, bold=False)
+        page.text((529, y), line["destination"], 12, role="bart", width=272 - 31 - times_w, bold=False)
 
 
 def footer(page, payload, now):

@@ -25,6 +25,8 @@ BART_PUBLIC_KEY = "MW9S-E7SL-26DU-VV8V"
 DEFAULT_BART_STATION = "WARM"
 BART_CODE = re.compile(r"^[A-Za-z0-9]{4}$")
 BART_COLOUR = re.compile(r"^#[0-9a-fA-F]{6}$")
+# The lines BART letters on its maps and signs (assets/logos/bart-<line>.png).
+BART_LINES = ("orange", "red", "yellow", "blue", "green")
 BART_DEPARTURES = 3
 COMPASS = {"N": "北", "NNE": "北东北", "NE": "东北", "ENE": "东东北", "E": "东", "ESE": "东东南", "SE": "东南",
            "SSE": "南东南", "S": "南", "SSW": "南西南", "SW": "西南", "WSW": "西西南", "W": "西", "WNW": "西西北",
@@ -360,7 +362,7 @@ def parse_bart(payload, now):
     for etd in station.get("etd") or []:
         if not isinstance(etd, dict) or not str(etd.get("destination") or "").strip():
             continue
-        times, colour, direction = [], None, ""
+        times, colour, direction, name = [], None, "", ""
         for estimate in etd.get("estimate") or []:
             if not isinstance(estimate, dict) or str(estimate.get("cancelflag")) == "1":
                 continue
@@ -372,8 +374,10 @@ def parse_bart(payload, now):
             times.append((now + timedelta(minutes=wait)).isoformat())
             colour = colour or (estimate.get("hexcolor") if BART_COLOUR.match(str(estimate.get("hexcolor") or "")) else None)
             direction = direction or str(estimate.get("direction") or "")
+            name = name or str(estimate.get("color") or "").strip().lower()
         if times:
             lines.append({"destination": str(etd["destination"]).strip()[:40], "colour": colour or "#8c96a0",
+                          "line": name if name in BART_LINES else "",
                           "direction": direction[:10], "departures": sorted(times)[:BART_DEPARTURES]})
     if not station.get("name"):
         raise ValueError("BART returned no station")
