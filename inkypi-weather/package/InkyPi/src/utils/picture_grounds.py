@@ -2,9 +2,9 @@
 
 A seal, logo or avatar on a flat ground loses the colour at least ``share`` of its edge is within
 ``tolerance`` of, flooded in from the edge (the same colour inside the mark stays); a photo keeps
-its frame. A diagram drawn on white (a paper's figure) is blended into the page instead of sitting
-on a white mat: multiplied onto a light page, and on a dark one turned to light-on-dark first (its
-lightness inverted, its hues kept) and lightened onto it.
+its frame. A diagram drawn on white (a paper's figure) can lose its empty margins, and is blended
+into the page instead of sitting on a white mat: multiplied onto a light page, and on a dark one
+turned to light-on-dark first (its lightness inverted, its hues kept) and lightened onto it.
 """
 
 from __future__ import annotations
@@ -83,6 +83,21 @@ def drawn_on_white(picture, *, tolerance=WHITE_TOLERANCE, share=WHITE_SHARE):
     edge = _edge(rgb.size)
     white = sum(min(rgb.getpixel(point)) >= 255 - tolerance for point in edge)
     return white >= share * len(edge)
+
+
+def trim_white(picture, *, tolerance=WHITE_TOLERANCE, margin=2):
+    """``picture`` cropped to what is drawn on its white ground, ``margin`` px around it: a
+    figure's empty margins go, so what it shows can be drawn larger."""
+    rgb = picture.convert("RGB")
+    red, green, blue = ImageChops.invert(rgb).split()
+    drawn = ImageChops.lighter(ImageChops.lighter(red, green), blue).point(
+        lambda value: 255 if value > tolerance else 0)
+    box = drawn.getbbox()
+    if box is None:
+        return rgb
+    left, top, right, bottom = box
+    return rgb.crop((max(0, left - margin), max(0, top - margin),
+                     min(rgb.width, right + margin), min(rgb.height, bottom + margin)))
 
 
 def _light_on_dark(rgb):

@@ -38,6 +38,9 @@ FIGURE_SECONDS = 30 * 86400
 SHOWN = 12
 PICTURED = 5
 STILL_PIXELS = (480, 360)
+# arXiv figures are often large PNGs (a 1360 x 2040 sample grid runs to 6.5 MB): one may download
+# to this size; its pixels stay within the thumbnail loader's limits.
+STILL_MAX_BYTES = 8 * 1024 * 1024
 AVATAR_PIXELS = (96, 96)
 # The translation request waits at most this long and runs only with this much of the refresh left.
 TRANSLATE_MIN_SECONDS = 35
@@ -114,12 +117,19 @@ class AiPapers(BasePlugin):
         return str(load("OPEN_AI_SECRET") or load("OPENAI_API_KEY") or "").strip()
 
     def _images(self, payload, *, allow_network, context):
-        """The papers' figures and their organisations' avatars (their logos on the Hub)."""
+        """The papers' figures (each paper's first that loads) and their organisations' avatars
+        (their logos on the Hub)."""
         papers = payload["papers"]
         common = {"cached_only": not allow_network, "http": get_http_client(), "context": context,
                   "safe_url": sources.safe_image_url, "user_agent": sources.USER_AGENT}
-        stills = load_thumbnails([url for paper in papers[:PICTURED] for url in render.picture_urls(paper)],
-                                 self._cache_subdir("stills"), size=STILL_PIXELS, **common)
+        stills = {}
+        for paper in papers[:PICTURED]:
+            for url in render.picture_urls(paper):
+                found = load_thumbnails([url], self._cache_subdir("stills"), size=STILL_PIXELS,
+                                        max_bytes=STILL_MAX_BYTES, **common)
+                if found:
+                    stills.update(found)
+                    break
         avatars = load_thumbnails([paper["org_avatar"] for paper in papers if paper.get("org_avatar")],
                                   self._cache_subdir("avatars"), size=AVATAR_PIXELS, keep_alpha=True, **common)
         return {**stills, **avatars}

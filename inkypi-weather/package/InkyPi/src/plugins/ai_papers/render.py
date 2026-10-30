@@ -1,13 +1,15 @@
 """800 x 480 AI 论文日报 page.
 
-Left: the most upvoted paper leads with its figure, the organisation behind it (its Hub avatar,
-its logo), its title and one-sentence summary, its keywords, and its upvotes, comments, GitHub
-stars and arXiv id. The next four stand in a 2 x 2 grid of cards beneath, each with its figure.
-Right: the rest of the ranking, each paper's title over its organisation and its upvotes. The
-header names the sources by their logos: Hugging Face Papers and arXiv.
+Left: the most upvoted paper leads with its figure down the card's full height, then the
+organisation behind it (its Hub avatar, its logo), its title and one-sentence summary, its
+keywords, and its upvotes, comments, GitHub stars and arXiv id. The next four stand in a 2 x 2 grid
+of cards beneath, each with its figure filling the card's left side. Right: the rest of the
+ranking, each paper's title over its organisation and its upvotes. The header names the sources by
+their logos: Hugging Face Papers and arXiv.
 
-Figures sit on the page itself: a diagram drawn on white is blended into the card's ground, a
-photo keeps its own frame, and a paper without either shows a generated placeholder. The
+Figures are shown as large as their boxes allow. A photo fills its box, cropped to it. A diagram
+drawn on white loses its empty margins, is cut to its box's shape only so far (most of it stays)
+and is blended into the card's ground. A paper without either shows a generated placeholder. The
 organisations' avatars lose their flat tiles. The cards carry a quiet doodle of research themes.
 """
 
@@ -21,7 +23,7 @@ from utils.doodle_backdrop import paint_doodles
 from utils.flat_icons import draw_icon
 from utils.local_wordmark import load_source_logo, paste_local_wordmark
 from utils.page_canvas import PageCanvas
-from utils.picture_grounds import blend_drawing, cut_flat_ground, drawn_on_white, readable_on
+from utils.picture_grounds import blend_drawing, cut_flat_ground, drawn_on_white, readable_on, trim_white
 
 
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -34,14 +36,21 @@ HF_YELLOW = (0xFF, 0xD2, 0x1E)
 HF_ORANGE = (0xFF, 0x9D, 0x00)
 WEEKDAYS = "一二三四五六日"
 LEAD = (12, 60, 520, 268)
-LEAD_FIGURE = (22, 70, 214, 214)
+# The lead's figure runs the card's full height, as wide as its shape asks within these bounds.
+LEAD_FIGURE_WIDTH = (184, 272)
 GRID = (12, 276, 520, 470)
 GRID_GAP = 8
 RANKING = (528, 60, 788, 470)
 RANKING_ROWS = 7
-# The cards' figures sit in a box this big, whole (a paper's diagram is not cropped).
-CARD_FIGURE = (100, 75)
+# A card's figure fills the card's full height down its left side, this wide.
+CARD_FIGURE_WIDTH = 124
+# A diagram is cut to its box's shape only so far: at least this share of its width (or height)
+# stays, the lead's more than a card's. It keeps this far from its box's edges.
+LEAD_DIAGRAM_KEPT = 0.75
+CARD_DIAGRAM_KEPT = 0.6
+DIAGRAM_INSET = 6
 AVATAR = 18
+LEAD_SUMMARY_LINES = 4
 KEYWORDS = 3
 DOODLES = ASSETS / "doodles" / "papers.png"
 DOODLE_STRENGTH = {"day": 0.2, "night": 0.3}
@@ -132,28 +141,68 @@ def _placeholder():
         return None
 
 
-def _figure(canvas, picture, box, ground):
-    """The paper's figure whole in ``box``, on the page: a diagram blended into ``ground``, a photo
-    with rounded corners, else the placeholder."""
+def _prepared(picture):
+    """The figure to show and whether it is a diagram drawn on white (its empty margins gone)."""
+    if picture is None:
+        return None, False
+    if drawn_on_white(picture):
+        return trim_white(picture), True
+    return picture, False
+
+
+def _figure_width(art, drawing, height, bounds):
+    """How wide a box ``height`` px tall should be to show ``art`` whole, within ``bounds``."""
+    low, high = bounds
+    if art is None:
+        return low
+    inset = 2 * DIAGRAM_INSET if drawing else 0
+    return max(low, min(high, round((height - inset) * art.width / art.height) + inset))
+
+
+def _shown(picture, size, kept):
+    """``picture`` as large as it goes in ``size``: cut to the box's shape, but keeping at least
+    ``kept`` of its width (or height), then fitted whole."""
+    width, height = picture.size
+    shape = size[0] / size[1]
+    if width / height > shape:
+        side = max(width * kept, height * shape)
+        crop = ((width - side) / 2, 0, (width + side) / 2, height)
+    else:
+        side = max(height * kept, width / shape)
+        crop = (0, (height - side) / 2, width, (height + side) / 2)
+    return ImageOps.contain(picture.crop(tuple(round(value) for value in crop)), size, Image.Resampling.LANCZOS)
+
+
+def _centred(canvas, art, box, ground):
+    """Where ``art`` sits centred in ``box``, the page's doodles cleared under it to ``ground``."""
+    left, top, right, bottom = box
+    at = (round(left + (right - left - art.width) / 2), round(top + (bottom - top - art.height) / 2))
+    canvas.draw.rectangle((at[0], at[1], at[0] + art.width - 1, at[1] + art.height - 1), fill=ground)
+    return at
+
+
+def _figure(canvas, art, drawing, box, ground, *, radius, kept):
+    """The paper's figure filling ``box``: a photo cropped to it with rounded corners, a diagram as
+    large as it goes (cut to the box's shape down to ``kept`` of it) blended into ``ground``, else
+    the placeholder."""
     left, top, right, bottom = box
     size = (right - left, bottom - top)
-    canvas.draw.rectangle((left, top, right - 1, bottom - 1), fill=ground)
-    if picture is None:
-        art = _placeholder()
-        if art is None:
+    if art is None:
+        placeholder = _placeholder()
+        if placeholder is None:
             draw_icon(canvas.draw, "paper", ((left + right) / 2 - 14, (top + bottom) / 2 - 14), 28,
                       canvas.color("muted"), ground)
             return
-        art = ImageOps.contain(art, (round(size[0] * 0.86), round(size[1] * 0.86)), Image.Resampling.LANCZOS)
-        canvas.image.paste(art, (round(left + (size[0] - art.width) / 2), round(top + (size[1] - art.height) / 2)), art)
+        placeholder = ImageOps.contain(placeholder, (round(size[0] * 0.86), round(size[1] * 0.86)),
+                                       Image.Resampling.LANCZOS)
+        canvas.image.paste(placeholder, _centred(canvas, placeholder, box, ground), placeholder)
         return
-    art = ImageOps.contain(picture.convert("RGB"), size, Image.Resampling.LANCZOS)
-    at = (round(left + (size[0] - art.width) / 2), round(top + (size[1] - art.height) / 2))
-    if drawn_on_white(picture):
-        blend_drawing(canvas.image, art, at, night=_night(canvas))
-    else:
-        tile = _rounded(art, art.size, 5)
-        canvas.image.paste(tile, at, tile)
+    if not drawing:
+        tile = _rounded(art, size, radius)
+        canvas.image.paste(tile, (left, top), tile)
+        return
+    shown = _shown(art.convert("RGB"), (size[0] - 2 * DIAGRAM_INSET, size[1] - 2 * DIAGRAM_INSET), kept)
+    blend_drawing(canvas.image, shown, _centred(canvas, shown, box, ground), night=_night(canvas))
 
 
 def _doodles(canvas, box, ground, offset=(0, 0)):
@@ -195,53 +244,84 @@ def _org_line(canvas, paper, images, x, middle, right, size):
         canvas.text((x, middle), name, size, "muted", anchor="lm", width=right - x)
 
 
+def _standing(canvas, paper, x, right, middles):
+    """The paper's upvotes, comments, GitHub stars and arXiv id, in that order, along the lines
+    whose middles are ``middles``: a part that does not fit the rest of a line starts the next."""
+    votes = count_text(paper["upvotes"])
+    logo = _logo(canvas, "arxiv", 13)
+
+    def upvotes(at, middle):
+        at += _upvote(canvas, at, middle, paper["upvotes"], 13) + 4
+        canvas.text((at, middle), "赞", 11, "muted", anchor="lm", bold=False)
+
+    def stat(icon, text):
+        return 15 + canvas.width(text, 11, False), lambda at, middle: _stat(canvas, at, middle, icon, text)
+
+    def arxiv(at, middle):
+        at += _paste_logo(canvas, "arxiv", at, middle, 13) + 5
+        canvas.text((at, middle), paper["id"], 11, anchor="lm", bold=False)
+
+    parts = [(12 + canvas.width(votes, 13) + 4 + canvas.width("赞", 11, False), upvotes),
+             stat("comment", f"{paper['comments']} 评论")]
+    if paper.get("stars"):
+        parts.append(stat("star", f"{count_text(paper['stars'])} GitHub 星"))
+    parts.append(((logo.width + 5 if logo else 0) + canvas.width(paper["id"], 11, False), arxiv))
+    lines = iter(middles)
+    middle, at = next(lines), x
+    for width, draw in parts:
+        if at > x and at + width > right:
+            middle, at = next(lines, None), x
+            if middle is None:
+                return
+        draw(at, middle)
+        at += width + 12
+
+
 def _lead(canvas, paper, images, chinese):
     left, top, right, bottom = LEAD
     canvas.draw.rounded_rectangle(LEAD, radius=6, fill=canvas.color("lead"))
     _doodles(canvas, LEAD, canvas.color("lead"))
-    canvas.draw.rectangle((left, top + 6, left + 3, bottom - 6), fill=HF_YELLOW)
-    _figure(canvas, _picture(paper, images), LEAD_FIGURE, canvas.color("lead"))
-    _badge(canvas, LEAD_FIGURE[0] - 4, LEAD_FIGURE[1] - 4, 1, 24)
-    x, text_right = LEAD_FIGURE[2] + 12, right - 10
-    _org_line(canvas, paper, images, x, top + 18, text_right, 12)
+    # The figure runs the card's full height down its left side, as wide as its shape asks.
+    art, drawing = _prepared(_picture(paper, images))
+    figure_width = _figure_width(art, drawing, bottom + 1 - top, LEAD_FIGURE_WIDTH)
+    _figure(canvas, art, drawing, (left, top, left + figure_width, bottom + 1), canvas.color("lead"), radius=6,
+            kept=LEAD_DIAGRAM_KEPT)
+    _badge(canvas, left + 6, top + 6, 1, 24)
+    x, text_right = left + figure_width + 12, right - 10
+    _org_line(canvas, paper, images, x, top + 16, text_right, 12)
     title, summary, translated = shown_text(paper, chinese)
-    y = top + 32
+    y = top + 30
     for line in canvas.wrap(title, 18, text_right - x, 3 if not translated else 2):
         canvas.text((x, y), line, 18, anchor="la")
         y += 24
     if translated:
         canvas.text((x, y + 1), paper["title"], 10, "muted", anchor="la", width=text_right - x, bold=False)
         y += 16
-    for line in canvas.wrap(summary, 12, text_right - x, 3 if y < top + 110 else 2):
+    # The paper's standing closes the column in two lines; the summary and keywords take what is left.
+    footer = bottom - 40
+    for line in canvas.wrap(summary, 12, text_right - x, max(0, min(LEAD_SUMMARY_LINES, (footer - y) // 18))):
         canvas.text((x, y + 2), line, 12, anchor="la", bold=False)
         y += 18
-    chip_x = x
-    for word in paper.get("keywords", [])[:KEYWORDS]:
+    chip_x, keywords = x, paper.get("keywords", [])[:KEYWORDS] if y + 22 <= footer else []
+    for word in keywords:
         width = canvas.width(word, 10, False) + 12
         if chip_x + width > text_right:
             break
         canvas.draw.rounded_rectangle((chip_x, y + 6, chip_x + width, y + 22), radius=8, fill=canvas.color("track"))
         canvas.text((chip_x + width / 2, y + 14), word, 10, anchor="mm", bold=False)
         chip_x += width + 6
-    # The figure's caption line: the paper's standing.
-    middle = bottom - 22
-    sx = LEAD_FIGURE[0]
-    sx += _upvote(canvas, sx, middle, paper["upvotes"], 13) + 4
-    sx += canvas.text((sx, middle), "赞", 11, "muted", anchor="lm", bold=False) + 12
-    sx += _stat(canvas, sx, middle, "comment", f"{paper['comments']} 评论") + 12
-    if paper.get("stars"):
-        sx += _stat(canvas, sx, middle, "star", f"{count_text(paper['stars'])} GitHub 星") + 12
-    sx += _paste_logo(canvas, "arxiv", sx, middle, 13) + 5
-    canvas.text((sx, middle), paper["id"], 11, anchor="lm", bold=False)
+    _standing(canvas, paper, x, text_right, (bottom - 31, bottom - 12))
 
 
 def _card(canvas, box, rank, paper, images, chinese):
     left, top, right, bottom = box
     canvas.draw.rounded_rectangle(box, radius=6, outline=canvas.color("rule"), width=1)
     _doodles(canvas, (left + 1, top + 1, right - 1, bottom - 1), canvas.color("paper"), offset=(rank * 97, rank * 61))
-    figure = (left + 8, top + 8, left + 8 + CARD_FIGURE[0], top + 8 + CARD_FIGURE[1])
-    _figure(canvas, _picture(paper, images), figure, canvas.color("paper"))
-    _badge(canvas, left + 3, top + 3, rank, 18)
+    # The figure fills the card's full height down its left side, inside its border.
+    art, drawing = _prepared(_picture(paper, images))
+    figure = (left + 1, top + 1, left + 1 + CARD_FIGURE_WIDTH, bottom)
+    _figure(canvas, art, drawing, figure, canvas.color("paper"), radius=5, kept=CARD_DIAGRAM_KEPT)
+    _badge(canvas, left + 4, top + 4, rank, 18)
     x, text_right = figure[2] + 8, right - 8
     count_w = _upvote(canvas, text_right, top + 13, paper["upvotes"], 11, anchor="rm")
     _org_line(canvas, paper, images, x, top + 13, text_right - count_w - 6, 10)

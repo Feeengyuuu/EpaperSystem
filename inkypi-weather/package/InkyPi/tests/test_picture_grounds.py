@@ -5,7 +5,7 @@ from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from utils.picture_grounds import blend_drawing, cut_flat_ground, drawn_on_white, readable_on  # noqa: E402
+from utils.picture_grounds import blend_drawing, cut_flat_ground, drawn_on_white, readable_on, trim_white  # noqa: E402
 
 
 def _diagram():
@@ -19,6 +19,14 @@ def _diagram():
 def test_a_diagram_on_white_is_told_from_a_photo():
     assert drawn_on_white(_diagram())
     assert not drawn_on_white(Image.effect_noise((60, 40), 80).convert("RGB"))
+
+
+def test_a_figure_loses_its_empty_white_margins():
+    figure = Image.new("RGB", (200, 120), (255, 255, 255))
+    ImageDraw.Draw(figure).rectangle((50, 30, 149, 89), fill=(30, 90, 220))
+
+    assert trim_white(figure).size == (104, 64)  # its drawing and 2 px around it
+    assert trim_white(Image.new("RGB", (20, 10), (255, 255, 255))).size == (20, 10)
 
 
 def test_a_diagram_takes_the_ground_it_lands_on_by_day_and_turns_light_at_night():

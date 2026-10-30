@@ -1,13 +1,15 @@
 import json
+import os
 import sys
 import threading
 import time
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -152,13 +154,65 @@ def test_the_page_draws_the_lead_cards_and_ranking(mode):
     page = render.render_page((800, 480), {"papers": papers, "chinese": chinese}, {"themeMode": mode}, NOW, images)
 
     assert page.size == (800, 480)
-    lead_figure = page.crop(render.LEAD_FIGURE).convert("RGB")
-    assert (40, 120, 200) in set(lead_figure.get_flattened_data())
+    # The lead's photo fills the card's full height down its left side, and each card's its left side.
+    left, top, _right, bottom = render.LEAD
+    lead_figure = page.crop((left + 40, top, left + render.LEAD_FIGURE_WIDTH[0] - 8, bottom + 1)).convert("RGB")
+    assert set(lead_figure.get_flattened_data()) == {(40, 120, 200)}
+    grid_left, grid_top = render.GRID[:2]
+    card_figure = page.crop((grid_left + 32, grid_top + 8, grid_left + render.CARD_FIGURE_WIDTH - 6, grid_top + 84))
+    assert set(card_figure.convert("RGB").get_flattened_data()) == {(40, 120, 200)}
     assert render.shown_text(papers[0], chinese)[:2] == ("首篇论文的中文标题", "一句话说明它做了什么。")
     assert render.shown_text(papers[1], chinese)[0] == papers[1]["title"]
     # The ranking rows carry the organisations' avatars (orange here).
     ranking = page.crop(render.RANKING).convert("RGB")
     assert sum(1 for pixel in ranking.get_flattened_data() if pixel == (255, 157, 0)) > 200
+
+
+def test_a_wide_diagram_leads_large_its_white_margins_gone():
+    papers = _papers(6)
+    papers[0]["image"] = None
+    papers[0]["figures"] = ["https://arxiv.org/html/2610.00000v1/x1.png"]
+    figure = Image.new("RGB", (800, 400), (255, 255, 255))
+    ImageDraw.Draw(figure).rectangle((200, 100, 599, 299), fill=(0, 0, 255))
+
+    page = render.render_page((800, 480), {"papers": papers}, {"themeMode": "day"}, NOW,
+                              {papers[0]["figures"][0]: figure})
+
+    left, top, _right, bottom = render.LEAD
+    lead = page.crop((left, top, left + render.LEAD_FIGURE_WIDTH[1], bottom)).convert("RGB")
+    blue = sum(1 for red, green, blue in lead.get_flattened_data() if blue > 150 and red < 40 and green < 40)
+    # Whole and with its margins it showed 96 x 48 px of blue before; now cut to three quarters of its width.
+    assert blue > 40_000
+
+
+def test_a_large_arxiv_figure_loads_and_each_paper_stops_at_its_first(monkeypatch, tmp_path):
+    from plugins.ai_papers import ai_papers
+
+    large = BytesIO()
+    Image.frombytes("RGB", (700, 700), os.urandom(700 * 700 * 3)).save(large, format="PNG")
+    assert large.tell() > 1024 * 1024  # over the thumbnail loader's usual cap
+    calls = []
+
+    class Http:
+        def request_bytes(self, _method, url, **_kwargs):
+            calls.append(url)
+            if url.endswith("x1.png"):
+                raise OSError("not found")
+            return SimpleNamespace(data=large.getvalue())
+
+    def subdir(name):
+        (tmp_path / name).mkdir(exist_ok=True)
+        return tmp_path / name
+
+    monkeypatch.setattr(ai_papers, "get_http_client", Http)
+    figures = [f"https://arxiv.org/html/2610.00001v1/x{index}.png" for index in (1, 2, 3)]
+    papers = [{"id": "2610.00001", "image": None, "figures": figures, "org_avatar": None}]
+
+    images = ai_papers.AiPapers._images(SimpleNamespace(_cache_subdir=subdir), {"papers": papers},
+                                        allow_network=True, context=_context())
+
+    assert calls == figures[:2]  # the third is never fetched
+    assert list(images) == [figures[1]] and images[figures[1]].size == (360, 360)
 
 
 def test_a_paper_without_an_upload_shows_its_first_arxiv_figure_that_loaded():
