@@ -477,3 +477,27 @@ def test_bart_rows_are_set_in_bart_typeface():
     assert font(12, "bart", bold=False).getname() != font(12, "bart").getname()
     record = json.loads((ASSETS / "fonts" / "Hind.source.json").read_text(encoding="utf-8"))
     assert record["licence"].startswith("SIL Open Font License") and (ASSETS / "fonts" / "Hind-OFL.txt").is_file()
+
+
+def test_the_tide_readout_holds_past_midnight_and_falls_back_to_the_day_range(monkeypatch):
+    from plugins.bay_commute import command_render
+
+    late = NOW.replace(hour=23, minute=55)
+    recorded = []
+    original = Canvas.text
+
+    def capture(self, xy, text, *args, **kwargs):
+        recorded.append((round(xy[1]), str(text)))
+        return original(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(Canvas, "text", capture)
+    page = Canvas({})
+    # Today's samples end at 23:45; the prediction runs on into tomorrow, so the readout stays.
+    command_render.tide_chart(page, tide_data(late), late)
+    assert (command_render.READOUT_Y, "预测此刻") in recorded
+    recorded.clear()
+    morning_only = {**tide_data(late), "curve": [row for row in tide_data(late)["curve"]
+                                                 if sources.parse_time(row["time"]) < late.replace(hour=12)]}
+    command_render.tide_chart(Canvas({}), morning_only, late)
+    assert (command_render.READOUT_Y, "今日潮位") in recorded
+    assert command_render.READOUT_Y < command_render.CHART_HEADER_Y < command_render.CHART[1]

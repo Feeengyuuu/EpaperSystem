@@ -31,7 +31,8 @@ PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 # set on it as a variable font (None for a static one); Inter stands in without it.
 DISPLAY_FACE = (PLUGIN_ROOT.parent / "static" / "fonts" / "SpaceGrotesk-VF.ttf", 700)
 # The tide chart, then the buoy's row and BART's departures beneath it, down the right column.
-CHART = (536, 274, 782, 344)
+READOUT_Y, CHART_HEADER_Y = 226, 246
+CHART = (536, 261, 782, 344)
 BUOY_Y = 369
 BART_Y = 391
 BART_ROWS, BART_ROW_STEP = 3, 14
@@ -345,12 +346,19 @@ def tide_chart(page, data, now):
             y = max(top, min(bottom, y))
             page.draw.ellipse((x - 3, y - 3, x + 3, y + 3), fill=page.palette["blue"])
             _chart_label(page, x, y, parse_time(row["time"]).astimezone(PACIFIC).strftime("%H:%M"), row["type"] == "H")
-    found = tide_now(rows, now)
+    # The tide now reads off the whole prediction, so it holds past today's last sample at midnight.
+    found = tide_now(data.get("curve", []), now)
     if found:
         height, rising = found
-        page.text((512, 238), "预测此刻", 11, "muted")
-        page.text((575, 235), f"{height:.1f} ft", 16, "blue", role="display")
-        page.text((784, 238), "涨潮 ↑" if rising else "退潮 ↓", 11, "blue", align="right")
+        page.text((512, READOUT_Y), "预测此刻", 11, "muted")
+        page.text((575, READOUT_Y - 3), f"{height:.1f} ft", 16, "blue", role="display")
+        page.text((784, READOUT_Y), "涨潮 ↑" if rising else "退潮 ↓", 11, "blue", align="right")
+    else:
+        heights = [row["height"] for row in rows]
+        page.text((512, READOUT_Y), "今日潮位", 11, "muted")
+        page.text((575, READOUT_Y - 3), f"{min(heights):.1f} – {max(heights):.1f} ft", 16, "blue", role="display")
+    if found:
+        height, _rising = found
         x, y = xy({"time": now.isoformat(), "height": height})
         for yy in range(top, bottom, 4):
             page.draw.point((round(x), yy), fill=page.palette["muted"])
@@ -388,8 +396,8 @@ def tides(page, payload, settings, now):
         else:
             page.text((x, 164), "暂无预测", 16, "muted")
     page.rule((642, 131, 642, 213))
-    page.text((512, 260), now.strftime("%m/%d") + " · 24H 预测曲线", 10, "muted", bold=False)
-    page.text((784, 260), "MLLW / ft", 10, "muted", role="number", align="right", bold=False)
+    page.text((512, CHART_HEADER_Y), now.strftime("%m/%d") + " · 24H 预测曲线", 10, "muted", bold=False)
+    page.text((784, CHART_HEADER_Y), "MLLW / ft", 10, "muted", role="number", align="right", bold=False)
     tide_chart(page, data, now)
     buoy = payload.get("buoy") or {}
     measured = buoy.get("data") or {}
