@@ -3067,3 +3067,18 @@ def test_story_titles_and_facts_are_set_in_noto_sans_sc():
     fact = news_layout._story_font(news_layout.STORY_FACT_SIZE, news_layout.STORY_FACT_WEIGHT)
     assert title is not None and fact is not None and fact.size >= 12
     assert "Noto" in " ".join(title.getname())
+
+
+def test_each_section_label_is_led_by_its_generated_badge(monkeypatch):
+    from plugins.daily_ai_news import news_art, news_layout
+
+    for name in news_layout.SECTION_ICONS.values():
+        assert news_art.badge(name, 20, 20) is not None, name
+    plugin = _plugin()
+    image = plugin._render((800, 480), {"brief_title": "整点新闻"}, _page_payload(), datetime(2026, 10, 21), {"mode": "day"})
+    x, middle = news_layout.MARGIN + 10, news_layout.COLUMN_TOP + 9
+
+    # 国内's badge is its crimson disc with a white roof, where the plain bar used to stand.
+    pixels = [image.getpixel((x + dx, middle + dy)) for dx in range(-8, 9) for dy in range(-8, 9)]
+    assert sum(1 for r, g, b in pixels if r > 150 and g < 90 and b < 100) > 60
+    assert any(min(pixel) > 225 for pixel in pixels)

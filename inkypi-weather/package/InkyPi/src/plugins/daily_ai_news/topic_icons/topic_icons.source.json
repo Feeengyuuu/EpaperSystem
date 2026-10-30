@@ -94,5 +94,37 @@
     "source_sha256": "c020f00fa6b1623904b13d97ed858eb556004918dd0ece0cadf8ecebcac846ff",
     "processing": "cropped to the alpha bounding box, fitted to 72x144 with LANCZOS, transparent margin",
     "sha256": "d8ed9ead3dfe46c56e5f6541fa4451278968d889e3ce2012c81427763540ef04"
+  },
+  "section_domestic.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+    "job_id": "b07a037c-8d57-401a-8059-04b92fb64ed9",
+    "generated": "2026-10-29",
+    "source_sha256": "b21306631794f8d73291e1b540cdb472ad70901c79510603c871cccbc98442d4",
+    "processing": "one quarter of a 2x2 sheet of the four section badges, cropped to the alpha bounding box, fitted to 128x128 with LANCZOS, transparent margin",
+    "sha256": "f0876f1d3cb51c2c24115c3b5bcf7404ac99c0dce6cba4ae391c6f91b284126c"
+  },
+  "section_world.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+    "job_id": "b07a037c-8d57-401a-8059-04b92fb64ed9",
+    "generated": "2026-10-29",
+    "source_sha256": "b21306631794f8d73291e1b540cdb472ad70901c79510603c871cccbc98442d4",
+    "processing": "one quarter of a 2x2 sheet of the four section badges, cropped to the alpha bounding box, fitted to 128x128 with LANCZOS, transparent margin",
+    "sha256": "c9b2bae7cb24edd0dd7e851c3234a04710a9672c3bd5e18f25d6624f1f67c777"
+  },
+  "section_ashare.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+    "job_id": "b07a037c-8d57-401a-8059-04b92fb64ed9",
+    "generated": "2026-10-29",
+    "source_sha256": "b21306631794f8d73291e1b540cdb472ad70901c79510603c871cccbc98442d4",
+    "processing": "one quarter of a 2x2 sheet of the four section badges, cropped to the alpha bounding box, fitted to 128x128 with LANCZOS, transparent margin",
+    "sha256": "6132cef0c87940fd77722c3d880174406caa0700a8d261f3d975286ba6f1e9b3"
+  },
+  "section_us.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+    "job_id": "b07a037c-8d57-401a-8059-04b92fb64ed9",
+    "generated": "2026-10-29",
+    "source_sha256": "b21306631794f8d73291e1b540cdb472ad70901c79510603c871cccbc98442d4",
+    "processing": "one quarter of a 2x2 sheet of the four section badges, cropped to the alpha bounding box, fitted to 128x128 with LANCZOS, transparent margin",
+    "sha256": "a3c11157c0e7085414ee4c55195e29b6c8b54c2d8641be73203318fcacf10449"
   }
 }

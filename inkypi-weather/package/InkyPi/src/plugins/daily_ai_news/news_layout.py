@@ -59,6 +59,9 @@ STORY_ICON_SLOT = 40
 STORY_ICON_RADIUS = 15
 # Accents are palette roles (the plugin's page colours fill them); anything unlisted stays in ink.
 SECTION_ACCENTS = {"国内": "red", "A股": "red", "国际": "blue", "美股": "blue"}
+# Each section's label is led by its generated badge (topic_icons/section_*.png) in its colour;
+# a missing file falls back to a bar of that colour.
+SECTION_ICONS = {"国内": "section_domestic", "国际": "section_world", "A股": "section_ashare", "美股": "section_us"}
 # Each board is coloured the way its own market quotes it: mainland boards show
 # gains red and losses green, US boards gains green and losses red.
 GAINS_IN_RED = {"A股": True, "美股": False}
@@ -185,6 +188,14 @@ class NewsPage:
     def card(self, box, colour):
         """A reading card of ``colour`` behind a column or a market strip."""
         self.d.rounded_rectangle(box, radius=CARD_RADIUS, fill=self.tint(colour, CARD_TINT))
+
+    def section_mark(self, x, middle, size, label, colour):
+        """The section's badge ``size`` px from ``x``, centred on ``middle`` (a bar of ``colour`` without
+        it); returns where its label starts."""
+        if news_art.paste_badge(self.img, SECTION_ICONS.get(label, ""), x + size / 2, middle, size):
+            return x + size + 5
+        self.d.rectangle((x, middle - 6, x + 3, middle + 6), fill=colour)
+        return x + 10
 
     def accent(self, role):
         """The page colour for an accent role, or the theme's ink for none."""
@@ -369,9 +380,9 @@ class NewsPage:
         c = self.c
         mark = self.accent(SECTION_ACCENTS.get(label))
         self.card((x - CARD_BLEED, COLUMN_TOP - 5, x + width + CARD_BLEED, COLUMN_BOTTOM + 1), mark)
-        self.d.rectangle((x, COLUMN_TOP + 3, x + 3, COLUMN_TOP + 15), fill=mark)
-        self.text((x + 10, COLUMN_TOP), label, 14, True)
-        count_x = x + 14 + self.width(label, 14)
+        label_x = self.section_mark(x, COLUMN_TOP + 9, 20, label, mark)
+        self.text((label_x, COLUMN_TOP), label, 14, True)
+        count_x = label_x + 4 + self.width(label, 14)
         self.d.line((x, COLUMN_TOP + 22, x + width, COLUMN_TOP + 22), fill=c["rule"], width=1)
         y = COLUMN_TOP + 32
         plan, gap, facts = self.plan_column(items, width - 26 - STORY_ICON_SLOT, COLUMN_BOTTOM - y)
@@ -475,8 +486,7 @@ class NewsPage:
         c = self.c
         mark = self.accent(SECTION_ACCENTS.get(label))
         self.card((x - CARD_BLEED, MARKET_TOP - 2, x + width + CARD_BLEED, height - 5), c["ink"])
-        self.d.rectangle((x, MARKET_TOP + 2, x + 2, MARKET_TOP + 12), fill=mark)
-        self.text((x + 7, MARKET_TOP), label, 11, True)
+        self.text((self.section_mark(x, MARKET_TOP + 7, 15, label, mark), MARKET_TOP), label, 11, True)
         as_of = next((row.get("as_of_label") for row in rows if row.get("as_of_label")), "")
         if as_of:
             self.text((x + width, MARKET_TOP), f"截至 {as_of}", 10, True, c["ink"], "ra")
