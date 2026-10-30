@@ -74,6 +74,9 @@ STEAMCHARTS_CHART_URL = "https://steamcharts.com/app/{appid}/chart-data.json"
 STEAM_STORE_APPDETAILS = "https://store.steampowered.com/api/appdetails"
 STEAM_USER_STATS_URL = "https://store.steampowered.com/stats/userdata.json"
 STEAM_CAPSULE_URL = "https://cdn.akamai.steamstatic.com/steam/apps/{appid}/capsule_sm_120.jpg"
+# A game the store hides from this country (appdetails fails, its page errors) still has its
+# 460x215 header on the image CDN, where newer apps have no small capsule.
+STEAM_HEADER_URL = "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/{appid}/header.jpg"
 STEAM_CAPSULE_TIMEOUT = 15
 STEAM_CAPSULE_CACHE_SIZE = 128
 STEAM_STORE_TIMEOUT = 20
@@ -1398,7 +1401,8 @@ class SteamCharts(LiveOverviewMixin, BasePlugin):
         except Exception as error:
             logger.debug("Steam store page unavailable for app %s: %s", app_id, error)
             urls = ()
-        image = try_images(urls) or try_images((STEAM_CAPSULE_URL.format(appid=app_id),))
+        image = try_images(urls) or try_images((STEAM_HEADER_URL.format(appid=app_id),
+                                                STEAM_CAPSULE_URL.format(appid=app_id)))
         if not image:
             logger.warning("No usable Steam cover found for app %s", app_id)
         return image

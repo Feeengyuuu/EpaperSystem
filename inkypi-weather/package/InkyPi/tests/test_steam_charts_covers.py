@@ -327,3 +327,24 @@ def test_disabled_covers_do_not_fetch_store_page(monkeypatch):
     monkeypatch.setattr(plugin, "_fetch_store_page_images", unexpected)
     monkeypatch.setattr(plugin, "_image_url_to_data_uri", unexpected)
     plugin._apply_store_metadata([{"app_id": 1867240, "name": "WARDOGS"}], include_images=False)
+
+
+def test_a_game_hidden_from_this_country_still_shows_its_cdn_header(monkeypatch):
+    """GIRLS' FRONTLINE 2: EXILIUM: appdetails fails and the store page errors in the US, but the
+    CDN serves its header (the legacy small capsule 404s)."""
+    plugin = SteamCharts({"id": "steam_charts"})
+    monkeypatch.setattr(plugin, "_fetch_store_appdetails", lambda *args: {})
+
+    def page_errors(*args):
+        raise ValueError("Steam page has no verified cover for app 3308670")
+
+    monkeypatch.setattr(plugin, "_fetch_store_page_images", page_errors)
+    tried = []
+    header = module.STEAM_HEADER_URL.format(appid=3308670)
+    monkeypatch.setattr(plugin, "_image_url_to_data_uri",
+                        lambda url: tried.append(url) or ("data:image/png;base64,header" if url == header else ""))
+    games = [{"app_id": 3308670, "name": "GIRLS' FRONTLINE 2: EXILIUM"}]
+
+    plugin._apply_store_metadata(games)
+
+    assert games[0]["image"] == "data:image/png;base64,header" and tried == [header]
