@@ -15,7 +15,7 @@ from urllib.parse import unquote, urljoin, urlparse
 
 import icalendar
 import pytz
-from PIL import Image, ImageChops, ImageColor, ImageDraw, ImageOps
+from PIL import Image, ImageChops, ImageColor, ImageDraw, ImageFilter, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.presentation import (
@@ -236,10 +236,14 @@ CALENDAR_GRID_DOT_STEP, CALENDAR_GRID_INSET = 3, 6
 # How strongly the month's border illustration is printed on the page (0-1).
 CALENDAR_BACKDROP_SHARE = 0.42
 # It keeps that strength within this many pixels of the page's edges and falls to this share
-# of it in the middle; the agenda's band at the foot is printed at half again.
+# of it in the middle; the agenda's band at the foot (as tall as a full agenda) is printed at half
+# again, fading in over CALENDAR_AGENDA_FADE px rather than as a hard-edged box.
 CALENDAR_BACKDROP_EDGE = 46
 CALENDAR_BACKDROP_INNER = 0.32
-CALENDAR_AGENDA_BAND = 70
+CALENDAR_AGENDA_BAND = 132
+CALENDAR_AGENDA_FADE = 8
+# The agenda runs at most this many rows down a column (two columns side by side).
+CALENDAR_AGENDA_ROWS = 7
 # A cross is scribbled over a past day like a hand with a red marker would: about as wide as
 # the day's cell, at a slant and off-centre that change with the date (so its strokes run out
 # of the cell), and the struck-off number shows through it.
@@ -258,7 +262,7 @@ CALENDAR_BLOOD_INK = (60, 0, 6)
 @lru_cache(maxsize=4)
 def _backdrop_edge_mask(size, box):
     """255 along the page's edges, falling to CALENDAR_BACKDROP_INNER inside it, and halved
-    again over the agenda band at the foot (corners excepted)."""
+    again over the agenda band at the foot (corners excepted), its edges soft."""
     width, height = size
     left, top, right, bottom = box
     inner = round(255 * CALENDAR_BACKDROP_INNER)
@@ -274,6 +278,7 @@ def _backdrop_edge_mask(size, box):
     agenda = Image.new("L", size, 255)
     ImageDraw.Draw(agenda).rectangle((left + CALENDAR_BACKDROP_EDGE // 2, bottom - CALENDAR_AGENDA_BAND,
                                       right - CALENDAR_BACKDROP_EDGE // 2, bottom), fill=128)
+    agenda = agenda.filter(ImageFilter.GaussianBlur(CALENDAR_AGENDA_FADE / 2))
     return ImageChops.multiply(mask, agenda)
 
 
@@ -484,7 +489,7 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
             limit=12,
         )
         _current_month, next_month = self._current_and_next_month(selected_date)
-        next_month_event_rows = self._upcoming_event_rows(holiday_events, next_month, limit=6)
+        next_month_event_rows = self._upcoming_event_rows(holiday_events, next_month, limit=2 * CALENDAR_AGENDA_ROWS)
 
         # Colours
         accent = primary_color
@@ -728,18 +733,15 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
         )
         cal_grid = calendar.Calendar(firstweekday=6).monthdayscalendar(selected_date.year, selected_date.month)
         num_weeks = len(cal_grid)
-        # Spend vertical whitespace on individual events without shrinking any
-        # font. Six-week months keep enough space for dates and their markers.
-        agenda_row_h = max(int(cal_w * 0.032), 14) + 4
+        # The agenda takes the rows the grid can spare (six-week months keep room for their dates and
+        # markers); its list runs down one column and on into a second, so it is as tall as its
+        # longer column.
+        agenda_row_h = self._agenda_sizes(cal_w)[3]
         grid_gap = int(cal_h * 0.015)
         agenda_budget = max(0, c_bottom - grid_top_y - grid_gap - num_weeks * (day_font_size + 7))
-        agenda_capacity = max(0, int((agenda_budget - 12) // agenda_row_h))
-        agenda_capacity = min(6, agenda_capacity)
-        following_event_rows = upcoming_event_rows[agenda_capacity:]
-        upcoming_event_rows = upcoming_event_rows[:agenda_capacity]
-        agenda_rows = len(upcoming_event_rows)
-        if next_month_event_rows:
-            agenda_rows = agenda_capacity
+        agenda_capacity = min(CALENDAR_AGENDA_ROWS, max(0, int((agenda_budget - 12) // agenda_row_h)))
+        agenda_rows = min(agenda_capacity,
+                          len(self._agenda_entries(upcoming_event_rows, next_month_event_rows)))
         event_list_h = 12 + agenda_row_h * agenda_rows if agenda_rows else 0
         available_grid_h = c_bottom - grid_top_y - grid_gap - event_list_h
         row_h = available_grid_h / num_weeks
@@ -814,7 +816,6 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
             text_color,
             muted_text,
             divider,
-            following_event_rows=following_event_rows,
             next_month_event_rows=next_month_event_rows,
         )
         return img
@@ -2697,98 +2698,86 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
             cx = start_x + gap * index
             draw.ellipse([cx - radius, y - radius, cx + radius, y + radius], fill=color)
 
-    def _draw_holiday_list(self, draw, events, selected_date, upcoming_event_rows, left, top, right, bottom, text_color, muted_text, divider, following_event_rows=None, next_month_event_rows=None):
-        if not (upcoming_event_rows or next_month_event_rows) or bottom <= top:
+    @staticmethod
+    def _agenda_sizes(width):
+        """The agenda's date, label and title font sizes and its row height, for a calendar ``width`` px wide."""
+        title = max(int(width * 0.03), 13)
+        return title, max(int(width * 0.024), 11), title, title + 3
+
+    @staticmethod
+    def _agenda_entries(upcoming_event_rows, next_month_event_rows):
+        """This month's coming events, then next month's under a NEXT MONTH heading."""
+        entries = list(upcoming_event_rows or [])
+        if next_month_event_rows:
+            entries.append({"heading": "NEXT MONTH"})
+            entries.extend(next_month_event_rows)
+        return entries
+
+    def _draw_holiday_list(self, draw, events, selected_date, upcoming_event_rows, left, top, right, bottom,
+                           text_color, muted_text, divider, next_month_event_rows=None):
+        """The agenda under the month as one list: this month's coming events, then next month's,
+        running down a column and on into a second beside it, so all the band's room goes to events.
+        A list that fits one column spans the band's width; a heading never ends a column."""
+        entries = self._agenda_entries(upcoming_event_rows, next_month_event_rows)
+        if not entries or bottom <= top:
             return
 
         width = right - left
         line_y = top + 2
         draw.line([(left + int(width * 0.04), line_y), (right - int(width * 0.04), line_y)], fill=divider, width=1)
-
-        date_font_size = max(int(width * 0.032), 14)
-        label_font_size = max(int(width * 0.025), 11)
-        title_font_size = max(int(width * 0.032), 14)
-        date_font = self._get_calendar_ui_font(date_font_size, bold=True)
-        label_font = self._get_calendar_ui_font(label_font_size, bold=True)
-        title_font = self._get_holiday_title_font(title_font_size)
-        row_h = title_font_size + 4
-        x0 = left + int(width * 0.055)
-        label_x = x0 + max(self._text_width(draw, "12/31", date_font) + 14, width * 0.12)
-        label_w = max((self._text_width(draw, event.get("label", ""), label_font) for event in upcoming_event_rows), default=0)
-        # Cap unusually long custom labels so the content column remains useful.
-        label_w = min(label_w, width * 0.20)
-        title_x = label_x + label_w + 10
-        split_x = left + width * 0.58
-        # Align the second column at the top when titles fit. Only long titles
-        # need full width and push the preview into the unused agenda tail.
-        preview_start = 0
-        for index, event in enumerate(upcoming_event_rows):
-            if title_x + self._text_width(draw, event["title"], title_font) > split_x - 12:
-                preview_start = index + 1
-        preview_slots = max(0, int((bottom - top - 10) // row_h) - preview_start)
-        preview_rows = []
-        for heading, candidates in (("NEXT", following_event_rows), ("NEXT MONTH", next_month_event_rows)):
-            available = preview_slots - len(preview_rows) - 1
-            if candidates and available > 0:
-                preview_rows.append({"heading": heading})
-                preview_rows.extend(candidates[:available])
-        if width < 440:
-            preview_rows = []
-        last_date = None
-        for index, event in enumerate(upcoming_event_rows):
-            row_right = split_x - 12 if preview_rows and index >= preview_start else right - int(width * 0.04)
-            row_y = top + 10 + row_h * index + row_h / 2
-            if row_y + row_h / 2 > bottom:
+        date_size, label_size, title_size, row_h = self._agenda_sizes(width)
+        fonts = (self._get_calendar_ui_font(date_size, bold=True), self._get_calendar_ui_font(label_size, bold=True),
+                 self._get_holiday_title_font(title_size))
+        rows = max(1, int((bottom - top - 10) // row_h))
+        columns = 2 if len(entries) > rows and width >= 440 else 1
+        if columns == 2 and "heading" in entries[rows - 1]:
+            entries.insert(rows - 1, None)
+        shown = entries[:columns * rows]
+        if shown and shown[-1] is not None and "heading" in shown[-1]:
+            shown[-1] = None
+        x0, x_end = left + int(width * 0.055), right - int(width * 0.04)
+        gap = int(width * 0.05)
+        column_w = (x_end - x0 - gap * (columns - 1)) / columns
+        for column in range(columns):
+            chunk = shown[column * rows:(column + 1) * rows]
+            if not any(chunk):
                 break
-            date_text = f"{event['date'].month}/{event['date'].day}"
-            if event["date"] != last_date:
+            x = x0 + column * (column_w + gap)
+            if column:
+                draw.line([(x - gap / 2, top + 8), (x - gap / 2, bottom - 4)], fill=divider, width=1)
+            self._draw_agenda_column(draw, chunk, x, x + column_w, top + 10, row_h, fonts,
+                                     text_color, muted_text, divider)
+
+    def _draw_agenda_column(self, draw, chunk, x, right, top, row_h, fonts, text_color, muted_text, divider):
+        """One column of the agenda: each date once over its events (a rule between dates), each
+        event's source label, then its title cut to the column."""
+        date_font, label_font, title_font = fonts
+        dated = [entry for entry in chunk if entry and "heading" not in entry]
+        date_w = max((self._text_width(draw, f"{e['date'].month}/{e['date'].day}", date_font) for e in dated), default=0)
+        label_w = min(max((self._text_width(draw, e.get("label", ""), label_font) for e in dated), default=0),
+                      (right - x) * 0.22)
+        label_x = x + date_w + 7
+        title_x = label_x + label_w + (7 if label_w else 0)
+        last_date = None
+        for index, entry in enumerate(chunk):
+            if entry is None:
+                continue
+            row_y = top + row_h * (index + 0.5)
+            if "heading" in entry:
+                draw.text((x, row_y), entry["heading"], font=label_font, fill=muted_text, anchor="lm")
+                last_date = None
+                continue
+            if entry["date"] != last_date:
                 if last_date is not None:
-                    draw.line([(x0, row_y - row_h / 2 - 1), (row_right, row_y - row_h / 2 - 1)], fill=divider, width=1)
-                draw.text((x0, row_y), date_text, fill=text_color, font=date_font, anchor="lm")
-                last_date = event["date"]
-            self._draw_source_label(
-                draw,
-                self._fit_text(draw, event.get("label", ""), label_font, label_w),
-                label_x,
-                row_y,
-                label_font,
-                event.get("color", muted_text),
-                separator_color=muted_text,
-                anchor="lm",
-            )
-            title = self._fit_text(draw, event["title"], title_font, right - title_x - int(width * 0.05))
-            draw.text(
-                (title_x, row_y),
-                title,
-                fill=text_color,
-                font=title_font,
-                anchor="lm",
-            )
-        if preview_rows:
-            preview_top = top + 10 + preview_start * row_h
-            preview_right = right - int(width * 0.04)
-            preview_x = split_x + 12
-            draw.line([(split_x, preview_top), (split_x, bottom - 4)], fill=divider, width=1)
-            dated_rows = [event for event in preview_rows if "heading" not in event]
-            next_date_w = max(self._text_width(draw, f"{e['date'].month}/{e['date'].day}", date_font) for e in dated_rows)
-            next_label_x = preview_x + next_date_w + 7
-            next_label_w = min(max(self._text_width(draw, e.get("label", ""), label_font) for e in dated_rows), width * 0.08)
-            next_title_x = next_label_x + next_label_w + 7
-            last_date = None
-            for index, event in enumerate(preview_rows):
-                row_y = preview_top + row_h * (index + 0.5)
-                if "heading" in event:
-                    draw.text((preview_x, row_y), event["heading"], font=label_font, fill=muted_text, anchor="lm")
-                    last_date = None
-                    continue
-                if event["date"] != last_date:
-                    draw.text((preview_x, row_y), f"{event['date'].month}/{event['date'].day}", font=date_font, fill=text_color, anchor="lm")
-                    last_date = event["date"]
-                self._draw_source_label(draw, self._fit_text(draw, event.get("label", ""), label_font, next_label_w),
-                                        next_label_x, row_y, label_font, event.get("color", muted_text),
-                                        separator_color=muted_text, anchor="lm")
-                title = self._fit_text(draw, event["title"], title_font, preview_right - next_title_x)
-                draw.text((next_title_x, row_y), title, font=title_font, fill=text_color, anchor="lm")
+                    draw.line([(x, row_y - row_h / 2), (right, row_y - row_h / 2)], fill=divider, width=1)
+                draw.text((x, row_y), f"{entry['date'].month}/{entry['date'].day}", fill=text_color,
+                          font=date_font, anchor="lm")
+                last_date = entry["date"]
+            self._draw_source_label(draw, self._fit_text(draw, entry.get("label", ""), label_font, label_w),
+                                    label_x, row_y, label_font, entry.get("color", muted_text),
+                                    separator_color=muted_text, anchor="lm")
+            draw.text((title_x, row_y), self._fit_text(draw, entry["title"], title_font, right - title_x),
+                      fill=text_color, font=title_font, anchor="lm")
 
     def _draw_source_label(self, draw, label, x, y, font, default_color, separator_color=None, anchor="lm"):
         parts = self._source_label_parts(label)
