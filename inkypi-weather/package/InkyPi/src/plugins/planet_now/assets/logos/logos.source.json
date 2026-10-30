@@ -114,6 +114,45 @@
     64,
     64
    ]
+  },
+  "wikipedia": {
+   "file": "File:Wikipedia-logo-v2.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:Wikipedia-logo-v2.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/80/Wikipedia-logo-v2.svg/960px-Wikipedia-logo-v2.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "CC BY-SA 3.0",
+   "source_sha256": "5bf2c814ac914240d3146ef8dd6c9e129f6c0d67bf629a11941c2202cccd6ae6",
+   "modified": "cropped and scaled only",
+   "sha256": "f2e7ec16f8f48348b4a900064edb34ba2fe2c6666dcd6ef1e8060fcb9e4fac99",
+   "size": [
+    71,
+    64
+   ]
+  },
+  "wikipedia_wordmark": {
+   "file": "File:Wikipedia wordmark.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:Wikipedia_wordmark.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bb/Wikipedia_wordmark.svg/960px-Wikipedia_wordmark.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "c36f4a65cbe03bc5e808c2826a47d967ed34a7ca56733438da832b6cd5cc5d85",
+   "modified": "cropped and scaled only",
+   "sha256": "ce610ff71b2cc9edcb06bbd2461df2876096b6bc51ee34e2d86c357b6fc68498",
+   "size": [
+    433,
+    64
+   ]
+  },
+  "wikipedia_wordmark_night": {
+   "file": "File:Wikipedia wordmark.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:Wikipedia_wordmark.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bb/Wikipedia_wordmark.svg/960px-Wikipedia_wordmark.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "c36f4a65cbe03bc5e808c2826a47d967ed34a7ca56733438da832b6cd5cc5d85",
+   "modified": "white on dark pages, as the brand publishes it",
+   "sha256": "615a4689251f2ede71b65f356e51be81a22c2f20070a2c7d04bdbf6dd16eea85",
+   "size": [
+    433,
+    64
+   ]
   }
  }
 }

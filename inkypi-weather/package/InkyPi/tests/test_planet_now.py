@@ -335,3 +335,17 @@ def test_the_mars_feed_is_asked_again_every_two_hours():
 
 def test_the_iss_lines_always_fill_the_column_to_the_cards_foot():
     assert render.ISS_LINE_SIZES[1] >= 16 and min(render.ISS_LINE_SIZES) >= 11
+
+
+def test_wikipedias_most_read_line_is_named_by_its_logo_not_a_text_tag(monkeypatch):
+    drawn = []
+    original = render._chip
+    monkeypatch.setattr(render, "_chip", lambda canvas, xy, text, **kwargs: drawn.append(text) or original(canvas, xy, text,
+                                                                                                         **kwargs))
+    for night in (False, True):
+        assert render._logo("wikipedia", night) is not None and render._logo("wikipedia_wordmark", night) is not None
+
+    render.render_page((800, 480), _payload(), {"_inkypi_theme": {"mode": "day"}},
+                       datetime(2026, 10, 25, 8, 5, tzinfo=sources.PACIFIC), {})
+
+    assert "维基热读" not in drawn

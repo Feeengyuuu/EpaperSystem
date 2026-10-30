@@ -1,6 +1,6 @@
 """Fetch the official logos 环球此刻 (Planet Now) prints where each card names its source.
 
-    python tools/build_planet_now_logos.py
+    python tools/build_planet_now_logos.py [key ...]    # only the named logos when given
 
 Commons logos are rendered to PNG by Commons; California ISO's are the SVGs its own site
 header uses (the light-page and dark-page versions), rasterized by a headless Chrome or Edge
@@ -37,14 +37,18 @@ COMMONS = {
     "nasa": "File:NASA logo.svg",
     "apple_music": "File:Apple Music logo.svg",
     "google_trends": "File:Google Trends.png",
+    # 美国热度's Wikipedia most-read line: the puzzle globe and the WIKIPEDIA wordmark beside it.
+    "wikipedia": "File:Wikipedia-logo-v2.svg",
+    "wikipedia_wordmark": "File:Wikipedia wordmark.svg",
 }
 # key: (SVG on the brand's own site, the page it is used on)
 SITE_SVGS = {
     "caiso": ("https://www.caiso.com/theme/dist/assets/www-logo-caiso.svg", "https://www.caiso.com/"),
     "caiso_night": ("https://www.caiso.com/theme/dist/assets/www-logo-caiso-dark.svg", "https://www.caiso.com/"),
 }
-# Apple publishes its Music wordmark in black for light grounds and in white for dark ones.
-WHITE_NIGHT = {"apple_music": "apple_music_night"}
+# Apple publishes its Music wordmark in black for light grounds and in white for dark ones;
+# Wikipedia's wordmark is set white on its own dark pages.
+WHITE_NIGHT = {"apple_music": "apple_music_night", "wikipedia_wordmark": "wikipedia_wordmark_night"}
 MAX_HEIGHT = 64
 
 
@@ -118,10 +122,13 @@ def _save(key, logo, entry, record):
     print(key, logo.size, entry.get("licence", ""))
 
 
-def main():
+def main(keys=()):
     OUT.mkdir(parents=True, exist_ok=True)
-    record = {"logos": {}}
+    path = OUT / "logos.source.json"
+    record = json.loads(path.read_text(encoding="utf-8")) if keys and path.is_file() else {"logos": {}}
     for key, title in COMMONS.items():
+        if keys and key not in keys:
+            continue
         data, page, url, licence = _commons(title)
         logo = _trim(Image.open(io.BytesIO(data)).convert("RGBA"))
         entry = {"file": title, "page": page, "rendered": url, "licence": licence,
@@ -133,6 +140,8 @@ def main():
             _save(WHITE_NIGHT[key], white, {**entry, "modified": "white on dark pages, as the brand publishes it"},
                   record)
     for key, (url, page) in SITE_SVGS.items():
+        if keys and key not in keys:
+            continue
         response = requests.get(url, headers={**HEADERS, "User-Agent": "Mozilla/5.0 " + HEADERS["User-Agent"]},
                                 timeout=30)
         response.raise_for_status()
@@ -146,4 +155,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+
+    main(set(sys.argv[1:]))

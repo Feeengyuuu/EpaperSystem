@@ -69,7 +69,8 @@ DOODLES = {key: Path(__file__).resolve().parent / "assets" / "doodles" / f"{name
 # Each source's official logo in assets/logos (tools/build_planet_now_logos.py): the height it
 # is set at in a card's header and its name in words should the file be missing.
 SOURCE_LOGOS = {"noaa": (18, "NOAA"), "caiso": (16, "CAISO"), "apple_music": (12, "Apple Music"),
-                "google_trends": (14, "Google Trends"), "nasa": (18, "NASA")}
+                "google_trends": (14, "Google Trends"), "nasa": (18, "NASA"),
+                "wikipedia": (18, "Wikipedia"), "wikipedia_wordmark": (9, "Wikipedia")}
 # Places marked on the satellite crop: (name, lat, lon, label side); a None side is a sea's
 # name with no dot.
 SKY_PLACES = (("旧金山", 37.7793, -122.4193, "left"), ("奥克兰", 37.8044, -122.2712, "right"),
@@ -544,7 +545,15 @@ def _trends(canvas, payload, images):
             small = ImageOps.fit(thumb, (22, 22), Image.Resampling.LANCZOS, centering=(0.5, 0.3))
             _paste(canvas, small, (x0, y), _rounded(small, 4))
             text_x += 27
-        text_x += _chip(canvas, (text_x, y + 2), "维基热读", size=10, fill="ink", color="paper") + 6
+        # Wikipedia names its most-read article by its logo: the puzzle globe, its wordmark beside it.
+        globe, wordmark = (_logo(name, canvas.palette["night"]) for name in ("wikipedia", "wikipedia_wordmark"))
+        if globe is not None and wordmark is not None:
+            _paste(canvas, globe, (text_x, y + 11 - globe.height // 2))
+            text_x += globe.width + 3
+            _paste(canvas, wordmark, (text_x, y + 11 - wordmark.height // 2))
+            text_x += wordmark.width + 7
+        else:
+            text_x += _chip(canvas, (text_x, y + 2), "维基热读", size=10, fill="ink", color="paper") + 6
         views = int(article.get("views") or 0)
         count = f"{views / 10000:.1f}万" if views else ""
         count_w = canvas.width(count, 10, False) + 6 if count else 0
