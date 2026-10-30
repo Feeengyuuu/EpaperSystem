@@ -128,3 +128,33 @@ def test_a_compact_live_row_boxes_the_leading_score_and_leaves_a_tie_plain():
     # The leader's score is a solid ink box; the trailing score and a tie are plain digits.
     assert lead_b["b"] > 2 * lead_b["a"]
     assert abs(tie["a"] - tie["b"]) < tie["a"] and lead_b["b"] > 2 * tie["b"]
+
+
+def test_a_small_live_tile_names_its_venue_on_its_top_band():
+    from plugins.sports_dashboard.common import DAY_COLORS
+
+    games, now = _wall_games(4)
+    for game, venue in zip(games, ["Moda Center", "Honda Center", "Crypto.com Arena", "Some Small Arena"]):
+        game["event"] = dict(game["event"], venue=venue)
+        game["tier"] = "C"
+    logos, names = [], []
+    original_chip, original_name = SportsDashboard._draw_wall_venue_chip, SportsDashboard._draw_wall_venue_name
+
+    def chip(self, image, draw, box, event, align="left"):
+        placed = original_chip(self, image, draw, box, event, align)
+        logos.append((event.get("venue"), placed))
+        return placed
+
+    def name(self, image, draw, box, event):
+        names.append(event.get("venue"))
+        return original_name(self, image, draw, box, event)
+
+    SportsDashboard._draw_wall_venue_chip, SportsDashboard._draw_wall_venue_name = chip, name
+    try:
+        _render(lambda plugin, image, draw: plugin._draw_lower_live_wall(image, draw, (0, 0, 555, 267), games, now),
+                DAY_COLORS)
+    finally:
+        SportsDashboard._draw_wall_venue_chip, SportsDashboard._draw_wall_venue_name = original_chip, original_name
+    # A known arena shows its logo; one without falls back to its name.
+    assert all(placed is not None for venue, placed in logos if venue != "Some Small Arena")
+    assert names == ["Some Small Arena"]

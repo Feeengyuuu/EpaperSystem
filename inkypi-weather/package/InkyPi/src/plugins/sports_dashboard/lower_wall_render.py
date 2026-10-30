@@ -31,6 +31,8 @@ WALL_BAND_STRIP_MIN_SPAN = 0.8
 # A game card's venue logo starts this far right of the league logo's left edge, in the top band,
 # its faint parts lifted until they reach this contrast with the band.
 WALL_VENUE_CHIP_LEFT = 46
+# A small tile's venue starts this far in, past its league logo.
+WALL_TILE_VENUE_LEFT = 44
 WALL_VENUE_MIN_CONTRAST = 2.6
 # Below this width the control-room strip in the header is left out rather than shrunk.
 WALL_CONTROL_ROOM_MIN_WIDTH = 170
@@ -271,6 +273,18 @@ class LowerWallRenderMixin:
         image.paste(logo, (left, top), logo)
         return left, top, left + logo.width, top + logo.height
 
+    def _draw_wall_venue_name(self, image, draw, box, event):
+        """A venue with no logo here: its name in small type on the band, white on a dark band or
+        ink on a light one."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        venue = str((event or {}).get("venue") or "").strip()
+        if not venue or x2 - x1 < 30:
+            return
+        text, font = self._fit_text_ellipsis(draw, venue, x2 - x1, 9, bold=True, min_size=7)
+        ground = ImageStat.Stat(image.convert("RGB").crop((x1, y1, x2, y2))).median
+        ink = (255, 255, 255) if _kit_luminance(ground) < 0.4 else (20, 22, 28)
+        self._draw_text_in_box(draw, (x1, y1, x2, y2), text, font, ink)
+
     def _draw_wall_series_line(self, image, draw, box, event, spec):
         """The series state in words and the leader's logo: '[logo] 密尔沃基酿酒人 3-0 领先',
         '系列赛 2-2 平'. False when the feed's summary has another shape or names neither team."""
@@ -503,8 +517,13 @@ class LowerWallRenderMixin:
         clock = self._wall_clock_label(event, now, spec)
         clock, clock_font = self._fit_text_ellipsis(draw, clock, inner_x2 - inner_x1 - 40, 10, bold=True, min_size=8)
         clock_w = self._text_width(draw, clock, clock_font)
-        draw.rounded_rectangle((inner_x2 - clock_w - 5, y1 + 3, inner_x2 + 3, y1 + 18), radius=4, fill=COLORS["panel"])
+        clock_left = inner_x2 - clock_w - 5
+        draw.rounded_rectangle((clock_left, y1 + 3, inner_x2 + 3, y1 + 18), radius=4, fill=COLORS["panel"])
         self._draw_text_in_box(draw, (inner_x1 + 30, y1 + 3, inner_x2, y1 + 18), clock, clock_font, COLORS["text"], align="right")
+        # The venue fills the band between the league's logo and the clock: its logo, else its name.
+        venue_box = (x1 + WALL_TILE_VENUE_LEFT, y1 + 3, clock_left - 6, y1 + 18)
+        if self._draw_wall_venue_chip(image, draw, venue_box, event) is None:
+            self._draw_wall_venue_name(image, draw, venue_box, event)
         leader = self._wall_leader(event)
         # The away stripe divides the rows; the home one runs along the card's bottom edge.
         for (top, bottom), side, colour, foot in zip(rows, ("a", "b"), colours, (None, y2 - 2)):
