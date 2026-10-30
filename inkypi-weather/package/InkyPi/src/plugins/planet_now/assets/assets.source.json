@@ -40,5 +40,12 @@
     "job_id": "",
     "note": "land mask 720x360, equirectangular, from ne_110m_land.geojson (nvkelso/natural-earth-vector)",
     "sha256": "b2ec8c5043a23d97b766124e15d4e74845502c46ef9b857fce4a278570bca19b"
+  },
+  "wikipedia_hot.png": {
+    "generator": "Creative Claw image/gpt-image-2.5-sunburst (1232x1232, transparent), an edit of Commons' Wikipedia-logo-v2.svg (CC BY-SA 3.0)",
+    "job_id": "d66ce0c9-2c79-48c8-b331-9b025bdb787d",
+    "note": "Wikipedia's puzzle globe on fire, for 美国热度's most-read article; cropped, 128 px tall",
+    "source_sha256": "2a58dcab242b1e9a01a7a3ee9326486d9ce665feb26a5594b3a8b7bc14b29b3f",
+    "sha256": "74b335ad0a771af31247a63a3435bf7010834636a31fec2447dc42d364e43a84"
   }
 }

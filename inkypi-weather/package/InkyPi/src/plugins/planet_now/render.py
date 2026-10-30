@@ -62,6 +62,9 @@ CARD_BAND = 5
 CARDS = {"earth": (12, 58, 394, 264), "grid": (406, 58, 788, 264), "trends": (12, 270, 300, 474),
          "space": (312, 270, 788, 474)}
 SECTION_ART = {"earth": "section-earth", "grid": "section-grid", "trends": "section-trends", "space": "section-space"}
+# Wikipedia's most-read article is marked by its puzzle globe on fire (assets/wikipedia_hot.png,
+# generated from Commons' globe; assets.source.json), this tall.
+HOT_WIKI_HEIGHT = 22
 # Quiet doodles in each card's colour under its content: weather for the sky, turbines and
 # pylons for the grid, search and news for the trends, rockets and planets for space.
 DOODLES = {key: Path(__file__).resolve().parent / "assets" / "doodles" / f"{name}.png"
@@ -157,6 +160,18 @@ def _logo(name, night):
             return image.resize((max(1, round(image.width * height / image.height)), height),
                                 Image.Resampling.LANCZOS)
     return None
+
+
+@lru_cache(maxsize=1)
+def _hot_wiki():
+    """Wikipedia's puzzle globe on fire, HOT_WIKI_HEIGHT tall, or None without the file."""
+    path = ASSETS / "wikipedia_hot.png"
+    if not path.is_file():
+        return None
+    with safe_open_image(path, limits=_LIMITS) as source:
+        image = source.convert("RGBA")
+    return image.resize((max(1, round(image.width * HOT_WIKI_HEIGHT / image.height)), HOT_WIKI_HEIGHT),
+                        Image.Resampling.LANCZOS)
 
 
 def _station_logo(station):
@@ -545,8 +560,8 @@ def _trends(canvas, payload, images):
             small = ImageOps.fit(thumb, (22, 22), Image.Resampling.LANCZOS, centering=(0.5, 0.3))
             _paste(canvas, small, (x0, y), _rounded(small, 4))
             text_x += 27
-        # Wikipedia names its most-read article by its puzzle globe alone.
-        globe = _logo("wikipedia", canvas.palette["night"])
+        # Wikipedia's most-read article: its puzzle globe on fire (the plain globe without the art).
+        globe = _hot_wiki() or _logo("wikipedia", canvas.palette["night"])
         if globe is not None:
             _paste(canvas, globe, (text_x, y + 11 - globe.height // 2))
             text_x += globe.width + 5

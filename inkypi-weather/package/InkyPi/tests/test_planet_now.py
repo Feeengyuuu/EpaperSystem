@@ -337,11 +337,15 @@ def test_the_iss_lines_always_fill_the_column_to_the_cards_foot():
     assert render.ISS_LINE_SIZES[1] >= 16 and min(render.ISS_LINE_SIZES) >= 11
 
 
-def test_wikipedias_most_read_line_is_named_by_its_logo_not_a_text_tag(monkeypatch):
+def test_wikipedias_most_read_line_is_marked_by_its_globe_on_fire_not_a_text_tag(monkeypatch):
     drawn = []
     original = render._chip
     monkeypatch.setattr(render, "_chip", lambda canvas, xy, text, **kwargs: drawn.append(text) or original(canvas, xy, text,
                                                                                                          **kwargs))
+    hot = render._hot_wiki()
+    assert hot is not None and hot.height == render.HOT_WIKI_HEIGHT
+    # The flames are the art's own colours: red and orange pixels around the grey globe.
+    assert any(r > 200 and g < 140 and b < 80 and a > 200 for r, g, b, a in hot.get_flattened_data())
     for night in (False, True):
         assert render._logo("wikipedia", night) is not None
 
