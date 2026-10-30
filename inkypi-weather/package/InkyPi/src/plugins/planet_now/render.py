@@ -14,7 +14,7 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 
@@ -82,6 +82,11 @@ STATIONS = {"tiangong": "天宫", "iss": "国际空间站"}
 # The ISS lines under the map (state, place, height and speed, next sunrise or sunset), these
 # sizes, spread to the card's foot.
 ISS_LINE_SIZES = (13, 18, 11, 11)
+# The place line leads with the country's flag (assets/flags) or the ocean's generated emblem
+# (assets/oceans) this tall; its coordinates and local solar time sit on the map, in a tag this
+# size at the bottom corner away from the station.
+PLACE_MARK_HEIGHT, MAP_TAG_SIZE = 16, 9
+OCEAN_EMBLEMS = {"太平洋": "pacific", "大西洋": "atlantic", "印度洋": "indian", "北冰洋": "arctic", "南大洋": "southern"}
 # Each station's official mark before its name (assets/logos): China Manned Space's emblem for
 # Tiangong, the ISS programme's emblem; this tall.
 STATION_LOGO_HEIGHT = 14
@@ -707,6 +712,13 @@ def _space(canvas, payload, images, now):
         canvas.draw.ellipse((x - 6, y - 6, x + 6, y + 6), fill=canvas.color("paper"), outline=canvas.color("space"), width=2)
         canvas.draw.line((x - 9, y, x + 9, y), fill=canvas.color("gold"), width=3)
         canvas.draw.rectangle((x - 2, y - 2, x + 2, y + 2), fill=canvas.color("ink"))
+        tag = f"{_coordinates(iss['lat'], iss['lon'])} · 当地 {_solar_time(fetched, iss['lon'])}"
+        tag_w = canvas.width(tag, MAP_TAG_SIZE, False) + 8
+        tag_x = mx0 + mw - tag_w - 3 if x < mx0 + mw / 2 else mx0 + 3
+        tag_y = my0 + mh - MAP_TAG_SIZE - 9
+        canvas.draw.rounded_rectangle((tag_x, tag_y, tag_x + tag_w, tag_y + MAP_TAG_SIZE + 6), radius=4,
+                                      fill=canvas.color("paper"))
+        canvas.text((tag_x + 4, tag_y + (MAP_TAG_SIZE + 6) / 2), tag, MAP_TAG_SIZE, "ink", anchor="lm", bold=False)
         country = str(iss.get("country") or "")
         place = (COUNTRY_NAMES.get(country, country) if country and country != "??" else
                  ocean_name(iss["lat"], iss["lon"]))
@@ -718,6 +730,7 @@ def _space(canvas, payload, images, now):
             last = f"{minutes:.0f} 分钟后{'迎来日出' if sunrise else '进入地影'} · {ISS_PERIOD_MIN:.0f} 分钟一圈"
         else:
             last = f"约 {ISS_PERIOD_MIN:.0f} 分钟一圈 · 每天 {24 * 60 / ISS_PERIOD_MIN:.1f} 圈"
+        over_land = bool(country and country != "??")
         lines = (
             (f"国际空间站 · {'日照中' if iss.get('daylight') else '地影中'}", ISS_LINE_SIZES[0], "space", True),
             (f"{place}上空", ISS_LINE_SIZES[1], "ink", True),
@@ -732,9 +745,28 @@ def _space(canvas, payload, images, now):
             if index == 0:
                 logo = _station_logo("iss")
                 x += _paste(canvas, logo, (mx0, ty + (heights[0] - logo.height) // 2)) + 4 if logo is not None else 0
+            if index == 1:
+                # Where it is: the country's flag, or the ocean's emblem, centred on the name's letters.
+                mark = (_asset(f"flags/{country.lower()}", PLACE_MARK_HEIGHT) if over_land
+                        else _asset(f"oceans/{OCEAN_EMBLEMS.get(place, '')}", PLACE_MARK_HEIGHT + 4))
+                if mark is not None:
+                    ink = canvas.draw.textbbox((x, round(ty)), text, font=canvas.font(size, bold), anchor="la")
+                    x += _paste(canvas, mark, (x, round((ink[1] + ink[3]) / 2 - mark.height / 2))) + 5
             canvas.text((x, round(ty)), text, size, colour, anchor="la", bold=bold, width=mx0 + mw - x)
             ty += heights[index] + gap
     _crew(canvas, payload.get("people", {}).get("data") or {}, images, now, (crew_left, my0, right - 8, bottom - 6))
+
+
+def _coordinates(lat, lon):
+    """'北纬 12° 东经 165°'."""
+    return f"{'北纬' if lat >= 0 else '南纬'} {abs(lat):.0f}° {'东经' if lon >= 0 else '西经'} {abs(lon):.0f}°"
+
+
+def _solar_time(moment, lon):
+    """The local mean solar time under a longitude at ``moment``, as 'HH:MM'."""
+    utc = moment.astimezone(timezone.utc)
+    minutes = (utc.hour * 60 + utc.minute + lon * 4) % (24 * 60)
+    return f"{int(minutes // 60):02d}:{int(minutes % 60):02d}"
 
 
 def _avatar(canvas, picture, xy, side, ring):

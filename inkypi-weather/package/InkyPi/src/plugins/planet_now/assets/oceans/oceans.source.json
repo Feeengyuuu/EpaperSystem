@@ -1,0 +1,44 @@
+{
+  "generator": "Creative Claw image/gpt-image-2.5-sunburst (1536x864, transparent)",
+  "job_id": "1a3cdcbd-649c-40d4-b679-46793080e558",
+  "generated": "2026-10-29",
+  "source_sha256": "2eb7b511c0519c3d9c4485f0a47c90e8bd84e21f3a43fed5294ad6c2fd736ad3",
+  "note": "the five oceans' emblems for the place the ISS is over: Pacific whale, Atlantic lighthouse, Indian sea turtle, Arctic polar bear, Southern emperor penguin; each disc cropped from the row, fitted in 96 px",
+  "files": {
+    "pacific.png": {
+      "size": [
+        96,
+        95
+      ],
+      "sha256": "973fab787a503be702d9bba6078665c1e7181fddadc0473858c42f78c9eafc20"
+    },
+    "atlantic.png": {
+      "size": [
+        96,
+        95
+      ],
+      "sha256": "7f238f1455901bc88aaf90377bda13ce97d269b79ee245c67d6d79278b78e119"
+    },
+    "indian.png": {
+      "size": [
+        96,
+        95
+      ],
+      "sha256": "37c65624fe40054270669c454462f72d6a11e388f5ce04b02ccae5e9b79c0f15"
+    },
+    "arctic.png": {
+      "size": [
+        96,
+        95
+      ],
+      "sha256": "726512ae8c43696112d679856b15d58d04036cce78041e81d23489a6e60d99a2"
+    },
+    "southern.png": {
+      "size": [
+        96,
+        95
+      ],
+      "sha256": "920e99fec3455885878487697f71e0f3862dc397614d24238cfbf781d29d4d5d"
+    }
+  }
+}

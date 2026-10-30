@@ -353,3 +353,16 @@ def test_wikipedias_most_read_line_is_marked_by_its_globe_on_fire_not_a_text_tag
                        datetime(2026, 10, 25, 8, 5, tzinfo=sources.PACIFIC), {})
 
     assert "维基热读" not in drawn
+
+
+def test_the_iss_place_is_led_by_the_countrys_flag_or_the_oceans_emblem():
+    from plugins.planet_now import render as page
+
+    names = {"CN", "US", "ID", "BR", "AR", "ZA", "GL", "MN"}
+    assert all(page._asset(f"flags/{code.lower()}", page.PLACE_MARK_HEIGHT) is not None for code in names)
+    for ocean in page.OCEAN_EMBLEMS.values():
+        assert page._asset(f"oceans/{ocean}", page.PLACE_MARK_HEIGHT + 4) is not None
+    assert page._coordinates(18.4, -163.2) == "北纬 18° 西经 163°"
+    assert page._coordinates(-8.8, 108.0) == "南纬 9° 东经 108°"
+    # Mean solar time: 15° of longitude is an hour from Greenwich.
+    assert page._solar_time(datetime(2026, 10, 30, 4, 0, tzinfo=page.timezone.utc), -165) == "17:00"
