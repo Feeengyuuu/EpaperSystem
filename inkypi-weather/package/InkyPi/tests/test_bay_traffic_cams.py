@@ -219,3 +219,27 @@ def test_control_room_style_puts_each_still_on_a_crt_monitor_with_recorder_text(
     corner = image.crop((x1 - 80, y0 + 9, x1 - 9, y0 + 34))
     pixels = [corner.getpixel((x, y)) for x in range(corner.width) for y in range(corner.height)]
     assert any(pixel[0] > 200 and pixel[1] < 90 and pixel[2] < 90 for pixel in pixels)
+
+
+def test_the_patrol_strip_names_its_cameras_on_guide_signs_whole():
+    from plugins.bay_traffic_cams import render
+
+    def camera(index, place, town):
+        return {"id": f"TVB{index}", "route": "I-80", "direction": "East", "place": place, "town": town,
+                "image": f"https://cwwp2.dot.ca.gov/b{index}.jpg", "history": [], "distance_km": 9.0, "bearing": 0}
+
+    lead = {**camera(0, "Gilman Street", "Albany"), "patrol": True}
+    extras = [camera(1, "I-780 以南", "Benicia"), camera(2, "Loveridge Road 以东 Antioch Hwy Bridge", "Pittsburg")]
+    frames = {item["image"]: {"image": _road(), "taken": NOW.isoformat()} for item in [lead, *extras]}
+    signs = []
+    original = render._guide_sign
+    render._guide_sign = lambda canvas, text, xy, height, max_width, **kwargs: (
+        signs.append((text, height)) or original(canvas, text, xy, height, max_width, **kwargs))
+    try:
+        render_page((800, 480), {"cameras": [lead], "extras": extras, "frames": frames},
+                    {"_inkypi_theme": {"mode": "day"}}, NOW)
+    finally:
+        render._guide_sign = original
+    strip = [text for text, height in signs if height == render.PATROL_SIGN_HEIGHT]
+    # The town joins the place when both fit; a long place keeps its own name rather than both cut.
+    assert strip[0] == "I-780 以南 · Benicia" and "Pittsburg" not in strip[1]

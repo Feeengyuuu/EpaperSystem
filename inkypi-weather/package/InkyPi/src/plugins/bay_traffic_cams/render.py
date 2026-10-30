@@ -36,6 +36,8 @@ WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 MAIN = (12, 58, 452, 372)
 STRIP = (12, 380, 452, 470)
+# The patrol strip's cameras are named on guide signs this tall under their stills.
+PATROL_SIGN_HEIGHT = 17
 SIDE = (464, 58, 788, 470)
 # A still older than this is marked as not updating.
 STALE_MINUTES = 30
@@ -237,13 +239,23 @@ def _direction_plate(canvas, direction, xy, height):
     return width
 
 
+def _sign_legend(canvas, text, height, max_width, series):
+    size = height - 7
+    return fit_sign(canvas, text, size, max_width - 10, height - 5, series=series, min_size=max(11, size - 2))
+
+
+def _sign_width(canvas, text, height, max_width, *, series="D"):
+    """How wide _guide_sign draws ``text``: to centre a sign before drawing it."""
+    legend = _sign_legend(canvas, text, height, max_width, series) if max_width >= 24 else None
+    return min(max_width, max(24, legend.width + 10)) if legend is not None and legend.runs else 0
+
+
 def _guide_sign(canvas, text, xy, height, max_width, *, series="EM"):
     """A green guide sign with a white border and legend, as wide as its text allows."""
     x, y = xy
     if max_width < 24:
         return 0
-    size = height - 7
-    legend = fit_sign(canvas, text, size, max_width - 10, height - 5, series=series, min_size=max(11, size - 2))
+    legend = _sign_legend(canvas, text, height, max_width, series)
     if not legend.runs:
         return 0
     width = min(max_width, max(24, legend.width + 10))
@@ -336,14 +348,20 @@ def _more_patrol(canvas, payload, now):
     for index, camera in enumerate(payload["extras"]):
         cell_x = left + index * (width + gap)
         frame = payload["frames"].get(camera["image"])
-        screen = _still(canvas, frame, (cell_x, y0, cell_x + width, y1 - 16), radius=5, bezel=(4, 7))
+        screen = _still(canvas, frame, (cell_x, y0, cell_x + width, y1 - PATROL_SIGN_HEIGHT - 3), radius=5, bezel=(4, 7))
         taken = _taken(frame)
         if getattr(canvas, "crt", False) and taken is not None:
             crt.osd_text(canvas.draw, (screen[2] - 4, screen[3] - 4), f"{taken:%H:%M}", 9, anchor="rd")
+        # Named on a green guide sign as the cameras beside it are, centred under its still: its
+        # place and town when both fit whole, else the place alone.
         place = camera["place"]
-        if camera.get("town") and camera["town"].lower() not in place.lower():
-            place = f"{place} · {camera['town']}"
-        canvas.text((cell_x + width / 2, y1 - 7), place, 10, "muted", anchor="mm", bold=False, width=width)
+        town = f"{place} · {camera['town']}" if camera.get("town") and camera["town"].lower() not in place.lower() else ""
+        if town and "…" not in _sign_legend(canvas, town, PATROL_SIGN_HEIGHT, width, "D").text:
+            place = town
+        sign_top = y1 - PATROL_SIGN_HEIGHT
+        sign_w = _sign_width(canvas, place, PATROL_SIGN_HEIGHT, width)
+        _guide_sign(canvas, place, (round(cell_x + (width - sign_w) / 2), sign_top), PATROL_SIGN_HEIGHT, width,
+                    series="D")
 
 
 def _timelapse(canvas, payload, now):
