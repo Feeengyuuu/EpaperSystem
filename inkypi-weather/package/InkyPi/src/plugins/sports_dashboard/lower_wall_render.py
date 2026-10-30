@@ -703,8 +703,10 @@ class LowerWallRenderMixin:
 
     @staticmethod
     def _wall_clock_label(event, now, spec):
+        """The game's state on one line, its parts parted by a dot so they read apart:
+        'Q4 · 2:31', 'TOP 7 · 2 OUT'."""
         top, bottom, _key = spec.hook("state_labels", event, now, default=("LIVE", "", "text"))
-        return " ".join(part for part in (str(top or "").strip(), str(bottom or "").strip()) if part) or "LIVE"
+        return " · ".join(part for part in (str(top or "").strip(), str(bottom or "").strip()) if part) or "LIVE"
 
     @staticmethod
     def _wall_context_label(sport, event):
