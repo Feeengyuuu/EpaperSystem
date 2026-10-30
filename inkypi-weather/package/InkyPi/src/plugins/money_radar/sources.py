@@ -29,6 +29,12 @@ FRED_URL = "https://api.stlouisfed.org/fred/series/observations"
 FINNHUB_EARNINGS_URL = "https://finnhub.io/api/v1/calendar/earnings"
 SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 SEC_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik:010d}.json"
+FEAR_GREED_URL = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
+# CNN's data host answers a script's user agent with 418; it serves a browser's.
+BROWSER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
+# CNN's five bands of its 0-100 score, in Chinese.
+FEAR_GREED_BANDS = ((25, "极度恐惧"), (45, "恐惧"), (55, "中性"), (75, "贪婪"), (101, "极度贪婪"))
+FEAR_GREED_HISTORY = 60
 FX_CURRENCIES = ("CNY", "EUR", "JPY", "HKD")
 DEFAULT_COINS = ("bitcoin", "ethereum")
 DEFAULT_SYMBOLS = ("AAPL", "NVDA", "TSLA", "GOOGL", "MSFT")
@@ -227,6 +233,38 @@ def fetch_markets(context):
 def valid_markets(data):
     quotes = (data or {}).get("quotes")
     return isinstance(quotes, dict) and isinstance(quotes.get("^TNX"), dict) and _finite(quotes["^TNX"].get("last"))
+
+
+# --- CNN Fear & Greed Index -------------------------------------------------------------------
+
+def fear_greed_band(score):
+    """The band of CNN's 0-100 score: its index (0 extreme fear .. 4 extreme greed) and Chinese name."""
+    for index, (upper, name) in enumerate(FEAR_GREED_BANDS):
+        if score < upper:
+            return index, name
+    return len(FEAR_GREED_BANDS) - 1, FEAR_GREED_BANDS[-1][1]
+
+
+def normalize_fear_greed(payload):
+    reading = (payload or {}).get("fear_and_greed") or {}
+    score = _finite(reading.get("score"))
+    if score is None or not 0 <= score <= 100:
+        raise ValueError("CNN returned no Fear & Greed score")
+    history = [_finite(point.get("y")) for point in ((payload.get("fear_and_greed_historical") or {}).get("data") or [])
+               if isinstance(point, dict)]
+    return {"score": round(score, 1), "timestamp": str(reading.get("timestamp") or ""),
+            "previous_close": _finite(reading.get("previous_close")), "week": _finite(reading.get("previous_1_week")),
+            "month": _finite(reading.get("previous_1_month")), "year": _finite(reading.get("previous_1_year")),
+            "history": [round(value, 1) for value in history if value is not None][-FEAR_GREED_HISTORY:]}
+
+
+def fetch_fear_greed(context):
+    return normalize_fear_greed(_get("GET", FEAR_GREED_URL, context, max_bytes=512 * 1024,
+                                     headers={"User-Agent": BROWSER_AGENT, "Accept": "application/json"}))
+
+
+def valid_fear_greed(data):
+    return _finite((data or {}).get("score")) is not None
 
 
 # --- Macro (FRED with a key, BLS otherwise) ----------------------------------------------------

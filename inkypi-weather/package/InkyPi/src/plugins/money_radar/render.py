@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import date
 from pathlib import Path
 
@@ -15,7 +16,8 @@ from utils.safe_image import ImageLimits, safe_open_image
 from utils.theme_utils import relative_luminance
 
 from .sources import (
-    CURVE_POINTS, EARNINGS_HOURS, FORM_NAMES, ITEM_NAMES, days_until, local_now, parse_time, upcoming_earnings,
+    CURVE_POINTS, EARNINGS_HOURS, FORM_NAMES, ITEM_NAMES, days_until, fear_greed_band, local_now, parse_time,
+    upcoming_earnings,
 )
 from .trend_lines import delta, direction as _direction, draw_segments, finite
 
@@ -129,6 +131,13 @@ DOODLE_STRENGTH = 0.18
 # The market tiles' title row, clear of the colour bar along their top (60-66).
 TITLE_Y = 83
 TILES = ((12, 200), (206, 394), (400, 588), (594, 788))
+# The yield curve's card, and CNN's Fear & Greed gauge beside it.
+CURVE_CARD = (12, 204, 262, 330)
+FEAR_GREED_CARD = (268, 204, 392, 330)
+# CNN's five bands from extreme fear to extreme greed, as the gauge's arc colours them.
+FEAR_GREED_COLOURS = ((0xD4, 0x20, 0x20), (0xF0, 0x8C, 0x00), (0x8C, 0x96, 0xA0), (0x6C, 0xC0, 0x4A),
+                      (0x00, 0xA8, 0x3A))
+FEAR_GREED_EDGES = (0, 25, 45, 55, 75, 100)
 
 
 def _rgb(value):
@@ -356,7 +365,7 @@ def _yield_tile(canvas, payload, box):
 
 
 def _curve(canvas, payload):
-    left, top, right, bottom = 12, 204, 392, 330
+    left, top, right, bottom = CURVE_CARD
     canvas.draw.rounded_rectangle((left, top, right, bottom), radius=6, outline=canvas.color("rule"), width=1)
     _accent_bar(canvas, (left, top, right, bottom), CARD_ACCENTS["yield"])
     _card_doodles(canvas, (left, top, right, bottom), "yield", CARD_ACCENTS["yield"])
@@ -365,18 +374,16 @@ def _curve(canvas, payload):
     canvas.text((title_x, top + 18), "美债收益率曲线", 15, anchor="lm")
     quotes = payload["markets"]["data"].get("quotes") or {}
     points = [(label, quotes.get(symbol) or {}) for symbol, label in CURVE_POINTS]
-    legend_x = right - 10
-    for label, color, dashed in (("一个月前", "past", True), ("今天", "muted", False)):
-        width = canvas.text((legend_x, top + 18), label, 11, "muted", anchor="rm", bold=False)
-        line_left = legend_x - width - 22
+    # The legend under the title: today's line and last month's, then how the colours read.
+    legend_x, legend_y = left + 10, top + 36
+    for label, color, dashed in (("今天", "muted", False), ("一个月前", "past", True)):
         if dashed:
-            for x in range(int(line_left), int(line_left) + 16, 5):
-                canvas.draw.line((x, top + 18, x + 2, top + 18), fill=canvas.color(color), width=2)
+            for x in range(int(legend_x), int(legend_x) + 16, 5):
+                canvas.draw.line((x, legend_y, x + 2, legend_y), fill=canvas.color(color), width=2)
         else:
-            canvas.draw.line((line_left, top + 18, line_left + 16, top + 18), fill=canvas.color(color), width=2)
-        legend_x = line_left - 10
-    canvas.text((left + 10, top + 35), "绿升 / 红降 / 灰平或无基准 · 非利好判断 · pp=百分点",
-                9, "muted", anchor="lm", bold=False, width=right - left - 20)
+            canvas.draw.line((legend_x, legend_y, legend_x + 16, legend_y), fill=canvas.color(color), width=2)
+        legend_x += 20 + canvas.text((legend_x + 20, legend_y), label, 10, "muted", anchor="lm", bold=False) + 10
+    canvas.text((right - 10, legend_y), "绿升红降 · 非利好判断", 9, "muted", anchor="rm", bold=False)
     if sum(finite(quote.get("last")) is not None for _label, quote in points) < 2:
         canvas.text(((left + right) / 2, (top + bottom) / 2 + 8), "收益率暂不可用", 14, "muted", anchor="mm")
         return
@@ -416,6 +423,52 @@ def _curve(canvas, payload):
             canvas.draw.ellipse((x - 4, y - 4, x + 4, y + 4), fill=canvas.color(tone))
             canvas.text((x, y - 8), f"{quote['last']:.2f}", 11, tone, anchor="mb", stroke="paper")
         canvas.text((x, bottom - 10), label, 12, anchor="mm", bold=False)
+
+
+def _gauge_point(centre, radius, score):
+    angle = math.pi * (1 - score / 100)
+    return centre[0] + radius * math.cos(angle), centre[1] - radius * math.sin(angle)
+
+
+def _fear_greed(canvas, payload):
+    """CNN's Fear & Greed Index as a half-dial over its five bands, the needle at today's score,
+    with the band named beneath and where it stood a week and a month ago."""
+    left, top, right, bottom = FEAR_GREED_CARD
+    reading = (payload.get("fear_greed") or {}).get("data") or {}
+    score = reading.get("score")
+    band, name = fear_greed_band(score) if score is not None else (2, "")
+    accent = FEAR_GREED_COLOURS[band]
+    canvas.draw.rounded_rectangle((left, top, right, bottom), radius=6, outline=canvas.color("rule"), width=1)
+    _accent_bar(canvas, (left, top, right, bottom), accent)
+    canvas.text((left + 9, top + 18), "恐惧贪婪", 14, anchor="lm")
+    logo = load_source_logo(ASSETS / "logos" / "cnn.png", 11)
+    if logo is not None:
+        canvas.image.paste(logo, (right - 8 - logo.width, top + 18 - logo.height // 2), logo)
+    if score is None:
+        canvas.text(((left + right) / 2, (top + bottom) / 2 + 8), "暂不可用", 13, "muted", anchor="mm")
+        return
+    centre, radius = ((left + right) / 2, top + 76), 42
+    box = (centre[0] - radius, centre[1] - radius, centre[0] + radius, centre[1] + radius)
+    for colour, start, end in zip(FEAR_GREED_COLOURS, FEAR_GREED_EDGES, FEAR_GREED_EDGES[1:]):
+        # PIL's angles run clockwise from 3 o'clock: the dial's left end is 180 degrees.
+        canvas.draw.arc(box, 180 + 180 * start / 100 + 1, 180 + 180 * end / 100 - 1, fill=colour, width=9)
+    tip = _gauge_point(centre, radius - 12, score)
+    canvas.draw.line((centre, tip), fill=canvas.color("ink"), width=3)
+    canvas.draw.ellipse((centre[0] - 5, centre[1] - 5, centre[0] + 5, centre[1] + 5), fill=canvas.color("ink"))
+    # Under the hub: the score and its band, side by side.
+    value = f"{score:.0f}"
+    pill_w = canvas.width(name, 11) + 14
+    row_w = canvas.width(value, 20) + 6 + pill_w
+    x = centre[0] - row_w / 2
+    middle = centre[1] + 20
+    x += canvas.text((x, middle), value, 20, anchor="lm") + 6
+    canvas.draw.rounded_rectangle((x, middle - 8, x + pill_w, middle + 8), radius=8, fill=accent)
+    canvas.text((x + pill_w / 2, middle), name, 11, "badge_ink", anchor="mm")
+    past = [f"{label} {value:.0f}" for label, value in (("周前", reading.get("week")), ("月前", reading.get("month")))
+            if value is not None]
+    if past:
+        canvas.text((centre[0], bottom - 9), " · ".join(past), 10, "muted", anchor="mm", bold=False,
+                    width=right - left - 10)
 
 
 def _macro_tiles(canvas, payload):
@@ -720,6 +773,7 @@ def render_page(dimensions, payload, settings, now):
         canvas.text(((box[0] + box[1]) / 2, 130), "暂不可用", 15, "muted", anchor="mm")
     _yield_tile(canvas, payload, TILES[3])
     _curve(canvas, payload)
+    _fear_greed(canvas, payload)
     _macro_tiles(canvas, payload)
     _holdings(canvas, payload, now)
     result = canvas.image

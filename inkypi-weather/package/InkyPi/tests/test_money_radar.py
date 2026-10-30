@@ -450,3 +450,35 @@ def test_macro_tiles_name_bls_by_its_official_logo(monkeypatch, night):
     payload["macro"]["data"]["source"] = "OECD"
     money_render._macro_tiles(canvas, payload)
     assert "9 月 · OECD" in drawn
+
+
+def test_cnn_fear_and_greed_reads_its_score_band_and_history():
+    payload = {"fear_and_greed": {"score": 34.6, "rating": "fear", "timestamp": "2026-10-30T00:00:00+00:00",
+                                  "previous_close": 34.6, "previous_1_week": 16.69, "previous_1_month": 30.31},
+               "fear_and_greed_historical": {"data": [{"x": 1, "y": 20.0}, {"x": 2, "y": "bad"}, {"x": 3, "y": 34.6}]}}
+    reading = sources.normalize_fear_greed(payload)
+
+    assert (reading["score"], reading["week"], reading["month"], reading["history"]) == (34.6, 16.69, 30.31, [20.0, 34.6])
+    assert [sources.fear_greed_band(score)[1] for score in (10, 30, 50, 60, 90)] == [
+        "极度恐惧", "恐惧", "中性", "贪婪", "极度贪婪"]
+    with pytest.raises(ValueError):
+        sources.normalize_fear_greed({"fear_and_greed": {"score": None}})
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_the_fear_and_greed_gauge_sits_beside_the_yield_curve(monkeypatch, mode):
+    canvas = PageCanvas(money_render._palette({"_inkypi_theme": {"mode": mode}}), family="Microsoft YaHei")
+    drawn = []
+    original = canvas.text
+    monkeypatch.setattr(canvas, "text", lambda xy, text, *args, **kwargs: drawn.append(text) or original(xy, text, *args, **kwargs))
+
+    money_render._fear_greed(canvas, {"fear_greed": {"data": {"score": 34.6, "week": 16.7, "month": 30.3}}})
+
+    assert {"恐惧贪婪", "35", "恐惧", "周前 17 · 月前 30"} <= set(drawn)
+    left, top, right, bottom = money_render.FEAR_GREED_CARD
+    assert money_render.CURVE_CARD[2] < left
+    gauge = canvas.image.crop((left, top + 30, right, top + 80)).convert("RGB")
+    assert money_render.FEAR_GREED_COLOURS[0] in set(gauge.get_flattened_data())  # the red end of the dial
+    drawn.clear()
+    money_render._fear_greed(canvas, {"fear_greed": {"data": {}}})
+    assert "暂不可用" in drawn

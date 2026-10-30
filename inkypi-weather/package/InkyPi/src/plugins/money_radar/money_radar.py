@@ -117,6 +117,10 @@ class MoneyRadar(BasePlugin):
                                  lambda ctx: sources.fetch_macro(fred_key, ctx), fresh_seconds=3 * 86400,
                                  usable_seconds=30 * 86400, validate=sources.valid_macro, timeout_seconds=10)),
         }
+        # CNN's index is computed after each close; an hour-old reading is current.
+        results["fear_greed"] = load(Source("fear_greed", {"index": "cnn"}, sources.fetch_fear_greed,
+                                            fresh_seconds=3600, usable_seconds=4 * 86400,
+                                            validate=sources.valid_fear_greed, timeout_seconds=10))
         ciks = load(Source("sec_ciks", {"symbols": list(symbols)},
                            (lambda ctx: sources.fetch_ciks(symbols, contact, ctx)) if contact else None,
                            fresh_seconds=7 * 86400, usable_seconds=30 * 86400, validate=sources.valid_ciks,
