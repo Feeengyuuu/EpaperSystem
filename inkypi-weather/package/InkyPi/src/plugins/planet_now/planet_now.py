@@ -73,6 +73,7 @@ class PlanetNow(BasePlugin):
             "mars": load("mars", sources.fetch_mars, MARS_REFRESH, 4 * DAY, sources.valid_mars, timeout=18),
             "iss": load("iss", lambda ctx: sources.fetch_iss(now, ctx), 4 * MINUTE, 3 * HOUR, sources.valid_iss),
             "people": load("people", sources.fetch_people, 6 * HOUR, 7 * DAY, sources.valid_people),
+            "fireballs": load("fireballs", sources.fetch_fireballs, 6 * HOUR, 7 * DAY, sources.valid_fireballs),
         }
         old_mars = payload["mars"]["data"] or {}
         if allow_network and old_mars.get("image") and not isinstance(old_mars.get("photos"), list):

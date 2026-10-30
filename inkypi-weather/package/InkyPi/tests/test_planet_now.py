@@ -366,3 +366,28 @@ def test_the_iss_place_is_led_by_the_countrys_flag_or_the_oceans_emblem():
     assert page._coordinates(-8.8, 108.0) == "南纬 9° 东经 108°"
     # Mean solar time: 15° of longitude is an hour from Greenwich.
     assert page._solar_time(datetime(2026, 10, 30, 4, 0, tzinfo=page.timezone.utc), -165) == "17:00"
+
+
+def test_jpl_fireballs_read_their_place_time_and_energy():
+    payload = {"fields": ["date", "energy", "impact-e", "lat", "lat-dir", "lon", "lon-dir", "alt", "vel"],
+               "data": [["2026-10-04 03:14:45", "5.4", "0.18", "41.8", "S", "173.1", "W", "26.9", "13.8"],
+                        ["2026-09-15 11:26:13", "2.2", None, "37.6", "N", "161.6", "E", "37.0", None],
+                        ["2026-09-11 10:18:03", "6.1", "0.2", None, None, None, None, None, None]]}
+
+    rows = sources.normalize_fireballs(payload)["fireballs"]
+
+    assert [(row["lat"], row["lon"], row["impact_kt"]) for row in rows] == [(-41.8, -173.1, 0.18), (37.6, 161.6, None)]
+    assert rows[0]["time"] == "2026-10-04T03:14:45+00:00"
+    assert sources.valid_fireballs({"fireballs": []}) and not sources.valid_fireballs({})
+
+
+def test_the_newest_recent_fireball_marks_the_iss_map():
+    now = datetime(2026, 10, 29, 21, 57, tzinfo=sources.PACIFIC)
+    payload = _payload()
+    payload["fireballs"] = {"data": {"fireballs": [{"time": "2026-10-04T03:14:45+00:00", "lat": -41.8, "lon": 60.0,
+                                                    "impact_kt": 0.18}]}}
+
+    assert render.latest_fireball(payload, now)["impact_kt"] == 0.18
+    assert render.latest_fireball(payload, datetime(2026, 12, 30, tzinfo=sources.PACIFIC)) is None
+    page = render.render_page((800, 480), payload, {}, now, {}).convert("RGB")
+    assert render.FIREBALL_COLOURS[0] in set(page.crop((300, 270, 790, 470)).get_flattened_data())

@@ -21,7 +21,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageOps
 
 from utils.doodle_backdrop import paint_doodles
-from utils.local_wordmark import paste_header_art, paste_local_wordmark
+from utils.local_wordmark import load_source_logo, paste_header_art, paste_local_wordmark
 from utils.page_canvas import PageCanvas
 from utils.safe_image import ImageLimits, safe_open_image
 from utils.space_typography import SpaceCanvas
@@ -86,6 +86,9 @@ ISS_LINE_SIZES = (13, 18, 11, 11)
 # (assets/oceans) this tall; its coordinates and local solar time sit on the map, in a tag this
 # size at the bottom corner away from the station.
 PLACE_MARK_HEIGHT, MAP_TAG_SIZE = 16, 9
+# JPL's newest fireball shows on the ISS map while it is this recent, named by JPL's logo.
+FIREBALL_DAYS, FIREBALL_LOGO_HEIGHT = 45, 8
+FIREBALL_COLOURS = ((0xFF, 0x6A, 0x00), (0xFF, 0xD2, 0x1E))
 OCEAN_EMBLEMS = {"太平洋": "pacific", "大西洋": "atlantic", "印度洋": "indian", "北冰洋": "arctic", "南大洋": "southern"}
 # Each station's official mark before its name (assets/logos): China Manned Space's emblem for
 # Tiangong, the ISS programme's emblem; this tall.
@@ -708,7 +711,9 @@ def _space(canvas, payload, images, now):
                 run.append(point)
             if len(run) > 1:
                 canvas.draw.line(run, fill=canvas.color("space"), width=2 if future else 1)
+        # The fireball sits over the orbit's track and under the station itself.
         x, y = at(iss["lat"], iss["lon"])
+        _fireball(canvas, payload, now, at, (mx0, my0, mx0 + mw, my0 + mh), (x, y))
         canvas.draw.ellipse((x - 6, y - 6, x + 6, y + 6), fill=canvas.color("paper"), outline=canvas.color("space"), width=2)
         canvas.draw.line((x - 9, y, x + 9, y), fill=canvas.color("gold"), width=3)
         canvas.draw.rectangle((x - 2, y - 2, x + 2, y + 2), fill=canvas.color("ink"))
@@ -754,7 +759,54 @@ def _space(canvas, payload, images, now):
                     x += _paste(canvas, mark, (x, round((ink[1] + ink[3]) / 2 - mark.height / 2))) + 5
             canvas.text((x, round(ty)), text, size, colour, anchor="la", bold=bold, width=mx0 + mw - x)
             ty += heights[index] + gap
+    else:
+        _fireball(canvas, payload, now, at, (mx0, my0, mx0 + mw, my0 + mh))
     _crew(canvas, payload.get("people", {}).get("data") or {}, images, now, (crew_left, my0, right - 8, bottom - 6))
+
+
+def latest_fireball(payload, now):
+    """JPL's newest fireball within FIREBALL_DAYS, or None."""
+    for row in (payload.get("fireballs", {}).get("data") or {}).get("fireballs") or []:
+        when = _local_time(row.get("time"))
+        if when is not None and 0 <= (now - when).total_seconds() <= FIREBALL_DAYS * 86400:
+            return {**row, "when": when}
+    return None
+
+
+def _fireball(canvas, payload, now, at, box, avoid=None):
+    """The newest fireball where it burst: a meteor streaking in from the upper right, and beside
+    it JPL's logo, its date and its impact energy, on whichever side keeps clear of ``avoid`` (the
+    station)."""
+    row = latest_fireball(payload, now)
+    if row is None:
+        return
+    x, y = at(row["lat"], row["lon"])
+    outer, inner = FIREBALL_COLOURS
+    canvas.draw.line((x + 2, y - 2, x + 11, y - 9), fill=outer, width=2)
+    canvas.draw.ellipse((x - 4, y - 4, x + 4, y + 4), fill=outer, outline=canvas.color("ink"))
+    canvas.draw.ellipse((x - 1.5, y - 1.5, x + 1.5, y + 1.5), fill=inner)
+    energy = row.get("impact_kt")
+    text = f"火流星 {row['when']:%m/%d}" + (f" {energy:.2g}kt" if energy else "")
+    logo = load_source_logo(ASSETS / "logos" / "jpl.png", FIREBALL_LOGO_HEIGHT)
+    width = canvas.width(text, MAP_TAG_SIZE, False) + 8 + (logo.width + 3 if logo is not None else 0)
+    height = MAP_TAG_SIZE + 6
+    left, top, right, bottom = box
+    tag_x = x + 8 if x + 8 + width <= right - 2 else x - 8 - width
+    # Above the meteor in the map's lower half, below it in the upper; clear of the bottom row,
+    # where the ISS's coordinates tag sits.
+    def placed(above):
+        return max(top + 2, min(y - height - 6 if above else y + 6, bottom - 2 * height - 6))
+
+    above = y > (top + bottom) / 2
+    tag_y = placed(above)
+    if avoid is not None and tag_x - 8 <= avoid[0] <= tag_x + width + 8 and tag_y - 8 <= avoid[1] <= tag_y + height + 8:
+        tag_y = placed(not above)
+    canvas.draw.rounded_rectangle((tag_x, tag_y, tag_x + width, tag_y + height), radius=4, fill=canvas.color("paper"))
+    cursor = tag_x + 4
+    if logo is not None:
+        _paste(canvas, logo, (cursor, tag_y + (height - logo.height) / 2))
+        cursor += logo.width + 3
+    canvas.text((cursor, tag_y + height / 2), text, MAP_TAG_SIZE, "ink", anchor="lm", bold=False)
 
 
 def _coordinates(lat, lon):

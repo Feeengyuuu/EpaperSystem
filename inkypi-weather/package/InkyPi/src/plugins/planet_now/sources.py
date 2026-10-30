@@ -92,6 +92,10 @@ ISS_PERIOD_MIN = 92.9
 EARTH_DEG_PER_MIN = 360 / 1436.07
 EARTH_RADIUS_KM = 6371.0
 ISS_URL = "https://api.wheretheiss.at/v1/satellites/25544"
+# JPL's fireball reports: bright meteors US government sensors caught, with where and how much
+# energy they released (a few a month).
+FIREBALL_URL = "https://ssd-api.jpl.nasa.gov/fireball.api"
+FIREBALLS = 5
 ISS_COORDINATES_URL = "https://api.wheretheiss.at/v1/coordinates"
 # The ISS's track drawn on the map: these minutes either side of now.
 ISS_TRACK_MINUTES = (-30, -20, -10, 10, 20, 30, 40)
@@ -587,6 +591,36 @@ def fetch_iss(now, context):
             "daylight": current.get("visibility") == "daylight",
             "ascending": (later[0][0] >= float(current["latitude"])) if later else True,
             "time": now.isoformat(), "track": points}
+
+
+def normalize_fireballs(payload):
+    """JPL's newest fireballs that have a place: when (UTC), where, and their impact energy (kt)."""
+    fields = list((payload or {}).get("fields") or [])
+    rows = []
+    for values in (payload or {}).get("data") or []:
+        row = dict(zip(fields, values))
+        try:
+            lat = float(row["lat"]) * (-1 if row.get("lat-dir") == "S" else 1)
+            lon = float(row["lon"]) * (-1 if row.get("lon-dir") == "W" else 1)
+            when = datetime.strptime(str(row["date"]), "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            continue
+        try:
+            energy = float(row.get("impact-e"))
+        except (TypeError, ValueError):
+            energy = None
+        rows.append({"time": when.isoformat(), "lat": lat, "lon": lon, "impact_kt": energy})
+    return {"fireballs": rows}
+
+
+def fetch_fireballs(context):
+    return normalize_fireballs(_json(FIREBALL_URL, context, max_bytes=32 * 1024, params={"limit": FIREBALLS}))
+
+
+def valid_fireballs(data):
+    return isinstance((data or {}).get("fireballs"), list)
 
 
 def _julian_centuries(now):
