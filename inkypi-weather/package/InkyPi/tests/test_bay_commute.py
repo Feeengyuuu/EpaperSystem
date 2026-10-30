@@ -99,6 +99,39 @@ def quiet_buoy(monkeypatch):
     monkeypatch.setattr(sources, "fetch_buoy", buoy)
 
 
+BART_PAYLOAD = {"root": {"station": [{"name": "Warm Springs/South Fremont", "abbr": "WARM", "etd": [
+    {"destination": "Berryessa", "abbreviation": "BERY", "estimate": [
+        {"minutes": "13", "direction": "South", "hexcolor": "#ff9933", "cancelflag": "0"},
+        {"minutes": "33", "direction": "South", "hexcolor": "#ff9933", "cancelflag": "0"}]},
+    {"destination": "Richmond", "abbreviation": "RICH", "estimate": [
+        {"minutes": "Leaving", "direction": "North", "hexcolor": "#ff9933", "cancelflag": "0"},
+        {"minutes": "28", "direction": "North", "hexcolor": "#ff9933", "cancelflag": "1"}]},
+    {"destination": "Daly City", "abbreviation": "DALY", "estimate": [
+        {"minutes": "5", "direction": "North", "hexcolor": "#339933", "cancelflag": "0"}]}]}]}}
+
+
+@pytest.fixture(autouse=True)
+def quiet_bart(monkeypatch):
+    """No test reaches BART: the station reads the departures above unless a test says otherwise."""
+    def bart(station, now, task):
+        task.raise_if_cancelled()
+        return sources.parse_bart(BART_PAYLOAD, now)
+    monkeypatch.setattr(sources, "fetch_bart", bart)
+
+
+def test_bart_departures_become_clock_times_and_drop_cancelled_and_departed_trains():
+    data = sources.parse_bart(BART_PAYLOAD, NOW)
+
+    assert data["station"] == "Warm Springs/South Fremont" and sources.valid_bart(data)
+    assert [len(line["departures"]) for line in data["lines"]] == [2, 1, 1]  # the cancelled train is gone
+    lines = sources.coming_trains(data, NOW + timedelta(minutes=6))
+    assert [(line["destination"], [stamp.strftime("%H:%M") for stamp in line["departures"]]) for line in lines] == [
+        ("Berryessa", ["22:43", "23:03"])]
+    assert sources.bart_station_setting("frmt") == "FRMT" and sources.bart_station_setting("../x") == "WARM"
+    with pytest.raises(ValueError):
+        sources.parse_bart({"root": {"station": []}}, NOW)
+
+
 def test_buoy_page_gives_waves_period_swell_and_water_temperature():
     data = sources.parse_buoy(BUOY_PAGE)
 
@@ -392,7 +425,7 @@ def test_buoy_is_drawn_beside_the_tides_and_never_decides_provenance(plugin, mon
     with_buoy = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW)
     without = render_page((800, 480), {**payload, "buoy": {"state": "unavailable", "data": {}}},
                           {"_inkypi_theme": {"mode": "day"}}, NOW)
-    assert with_buoy.crop((510, 424, 790, 448)).tobytes() != without.crop((510, 424, 790, 448)).tobytes()
+    assert with_buoy.crop((510, 362, 790, 378)).tobytes() != without.crop((510, 362, 790, 378)).tobytes()
     assert with_buoy.crop((0, 100, 460, 480)).tobytes() == without.crop((0, 100, 460, 480)).tobytes()
 
     monkeypatch.setattr(sources, "fetch_buoy", lambda task: (_ for _ in ()).throw(OSError("offline")))
@@ -412,3 +445,23 @@ def test_the_tide_readouts_are_set_in_space_grotesk_with_inter_standing_in(monke
         assert command_render.font(32, "display").getname()[0] == command_render.font(32, "number").getname()[0]
     finally:
         command_render.font.cache_clear()
+
+
+def test_bart_departures_sit_under_the_buoy_and_never_decide_provenance(plugin, monkeypatch):
+    mock_sources(monkeypatch, [])
+    payload = plugin._payload(SETTINGS, NOW, allow_network=True, context=context())
+    assert payload["bart"]["state"] == "live" and payload["provenance"] == SourceProvenance.LIVE
+    recorded = []
+    original = Canvas.text
+
+    def capture(self, xy, text, *args, **kwargs):
+        recorded.append(str(text))
+        return original(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(Canvas, "text", capture)
+    with_bart = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW)
+    assert {"Warm Springs 站", "Daly City", "Berryessa", "22:35"} <= set(recorded)
+    without = render_page((800, 480), {**payload, "bart": {"state": "unavailable", "data": {}}},
+                          {"_inkypi_theme": {"mode": "day"}}, NOW)
+    assert with_bart.crop((510, 395, 790, 444)).tobytes() != without.crop((510, 395, 790, 444)).tobytes()
+    assert with_bart.crop((0, 100, 460, 480)).tobytes() == without.crop((0, 100, 460, 480)).tobytes()

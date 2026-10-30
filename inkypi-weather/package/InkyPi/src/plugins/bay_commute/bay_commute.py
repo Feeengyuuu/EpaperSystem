@@ -71,6 +71,8 @@ class BayCommute(BasePlugin):
             return False
         if name == "buoy":
             return sources.valid_buoy(data)
+        if name == "bart":
+            return sources.valid_bart(data)
         if name == "roads":
             rows = data.get("items")
             return (isinstance(rows, list) and len(rows) <= sources.MAX_CACHED_ROADS
@@ -110,6 +112,8 @@ class BayCommute(BasePlugin):
             return False
         if name == "buoy":
             return -300 <= (now - fetched).total_seconds() < 1800
+        if name == "bart":
+            return -60 <= (now - fetched).total_seconds() < 120
         if name == "roads":
             source = sources.parse_time(cache["data"].get("source_updated_at"))
             return (0 <= (now - fetched).total_seconds() < 3600
@@ -126,6 +130,8 @@ class BayCommute(BasePlugin):
             return cache["data"].get("end_date", "") >= now.date().isoformat()
         if name == "buoy":
             return (now - fetched).total_seconds() <= 6 * 3600
+        if name == "bart":
+            return (now - fetched).total_seconds() <= 2 * 3600
         return True
 
     def _source(self, name, identity, now, *, allow_network, force, context, fetcher):
@@ -176,11 +182,16 @@ class BayCommute(BasePlugin):
         buoy = self._source("buoy", {"station": sources.BUOY_STATION}, now,
                             allow_network=allow_network, force=force, context=context,
                             fetcher=lambda: sources.fetch_buoy(context))
+        # BART's departures, like the buoy, add to the page without deciding whether it counts as live.
+        bart_station = sources.bart_station_setting(settings.get("bartStation"))
+        bart = self._source("bart", {"station": bart_station}, now,
+                            allow_network=allow_network, force=force, context=context,
+                            fetcher=lambda: sources.fetch_bart(bart_station, now, context))
         states = {roads["state"], tides["state"]}
         provenance = (SourceProvenance.LOCAL_FALLBACK if "unavailable" in states
                       else SourceProvenance.STALE_CACHE if "stale_cache" in states
                       else SourceProvenance.LIVE if "live" in states else SourceProvenance.FRESH_CACHE)
-        return {"roads": roads, "tides": tides, "buoy": buoy, "routes": list(routes), "station": station,
+        return {"roads": roads, "tides": tides, "buoy": buoy, "bart": bart, "routes": list(routes), "station": station,
                 "window_days": window_days, "provenance": provenance}
 
     def render_cached_display(self, settings, device_config, *, resolved_theme_context):

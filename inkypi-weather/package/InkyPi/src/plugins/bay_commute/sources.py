@@ -18,6 +18,14 @@ NOAA_URL = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter"
 NDBC_URL = "https://www.ndbc.noaa.gov/data/latest_obs/{station}.txt"
 # NDBC 46026, San Francisco: the buoy 18 nautical miles west of the Golden Gate.
 BUOY_STATION = "46026"
+BART_URL = "https://api.bart.gov/api/etd.aspx"
+# The key BART publishes for anyone to use with its API (api.bart.gov/docs/overview).
+BART_PUBLIC_KEY = "MW9S-E7SL-26DU-VV8V"
+# Warm Springs / South Fremont, the station nearest home; any station's four-letter code works.
+DEFAULT_BART_STATION = "WARM"
+BART_CODE = re.compile(r"^[A-Za-z0-9]{4}$")
+BART_COLOUR = re.compile(r"^#[0-9a-fA-F]{6}$")
+BART_DEPARTURES = 3
 COMPASS = {"N": "北", "NNE": "北东北", "NE": "东北", "ENE": "东东北", "E": "东", "ESE": "东东南", "SE": "东南",
            "SSE": "南东南", "S": "南", "SSW": "南西南", "SW": "西南", "WSW": "西西南", "W": "西", "WNW": "西西北",
            "NW": "西北", "NNW": "北西北"}
@@ -336,6 +344,69 @@ def valid_buoy(data):
     numbers = [data.get(key) for key in ("wave_ft", "period_s", "water_f", "wind_kt")]
     return (all(value is None or (type(value) in (int, float) and math.isfinite(value)) for value in numbers)
             and (data.get("wave_ft") is not None or data.get("water_f") is not None))
+
+
+def bart_station_setting(value):
+    code = str(value or "").strip().upper()
+    return code if BART_CODE.match(code) else DEFAULT_BART_STATION
+
+
+def parse_bart(payload, now):
+    """A station's next trains by destination: the line's colour and when each train leaves, as
+    clock times (so a reading kept for a while still says when, not how long ago it said)."""
+    stations = (((payload or {}).get("root") or {}).get("station")) or []
+    station = stations[0] if isinstance(stations, list) and stations and isinstance(stations[0], dict) else {}
+    lines = []
+    for etd in station.get("etd") or []:
+        if not isinstance(etd, dict) or not str(etd.get("destination") or "").strip():
+            continue
+        times, colour, direction = [], None, ""
+        for estimate in etd.get("estimate") or []:
+            if not isinstance(estimate, dict) or str(estimate.get("cancelflag")) == "1":
+                continue
+            minutes = str(estimate.get("minutes") or "").strip()
+            try:
+                wait = 0 if minutes.lower() == "leaving" else int(minutes)
+            except ValueError:
+                continue
+            times.append((now + timedelta(minutes=wait)).isoformat())
+            colour = colour or (estimate.get("hexcolor") if BART_COLOUR.match(str(estimate.get("hexcolor") or "")) else None)
+            direction = direction or str(estimate.get("direction") or "")
+        if times:
+            lines.append({"destination": str(etd["destination"]).strip()[:40], "colour": colour or "#8c96a0",
+                          "direction": direction[:10], "departures": sorted(times)[:BART_DEPARTURES]})
+    if not station.get("name"):
+        raise ValueError("BART returned no station")
+    return {"station": str(station["name"])[:40], "code": str(station.get("abbr") or "")[:4],
+            "time": now.isoformat(), "lines": lines}
+
+
+def fetch_bart(station, now, context):
+    context.raise_if_cancelled()
+    response = get_http_client().request_json(
+        "GET", BART_URL, context=context, timeout=REQUEST_TIMEOUT, max_bytes=64 * 1024,
+        params={"cmd": "etd", "orig": bart_station_setting(station), "key": BART_PUBLIC_KEY, "json": "y"},
+        headers={"User-Agent": USER_AGENT})
+    context.raise_if_cancelled()
+    return parse_bart(response.data, now)
+
+
+def valid_bart(data):
+    return (isinstance(data, dict) and bool(data.get("station")) and isinstance(data.get("lines"), list)
+            and all(isinstance(line, dict) and line.get("destination") and isinstance(line.get("departures"), list)
+                    and all(parse_time(stamp) for stamp in line["departures"]) for line in data["lines"]))
+
+
+def coming_trains(data, now):
+    """The lines whose next train has not left yet, soonest first, each with only its trains to come."""
+    now = local_now(now)
+    lines = []
+    for line in (data or {}).get("lines") or []:
+        departures = [parse_time(stamp) for stamp in line.get("departures") or []]
+        upcoming = [stamp for stamp in departures if stamp and (stamp - now).total_seconds() >= -30]
+        if upcoming:
+            lines.append({**line, "departures": upcoming})
+    return sorted(lines, key=lambda line: line["departures"][0])
 
 
 def next_tides(data, now):

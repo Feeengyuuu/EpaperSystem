@@ -14,7 +14,9 @@ from utils.fonts import load_font
 from .map_view import draw_marker, render_map, source_logo
 from .render import ASSETS, FACILITIES, KINDS, draw_water, paste_sticker, source_label, tide_now
 from .direction_plaques import draw_direction
-from .sources import COMPASS, PACIFIC, local_now, next_tides, parse_time, rank_roads, road_state, select_roads
+from .sources import (
+    COMPASS, PACIFIC, coming_trains, local_now, next_tides, parse_time, rank_roads, road_state, select_roads,
+)
 from .traffic_icons import draw_icon
 
 
@@ -28,6 +30,11 @@ PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 # The tide card's readouts in a display face (the bundled Space Grotesk, SIL OFL) and the weight
 # set on it as a variable font (None for a static one); Inter stands in without it.
 DISPLAY_FACE = (PLUGIN_ROOT.parent / "static" / "fonts" / "SpaceGrotesk-VF.ttf", 700)
+# The tide chart, then the buoy's row and BART's departures beneath it, down the right column.
+CHART = (536, 274, 782, 344)
+BUOY_Y = 369
+BART_Y = 391
+BART_ROWS, BART_COLUMNS = 2, 2
 PLACE_MARKS = {"san jose": ("san-jose.png", 31, ""),
                "redwood city": ("redwood-city.png", 18, ""),
                "alamo": ("contra-costa-seal.png", 18, "Contra Costa")}
@@ -290,9 +297,9 @@ def _chart_label(page, x, y, text, high):
     width = page.draw.textlength(text, font=font(10, "number"))
     xx = max(538, min(780 - width, x - width / 2))
     yy = y - 17 if high else y + 6
-    if yy < 278:
+    if yy < CHART[1] + 1:
         xx, yy = min(780 - width, x + 8), y - 7
-    if yy + 12 > 393:
+    if yy + 12 > CHART[3] - 2:
         xx, yy = min(780 - width, x + 7), y - 13
     page.draw.rounded_rectangle((xx - 2, yy - 1, xx + width + 2, yy + 12), radius=3, fill=page.palette["paper"])
     page.text((xx, yy), text, 10, "blue", role="number")
@@ -303,9 +310,9 @@ def tide_chart(page, data, now):
     end = datetime.combine(now.date() + timedelta(days=1), time.min, PACIFIC)
     rows = [row for row in data.get("curve", []) if begin <= parse_time(row["time"]) < end]
     if len(rows) < 4:
-        page.text((512, 305), "今日预测曲线不可用", 15, "muted", width=272)
+        page.text((512, (CHART[1] + CHART[3]) / 2 - 8), "今日预测曲线不可用", 15, "muted", width=272)
         return
-    left, top, right, bottom = 536, 277, 782, 395
+    left, top, right, bottom = CHART
     low = math.floor(min(row["height"] for row in rows) / 2) * 2
     high = max(low + 2, math.ceil(max(row["height"] for row in rows) / 2) * 2)
     span = end.timestamp() - begin.timestamp()
@@ -349,7 +356,7 @@ def tide_chart(page, data, now):
     for hour in (0, 6, 12, 18, 24):
         stamp = end if hour == 24 else datetime.combine(now.date(), time(hour), PACIFIC)
         x = left + (stamp.timestamp() - begin.timestamp()) / span * (right - left)
-        page.text((x, 403), f"{hour:02d}", 10, "muted", role="number", align="center", bold=False)
+        page.text((x, bottom + 4), f"{hour:02d}", 10, "muted", role="number", align="center", bold=False)
 
 
 def tides(page, payload, settings, now):
@@ -377,17 +384,45 @@ def tides(page, payload, settings, now):
     tide_chart(page, data, now)
     buoy = payload.get("buoy") or {}
     measured = buoy.get("data") or {}
-    page.rule((512, 424, 784, 424))
+    page.rule((512, BUOY_Y - 7, 784, BUOY_Y - 7))
+    bart(page, payload, now)
     if buoy.get("state") in {None, "unavailable"} or not measured:
-        page.text((512, 433), "浮标 46026 · 海况暂不可用", 10, "muted", width=272, bold=False)
+        page.text((512, BUOY_Y), "浮标 46026 · 海况暂不可用", 10, "muted", width=272, bold=False)
         return
-    page.text((512, 433), "浮标缓存" if buoy.get("state") == "stale_cache" else "浮标 46026", 10, "muted", bold=False)
+    page.text((512, BUOY_Y), "浮标缓存" if buoy.get("state") == "stale_cache" else "浮标 46026", 10, "muted", bold=False)
     if measured.get("wave_ft") is not None:
-        page.text((592, 431), f"浪 {measured['wave_ft']:.1f} ft", 12, "blue", width=90)
+        page.text((592, BUOY_Y - 2), f"浪 {measured['wave_ft']:.1f} ft", 12, "blue", width=90)
     parts = ([f"{measured['period_s']:.0f} 秒"] if measured.get("period_s") else [])
     if measured.get("swell_dir") in COMPASS:
         parts.append(COMPASS[measured["swell_dir"]])
-    page.text((784, 433), " · ".join(parts), 10, "muted", align="right", width=99, bold=False)
+    page.text((784, BUOY_Y), " · ".join(parts), 10, "muted", align="right", width=99, bold=False)
+
+
+def bart(page, payload, now):
+    """BART's next trains from the chosen station: its logo and name, then each destination with
+    its line's colour and its next departures as clock times."""
+    source = payload.get("bart") or {}
+    data = source.get("data") or {}
+    page.rule((512, BART_Y - 6, 784, BART_Y - 6))
+    page.logo("bart", 512, BART_Y - 1, 14)
+    # "Warm Springs/South Fremont" reads as its first name.
+    name = str(data.get("station") or "BART").split("/")[0].strip()
+    page.text((538, BART_Y), f"{name} 站", 11, width=170)
+    note = "缓存" if source.get("state") == "stale_cache" else "实时发车"
+    page.text((784, BART_Y + 1), note, 10, "muted", align="right", bold=False)
+    lines = coming_trains(data, now)[:BART_ROWS * BART_COLUMNS]
+    if not lines:
+        page.text((512, BART_Y + 22), "暂无发车信息" if data else "BART 发车暂不可用", 10, "muted", bold=False)
+        return
+    width = 272 / BART_COLUMNS
+    for index, line in enumerate(lines):
+        column, row = index % BART_COLUMNS, index // BART_COLUMNS
+        x, y = 512 + column * width, BART_Y + 19 + row * 16
+        page.draw.ellipse((x, y + 2, x + 8, y + 10), fill=line["colour"])
+        times = " · ".join(stamp.astimezone(PACIFIC).strftime("%H:%M") for stamp in line["departures"][:2])
+        times_w = page.draw.textlength(times, font=font(10, "number"))
+        page.text((x + width - 8, y), times, 10, "blue", role="number", align="right")
+        page.text((x + 12, y), line["destination"], 10, width=width - 26 - times_w, bold=False)
 
 
 def footer(page, payload, now):
