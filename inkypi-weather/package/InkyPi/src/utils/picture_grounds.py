@@ -25,9 +25,10 @@ def _edge(size):
         [(x, y) for y in range(1, height - 1) for x in (0, width - 1)]
 
 
-def cut_flat_ground(picture, side, *, tolerance=GROUND_TOLERANCE, share=GROUND_SHARE):
+def cut_flat_ground(picture, side, *, tolerance=GROUND_TOLERANCE, share=GROUND_SHARE, corners=0):
     """``picture`` (at most ``side`` * 3 px) without the flat ground its edge shows, cropped to
-    what stands on it (RGBA); None when its edge is not one colour, as a photo's is."""
+    what stands on it (RGBA); None when its edge is not one colour, as a photo's is. ``corners`` px
+    squares at its corners go too (a rounded tile's dark corners left in a square copy)."""
     art = picture.convert("RGBA")
     art.thumbnail((side * 3, side * 3), Image.Resampling.LANCZOS)
     alpha = art.getchannel("A")
@@ -57,7 +58,12 @@ def cut_flat_ground(picture, side, *, tolerance=GROUND_TOLERANCE, share=GROUND_S
     graded = distance.point(lambda value: min(255, value * 255 // (2 * tolerance)))
     kept = ImageChops.invert(flooded)
     kept.paste(graded, (0, 0), rim)
-    art.putalpha(ImageChops.multiply(kept, alpha))
+    kept = ImageChops.multiply(kept, alpha)
+    if corners:
+        clear = ImageDraw.Draw(kept)
+        for x, y in ((0, 0), (width - corners, 0), (0, height - corners), (width - corners, height - corners)):
+            clear.rectangle((x, y, x + corners - 1, y + corners - 1), fill=0)
+    art.putalpha(kept)
     box = art.getchannel("A").point(lambda value: 255 if value > 16 else 0).getbbox()
     return art.crop(box) if box else None
 
@@ -100,7 +106,7 @@ def trim_white(picture, *, tolerance=WHITE_TOLERANCE, margin=2):
                      min(rgb.width, right + margin), min(rgb.height, bottom + margin)))
 
 
-def _light_on_dark(rgb):
+def light_on_dark(rgb):
     """The drawing with its lightness inverted and its hues kept: white ground to black, black
     lines to white, a blue box still blue."""
     hue, saturation, value = ImageChops.invert(rgb).convert("HSV").split()
@@ -114,5 +120,5 @@ def blend_drawing(image, drawing, xy, *, night):
     x, y = (int(value) for value in xy)
     rgb = drawing.convert("RGB")
     region = image.crop((x, y, x + rgb.width, y + rgb.height)).convert("RGB")
-    blended = ImageChops.lighter(region, _light_on_dark(rgb)) if night else ImageChops.multiply(region, rgb)
+    blended = ImageChops.lighter(region, light_on_dark(rgb)) if night else ImageChops.multiply(region, rgb)
     image.paste(blended, (x, y))

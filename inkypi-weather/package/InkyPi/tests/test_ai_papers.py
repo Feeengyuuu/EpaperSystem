@@ -215,6 +215,22 @@ def test_a_large_arxiv_figure_loads_and_each_paper_stops_at_its_first(monkeypatc
     assert list(images) == [figures[1]] and images[figures[1]].size == (360, 360)
 
 
+def test_a_wordmark_shows_wide_without_its_name_and_turns_light_by_night():
+    avatar = Image.new("RGBA", (96, 96), (255, 255, 255, 255))
+    draw = ImageDraw.Draw(avatar)
+    draw.rectangle((8, 40, 87, 55), fill=(20, 40, 90, 255))  # a navy wordmark, 80 x 16
+    for x, y in ((0, 0), (93, 0), (0, 93), (93, 93)):  # the dark corners of a rounded tile's square copy
+        draw.rectangle((x, y, x + 2, y + 2), fill=(20, 20, 20, 255))
+
+    day = render.avatar_mark(render.PageCanvas(render._palette({"themeMode": "day"})), avatar, 14)
+    night = render.avatar_mark(render.PageCanvas(render._palette({"themeMode": "night"})), avatar, 14)
+
+    assert day.size == (56, 11) and render.spells_name(day)
+    assert day.getpixel((28, 5))[:3] == (20, 40, 90)  # its own colour by day
+    red, green, blue, _alpha = night.getpixel((28, 5))
+    assert min(red, green, blue) > 120 and blue > red  # light by night, still blue
+
+
 def test_a_paper_without_an_upload_shows_its_first_arxiv_figure_that_loaded():
     paper = {"image": None, "figures": ["https://arxiv.org/html/1/x1.png", "https://arxiv.org/html/1/x2.png"]}
     second = Image.new("RGB", (8, 8))

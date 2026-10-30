@@ -34,9 +34,9 @@ FRESH_SECONDS = 60 * 60
 USABLE_SECONDS = 3 * 86400
 # A paper's arXiv figure does not change.
 FIGURE_SECONDS = 30 * 86400
-# The papers on the page: the lead, four cards and the ranking down the right.
-SHOWN = 12
+# The papers on the page: the lead and four cards, pictured, and the ranking down the right.
 PICTURED = 5
+SHOWN = PICTURED + render.RANKING_ROWS
 STILL_PIXELS = (480, 360)
 # arXiv figures are often large PNGs (a 1360 x 2040 sample grid runs to 6.5 MB): one may download
 # to this size; its pixels stay within the thumbnail loader's limits.

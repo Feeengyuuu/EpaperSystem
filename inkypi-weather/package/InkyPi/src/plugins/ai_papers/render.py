@@ -23,7 +23,10 @@ from utils.doodle_backdrop import paint_doodles
 from utils.flat_icons import draw_icon
 from utils.local_wordmark import load_source_logo, paste_local_wordmark
 from utils.page_canvas import PageCanvas
-from utils.picture_grounds import blend_drawing, cut_flat_ground, drawn_on_white, readable_on, trim_white
+from utils.picture_grounds import (
+    blend_drawing, cut_flat_ground, drawn_on_white, light_on_dark, readable_on, trim_white,
+)
+from utils.theme_utils import contrast_ratio, relative_luminance
 
 
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -41,7 +44,11 @@ LEAD_FIGURE_WIDTH = (184, 272)
 GRID = (12, 276, 520, 470)
 GRID_GAP = 8
 RANKING = (528, 60, 788, 470)
-RANKING_ROWS = 7
+# Six rows leave each its title's two lines, a clear gap, then its organisation and upvotes.
+RANKING_ROWS = 6
+RANKING_LINE = 17
+RANKING_GAP = 6
+RANKING_MARK = 14
 # A card's figure fills the card's full height down its left side, this wide.
 CARD_FIGURE_WIDTH = 124
 # A diagram is cut to its box's shape only so far: at least this share of its width (or height)
@@ -50,6 +57,13 @@ LEAD_DIAGRAM_KEPT = 0.75
 CARD_DIAGRAM_KEPT = 0.6
 DIAGRAM_INSET = 6
 AVATAR = 18
+# A mark at least this much wider than tall spells its organisation's name; one may run to this
+# many times its height.
+WORDMARK_RATIO = 2.2
+WORDMARK_WIDTH = 4
+AVATAR_CORNER = 4
+# By night a mark drawn in a colour no channel of which reaches this (a navy, a dark purple) turns light.
+DARK_MARK_VALUE = 160
 LEAD_SUMMARY_LINES = 4
 KEYWORDS = 3
 DOODLES = ASSETS / "doodles" / "papers.png"
@@ -113,24 +127,47 @@ def _rounded(picture, size, radius):
     return tile
 
 
-def avatar_mark(canvas, picture, side):
-    """An organisation's avatar ``side`` px tall: its mark off its flat tile, its parts too close to
-    the page in ink; a photo stays a rounded square."""
-    art = cut_flat_ground(picture, side)
+def avatar_mark(canvas, picture, side, max_width=None):
+    """An organisation's avatar ``side`` px tall: its mark off its flat tile (a wordmark as wide as
+    WORDMARK_WIDTH times that, or ``max_width``), its parts too close to the page in ink; a photo
+    stays a rounded square. The avatar's corners do not count: the Hub's copies can carry a rounded
+    tile's dark corners, which would hold the mark's crop to the whole square."""
+    corners = AVATAR_CORNER if min(picture.size) > 8 * AVATAR_CORNER else 0
+    art = cut_flat_ground(picture, side * WORDMARK_WIDTH, corners=corners)
     if art is None:
         return _rounded(picture, (side, side), max(2, side // 5))
-    art = ImageOps.contain(art, (side, side), Image.Resampling.LANCZOS)
-    return readable_on(art, canvas.color("paper"), canvas.color("ink"))
+    width = min(side * WORDMARK_WIDTH, max_width or side * WORDMARK_WIDTH)
+    art = ImageOps.contain(art, (max(side, width), side), Image.Resampling.LANCZOS)
+    paper, ink = canvas.color("paper"), canvas.color("ink")
+    if _night(canvas) and _dark_mark(art):
+        # A dark mark (a navy wordmark) turns light on the black page, its hues kept, as a diagram does.
+        return Image.merge("RGBA", (*light_on_dark(art.convert("RGB")).split(), art.getchannel("A")))
+    return readable_on(art, paper, ink)
 
 
-def _avatar(canvas, paper, images, x, middle, side=AVATAR):
-    """The organisation's mark before ``x``'s text; its width (0 without one)."""
+def _dark_mark(art):
+    """Whether ``art`` (RGBA) is drawn in a dark colour (a navy, not a bright brand blue): the colour
+    a quarter of the way up its drawn pixels by lightness, its white fills and soft rims aside."""
+    drawn = sorted(((red, green, blue) for red, green, blue, alpha in art.get_flattened_data()
+                    if alpha >= 128 and contrast_ratio((red, green, blue), (255, 255, 255)) >= 1.5),
+                   key=relative_luminance)
+    return bool(drawn) and max(drawn[len(drawn) // 4]) < DARK_MARK_VALUE
+
+
+def spells_name(mark):
+    """Whether an organisation's mark is a wordmark (its name spelled out), which needs no name beside it."""
+    return mark.width >= WORDMARK_RATIO * mark.height
+
+
+def _avatar(canvas, paper, images, x, middle, side=AVATAR, max_width=None):
+    """The organisation's mark before ``x``'s text: its width (0 without one) and whether it
+    spells the organisation's name."""
     picture = images.get(paper.get("org_avatar") or "")
     if picture is None:
-        return 0
-    mark = avatar_mark(canvas, picture, side)
+        return 0, False
+    mark = avatar_mark(canvas, picture, side, max_width)
     canvas.image.paste(mark, (round(x), round(middle - mark.height / 2)), mark)
-    return mark.width
+    return mark.width, spells_name(mark)
 
 
 def _placeholder():
@@ -233,15 +270,19 @@ def _stat(canvas, x, middle, icon, text, size=11):
     return 15 + canvas.text((x + 15, middle), text, size, anchor="lm", bold=False)
 
 
-def _org_line(canvas, paper, images, x, middle, right, size):
-    """The organisation (avatar and name), else the first author and the count of the rest."""
-    x += _avatar(canvas, paper, images, x, middle, size + 6) + 5 if paper.get("org_avatar") in images else 0
+def _org_line(canvas, paper, images, x, middle, right, size, side=None, *, bold=True):
+    """The organisation (its mark and name, a wordmark alone), else the first author and the count
+    of the rest."""
+    width, spelled = _avatar(canvas, paper, images, x, middle, side or size + 6, right - x)
+    if spelled:
+        return
+    x += width + 5 if width else 0
     name = paper.get("organization")
     if not name and paper.get("authors"):
         rest = paper["author_count"] - 1
         name = paper["authors"][0] + (f" 等 {paper['author_count']} 人" if rest > 0 else "")
     if name:
-        canvas.text((x, middle), name, size, "muted", anchor="lm", width=right - x)
+        canvas.text((x, middle), name, size, "muted", anchor="lm", width=right - x, bold=bold)
 
 
 def _standing(canvas, paper, x, right, middles):
@@ -359,21 +400,18 @@ def _ranking(canvas, papers, images, chinese, first_rank):
     text_x = left + 34
     for index, paper in enumerate(papers[:RANKING_ROWS]):
         y = top + 34 + index * row_h
-        # Each row reads down: its title (two lines at most), then who made it and its upvotes.
-        canvas.text((left + 18, y + 13), str(first_rank + index), 16, anchor="mm")
         title, _summary, _translated = shown_text(paper, chinese)
-        line_y = y + 5
-        for line in canvas.wrap(title, 13, right - 10 - text_x, 2):
+        lines = canvas.wrap(title, 13, right - 10 - text_x, 2)
+        # Each row reads down, centred in its band: its title (two lines at most), a clear gap, then
+        # who made it and its upvotes.
+        line_y = y + (row_h - len(lines) * RANKING_LINE - RANKING_GAP - RANKING_MARK) / 2
+        canvas.text((left + 18, line_y + 9), str(first_rank + index), 16, anchor="mm")
+        for line in lines:
             canvas.text((text_x, line_y), line, 13, anchor="la")
-            line_y += 17
-        meta = y + row_h - 10
+            line_y += RANKING_LINE
+        meta = line_y + RANKING_GAP + RANKING_MARK / 2
         count_w = _upvote(canvas, right - 10, meta, paper["upvotes"], 11, anchor="rm")
-        x = text_x
-        if paper.get("org_avatar") in images:
-            x += _avatar(canvas, paper, images, x, meta, 14) + 4
-        name = paper.get("organization") or (paper.get("authors") or [""])[0]
-        if name:
-            canvas.text((x, meta), name, 10, "muted", anchor="lm", width=right - 16 - count_w - x, bold=False)
+        _org_line(canvas, paper, images, text_x, meta, right - 18 - count_w, 10, RANKING_MARK, bold=False)
         if index < RANKING_ROWS - 1:
             canvas.rule((left + 10, y + row_h, right - 10, y + row_h), "track")
 
