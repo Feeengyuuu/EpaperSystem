@@ -280,3 +280,113 @@ def test_a_name_matches_a_steam_game_by_whole_words(monkeypatch):
     assert sources.steam_appid("Grand Theft Auto VI", None) is None
     assert sources.steam_appid("Hela", None) == 3161310
     assert sources.steam_appid("Hela: Of Mice & Magic", None) == 3161310
+
+
+ARXIV_PAGE = """<figure class="ltx_figure" id="S1.F1"><img src="2610.00001v1/x1.png" alt=""></figure>
+<span class="ltx_contact ltx_role_affiliation"><span class="ltx_text">Meta FAIR</span>
+<span class="ltx_text">Email: a@meta.com</span></span>
+<span class="ltx_contact ltx_role_affiliation"><span>organization=Universit&eacute; Paris-Saclay,
+ city=Palaiseau</span></span>
+<span class="ltx_contact ltx_role_affiliation"><span>Meta FAIR</span></span>"""
+
+
+class _Text:
+    def __init__(self, data):
+        self.data = data
+
+
+def test_a_papers_arxiv_page_gives_its_figures_and_affiliations(monkeypatch):
+    class Client:
+        def request_text(self, _method, url, **_kwargs):
+            if "2610.00002" in url:
+                raise HttpStatusError("GET", url, 404)
+            return _Text(ARXIV_PAGE)
+
+    monkeypatch.setattr(sources, "get_http_client", Client)
+
+    paper = sources.fetch_arxiv_paper("2610.00001", _context())
+    assert paper["figures"] == ["https://arxiv.org/html/2610.00001v1/x1.png"]
+    assert paper["affiliations"] == ["Meta FAIR", "Université Paris-Saclay, Palaiseau"]
+    # A paper without an HTML version has neither, and keeps that answer.
+    assert sources.fetch_arxiv_paper("2610.00002", _context()) == {"figures": [], "affiliations": []}
+    assert sources.valid_arxiv_paper({"figures": [], "affiliations": []})
+    with pytest.raises(ValueError):
+        sources.fetch_arxiv_paper("../etc", _context())
+
+
+def test_a_paper_stands_for_its_first_organisation_with_a_logo(monkeypatch):
+    calls = []
+
+    def get_json(_method, url, _context, *, params=None, **_kwargs):
+        calls.append(params.get("affiliation") or params.get("action"))
+        if url == sources.ROR_URL:
+            known = {"Université Paris-Saclay": "Q1484306"}
+            qid = known.get(params["affiliation"])
+            return {"items": [{"chosen": bool(qid), "organization": {"external_ids": [
+                {"type": "wikidata", "preferred": qid, "all": [qid]}]}}]}
+        if params["action"] == "wbgetentities":
+            return {"entities": {params["ids"]: {"labels": {"zh-cn": {"value": "巴黎-萨克雷大学"}}}}}
+        logo = {"Q380": "Meta Platforms Inc. logo.svg", "Q1484306": None}[params["entity"]]
+        return {"claims": {"P154": [{"mainsnak": {"datavalue": {"value": logo}}}] if logo else []}}
+
+    monkeypatch.setattr(sources, "_get_json", get_json)
+
+    # A lab known by its name skips ROR and keeps its own name.
+    meta = sources.fetch_institution(["Meta FAIR"], _context())
+    assert meta == {"name": "Meta", "logo": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7b/"
+                    "Meta_Platforms_Inc._logo.svg/250px-Meta_Platforms_Inc._logo.svg.png"}
+    assert "Meta FAIR" not in calls
+    # Without a logo anywhere, the first organisation ROR named still stands; with none, nothing.
+    assert sources.fetch_institution(["Nowhere Lab", "Université Paris-Saclay"], _context()) == {
+        "name": "巴黎-萨克雷大学", "logo": None}
+    assert sources.fetch_institution(["Nowhere Lab"], _context()) == {}
+    assert sources.valid_institution({}) and not sources.valid_institution({"name": "", "logo": None})
+
+
+def _picture(size, colour=(40, 90, 160)):
+    from PIL import Image
+
+    return Image.new("RGB", size, colour)
+
+
+def test_each_shown_paper_takes_its_best_fitting_figure_and_its_organisations_logo(monkeypatch, tmp_path):
+    from plugins.tech_play import tech_play
+
+    pictures = {"https://arxiv.org/html/1/wide.png": _picture((320, 60)),
+                "https://arxiv.org/html/1/square.png": _picture((300, 240)),
+                "https://upload.wikimedia.org/logo.png": _picture((200, 60))}
+    monkeypatch.setattr(tech_play, "load_thumbnails",
+                        lambda urls, *_args, **_kwargs: {url: pictures[url] for url in urls if url in pictures})
+    details = {"arxiv-paper": {"figures": ["https://arxiv.org/html/1/wide.png", "https://arxiv.org/html/1/square.png"],
+                               "affiliations": ["Meta FAIR"]},
+               "institution": {"name": "Meta", "logo": "https://upload.wikimedia.org/logo.png"}}
+    papers = [{"id": "2610.00001", "title": "A"}]
+
+    images = tech_play.TechPlay._paper_images(papers, lambda spec: {"data": details[spec.name]}, tmp_path, {})
+
+    # The later figure fills the row's box better than the first, a thin strip.
+    assert papers[0]["figure"] == "https://arxiv.org/html/1/square.png"
+    assert papers[0]["institution"]["name"] == "Meta"
+    assert set(images) == {"https://arxiv.org/html/1/square.png", "https://upload.wikimedia.org/logo.png"}
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_papers_render_with_their_figures_logos_or_neither(mode):
+    from PIL import Image, ImageDraw
+
+    diagram = Image.new("RGB", (320, 240), (255, 255, 255))
+    ImageDraw.Draw(diagram).rectangle((40, 40, 280, 200), outline=(20, 20, 20), width=3)
+    logo = Image.new("RGBA", (200, 60), (0, 0, 0, 0))
+    ImageDraw.Draw(logo).rectangle((10, 10, 190, 50), fill=(20, 60, 140, 255))
+    payload = _payload()
+    base = payload["arxiv"]["data"]["papers"][0]
+    payload["arxiv"]["data"]["papers"] = [
+        {**base, "figure": "photo", "institution": {"name": "巴黎-萨克雷大学", "logo": "logo"}},
+        {**base, "figure": "diagram", "institution": None},
+        {**base, "institution": {"name": "Meta", "logo": "logo"}},
+    ]
+    images = {"photo": _picture((320, 240)), "diagram": diagram, "logo": logo}
+
+    image = render_page((800, 480), payload, {"_inkypi_theme": {"mode": mode}}, NOW, images)
+
+    assert image.size == (800, 480)

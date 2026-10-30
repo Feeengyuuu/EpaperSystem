@@ -5,7 +5,9 @@ from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from utils.picture_grounds import blend_drawing, cut_flat_ground, drawn_on_white, readable_on, trim_white  # noqa: E402
+from utils.picture_grounds import (  # noqa: E402
+    blend_drawing, cut_flat_ground, drawn_on_white, readable_on, trim_white, white_share,
+)
 
 
 def _diagram():
@@ -27,6 +29,18 @@ def test_a_figure_loses_its_empty_white_margins():
 
     assert trim_white(figure).size == (104, 64)  # its drawing and 2 px around it
     assert trim_white(Image.new("RGB", (20, 10), (255, 255, 255))).size == (20, 10)
+
+
+def test_a_diagram_is_mostly_white_and_a_grid_of_photos_is_not():
+    diagram = Image.new("RGB", (160, 120), (255, 255, 255))
+    ImageDraw.Draw(diagram).rectangle((20, 20, 140, 100), outline=(0, 0, 0), width=2)
+    grid = Image.new("RGB", (160, 120), (255, 255, 255))
+    for x in (0, 82):
+        for y in (0, 62):
+            grid.paste((90, 120, 60), (x, y, x + 78, y + 58))
+
+    assert white_share(diagram) > 0.8
+    assert white_share(grid) < 0.2
 
 
 def test_a_diagram_takes_the_ground_it_lands_on_by_day_and_turns_light_at_night():

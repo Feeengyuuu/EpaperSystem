@@ -26,6 +26,17 @@ CACHE_SCHEMA = 1
 CACHE_BUDGET = CacheBudget(30 * 86400, 16, 2 * 1024 * 1024)
 DEFAULT_FONT = "Microsoft YaHei"
 TASK_SECONDS = 50
+# The new papers on the page each show their arXiv figure and the organisation behind them, looked
+# up once a paper (neither changes) and only with this much of the refresh left.
+PICTURED_PAPERS = 3
+PAPER_SECONDS = 30 * 86400
+PAPER_MIN_SECONDS = 20
+# Their lookups keep a book of their own, so a month of them never crowds out the page's feeds.
+PAPER_CACHE_BUDGET = CacheBudget(PAPER_SECONDS, 24, 512 * 1024)
+FIGURE_PIXELS = (320, 240)
+# arXiv figures are often large PNGs; one may download to this size (as on AI 论文日报).
+FIGURE_MAX_BYTES = 8 * 1024 * 1024
+LOGO_PIXELS = (250, 250)
 
 
 def _checkpoint(context):
@@ -43,10 +54,9 @@ class TechPlay(BasePlugin):
         params["available_fonts"] = get_available_font_names(default=DEFAULT_FONT)
         return params
 
-    def _book(self):
-        directory = self.cache_dir(env_var="TECH_PLAY_CACHE_DIR", leaf="sources", create=True, strip=True)
-        return SourceBook(directory, CACHE_BUDGET, schema=CACHE_SCHEMA, max_bytes=256 * 1024,
-                          checkpoint=_checkpoint)
+    def _book(self, leaf="sources", budget=CACHE_BUDGET):
+        directory = self.cache_dir(env_var="TECH_PLAY_CACHE_DIR", leaf=leaf, create=True, strip=True)
+        return SourceBook(directory, budget, schema=CACHE_SCHEMA, max_bytes=256 * 1024, checkpoint=_checkpoint)
 
     @staticmethod
     def _twitch_credentials(device_config):
@@ -120,13 +130,52 @@ class TechPlay(BasePlugin):
         for game in payload["speedrun"]["data"].get("top", []):
             urls.append(game.get("cover"))
             urls += [sources.flag_url(run.get("country")) for run in game.get("runs", [])[:2]]
-        images = load_thumbnails(urls, self.cache_dir(env_var="TECH_PLAY_CACHE_DIR", leaf="covers", create=True,
-                                                      strip=True),
-                                 http=get_http_client(), context=context, cached_only=not allow_network,
-                                 safe_url=sources.safe_image_url, user_agent=sources.USER_AGENT)
+        covers = self.cache_dir(env_var="TECH_PLAY_CACHE_DIR", leaf="covers", create=True, strip=True)
+        common = {"http": get_http_client(), "context": context, "cached_only": not allow_network,
+                  "safe_url": sources.safe_image_url, "user_agent": sources.USER_AGENT}
+        images = load_thumbnails(urls, covers, **common)
+        paper_book = self._book("papers", PAPER_CACHE_BUDGET)
+
+        def load_paper(spec):
+            return paper_book.load(spec, now, allow_network=allow_network, context=context, force=force)
+
+        images.update(self._paper_images(payload["arxiv"]["data"].get("papers", []), load_paper, covers, common))
         results = [payload[name] for name in ("status", "epic", "upcoming", "arxiv", "speedrun")]
         payload["provenance"] = combined_provenance(results)
         return payload, images
+
+    @staticmethod
+    def _paper_images(papers, load, covers, common):
+        """The shown papers' figures (of each paper's first few, the one whose shape best fills its
+        box) and their organisations' logos; each paper gains its ``figure`` and ``institution``."""
+        from .render import figure_misfit
+
+        images = {}
+        for paper in papers[:PICTURED_PAPERS]:
+            details = load(Source("arxiv-paper", {"id": paper.get("id")},
+                                  lambda ctx, paper_id=paper.get("id"): sources.fetch_arxiv_paper(paper_id, ctx),
+                                  fresh_seconds=PAPER_SECONDS, usable_seconds=PAPER_SECONDS,
+                                  validate=sources.valid_arxiv_paper, timeout_seconds=10,
+                                  min_remaining_seconds=PAPER_MIN_SECONDS))["data"]
+            affiliations = details.get("affiliations") or []
+            if affiliations:
+                paper["institution"] = load(Source(
+                    "institution", {"affiliations": affiliations},
+                    lambda ctx, found=tuple(affiliations): sources.fetch_institution(found, ctx),
+                    fresh_seconds=PAPER_SECONDS, usable_seconds=PAPER_SECONDS, validate=sources.valid_institution,
+                    timeout_seconds=12, min_remaining_seconds=PAPER_MIN_SECONDS))["data"] or None
+            figures = details.get("figures") or []
+            found = load_thumbnails(figures, covers, size=FIGURE_PIXELS, max_bytes=FIGURE_MAX_BYTES, **common)
+            if found:
+                best = min(found, key=lambda url: figure_misfit(found[url], figures.index(url)))
+                paper["figure"] = best
+                images[best] = found.pop(best)
+                for picture in found.values():
+                    picture.close()
+            logo = (paper.get("institution") or {}).get("logo")
+            if logo:
+                images.update(load_thumbnails([logo], covers, size=LOGO_PIXELS, keep_alpha=True, **common))
+        return images
 
     def render_cached_display(self, settings, device_config, *, resolved_theme_context):
         return self.render_themed_image(settings, device_config, theme_render_only=True,

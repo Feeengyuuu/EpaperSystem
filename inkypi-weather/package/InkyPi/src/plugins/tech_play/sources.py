@@ -4,16 +4,19 @@ new arXiv papers and speedrun world records."""
 from __future__ import annotations
 
 import calendar
+import hashlib
 import json
 import re
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlsplit
+from html import unescape
+from urllib.parse import quote, urlsplit
 from zoneinfo import ZoneInfo
 
 import feedparser
 
+from plugins.ai_papers import sources as paper_sources
 from runtime.refresh_contracts import TaskCancelled
-from utils.http_client import HttpClientError, get_http_client
+from utils.http_client import HttpClientError, HttpStatusError, get_http_client
 
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
@@ -43,7 +46,7 @@ SPEEDRUN_GAMES_URL = "https://www.speedrun.com/api/v1/games"
 SPEEDRUN_RUNS_URL = "https://www.speedrun.com/api/v1/runs"
 WIKIPEDIA_API_URL = "https://en.wikipedia.org/w/api.php"
 DEFAULT_ARXIV = "cs.AI"
-IMAGE_HOSTS = ("cdn1.epicgames.com", "cdn2.unrealengine.com", "images.igdb.com",
+IMAGE_HOSTS = ("arxiv.org", "cdn1.epicgames.com", "cdn2.unrealengine.com", "images.igdb.com",
                "shared.akamai.steamstatic.com", "shared.fastly.steamstatic.com",
                "cdn.akamai.steamstatic.com", "cdn.cloudflare.steamstatic.com", "upload.wikimedia.org",
                "thumb.wikimedia.org", "flagcdn.com")
@@ -317,6 +320,130 @@ def fetch_arxiv(category, context):
 def valid_arxiv(data):
     papers = (data or {}).get("papers")
     return isinstance(papers, list) and all(isinstance(paper, dict) and paper.get("title") for paper in papers)
+
+
+# --- A new paper's figure and the organisation behind it ---------------------------------------------
+# arXiv's HTML version of a paper holds its figures and its authors' affiliations. The first
+# affiliation that names an organisation with a logo on Wikidata (a lab known by its name, else
+# one ROR's affiliation matcher picks) stands for the paper.
+
+ROR_URL = "https://api.ror.org/v2/organizations"
+WIKIDATA_URL = "https://www.wikidata.org/w/api.php"
+COMMONS_THUMB_URL = "https://upload.wikimedia.org/wikipedia/commons/thumb/{a}/{ab}/{name}/250px-{name}{suffix}"
+AFFILIATION = re.compile(r'class="ltx_contact ltx_role_affiliation"[^>]*>(.*?)</span>\s*</span>', re.S)
+PAPER_AFFILIATIONS = 4
+WIKIDATA_LANGUAGES = ("zh-cn", "zh-hans", "zh", "en")
+# Companies and labs by what their affiliations say: their Chinese name and Wikidata item.
+LABS = (
+    (r"DeepMind", "Google DeepMind", "Q15733006"), (r"\bGoogle\b", "谷歌", "Q95"),
+    (r"\bMeta\b|\bFAIR\b|Facebook AI", "Meta", "Q380"), (r"OpenAI", "OpenAI", "Q21708200"),
+    (r"Anthropic", "Anthropic", "Q116758847"), (r"Microsoft", "微软", "Q2283"),
+    (r"NVIDIA|Nvidia", "英伟达", "Q182477"), (r"Alibaba|Qwen|Tongyi|DAMO", "阿里巴巴", "Q1359568"),
+    (r"Tencent", "腾讯", "Q860580"), (r"Huawei", "华为", "Q160120"), (r"Xiaomi", "小米", "Q1636958"),
+    (r"\bApple\b", "苹果", "Q312"), (r"Amazon|\bAWS\b", "亚马逊", "Q3884"), (r"\bIBM\b", "IBM", "Q37156"),
+    (r"Samsung", "三星", "Q20718"), (r"Salesforce", "Salesforce", "Q941127"),
+    (r"Hugging ?Face", "Hugging Face", "Q108943604"), (r"\bIntel\b", "英特尔", "Q248"),
+    (r"Qualcomm", "高通", "Q544847"),
+)
+
+
+def paper_affiliations(html):
+    """A paper's affiliations in author order, each once, without address field names or emails."""
+    found = []
+    for raw in AFFILIATION.findall(html or ""):
+        text = " ".join(unescape(re.sub(r"<[^>]+>", " ", raw)).split())
+        text = re.sub(r"^Affiliation:\s*", "", text)
+        text = re.sub(r"\S+@\S+|\bE-?mail\b:?", "", text, flags=re.I)
+        text = re.sub(r"\b(?:organization|addressline|city|postcode|postcodesep|state|country)=", "", text)
+        for part in re.split(r"\s*Affiliation:\s*", text):
+            part = _clean(part.strip(" ,;⋆*†"), 160)
+            if len(part) >= 3 and part not in found:
+                found.append(part)
+    return found[:PAPER_AFFILIATIONS]
+
+
+def fetch_arxiv_paper(paper_id, context):
+    """A paper's first few figures and its affiliations, from its arXiv HTML version (a paper
+    without one has neither)."""
+    if not paper_sources.ARXIV_ID.match(str(paper_id)):
+        raise ValueError("not an arXiv id")
+    context.raise_if_cancelled()
+    page = paper_sources.ARXIV_HTML.format(id=paper_id)
+    try:
+        response = get_http_client().request_text(
+            "GET", page, context=context, timeout=REQUEST_TIMEOUT, max_bytes=paper_sources.ARXIV_MAX_BYTES,
+            headers={"User-Agent": USER_AGENT, "Accept": "text/html"})
+    except HttpStatusError as exc:
+        if exc.status != 404:
+            raise
+        return {"figures": [], "affiliations": []}
+    context.raise_if_cancelled()
+    return {"figures": paper_sources.arxiv_figures(response.data, page),
+            "affiliations": paper_affiliations(response.data)}
+
+
+def valid_arxiv_paper(data):
+    return (isinstance(data, dict) and isinstance(data.get("figures"), list)
+            and isinstance(data.get("affiliations"), list))
+
+
+def commons_thumbnail(filename):
+    """A Commons file's 250 px thumbnail (an SVG's as PNG)."""
+    name = str(filename).replace(" ", "_")
+    digest = hashlib.md5(name.encode("utf-8"), usedforsecurity=False).hexdigest()
+    quoted = quote(name)
+    suffix = ".png" if name.lower().endswith(".svg") else ""
+    return COMMONS_THUMB_URL.format(a=digest[0], ab=digest[:2], name=quoted, suffix=suffix)
+
+
+def _ror_wikidata(affiliation, context):
+    """The Wikidata item of the organisation ROR's matcher picks for ``affiliation``, if any."""
+    data = _get_json("GET", ROR_URL, context, params={"affiliation": affiliation})
+    chosen = next((item for item in data.get("items") or [] if item.get("chosen")), None)
+    for external in ((chosen or {}).get("organization") or {}).get("external_ids") or []:
+        if external.get("type") == "wikidata":
+            qid = external.get("preferred") or next(iter(external.get("all") or []), None)
+            return qid if re.fullmatch(r"Q\d+", str(qid or "")) else None
+    return None
+
+
+def _wikidata_organisation(qid, context):
+    """An organisation's Chinese name (else English) and its current logo's thumbnail, on Wikidata."""
+    entity = (_get_json("GET", WIKIDATA_URL, context, params={
+        "action": "wbgetentities", "ids": qid, "props": "labels", "languages": "|".join(WIKIDATA_LANGUAGES),
+        "format": "json"}).get("entities") or {}).get(qid) or {}
+    labels = entity.get("labels") or {}
+    name = next((labels[language]["value"] for language in WIKIDATA_LANGUAGES if language in labels), None)
+    claims = (_get_json("GET", WIKIDATA_URL, context, params={
+        "action": "wbgetclaims", "entity": qid, "property": "P154", "format": "json"}).get("claims") or {})
+    claims = [claim for claim in claims.get("P154", []) if "datavalue" in claim.get("mainsnak", {})]
+    # The preferred logo, else one with no end date, else the last listed.
+    current = ([claim for claim in claims if claim.get("rank") == "preferred"]
+               or [claim for claim in claims if "P582" not in (claim.get("qualifiers") or {})] or claims)
+    logo = current[-1]["mainsnak"]["datavalue"].get("value") if current else None
+    return _clean(name, 40), commons_thumbnail(logo) if isinstance(logo, str) and logo else None
+
+
+def fetch_institution(affiliations, context):
+    """The organisation behind a paper: the first of its affiliations that has a logo, else the
+    first that names one (``{"name", "logo"}``), else nothing (``{}``)."""
+    first = {}
+    for text in affiliations:
+        lab = next(((name, qid) for pattern, name, qid in LABS if re.search(pattern, text)), None)
+        name, qid = lab if lab else (None, _ror_wikidata(text, context))
+        if not qid:
+            continue
+        label, logo = _wikidata_organisation(qid, context)
+        entry = {"name": name or label, "logo": logo}
+        if logo:
+            return entry
+        if entry["name"]:
+            first = first or entry
+    return first
+
+
+def valid_institution(data):
+    return isinstance(data, dict) and (not data or bool(data.get("name") or data.get("logo")))
 
 
 # --- Speedrun.com weekly hot games (rolling seven-day counts of newly verified runs) ------------

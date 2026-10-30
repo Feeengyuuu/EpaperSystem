@@ -6,6 +6,7 @@ releases, and per-game speedrun world records with box art, trophies and runner 
 
 from __future__ import annotations
 
+import math
 import re
 from functools import lru_cache
 from pathlib import Path
@@ -15,7 +16,11 @@ from PIL import Image, ImageDraw, ImageOps
 from utils.flat_icons import draw_icon
 from utils.local_wordmark import paste_header_art, paste_local_wordmark
 from utils.page_canvas import PageCanvas
+from utils.picture_grounds import (
+    blend_drawing, cut_flat_ground, drawn_on_white, light_on_dark, readable_on, trim_white, white_share,
+)
 from utils.safe_image import ImageLimits, safe_open_image
+from utils.theme_utils import contrast_ratio, relative_luminance
 
 from .sources import epic_end_label, flag_url, local_now, parse_time, run_time
 
@@ -48,6 +53,18 @@ LEFT_CARD = (12, 58, 268, 244)
 # The wire from a service's name to its state keeps this gap at both ends and needs this room (px).
 LINK_GAP, LINK_MIN = 8, 34
 PAPER_CARD = (12, 250, 268, 468)
+# A paper's figure stands at the left of its row, this big; a diagram is cut to its box's shape only
+# so far (at least this share stays). Its organisation's logo is this tall.
+PAPER_FIGURE = (64, 52)
+PAPER_DIAGRAM_KEPT = 0.5
+# A figure on white is a diagram when at least this share of it is white; less, and it is photos
+# with white gaps, shown as a photo (by night a diagram turns light-on-dark, which would invert them).
+DIAGRAM_WHITE_SHARE = 0.35
+PAPER_MARK = 13
+# By night a logo drawn in a colour no channel of which reaches this (a navy) turns light.
+DARK_MARK_VALUE = 160
+# A logo at least this much wider than tall is a wordmark.
+WORDMARK_RATIO = 2.2
 EPIC_CARD = (280, 58, 788, 196)
 UPCOMING_CARD = (280, 202, 788, 314)
 SPEED_CARD = (280, 320, 788, 468)
@@ -280,7 +297,80 @@ def _status_link(canvas, x0, x1, y, indicator, tone):
             draw.point((x, y), fill=colour)
 
 
-def _papers(canvas, payload, now):
+def _night(canvas):
+    return sum(canvas.color("paper")) < 200
+
+
+def _dark_mark(art):
+    """Whether ``art`` (RGBA) is drawn in a dark colour (a navy, not a bright brand blue): the colour
+    a quarter of the way up its drawn pixels by lightness, its white fills and soft rims aside."""
+    drawn = sorted(((red, green, blue) for red, green, blue, alpha in art.get_flattened_data()
+                    if alpha >= 128 and contrast_ratio((red, green, blue), (255, 255, 255)) >= 1.5),
+                   key=relative_luminance)
+    return bool(drawn) and max(drawn[len(drawn) // 4]) < DARK_MARK_VALUE
+
+
+def institution_mark(canvas, picture, height, max_width):
+    """An organisation's logo ``height`` px tall (at most ``max_width`` wide): off its flat ground,
+    its parts too close to the page in ink; by night a dark logo turns light, its hues kept."""
+    art = cut_flat_ground(picture, max(height, max_width), corners=2)
+    if art is None:
+        art = picture.convert("RGBA")
+    art = ImageOps.contain(art, (max_width, height), Image.Resampling.LANCZOS)
+    if _night(canvas) and _dark_mark(art):
+        return Image.merge("RGBA", (*light_on_dark(art.convert("RGB")).split(), art.getchannel("A")))
+    return readable_on(art, canvas.color("paper"), canvas.color("ink"))
+
+
+def _shown(picture, size, kept):
+    """``picture`` as large as it goes in ``size``: cut to the box's shape, but keeping at least
+    ``kept`` of its width (or height), then fitted whole."""
+    width, height = picture.size
+    shape = size[0] / size[1]
+    if width / height > shape:
+        side = max(width * kept, height * shape)
+        crop = ((width - side) / 2, 0, (width + side) / 2, height)
+    else:
+        side = max(height * kept, width / shape)
+        crop = (0, (height - side) / 2, width, (height + side) / 2)
+    return ImageOps.contain(picture.crop(tuple(round(value) for value in crop)), size, Image.Resampling.LANCZOS)
+
+
+def figure_misfit(picture, rank):
+    """How badly ``picture``, a paper's ``rank``-th figure, fills a row's figure box: its shape (a
+    diagram's without its white margins) against the box's, a later figure a little worse."""
+    shape = trim_white(picture) if drawn_on_white(picture) else picture
+    return abs(math.log(shape.width / shape.height * PAPER_FIGURE[1] / PAPER_FIGURE[0])) + 0.15 * rank
+
+
+def _paper_figure(canvas, figure, mark, box):
+    """A paper's figure filling ``box``: a photo (or a grid of them on white) cropped to it, a
+    diagram (its white margins gone) blended into the page with no ground of its own; without one,
+    its organisation's logo, else the card's own generated paper icon."""
+    left, top, right, bottom = box
+    size = (right - left, bottom - top)
+    drawing = figure is not None and drawn_on_white(figure)
+    if drawing:
+        figure = trim_white(figure)
+        drawing = white_share(figure) >= DIAGRAM_WHITE_SHARE
+    if figure is not None and not drawing:
+        tile = ImageOps.fit(figure.convert("RGB"), size, Image.Resampling.LANCZOS).convert("RGBA")
+        mask = Image.new("L", size, 0)
+        ImageDraw.Draw(mask).rounded_rectangle((0, 0, size[0] - 1, size[1] - 1), radius=4, fill=255)
+        canvas.image.paste(tile, (left, top), mask)
+        return
+    if figure is not None:
+        shown = _shown(figure, size, PAPER_DIAGRAM_KEPT)
+        at = (round(left + (size[0] - shown.width) / 2), round(top + (size[1] - shown.height) / 2))
+        blend_drawing(canvas.image, shown, at, night=_night(canvas))
+        return
+    art = institution_mark(canvas, mark, round(size[1] * 0.6), size[0]) if mark is not None else None
+    art = art or _section_art("section-papers", round(size[1] * 0.8))
+    if art is not None:
+        _paste(canvas, art, (left + (size[0] - art.width) / 2, top + (size[1] - art.height) / 2))
+
+
+def _papers(canvas, payload, now, images):
     source = payload["arxiv"]
     papers = source["data"].get("papers", [])
     _card(canvas, PAPER_CARD, "papers_bar", "新论文", logo=_logo("arxiv", 18), chip=payload["arxiv_category"],
@@ -291,24 +381,40 @@ def _papers(canvas, payload, now):
         return
     for index, paper in enumerate(papers[:3]):
         top = PAPER_CARD[1] + HEADER + 6 + index * 61
-        canvas.draw.rounded_rectangle((left, top + 1, left + 18, top + 19), radius=3, fill=canvas.color("ink"))
-        canvas.text((left + 9, top + 10), str(index + 1), 12, "paper", anchor="mm")
-        for line_index, line in enumerate(canvas.wrap(paper["title"], 13, right - left - 26, 2)):
-            canvas.text((left + 26, top + line_index * 16), line, 13, anchor="la")
-        chip = paper.get("id") or ""
-        chip_width = canvas.width(chip, 10, False) + 10 if chip else 0
-        if chip:
-            canvas.draw.rounded_rectangle((right - chip_width, top + 36, right, top + 50), radius=3,
-                                          outline=canvas.color("rule"), width=1)
-            canvas.text((right - chip_width / 2, top + 43), chip, 10, anchor="mm", bold=False)
-        authors = paper.get("authors") or []
-        who = authors[0] + (" 等" if paper.get("author_count", 1) > 1 else "") if authors else ""
+        institution = paper.get("institution") or {}
+        mark = images.get(institution.get("logo") or "")
+        figure = images.get(paper.get("figure") or "")
+        # Each row: the paper's figure with its rank on the corner (its organisation's logo stands in
+        # for a paper without one), then its title (two lines) over the organisation behind it, or
+        # its authors when the logo already fills the figure's place, and when it came out.
+        _paper_figure(canvas, figure, mark, (left, top, left + PAPER_FIGURE[0], top + PAPER_FIGURE[1]))
+        if figure is None:
+            mark, institution = None, {}
+        canvas.draw.rounded_rectangle((left, top, left + 17, top + 17), radius=3, fill=canvas.color("ink"))
+        canvas.text((left + 8.5, top + 9), str(index + 1), 11, "paper", anchor="mm")
+        x = left + PAPER_FIGURE[0] + 7
+        for line_index, line in enumerate(canvas.wrap(paper["title"], 13, right - x, 2)):
+            canvas.text((x, top + line_index * 16), line, 13, anchor="la")
+        middle = top + 44
         stamp = parse_time(paper.get("time"))
-        canvas.text((left + 26, top + 43), f"{who} · {ago(stamp, now) if stamp else ''}", 11, "muted",
-                    anchor="lm", bold=False, width=right - left - 32 - chip_width)
+        when = ago(stamp, now) if stamp else ""
+        name_right = right - (canvas.text((right, middle), when, 11, "muted", anchor="rm", bold=False) + 6
+                              if when else 0)
+        authors = paper.get("authors") or []
+        who = institution.get("name") or (
+            authors[0] + (" 等" if paper.get("author_count", 1) > 1 else "") if authors else "")
+        if mark is not None:
+            art = institution_mark(canvas, mark, PAPER_MARK, PAPER_MARK * 4)
+            _paste(canvas, art, (x, middle - art.height / 2))
+            x += art.width + 5
+            # A wordmark spells a Latin name already; a Chinese name still reads beside it.
+            if art.width >= WORDMARK_RATIO * art.height and not re.search(r"[一-鿿]", who):
+                who = ""
+        if who and x < name_right:
+            canvas.text((x, middle), who, 11, "muted", anchor="lm", bold=False, width=name_right - x)
         if index < 2:
-            for x in range(left, right, 6):
-                canvas.draw.line((x, top + 57, x + 2, top + 57), fill=canvas.color("rule"), width=1)
+            for dash in range(left, right, 6):
+                canvas.draw.line((dash, top + 57, dash + 2, top + 57), fill=canvas.color("rule"), width=1)
 
 
 # --- Right column ----------------------------------------------------------------------------------
@@ -538,7 +644,7 @@ def render_page(dimensions, payload, settings, now, images):
     paste_header_art(canvas.image, ASSETS / "header_art.png", subtitle_right, date_left)
     canvas.rule((12, 52, 788, 52), "ink", 2)
     _status(canvas, payload)
-    _papers(canvas, payload, now)
+    _papers(canvas, payload, now, images)
     _epic(canvas, payload, images, now)
     _upcoming(canvas, payload, images, now)
     _speedruns(canvas, payload, images, now)

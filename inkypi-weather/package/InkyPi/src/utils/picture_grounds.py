@@ -91,6 +91,14 @@ def drawn_on_white(picture, *, tolerance=WHITE_TOLERANCE, share=WHITE_SHARE):
     return white >= share * len(edge)
 
 
+def white_share(picture, *, tolerance=WHITE_TOLERANCE):
+    """The share of ``picture`` that is (nearly) white: a diagram's ground is most of it, a grid of
+    photos with white gaps has little."""
+    sample = picture.convert("RGB").resize((80, 60), Image.Resampling.BILINEAR)
+    pixels = list(sample.get_flattened_data())
+    return sum(min(pixel) >= 255 - tolerance for pixel in pixels) / len(pixels)
+
+
 def trim_white(picture, *, tolerance=WHITE_TOLERANCE, margin=2):
     """``picture`` cropped to what is drawn on its white ground, ``margin`` px around it: a
     figure's empty margins go, so what it shows can be drawn larger."""

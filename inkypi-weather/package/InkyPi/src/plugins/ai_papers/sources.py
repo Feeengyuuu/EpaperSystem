@@ -133,6 +133,20 @@ def ranked(days):
     return sorted(papers, key=lambda paper: (-paper["upvotes"], -paper["comments"], paper["id"]))
 
 
+def arxiv_figures(html, page):
+    """The first few figures in ``html``, the arXiv HTML version at ``page``, in order (a logo is
+    not one)."""
+    urls = []
+    for block in FIGURE.findall(html or ""):
+        for source in FIGURE_IMAGE.findall(block):
+            url = safe_image_url(urljoin(page, source))
+            if url and not NOT_A_FIGURE.search(source) and STILL.search(urlsplit(url).path) and url not in urls:
+                urls.append(url)
+        if len(urls) >= FIGURE_CANDIDATES:
+            break
+    return urls[:FIGURE_CANDIDATES]
+
+
 def fetch_arxiv_figure(paper_id, context):
     """The first few figures of a paper's arXiv HTML version, in order (a logo is not one)."""
     if not ARXIV_ID.match(str(paper_id)):
@@ -143,15 +157,7 @@ def fetch_arxiv_figure(paper_id, context):
         "GET", page, context=context, timeout=REQUEST_TIMEOUT, max_bytes=ARXIV_MAX_BYTES,
         headers={"User-Agent": USER_AGENT, "Accept": "text/html"})
     context.raise_if_cancelled()
-    urls = []
-    for block in FIGURE.findall(response.data or ""):
-        for source in FIGURE_IMAGE.findall(block):
-            url = safe_image_url(urljoin(page, source))
-            if url and not NOT_A_FIGURE.search(source) and STILL.search(urlsplit(url).path) and url not in urls:
-                urls.append(url)
-        if len(urls) >= FIGURE_CANDIDATES:
-            break
-    return {"urls": urls[:FIGURE_CANDIDATES]}
+    return {"urls": arxiv_figures(response.data, page)}
 
 
 def valid_figure(data):
