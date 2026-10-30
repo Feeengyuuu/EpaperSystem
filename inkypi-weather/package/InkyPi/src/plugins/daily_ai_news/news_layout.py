@@ -17,7 +17,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from PIL import ImageDraw
+from PIL import Image, ImageDraw
 
 from utils.fonts import load_font
 
@@ -84,6 +84,15 @@ WEEKDAYS = "一二三四五六日"
 
 # How far a market sparkline's direction arrow carries on beyond the line's last close.
 TREND_ARROW_LENGTH = 8
+# Each column and market strip reads off a card of its section's colour laid faintly over the page
+# (CARD_TINT, stronger by night), every other story off a band of it (BAND_TINT); the card reaches
+# CARD_BLEED px past the column's text on each side.
+CARD_TINT, BAND_TINT = {"day": 0.05, "night": 0.16}, {"day": 0.11, "night": 0.27}
+CARD_BLEED, CARD_RADIUS = 7, 7
+# The three blocks read apart: the lead on its red fading from LEAD_GRADIENT's left share to its
+# right one (the outlets' logos stand where it has all but gone), the stories on their sections'
+# cards, the markets on neutral cards of the page's ink.
+LEAD_GRADIENT = ({"day": 0.17, "night": 0.36}, {"day": 0.0, "night": 0.0})
 
 
 class NewsPage:
@@ -169,6 +178,30 @@ class NewsPage:
         return width
 
     # -- colour helpers -----------------------------------------------------
+    def tint(self, colour, shares):
+        """``colour`` laid over the page at the day's or night's share of ``shares``."""
+        base = tuple(self.c["background"])[:3]
+        share = shares["night" if sum(base) < 200 else "day"]
+        return tuple(round(low + (high - low) * share) for high, low in zip(tuple(colour)[:3], base))
+
+    def card(self, box, colour):
+        """A reading card of ``colour`` behind a column or a market strip."""
+        self.d.rounded_rectangle(box, radius=CARD_RADIUS, fill=self.tint(colour, CARD_TINT))
+
+    def gradient_card(self, box, colour, shares):
+        """A card of ``colour`` fading from the left share of ``shares`` to the right one."""
+        left, top, right, bottom = [int(value) for value in box]
+        start, end = (self.tint(colour, share) for share in shares)
+        width, height = right - left, bottom - top
+        row = Image.new("RGB", (width, 1))
+        for x in range(width):
+            # Eased out: the colour stays a while at the left, then fades.
+            t = (x / max(1, width - 1)) ** 1.35
+            row.putpixel((x, 0), tuple(round(a + (b - a) * t) for a, b in zip(start, end)))
+        mask = Image.new("L", (width, height), 0)
+        ImageDraw.Draw(mask).rounded_rectangle((0, 0, width - 1, height - 1), radius=CARD_RADIUS, fill=255)
+        self.img.paste(row.resize((width, height)), (left, top), mask)
+
     def accent(self, role):
         """The page colour for an accent role, or the theme's ink for none."""
         return self.c[role] if role else self.c["ink"]
@@ -227,6 +260,8 @@ class NewsPage:
         if not lead:
             self.text((MARGIN, top + 28), "新闻源暂无更新", 20, True)
             return
+        self.gradient_card((MARGIN - CARD_BLEED, top - 4, width - MARGIN + CARD_BLEED, bottom - 4), c["lead"],
+                           LEAD_GRADIENT)
         seal_w, seal_h = SEAL_SIZE
         # The generated 头条 badge is 1:2; drawn as a plain seal when the file is missing.
         if not news_art.paste_badge(self.img, "seal", MARGIN + seal_w / 2, top + 9 + seal_h / 2, seal_h // 2, seal_h):
@@ -351,6 +386,7 @@ class NewsPage:
     def column(self, x, width, label, items, *, sources):
         c = self.c
         mark = self.accent(SECTION_ACCENTS.get(label))
+        self.card((x - CARD_BLEED, COLUMN_TOP - 5, x + width + CARD_BLEED, COLUMN_BOTTOM + 1), mark)
         self.d.rectangle((x, COLUMN_TOP + 3, x + 3, COLUMN_TOP + 15), fill=mark)
         self.text((x + 10, COLUMN_TOP), label, 14, True)
         count_x = x + 14 + self.width(label, 14)
@@ -364,13 +400,14 @@ class NewsPage:
             # Too little room for the globe: spread the stories down the column, as a
             # newspaper justifies one, instead of leaving a band at its foot.
             gap += min(spare // (len(plan) - 1), JUSTIFY_GAP_MAX)
+        band = self.tint(mark, BAND_TINT)
         for number, (item, title_lines, fact) in enumerate(zip(items, plan, facts), 1):
+            # Every other story reads off a band across the card, so the eye keeps its line.
+            if number % 2 == 0:
+                height = self.item_height(width, item, title_lines, fact)
+                self.d.rounded_rectangle((x - CARD_BLEED + 2, y - gap // 2 - 1, x + width + CARD_BLEED - 2,
+                                          y + height + (gap + 1) // 2), radius=4, fill=band)
             height = self.item(x, y, width, number, item, title_lines, mark, with_fact=fact)
-            if number < len(plan):
-                # A dotted rule in the gap parts one story from the next, as a news digest does.
-                rule_y = y + height + max(1, gap // 2)
-                for dot_x in range(x + 26, x + width - STORY_ICON_SLOT + 6, 4):
-                    self.d.point((dot_x, rule_y), fill=c["rule"])
             y += height + gap
         self.text((count_x, COLUMN_TOP + 2), str(len(plan)), 11, True, mark)
         if COLUMN_BOTTOM - y >= GLOBE_MIN_HEIGHT:
@@ -414,6 +451,12 @@ class NewsPage:
                 best = (lines, gap, facts, score)
         return best[0], best[1], best[2]
 
+    def item_height(self, width, item, title_lines, with_fact=True):
+        """The rows ``item`` takes, as ``item`` draws it."""
+        lines = self.wrap(item["title"], STORY_TITLE_SIZE, width - 26 - STORY_ICON_SLOT, title_lines, STORY_TITLE_WEIGHT)
+        why = with_fact and bool(str(item.get("why") or "").strip())
+        return len(lines) * TITLE_LINE + (ITEM_FOOTER if why else 0)
+
     def item(self, x, y, width, number, item, title_lines, number_colour=None, with_fact=True):
         c = self.c
         self.text((x, y + 1), f"{number:02d}", 13, True, number_colour)
@@ -448,7 +491,9 @@ class NewsPage:
 
     def market(self, x, width, label, rows, height):
         c = self.c
-        self.d.rectangle((x, MARKET_TOP + 2, x + 2, MARKET_TOP + 12), fill=self.accent(SECTION_ACCENTS.get(label)))
+        mark = self.accent(SECTION_ACCENTS.get(label))
+        self.card((x - CARD_BLEED, MARKET_TOP - 2, x + width + CARD_BLEED, height - 5), c["ink"])
+        self.d.rectangle((x, MARKET_TOP + 2, x + 2, MARKET_TOP + 12), fill=mark)
         self.text((x + 7, MARKET_TOP), label, 11, True)
         as_of = next((row.get("as_of_label") for row in rows if row.get("as_of_label")), "")
         if as_of:

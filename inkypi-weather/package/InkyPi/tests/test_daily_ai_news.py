@@ -2100,7 +2100,24 @@ def test_words_stay_ink_with_red_and_blue_as_sparing_accents(monkeypatch):
     # Refined tones rather than the panel's pure inks.
     assert not {palette["red"], palette["blue"], palette["green"]} & {(255, 0, 0), (0, 0, 255), (0, 255, 0)}
     assert "domestic" not in palette and "world" not in palette
-    assert image.getpixel((400, 100)) == (255, 255, 255)
+    # The page stays white round its cards; the lead reads off its red, faded out by the logos.
+    assert image.getpixel((5, 300)) == image.getpixel((400, 143)) == (255, 255, 255)
+    lead_left, lead_right = image.getpixel((60, 140)), image.getpixel((780, 140))
+    assert lead_left[0] > lead_left[2] and sum(lead_right) > sum(lead_left)
+
+
+def test_the_stories_and_markets_read_off_cards_every_other_story_banded(monkeypatch):
+    from plugins.daily_ai_news import news_layout
+
+    plugin = _plugin()
+    image = plugin._render((800, 480), {"brief_title": "整点新闻"}, _page_payload(), datetime(2026, 10, 21), {"mode": "day"})
+    left = news_layout.MARGIN
+    card = image.getpixel((left - 3, news_layout.COLUMN_TOP + 20))
+    market = image.getpixel((left - 3, news_layout.MARKET_TOP + 40))
+
+    # 国内's card is tinted with its red; the market strip's is neutral, apart from both.
+    assert card != (255, 255, 255) and card[0] > card[2]
+    assert market != (255, 255, 255) and market[0] == market[1] == market[2]
 
 
 def test_night_render_keeps_a_black_canvas(monkeypatch):
