@@ -463,18 +463,7 @@ class SportsDashboard(
         logo = SportsDashboard._lolesports_logo_thumbnail_url(str(team.get("image") or "").strip())
         return name, SportsDashboard._lpl_int_value(result.get("gameWins")), logo
 
-    @staticmethod
-    def _lolesports_logo_thumbnail_url(url, side=LOLESPORTS_LOGO_THUMBNAIL_SIDE):
-        """Ask Riot's image resizer for a small PNG of a lolesports team logo.
-
-        Some originals are 3500 px (LYON), past the decode limit, so those teams
-        showed only an initial; the resizer serves the same artwork at ~200 px.
-        """
-        parsed = urlparse(str(url or ""))
-        if (parsed.scheme not in {"http", "https"} or parsed.netloc != "static.lolesports.com"
-                or not parsed.path.startswith("/teams/")):
-            return url
-        return f"{LOLESPORTS_IMAGE_RESIZER_URL}?{urlencode({'resize': f'{side}:', 'f': url})}"
+    _lolesports_logo_thumbnail_url = staticmethod(lolesports_logo_thumbnail_url)
 
 
     @staticmethod

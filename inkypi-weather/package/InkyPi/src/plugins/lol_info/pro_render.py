@@ -25,6 +25,7 @@ from plugins.sports_dashboard.common import (
     LOCAL_MSI_LOGO_PATH,
     LOCAL_WORLDS_LOGO_PATH,
     LOCAL_WORLDS_WORDMARK_PATHS,
+    lolesports_logo_thumbnail_url,
 )
 from plugins.sports_dashboard.esports_font_runs import EsportsFont
 from plugins.sports_dashboard.esports_fonts import active_font, type_scope
@@ -604,10 +605,11 @@ class ProRenderMixin:
             self._single(draw, (left + 21, y + 2), item.get("champion_name"), fonts["tiny"], colors["ink"], slot - 24, 7)
 
     def _lol_team_logo(self, url, label, size):
-        """A team's bundled logo when the page ships one, else lolesports' (None when neither loads)."""
+        """A team's bundled logo when the page ships one, else lolesports' through Riot's resizer
+        (some originals, LYON's, are too large to decode); None when neither loads."""
         logo = self._team_logo(label, size)
         if logo is None:
-            raw = self._image_from_url(url, label)
+            raw = self._image_from_url(lolesports_logo_thumbnail_url(url), label)
             logo = (ImageOps.contain(self._trim_alpha(raw.convert("RGBA")), (size, size), method=Image.Resampling.LANCZOS)
                     if raw is not None and raw.width > 1 else None)
         return logo

@@ -265,3 +265,22 @@ def test_an_event_without_a_mark_leaves_the_header_clear(plugin):
     assert plugin._event_mark("first_stand", None, (80, 15), colors) is None
     worlds = plugin._event_mark("worlds", time.time(), (80, 15), colors)
     assert worlds is not None and worlds.height <= 15 and worlds.width > worlds.height * 3
+
+
+def test_a_lolesports_team_logo_comes_through_riots_resizer(plugin, monkeypatch):
+    asked = []
+
+    def image_from_url(url, label=""):
+        asked.append(url)
+        return Image.new("RGBA", (200, 200), (200, 160, 100, 255))
+
+    monkeypatch.setattr(plugin, "_image_from_url", image_from_url)
+    original = "http://static.lolesports.com/teams/1743717443673_isotypelyon-03.png"
+
+    # LYON's original is 3500 px, past the decode limit; Riot's resizer serves it at 200 px.
+    logo = plugin._lol_team_logo(original, "LYON", 16)
+    assert logo is not None and max(logo.size) == 16
+    assert asked == ["https://am-a.akamaihd.net/image?" + urllib.parse.urlencode({"resize": "200:", "f": original})]
+    # A team the page ships a logo for never asks.
+    assert plugin._lol_team_logo("http://static.lolesports.com/teams/hle.png", "HLE", 16) is not None
+    assert len(asked) == 1

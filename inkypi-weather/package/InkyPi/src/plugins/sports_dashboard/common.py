@@ -185,6 +185,20 @@ ESPN_LOGO_THUMBNAIL_SIDE = 200
 # Riot's image resizer, which lolesports.com itself serves team logos through.
 LOLESPORTS_IMAGE_RESIZER_URL = "https://am-a.akamaihd.net/image"
 LOLESPORTS_LOGO_THUMBNAIL_SIDE = 200
+
+
+def lolesports_logo_thumbnail_url(url, side=LOLESPORTS_LOGO_THUMBNAIL_SIDE):
+    """Ask Riot's image resizer for a small PNG of a lolesports team logo.
+
+    Some originals are 3500 px (LYON), past the decode limit, so those teams
+    showed only an initial; the resizer serves the same artwork at ~200 px.
+    """
+    parsed = urlparse(str(url or ""))
+    if (parsed.scheme not in {"http", "https"} or parsed.netloc != "static.lolesports.com"
+            or not parsed.path.startswith("/teams/")):
+        return url
+    return f"{LOLESPORTS_IMAGE_RESIZER_URL}?{urlencode({'resize': f'{side}:', 'f': url})}"
+
 NCAA_POLL_SIZE = 25
 TEAM_LOGO_DISK_CACHE_MAX_PIXELS = 4 * 1024 * 1024
 TEAM_LOGO_IMAGE_LIMITS = ImageLimits(
