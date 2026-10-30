@@ -196,3 +196,26 @@ def test_a_rows_sentence_comes_before_its_heat_and_tags():
     pairs = [(note, heat) for note in drawn if note[0].startswith("10月29日")
              for heat in drawn if heat[0] == "781万" and abs(heat[2] - note[2]) < 1 and (heat[1] < 400) == (note[1] < 400)]
     assert len(pairs) >= 4 and all(note[1] < heat[1] for note, heat in pairs)
+
+
+def test_a_row_without_a_sentence_keeps_its_heat_and_tags_first():
+    lists = {platform: [{"rank": rank, "title": "某话题", "heat": 12_150_000, "tag": "热", "videos": 7, "image": None}
+                        for rank in range(1, 4)] for platform in sources.PLATFORMS}
+    drawn = []
+    from utils.page_canvas import PageCanvas
+
+    original = PageCanvas.text
+
+    def capture(self, xy, text, size=14, color="ink", **kwargs):
+        drawn.append((str(text), xy[0], xy[1]))
+        return original(self, xy, text, size, color, **kwargs)
+
+    PageCanvas.text = capture
+    try:
+        render_page((800, 480), {"lists": lists, "topics": [], "history": {}}, {"_inkypi_theme": {"mode": "day"}}, NOW, {})
+    finally:
+        PageCanvas.text = original
+    # Douyin's line is its videos: the heat leads it.
+    pairs = [(heat, note) for note in drawn if note[0].startswith("7个视频")
+             for heat in drawn if heat[0] == "1215万" and abs(heat[2] - note[2]) < 1 and (heat[1] < 400) == (note[1] < 400)]
+    assert pairs and all(heat[1] < note[1] for heat, note in pairs)

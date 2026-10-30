@@ -453,22 +453,34 @@ def _platform_card(canvas, box, platform, payload, images, marks, now):
             move = {"up": 1, "down": -1}.get(row.get("change"))
 
         def meta(x, middle, end, row=row, topic=topic):
-            # The platform's sentence leads; its heat and tags follow it (the sentence says more).
             heat = heat_text(row.get("heat"))
             tags = [(row["tag"], TAG_COLORS.get(row["tag"], SHARED), False)] if row.get("tag") else []
             if topic:
                 tags.append((f"全网{len(topic['ranks'])}", SHARED, True))
             count = row_count(platform, row)
-            marks_w = (canvas.width(heat, 10) + 5 if heat else 0) + sum(canvas.width(text, 9) + 12 for text, _f, _o in tags)                 + (canvas.width(count, 10, False) + 6 if count else 0)
             note = row_note(platform, row, now)
-            if note and end - x - marks_w > NOTE_MIN_WIDTH:
+
+            def marks(x):
+                if count:
+                    x += canvas.text((x, middle), count, 10, "muted", anchor="lm", bold=False) + 6
+                if heat:
+                    x += canvas.text((x, middle), heat, 10, "ink", anchor="lm") + 5
+                for text, fill, outline in tags:
+                    x += _chip(canvas, x, middle, text, fill, outline=outline) + 4
+                return x
+
+            if not row.get("summary"):
+                # No sentence (Douyin's videos and age, Weibo's category): the heat and tags lead.
+                x = marks(x)
+                if note and end - x > NOTE_MIN_WIDTH:
+                    canvas.text((x + 1, middle), note, 10, "muted", anchor="lm", bold=False, width=end - x - 1)
+                return
+            # The platform's sentence leads, clipped to leave room for its counts, heat and tags.
+            marks_w = (canvas.width(count, 10, False) + 6 if count else 0) \
+                + (canvas.width(heat, 10) + 5 if heat else 0) + sum(canvas.width(text, 9) + 12 for text, _f, _o in tags)
+            if end - x - marks_w > NOTE_MIN_WIDTH:
                 x += canvas.text((x, middle), note, 10, "muted", anchor="lm", bold=False, width=end - x - marks_w) + 6
-            if count:
-                x += canvas.text((x, middle), count, 10, "muted", anchor="lm", bold=False) + 6
-            if heat:
-                x += canvas.text((x, middle), heat, 10, "ink", anchor="lm") + 5
-            for text, fill, outline in tags:
-                x += _chip(canvas, x, middle, text, fill, outline=outline) + 4
+            marks(x)
 
         _row(canvas, box, y0, row_h, picture=picture, tint=BRANDS[platform], rank=rank, title=row.get("title"),
              move=move, meta=meta)
