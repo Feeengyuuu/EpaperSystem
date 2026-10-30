@@ -37,18 +37,16 @@ COMMONS = {
     "nasa": "File:NASA logo.svg",
     "apple_music": "File:Apple Music logo.svg",
     "google_trends": "File:Google Trends.png",
-    # 美国热度's Wikipedia most-read line: the puzzle globe and the WIKIPEDIA wordmark beside it.
+    # 美国热度's Wikipedia most-read line: the puzzle globe.
     "wikipedia": "File:Wikipedia-logo-v2.svg",
-    "wikipedia_wordmark": "File:Wikipedia wordmark.svg",
 }
 # key: (SVG on the brand's own site, the page it is used on)
 SITE_SVGS = {
     "caiso": ("https://www.caiso.com/theme/dist/assets/www-logo-caiso.svg", "https://www.caiso.com/"),
     "caiso_night": ("https://www.caiso.com/theme/dist/assets/www-logo-caiso-dark.svg", "https://www.caiso.com/"),
 }
-# Apple publishes its Music wordmark in black for light grounds and in white for dark ones;
-# Wikipedia's wordmark is set white on its own dark pages.
-WHITE_NIGHT = {"apple_music": "apple_music_night", "wikipedia_wordmark": "wikipedia_wordmark_night"}
+# Apple publishes its Music wordmark in black for light grounds and in white for dark ones.
+WHITE_NIGHT = {"apple_music": "apple_music_night"}
 MAX_HEIGHT = 64
 
 

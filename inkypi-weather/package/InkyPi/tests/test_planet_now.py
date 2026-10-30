@@ -343,7 +343,7 @@ def test_wikipedias_most_read_line_is_named_by_its_logo_not_a_text_tag(monkeypat
     monkeypatch.setattr(render, "_chip", lambda canvas, xy, text, **kwargs: drawn.append(text) or original(canvas, xy, text,
                                                                                                          **kwargs))
     for night in (False, True):
-        assert render._logo("wikipedia", night) is not None and render._logo("wikipedia_wordmark", night) is not None
+        assert render._logo("wikipedia", night) is not None
 
     render.render_page((800, 480), _payload(), {"_inkypi_theme": {"mode": "day"}},
                        datetime(2026, 10, 25, 8, 5, tzinfo=sources.PACIFIC), {})
