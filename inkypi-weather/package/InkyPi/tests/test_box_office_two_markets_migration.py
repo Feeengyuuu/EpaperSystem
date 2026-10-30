@@ -12,7 +12,7 @@ from config import Config  # noqa: E402
 OWNER_UUID = "6ce0a56e6ddd4feaa1006be9394daf10"
 MARKERS = {"aggregate_pages_playlist_v1": True, "ai_ecosystem_pulse_retired_v1": True,
            "pop_traffic_pages_playlist_v1": True, "planet_now_page_playlist_v1": True, "sky_radar_page_playlist_v1": True,
-           "hot_odds_pages_playlist_v1": True}
+           "hot_odds_pages_playlist_v1": True, "ai_papers_page_playlist_v1": True}
 
 
 def _instance(plugin_id, name, uuid, settings=None):

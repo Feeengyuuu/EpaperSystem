@@ -77,6 +77,17 @@
         64
       ],
       "sha256": "ef2878641cf353dc94225f30ec962e27b05d738a6a4fdfe75a2ad8b051dd8831"
+    },
+    "cnn": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b1/CNN.svg/500px-CNN.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:CNN.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "f2591a486628cacc4e3b192477028d392f4edabd38e8723b4c3c37d349937bb0",
+      "size": [
+        134,
+        64
+      ],
+      "sha256": "45bcf06fd41e7cbe21f612b832c14aa3e87bcdd22bea8afcc1cf310114cf45d4"
     }
   }
 }

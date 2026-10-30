@@ -1,0 +1,11 @@
+{
+  "use": "a paper without an uploaded still or an arXiv figure",
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job a8d67932-52f7-425f-b3d0-9b4a3c87c59e",
+  "source_sha256": "bec3019983072ade619fe90a74c8e5e45aa80326b07622d109eb733801da217e",
+  "processing": "alpha below 40 cleared, trimmed, fitted 320 x 240 (LANCZOS)",
+  "size": [
+    243,
+    240
+  ],
+  "sha256": "9856b719e4a6b5985c933ebbe1a2c83830066a5b754a16f74382287a814bc660"
+}

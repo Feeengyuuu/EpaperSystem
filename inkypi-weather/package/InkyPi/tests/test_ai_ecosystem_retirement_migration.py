@@ -24,7 +24,7 @@ def _payload(*extra, live_radar_uuid=OWNER_UUID):
         "resolution": [800, 480],
         "runtime_migrations": {"existing_migration_v1": True, "aggregate_pages_playlist_v1": True,
                                "pop_traffic_pages_playlist_v1": True, "planet_now_page_playlist_v1": True, "sky_radar_page_playlist_v1": True,
-                               "hot_odds_pages_playlist_v1": True},
+                               "hot_odds_pages_playlist_v1": True, "ai_papers_page_playlist_v1": True},
         "playlist_config": {
             "playlists": [{"name": "DailyDoseOfDay", "start_time": "00:00", "end_time": "24:00",
                            "plugins": [_instance("live_radar", "LiveRadar", live_radar_uuid), *extra]}],
@@ -57,7 +57,7 @@ def test_startup_retires_the_ai_ecosystem_page_once_tech_pulse_carries_it(monkey
     assert plugins[1] == {**tech, "latest_refresh_time": None}
     assert saved["runtime_migrations"] == {"existing_migration_v1": True, "aggregate_pages_playlist_v1": True,
                                            "pop_traffic_pages_playlist_v1": True, "planet_now_page_playlist_v1": True, "sky_radar_page_playlist_v1": True,
-                                           "hot_odds_pages_playlist_v1": True,
+                                           "hot_odds_pages_playlist_v1": True, "ai_papers_page_playlist_v1": True,
                                            migration.MIGRATION_ID: True}
     assert config.get_playlist_manager().find_plugin("ai_ecosystem_pulse", "AI") is None
 

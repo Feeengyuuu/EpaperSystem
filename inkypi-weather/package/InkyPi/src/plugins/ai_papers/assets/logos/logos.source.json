@@ -1,0 +1,37 @@
+{
+  "logos": {
+    "huggingface": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d6/Hf-logo-with-title.svg/500px-Hf-logo-with-title.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Hf-logo-with-title.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "b4a14b1964d5f8b65aaf991214966f6256528dabd788674d21e6bef142eef385",
+      "size": [
+        285,
+        64
+      ],
+      "sha256": "d219f913f09af1f7e3187f232b5859b99bcdbdf832b6aa36d85d33a81eecfbb0"
+    },
+    "huggingface_mark": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3f/Hf-logo-without-title.svg/500px-Hf-logo-without-title.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Hf-logo-without-title.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "240412e3ef556068db0ca9ea1e581f1bebb8e5e24f6e9e9b14f505ea7c89f490",
+      "size": [
+        68,
+        64
+      ],
+      "sha256": "e7fee935fcdd863fc81c89dfd7d5e556c0a5aa7aa0a8bfe5b6f9d77995e51985"
+    },
+    "arxiv": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/b/bc/ArXiv_logo_2022.svg/500px-ArXiv_logo_2022.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:ArXiv_logo_2022.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "875063d0e836a323e674396441aab2bd2d6abe92eac200660175c87b29008520",
+      "size": [
+        142,
+        64
+      ],
+      "sha256": "c1f124a1165243582add843b0d3e710d77ee999aeb7555126f8b518ca47e4139"
+    }
+  }
+}

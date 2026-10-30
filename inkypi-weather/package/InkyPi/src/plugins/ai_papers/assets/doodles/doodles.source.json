@@ -1,0 +1,9 @@
+{
+  "papers.png": {
+    "theme": "AI research papers",
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job 8ae5b2b8-46bf-4157-8b6e-8fbb8bba49e1",
+    "source_sha256": "3cda1c674c6dd50a5daca5e726cf569d818690616130133b118fa156294af90d",
+    "processing": "greyscale, 360 px LANCZOS, values above 232 to white",
+    "sha256": "57042d466db15c366a0e4d837718acd89f8809f88ce116eecd9a90225342455a"
+  }
+}

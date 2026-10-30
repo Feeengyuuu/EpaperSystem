@@ -23,7 +23,7 @@ def _payload(*extra, playlist="DailyDoseOfDay", live_radar_uuid=OWNER_UUID):
         "resolution": [800, 480],
         "runtime_migrations": {"existing_migration_v1": True, "pop_traffic_pages_playlist_v1": True,
                                "planet_now_page_playlist_v1": True, "sky_radar_page_playlist_v1": True,
-                               "hot_odds_pages_playlist_v1": True},
+                               "hot_odds_pages_playlist_v1": True, "ai_papers_page_playlist_v1": True},
         "playlist_config": {
             "playlists": [{"name": playlist, "start_time": "00:00", "end_time": "24:00",
                            "plugins": [_instance("live_radar", "LiveRadar", live_radar_uuid), *extra]}],
@@ -58,7 +58,7 @@ def test_startup_adds_the_four_pages_to_the_owner_rotation_once(monkeypatch, tmp
     assert len({item["instance_uuid"] for item in plugins}) == 5
     assert saved["runtime_migrations"] == {"existing_migration_v1": True, "pop_traffic_pages_playlist_v1": True,
                                            "planet_now_page_playlist_v1": True, "sky_radar_page_playlist_v1": True,
-                                           "hot_odds_pages_playlist_v1": True, "aggregate_pages_playlist_v1": True}
+                                           "hot_odds_pages_playlist_v1": True, "ai_papers_page_playlist_v1": True, "aggregate_pages_playlist_v1": True}
     assert config.get_playlist_manager().find_plugin("tech_play", "TechPlay") is not None
 
     revision = saved["config_revision"]

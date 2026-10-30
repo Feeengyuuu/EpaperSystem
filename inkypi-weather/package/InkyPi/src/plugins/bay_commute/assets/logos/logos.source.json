@@ -33,6 +33,17 @@
         64
       ],
       "sha256": "abbc58f54dbe1bc72b9be3394b6c12d49fc6e3251133a8dcc1641c4f19d86ed9"
+    },
+    "bart": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/2/26/Bart-logo.svg/500px-Bart-logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Bart-logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "ac1ee2600bb86d1f6598273185457cdb65b8a6166fe5f4ac0eced4cf5ad0d978",
+      "size": [
+        105,
+        64
+      ],
+      "sha256": "dfdcdebad7f6050f688729a9cb9c335882196c2d3e86ce883fbeae0c625ec43f"
     }
   }
 }

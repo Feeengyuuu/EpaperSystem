@@ -1,0 +1,92 @@
+{
+  "logos": {
+    "news-nasa": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e5/NASA_logo.svg/500px-NASA_logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:NASA_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "c26ca481b8bb2241aa3276bd8c1335259ded59fd4f11dc8c7f8b4dd3301fe4b1",
+      "size": [
+        78,
+        64
+      ],
+      "sha256": "b574b8a8c14158f9f0be042de95fce7f50c3ef40aaafedb3a81ecf8decd3a9dd"
+    },
+    "news-esa": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/b/bd/European_Space_Agency_logo.svg/500px-European_Space_Agency_logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:European_Space_Agency_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "e0779878d3ed891cfd843d0d767bb53fb177b802e64d4e51355a122ece0b7ecc",
+      "size": [
+        177,
+        64
+      ],
+      "sha256": "06af52cf120fddb476d6a589f4906e3ff845d237135eb19ae116b9a96756c142"
+    },
+    "news-arstechnica": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/51/Ars_Technica_logo_%282016%29.svg/500px-Ars_Technica_logo_%282016%29.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Ars_Technica_logo_(2016).svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "ff5c7a08465f2fad9e65e20a749fc70a6d50214687841cded7e4b67f6202aa70",
+      "size": [
+        193,
+        64
+      ],
+      "sha256": "5b0973f53cc8b05f040c1d39d4abafc162978d507730d3d90c9d9fc326b71cd6"
+    },
+    "news-spacenews": {
+      "source": "https://i0.wp.com/spacenews.com/wp-content/uploads/2024/05/cropped-SN_forza_star.png?fit=192%2C192&ssl=1",
+      "page": "https://spacenews.com/",
+      "licence": "SpaceNews' site icon, shown to name the story's source",
+      "source_sha256": "981a3c06a69a213d7a0a2b9e32716dcd599a86f97e1721f1b9d042ff4d631e45",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "6ad060c0d5e5305875d081f0280cc48ff7e8970b28a519a4e0ce86d2d3660326"
+    },
+    "news-nasaspaceflight": {
+      "source": "https://www.nasaspaceflight.com/wp-content/uploads/2023/03/NSF-Logo-Blue-300.svg",
+      "page": "https://www.nasaspaceflight.com/",
+      "licence": "NASASpaceflight's logo from its own site header, shown to name the story's source",
+      "source_sha256": "d275d5f545eaa27db4474ceb6c0a5ba997091efacbb34f666074017b2ef75d34",
+      "size": [
+        173,
+        64
+      ],
+      "sha256": "09bfa60b71c6394af0aedb97f7d2f4124899a099de44ffaa0149a1214d061c8e"
+    },
+    "news-spaceflight_now": {
+      "source": "https://spaceflightnow.com/new/assets/images/favicon-180.png",
+      "page": "https://spaceflightnow.com/",
+      "licence": "Spaceflight Now's site icon, shown to name the story's source",
+      "source_sha256": "4924e80c95156a765d391c41355f73bc9e32c06f23471f77f9cae682d8ff96e9",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "5eed8abfdd51f0102e3adab4185e064906898383174618e8b64c65bf50fcd6f6"
+    },
+    "news-european_spaceflight": {
+      "source": "https://europeanspaceflight.com/wp-content/uploads/2021/12/cropped-European-Spaceflight-logo-192x192.png",
+      "page": "https://europeanspaceflight.com/",
+      "licence": "European Spaceflight's site icon, shown to name the story's source",
+      "source_sha256": "a213c066779ee593b454ece88ca5a40f4e10c026e423dbb203dde4b5058c86b4",
+      "size": [
+        59,
+        64
+      ],
+      "sha256": "64f2e52694dd5d5e8184727d5ffd645dbf8f151caceb2ad39140f4b3e567fbc4"
+    },
+    "snapi": {
+      "source": "https://www.spaceflightnewsapi.net/img/SNAPI_logo.png",
+      "page": "https://www.spaceflightnewsapi.net/",
+      "licence": "The Spaceflight News API's logo from its own site, shown to name the source",
+      "source_sha256": "429581827a9e71cbbd3892b1d43c4c06ae7dac3fffbcf9558414927d6b7dc009",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "97eb6d47a2c65de5184a04e2d381e7a3e51de78ee0634d0714b62abe29bd3f44"
+    }
+  }
+}

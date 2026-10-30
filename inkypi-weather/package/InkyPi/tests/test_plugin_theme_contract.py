@@ -42,7 +42,7 @@ def contrast_ratio(first, second):
 def test_every_theme_capable_builtin_renderer_owns_two_valid_palettes():
     manifests = load_all_builtin_manifests()
 
-    assert len(manifests) == 71
+    assert len(manifests) == 72
     static_cache_only = {
         manifest.id
         for manifest in manifests

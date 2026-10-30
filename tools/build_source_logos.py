@@ -34,6 +34,13 @@
   navigation; Toutiao's, Zhihu's and Douyin's from Commons (public domain).
 - 世界赔率榜 (world_odds): Kalshi's and Polymarket's logos from Commons (public domain).
 - NASA Pics × Space Weather: JPL's logo from Commons (public domain), for the near-Earth objects.
+- AI 论文日报 (ai_papers): Hugging Face's logo, with and without its name, and arXiv's, from Commons.
+- 资金雷达's Fear & Greed gauge: CNN's logo from Commons (public domain).
+- 湾区交通观测's BART departures: BART's logo from Commons (public domain).
+- 环球此刻's fireballs: JPL's logo (as for NASA Pics) beside NASA's.
+- Orbital Signal's space-news line: each news site's own mark (NASA's, ESA's and Ars Technica's from
+  Commons; SpaceNews', NASASpaceflight's, Spaceflight Now's and European Spaceflight's from their own
+  sites) and the Spaceflight News API's logo from its site.
 - The sports page's NHL panel: the league's shield from Commons (public domain).
 - Tech Pulse: OpenRouter's logo and icon from Commons (public domain), for the newest models, and
   their makers' marks: Commons where it has one, else the maker's own site icon.
@@ -77,6 +84,8 @@ HOT_SEARCH = PLUGINS / "cn_hot_search" / "assets" / "logos"
 ODDS = PLUGINS / "world_odds" / "assets" / "logos"
 TECH_LOGOS = PLUGINS / "tech_pulse" / "assets" / "logos"
 ORGANISERS = PLUGINS / "lol_info" / "assets" / "cs2_organisers"
+PAPERS = PLUGINS / "ai_papers" / "assets" / "logos"
+SPACE_NEWS = PLUGINS / "orbital_signal" / "assets" / "news"
 COMMONS_FILE = "https://commons.wikimedia.org/wiki/File:{name}"
 CALTRANS = ("https://dot.ca.gov/-/media/dot-media/images/logos/caltrans/caltranslogo.png", "https://dot.ca.gov/",
             "Caltrans' official logo from its own site header, shown to name the source")
@@ -193,7 +202,7 @@ LOGOS = {
             [PLUGINS / "sports_dashboard" / "assets" / "logos"], 1.0),
     "jpl": ((COMMONS.format(path="c/c6/Jet_Propulsion_Laboratory_logo.svg", name="Jet_Propulsion_Laboratory_logo.svg"),
              COMMONS_FILE.format(name="Jet_Propulsion_Laboratory_logo.svg"), PUBLIC_DOMAIN),
-            [PLUGINS / "apod" / "assets" / "logos"], 0.56),
+            [PLUGINS / "apod" / "assets" / "logos", PLUGINS / "planet_now" / "assets" / "logos"], 0.56),
     # The makers of the models on Tech Pulse's OpenRouter strip, one mark beside each card.
     "provider-openai": (("https://status.openai.com/favicon.ico", "https://status.openai.com/",
                          "OpenAI's site icon, shown to name the model's maker"), [TECH_LOGOS], 1.0),
@@ -226,6 +235,34 @@ LOGOS = {
     "openrouter": ((COMMONS.format(path="c/ca/OpenRouter_Logo.svg", name="OpenRouter_Logo.svg"),
                     COMMONS_FILE.format(name="OpenRouter_Logo.svg"), PUBLIC_DOMAIN),
                    [PLUGINS / "tech_pulse" / "assets" / "logos"], 1.0),
+    "huggingface": ((COMMONS.format(path="d/d6/Hf-logo-with-title.svg", name="Hf-logo-with-title.svg"),
+                     COMMONS_FILE.format(name="Hf-logo-with-title.svg"), PUBLIC_DOMAIN), [PAPERS], 1.0),
+    "huggingface_mark": ((COMMONS.format(path="3/3f/Hf-logo-without-title.svg", name="Hf-logo-without-title.svg"),
+                          COMMONS_FILE.format(name="Hf-logo-without-title.svg"), PUBLIC_DOMAIN), [PAPERS], 1.0),
+    "arxiv": ((COMMONS.format(path="b/bc/ArXiv_logo_2022.svg", name="ArXiv_logo_2022.svg"),
+               COMMONS_FILE.format(name="ArXiv_logo_2022.svg"), PUBLIC_DOMAIN), [PAPERS], 1.0),
+    "cnn": ((COMMONS.format(path="b/b1/CNN.svg", name="CNN.svg"), COMMONS_FILE.format(name="CNN.svg"), PUBLIC_DOMAIN),
+            [MONEY], 1.0),
+    "bart": ((COMMONS.format(path="2/26/Bart-logo.svg", name="Bart-logo.svg"), COMMONS_FILE.format(name="Bart-logo.svg"),
+              PUBLIC_DOMAIN), [PLUGINS / "bay_commute" / "assets" / "logos"], 1.0),
+    "news-nasa": ((COMMONS.format(path="e/e5/NASA_logo.svg", name="NASA_logo.svg"),
+                   COMMONS_FILE.format(name="NASA_logo.svg"), PUBLIC_DOMAIN), [SPACE_NEWS], 1.0),
+    "news-esa": ((COMMONS.format(path="b/bd/European_Space_Agency_logo.svg", name="European_Space_Agency_logo.svg"),
+                  COMMONS_FILE.format(name="European_Space_Agency_logo.svg"), PUBLIC_DOMAIN), [SPACE_NEWS], 1.0),
+    "news-arstechnica": ((COMMONS.format(path="5/51/Ars_Technica_logo_%282016%29.svg", name="Ars_Technica_logo_%282016%29.svg"),
+                          COMMONS_FILE.format(name="Ars_Technica_logo_(2016).svg"), PUBLIC_DOMAIN), [SPACE_NEWS], 1.0),
+    "news-spacenews": (("https://i0.wp.com/spacenews.com/wp-content/uploads/2024/05/cropped-SN_forza_star.png?fit=192%2C192&ssl=1",
+                        "https://spacenews.com/", "SpaceNews' site icon, shown to name the story's source"), [SPACE_NEWS], 1.0),
+    "news-nasaspaceflight": (("https://www.nasaspaceflight.com/wp-content/uploads/2023/03/NSF-Logo-Blue-300.svg",
+                              "https://www.nasaspaceflight.com/", "NASASpaceflight's logo from its own site header, shown to "
+                              "name the story's source"), [SPACE_NEWS], 1.0),
+    "news-spaceflight_now": (("https://spaceflightnow.com/new/assets/images/favicon-180.png", "https://spaceflightnow.com/",
+                              "Spaceflight Now's site icon, shown to name the story's source"), [SPACE_NEWS], 1.0),
+    "news-european_spaceflight": (("https://europeanspaceflight.com/wp-content/uploads/2021/12/"
+                                   "cropped-European-Spaceflight-logo-192x192.png", "https://europeanspaceflight.com/",
+                                   "European Spaceflight's site icon, shown to name the story's source"), [SPACE_NEWS], 1.0),
+    "snapi": (("https://www.spaceflightnewsapi.net/img/SNAPI_logo.png", "https://www.spaceflightnewsapi.net/",
+               "The Spaceflight News API's logo from its own site, shown to name the source"), [SPACE_NEWS], 1.0),
 }
 PUBLISHERS = PLUGINS / "base_plugin" / "assets" / "publisher_logos"
 # The cover pages' publishers and magazines (base_plugin/publisher_logos.py knows their names): key ->

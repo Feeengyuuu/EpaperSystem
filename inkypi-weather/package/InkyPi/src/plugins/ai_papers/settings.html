@@ -1,0 +1,31 @@
+<input type="hidden" name="refreshOnDisplay" id="refreshOnDisplay" value="false">
+<div class="form-group">
+  <small>每天 AI 圈最受关注的论文：Hugging Face Papers 社区当天与前一天精选的 arXiv 论文按点赞排序。头条配论文主图、发表机构、一句话摘要与关键词，另有点赞、评论、GitHub 星数；没有上传配图的论文取 arXiv 网页版的第一张图。公开接口，无需密钥。</small>
+</div>
+<div class="form-group">
+  <label class="form-label" for="fontFamily">字体</label>
+  <select name="fontFamily" id="fontFamily">
+    {% for font_name in available_fonts %}<option value="{{ font_name }}">{{ font_name }}</option>{% endfor %}
+  </select>
+</div>
+<div class="form-group">
+  <label><input type="checkbox" name="translate" id="translate"> 标题与摘要翻成中文</label>
+  <small>使用已保存的 OpenAI 密钥（与 Telegram 精选、每日 AI 新闻相同），每篇只翻译一次并保存；没有密钥时显示英文原文。</small>
+</div>
+<div class="form-group">
+  <label><input type="checkbox" name="forceRefresh" id="forceRefresh"> 下次刷新重新获取论文列表</label>
+  <small>列表每小时以上才重新获取。轮播使用本地缓存，不请求网络。</small>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  for (const key of ['fontFamily', 'translate', 'forceRefresh']) {
+    const el = document.getElementById(key);
+    const value = typeof pluginSettings !== 'undefined' ? pluginSettings[key] : undefined;
+    if (value !== undefined) {
+      if (el.type === 'checkbox') el.checked = [true, 'true', 'on', '1'].includes(value);
+      else el.value = value;
+    } else if (key === 'fontFamily') el.value = 'Microsoft YaHei';
+    else if (key === 'translate') el.checked = true;
+  }
+});
+</script>
