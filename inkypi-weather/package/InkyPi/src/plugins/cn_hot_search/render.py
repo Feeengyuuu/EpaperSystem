@@ -58,6 +58,8 @@ MOVE_ROOM = 28
 # A row's title takes the largest of these sizes it fits whole at (the narrow cards start a size
 # down), clipped only at the smallest.
 TITLE_SIZES = (14, 13, 12)
+# A row's sentence is shown only with at least this much room before its heat and tags.
+NOTE_MIN_WIDTH = 30
 # Each card's doodles (its platform's own theme: chatter, search, news, questions, video, the shared
 # card's network) show this much of their strokes, under the rows.
 DOODLE_STRENGTH = 0.26
@@ -105,16 +107,23 @@ def ago_text(epoch, now):
 
 
 def row_note(platform, row, now):
-    """The line of what the platform says about an entry, under its title."""
+    """The line of what the platform says about an entry, under its title (Zhihu's answer count
+    only when it has no sentence; row_count gives it otherwise)."""
     if platform == "zhihu":
-        answers = f"{row['answers']}回答" if row.get("answers") else ""
-        return " · ".join(part for part in (answers, row.get("summary")) if part)
+        return row.get("summary") or (f"{row['answers']}回答" if row.get("answers") else "")
     if platform == "douyin":
         videos = f"{row['videos']}个视频" if row.get("videos") else ""
         return " · ".join(part for part in (videos, ago_text(row.get("since"), now)) if part)
     if platform == "weibo":
         return row.get("category") or ""
     return row.get("summary") or ""
+
+
+def row_count(platform, row):
+    """The count that follows an entry's sentence, with its heat and tags: Zhihu's answers."""
+    if platform == "zhihu" and row.get("summary") and row.get("answers"):
+        return f"{row['answers']}回答"
+    return ""
 
 
 def _night(canvas):
@@ -444,16 +453,22 @@ def _platform_card(canvas, box, platform, payload, images, marks, now):
             move = {"up": 1, "down": -1}.get(row.get("change"))
 
         def meta(x, middle, end, row=row, topic=topic):
+            # The platform's sentence leads; its heat and tags follow it (the sentence says more).
             heat = heat_text(row.get("heat"))
+            tags = [(row["tag"], TAG_COLORS.get(row["tag"], SHARED), False)] if row.get("tag") else []
+            if topic:
+                tags.append((f"全网{len(topic['ranks'])}", SHARED, True))
+            count = row_count(platform, row)
+            marks_w = (canvas.width(heat, 10) + 5 if heat else 0) + sum(canvas.width(text, 9) + 12 for text, _f, _o in tags)                 + (canvas.width(count, 10, False) + 6 if count else 0)
+            note = row_note(platform, row, now)
+            if note and end - x - marks_w > NOTE_MIN_WIDTH:
+                x += canvas.text((x, middle), note, 10, "muted", anchor="lm", bold=False, width=end - x - marks_w) + 6
+            if count:
+                x += canvas.text((x, middle), count, 10, "muted", anchor="lm", bold=False) + 6
             if heat:
                 x += canvas.text((x, middle), heat, 10, "ink", anchor="lm") + 5
-            if row.get("tag"):
-                x += _chip(canvas, x, middle, row["tag"], TAG_COLORS.get(row["tag"], SHARED)) + 4
-            if topic:
-                x += _chip(canvas, x, middle, f"全网{len(topic['ranks'])}", SHARED, outline=True) + 4
-            note = row_note(platform, row, now)
-            if note and end - x > 24:
-                canvas.text((x + 1, middle), note, 10, "muted", anchor="lm", bold=False, width=end - x - 1)
+            for text, fill, outline in tags:
+                x += _chip(canvas, x, middle, text, fill, outline=outline) + 4
 
         _row(canvas, box, y0, row_h, picture=picture, tint=BRANDS[platform], rank=rank, title=row.get("title"),
              move=move, meta=meta)

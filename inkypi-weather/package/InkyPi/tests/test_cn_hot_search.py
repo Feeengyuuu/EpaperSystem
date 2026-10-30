@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from plugins.cn_hot_search import sources  # noqa: E402
 from plugins.cn_hot_search.cn_hot_search import list_moves  # noqa: E402
 from plugins.cn_hot_search.render import (  # noqa: E402
-    _slots, ago_text, heat_text, lead_facts, lead_moves, render_page, row_note, span_text, story_since,
+    _slots, ago_text, heat_text, lead_facts, lead_moves, render_page, row_count, row_note, span_text, story_since,
 )
 
 NOW = datetime(2026, 10, 28, 21, 30, tzinfo=sources.PACIFIC)
@@ -107,7 +107,10 @@ def test_list_moves_match_a_reworded_entry_and_mark_new_ones():
 def test_heat_notes_and_layout_slots():
     assert (heat_text(7808034), heat_text(52300), heat_text(123456789)) == ("781万", "5.2万", "1.2亿")
     assert ago_text(int(NOW.timestamp()) - 3 * 3600, NOW) == "3小时前"
-    assert row_note("zhihu", {"answers": 198, "summary": "近日"}, NOW) == "198回答 · 近日"
+    # Zhihu's sentence leads; its answer count follows it with the heat and tags.
+    assert row_note("zhihu", {"answers": 198, "summary": "近日"}, NOW) == "近日"
+    assert row_note("zhihu", {"answers": 198}, NOW) == "198回答"
+    assert (row_count("zhihu", {"answers": 198, "summary": "近日"}), row_count("zhihu", {"answers": 198})) == ("198回答", "")
     assert row_note("douyin", {"videos": 3}, NOW) == "3个视频"
     four = {"lists": {platform: [] for platform in sources.PLATFORMS}}
     assert _slots(four) == list(sources.PLATFORMS)
@@ -168,3 +171,28 @@ def test_a_row_title_steps_down_to_fit_and_keeps_the_move_room_only_for_a_move()
         PageCanvas.text = original
     # In the narrow 3-column cards the whole title fits at a smaller size instead of being cut.
     assert ("中共中央30日上午举行新闻发布会", 12) in drawn or ("中共中央30日上午举行新闻发布会", 13) in drawn
+
+
+def test_a_rows_sentence_comes_before_its_heat_and_tags():
+    lists = {platform: [{"rank": rank, "title": "某话题", "heat": 7_810_000, "tag": "新",
+                         "summary": "10月29日，重庆知识产权局发布消息", "image": None} for rank in range(1, 4)]
+             for platform in sources.PLATFORMS}
+    payload = {"lists": lists, "topics": [], "history": {}}
+    drawn = []
+    from utils.page_canvas import PageCanvas
+
+    original = PageCanvas.text
+
+    def capture(self, xy, text, size=14, color="ink", **kwargs):
+        drawn.append((str(text), xy[0], xy[1]))
+        return original(self, xy, text, size, color, **kwargs)
+
+    PageCanvas.text = capture
+    try:
+        render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, {})
+    finally:
+        PageCanvas.text = original
+    # On every row the sentence starts left of the heat figure on its line.
+    pairs = [(note, heat) for note in drawn if note[0].startswith("10月29日")
+             for heat in drawn if heat[0] == "781万" and abs(heat[2] - note[2]) < 1 and (heat[1] < 400) == (note[1] < 400)]
+    assert len(pairs) >= 4 and all(note[1] < heat[1] for note, heat in pairs)
