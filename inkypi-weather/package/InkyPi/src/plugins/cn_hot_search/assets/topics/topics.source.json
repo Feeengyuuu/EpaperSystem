@@ -1,0 +1,93 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "job_id": "42a76239-aa65-41de-afed-92554bcb124e",
+  "generated": "2026-10-29",
+  "source_sha256": "dd446a05fb695fedb9d9f33255ccebe326c33901a98df16ee4c184e13564acb7",
+  "processing": "one cell each of a 3x4 sheet (cut at its white gutters, 3 px inset), politics without the top 30% (a wall emblem), fitted inside 270x200 with LANCZOS, JPEG quality 88",
+  "files": {
+    "politics.jpg": {
+      "size": [
+        270,
+        141
+      ],
+      "sha256": "2a6537f26e5314abb909bf9886a6a09f65c69573a122e046773c59a7f4585d04"
+    },
+    "society.jpg": {
+      "size": [
+        270,
+        200
+      ],
+      "sha256": "8f6b2fb55b1faa06a99ca63c6492d0f5a5827a5c0a4f285a33cf8fe2579bb571"
+    },
+    "finance.jpg": {
+      "size": [
+        269,
+        200
+      ],
+      "sha256": "f09ebfe6bd6a29189cebf929b829f355b183f72aa1d3b723452791e14f4b5d1c"
+    },
+    "tech.jpg": {
+      "size": [
+        270,
+        197
+      ],
+      "sha256": "35a4c367bda699bccf7aa58ab86d50954f3a404800d288767e2111dd6dfb45a4"
+    },
+    "entertainment.jpg": {
+      "size": [
+        270,
+        197
+      ],
+      "sha256": "69c24cdcb5d40f54276f01e9a84cade306a872ee1c0fe6168391e239f8c24bb9"
+    },
+    "sports.jpg": {
+      "size": [
+        270,
+        197
+      ],
+      "sha256": "e1214172b0b7ec397d3182ccec836ba679f62ddf6d8303e7ffd7d520cb6c46fb"
+    },
+    "world.jpg": {
+      "size": [
+        270,
+        194
+      ],
+      "sha256": "92c040670408c8b67d238067d8dfd20bbc4aded4fdd9930acfd7ff66c05ffbdc"
+    },
+    "military.jpg": {
+      "size": [
+        270,
+        193
+      ],
+      "sha256": "afb7847c2cb1e5eb794323cb1fe9f0e735401e05ecbc4b37ebae79943f8345dc"
+    },
+    "weather.jpg": {
+      "size": [
+        270,
+        194
+      ],
+      "sha256": "f422f61d77f43353fa6f45b1d791b16d23567992d35e5ac5488bac9a5e916584"
+    },
+    "health.jpg": {
+      "size": [
+        254,
+        200
+      ],
+      "sha256": "8418e49a255952098f2311abfbefad3e5785b50ace8255cee7fdc0774f8bb2ec"
+    },
+    "life.jpg": {
+      "size": [
+        255,
+        200
+      ],
+      "sha256": "4eb65d4228f1f93df555c6b31bca2641d75ad74892ef94f386f48cc076f6078b"
+    },
+    "transport.jpg": {
+      "size": [
+        254,
+        200
+      ],
+      "sha256": "cd88c9e62ef7ca47eda1fa262da159ec5b0312f1c9ee4205d46f5246730d6251"
+    }
+  }
+}

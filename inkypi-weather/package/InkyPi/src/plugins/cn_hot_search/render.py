@@ -21,7 +21,7 @@ from utils.doodle_backdrop import paint_doodles
 from utils.local_wordmark import load_source_logo, paste_local_wordmark
 from utils.page_canvas import PageCanvas
 
-from . import sources
+from . import sources, topic_art
 from .cn_hot_search import ROWS_SHOWN, list_moves
 
 
@@ -53,8 +53,11 @@ LEAD_FADE = 0.5
 GRID_TOP, GRID_BOTTOM, GRID_GAP = 164, 470, 8
 # A card row: its picture fills the row's height at 3:2, the rank on its corner; the title on the
 # first line, the heat, labels and the platform's own words on the second.
-THUMB_RATIO = 1.5
+THUMB_RATIO = 1.3
 MOVE_ROOM = 28
+# A row's title takes the largest of these sizes it fits whole at (the narrow cards start a size
+# down), clipped only at the smallest.
+TITLE_SIZES = (14, 13, 12)
 # Each card's doodles (its platform's own theme: chatter, search, news, questions, video, the shared
 # card's network) show this much of their strokes, under the rows.
 DOODLE_STRENGTH = 0.26
@@ -190,6 +193,10 @@ def _chip(canvas, x, middle, text, fill, *, outline=False):
     return width
 
 
+def _has_move(move):
+    return move == "new" or (isinstance(move, int) and move != 0)
+
+
 def _move(canvas, x, middle, move):
     """NEW, or a small triangle and the places gained or lost, ending at ``x``."""
     if move == "new":
@@ -296,7 +303,8 @@ def _lead(canvas, payload, images, platforms, now):
     canvas.text((x + chip_w + 8, top + 16), "全网头条", 11, "muted", anchor="lm")
     for size in (21, 19, 17):
         lines = canvas.wrap(story["title"], size, width, 2)
-        if not lines[-1].endswith("…"):
+        # Whole, and with no lone character or two left on a second line ("…8 / 强").
+        if not lines[-1].endswith("…") and (len(lines) == 1 or len(lines[-1]) > 2):
             break
     y = top + 30
     for line in lines:
@@ -398,9 +406,12 @@ def _row(canvas, box, y0, row_h, *, picture, tint, rank, title, move, meta):
         canvas.text(((chip[0] + chip[2]) / 2, (chip[1] + chip[3]) / 2), str(rank), 10,
                     (255, 255, 255), anchor="mm")
     text_x = thumb[2] + 8
-    size = 14 if right - left > 300 else 13
-    title_middle = y0 + 2 + size / 2 + 1
-    canvas.text((text_x, title_middle), title, size, anchor="lm", width=right - 8 - MOVE_ROOM - text_x)
+    # The move's room is kept only when there is a move to show.
+    room = right - 8 - (MOVE_ROOM if _has_move(move) else 0) - text_x
+    sizes = TITLE_SIZES if right - left > 300 else TITLE_SIZES[1:]
+    size = next((size for size in sizes if canvas.width(title, size) <= room), sizes[-1])
+    title_middle = y0 + 2 + sizes[0] / 2 + 1
+    canvas.text((text_x, title_middle), title, size, anchor="lm", width=room)
     _move(canvas, right - 8, title_middle, move)
     meta(text_x, y0 + row_h - 12, right - 8)
 
@@ -425,8 +436,9 @@ def _platform_card(canvas, box, platform, payload, images, marks, now):
             canvas.rule((left + 8, y0 - 1, right - 8, y0 - 1))
         rank = row.get("rank") or number + 1
         topic = marks.get(rank)
-        # An entry without a picture borrows the one another list gives the same story.
-        picture = _picture_for(images, [row] + (list(topic["rows"].values()) if topic else []))
+        # An entry without a picture borrows the one another list gives the same story, else shows
+        # an illustration of its topic.
+        picture = _picture_for(images, [row] + (list(topic["rows"].values()) if topic else []))             or topic_art.picture(row.get("title"), row.get("category"))
         move = moves.get(row.get("title"))
         if move is None and platform == "baidu":
             move = {"up": 1, "down": -1}.get(row.get("change"))
@@ -477,7 +489,9 @@ def _shared_card(canvas, box, payload, images):
                 x += _paste_logo(canvas, platform, x, middle, 11 if platform != "baidu" else 13) + 2
                 x += canvas.text((x, middle), f"#{rank}", 10, BRANDS[platform], anchor="lm") + 8
 
-        _row(canvas, box, y0, row_h, picture=_picture_for(images, topic["rows"].values()), tint=SHARED,
+        picture = _picture_for(images, topic["rows"].values()) or topic_art.picture(
+            topic["title"], next((row.get("category") for row in topic["rows"].values() if row.get("category")), ""))
+        _row(canvas, box, y0, row_h, picture=picture, tint=SHARED,
              rank=number + 2, title=topic["title"], move=None, meta=meta)
 
 

@@ -128,3 +128,43 @@ def test_page_renders_without_pictures_in_both_grids(mode, weibo):
 
     assert image.size == (800, 480)
     assert image.getbbox() is not None
+
+
+def test_an_entry_without_a_picture_shows_an_illustration_of_its_topic():
+    from plugins.cn_hot_search import topic_art
+
+    assert topic_art.topic("A股磨底阶段如何应对", "社会") == "finance"
+    assert topic_art.topic("国防部回应美日近期军演") == "military"
+    assert topic_art.topic("中国U17女足首进世界杯8强") == "sports"
+    assert topic_art.topic("养猫后明白了辱追心理") == "health"
+    assert topic_art.topic("某地发生一件事", "娱乐") == "entertainment"
+    assert topic_art.topic("某地发生一件事") == topic_art.DEFAULT_TOPIC
+    keys = {key for key, _words in topic_art.TITLE_TOPICS} | set(topic_art.CATEGORY_TOPICS.values())
+    assert topic_art.picture("", "") is not None
+    assert {path.stem for path in topic_art.TOPIC_DIR.glob("*.jpg")} == keys | {topic_art.DEFAULT_TOPIC}
+
+
+def test_a_row_title_steps_down_to_fit_and_keeps_the_move_room_only_for_a_move():
+    from plugins.cn_hot_search import render
+
+    assert render._has_move("new") and render._has_move(-2) and not render._has_move(0) and not render._has_move(None)
+    lists = {platform: [{"rank": rank, "title": "中共中央30日上午举行新闻发布会", "heat": 1_000_000, "image": None}
+                        for rank in range(1, 4)] for platform in sources.PLATFORMS}
+    lists = {"weibo": lists["douyin"], **lists}
+    payload = {"lists": lists, "topics": sources.cross_topics(lists), "history": {}}
+    drawn = []
+    from utils.page_canvas import PageCanvas
+
+    original = PageCanvas.text
+
+    def capture(self, xy, text, size=14, color="ink", **kwargs):
+        drawn.append((str(text), size))
+        return original(self, xy, text, size, color, **kwargs)
+
+    PageCanvas.text = capture
+    try:
+        render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, {})
+    finally:
+        PageCanvas.text = original
+    # In the narrow 3-column cards the whole title fits at a smaller size instead of being cut.
+    assert ("中共中央30日上午举行新闻发布会", 12) in drawn or ("中共中央30日上午举行新闻发布会", 13) in drawn
