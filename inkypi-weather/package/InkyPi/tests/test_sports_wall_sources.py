@@ -103,3 +103,28 @@ def test_a_live_wall_with_an_nhl_game_draws_instead_of_falling_back():
                                                                                     games, now))
 
     assert image.size[0] >= 555
+
+
+def test_a_compact_live_row_boxes_the_leading_score_and_leaves_a_tie_plain():
+    from plugins.sports_dashboard.common import DAY_COLORS
+
+    games, now = _wall_games(2)
+    ink = DAY_COLORS["text"]
+
+    def score_ink(wins_a, wins_b):
+        event = dict(games[0]["event"], wins_a=wins_a, wins_b=wins_b)
+        found = {}
+
+        def draw_row(plugin, image, draw):
+            plugin._draw_kit_scoreboard_row(image, draw, (0, 0, 250, 26), event, now, plugin._wall_spec(games[0]["sport"]),
+                                            last=True)
+            for side, (top, bottom) in (("a", (2, 12)), ("b", (14, 24))):
+                found[side] = sum(1 for pixel in image.crop((222, top, 250, bottom)).get_flattened_data() if pixel == ink)
+
+        _render(draw_row, DAY_COLORS)
+        return found
+
+    lead_b, tie = score_ink(10, 20), score_ink(24, 24)
+    # The leader's score is a solid ink box; the trailing score and a tie are plain digits.
+    assert lead_b["b"] > 2 * lead_b["a"]
+    assert abs(tie["a"] - tie["b"]) < tie["a"] and lead_b["b"] > 2 * tie["b"]

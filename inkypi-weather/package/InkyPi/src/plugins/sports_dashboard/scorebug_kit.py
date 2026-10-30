@@ -24,6 +24,9 @@ KIT_SCOREBUG_SCORE_WIDTH = 44
 KIT_SCOREBUG_PERIOD_WIDTH = 17
 KIT_SCOREBOARD_ROW_HEIGHT = 26
 KIT_SCOREBOARD_STATE_WIDTH = 44
+# A live row's leading score sits in a solid ink box this far round its digits (the wall's
+# broadcast-scorebug mark); every row's scores keep the room, so all digits stay in one column.
+KIT_LEAD_PAD = 3
 KIT_TILE_HEIGHT = 36
 # The space either side of the rule between a TV tile's networks and its venue logo.
 KIT_TILE_VENUE_GAP = 7
@@ -669,6 +672,8 @@ class ScorebugKitMixin:
             draw.rectangle((state_x2 - 1, y1 + 3, state_x2 + 1, y2 - 3), fill=COLORS[spec.live])
         winner = spec.hook("winner_side", event, default="") if state == "final" else ""
         offense = spec.hook("possession_side", event, default="") if state == "live" else ""
+        leader = SportsDashboard._wall_leader(event) if state == "live" else None
+        score_right = x2 - 2 - KIT_LEAD_PAD
         team_x = state_x2 + 6
         for index, side in enumerate(("a", "b")):
             line_y1 = y1 + 1 + index * 12
@@ -682,14 +687,20 @@ class ScorebugKitMixin:
                                                     sport=spec.sport, max_height=line_y2 - line_y1)
             score_w = self._text_width(draw, score_text, score_font) if score_text else 0
             name_x = team_x + 15
-            name_budget = x2 - 2 - score_w - 6 - name_x - (9 if offense == side else 0)
+            name_budget = score_right - score_w - (KIT_LEAD_PAD if leader else 0) - 6 - name_x                 - (9 if offense == side else 0)
             name, font = self._kit_team_name(draw, spec, event, side, name_budget, 11, not dimmed)
             self._draw_text_in_box(draw, (name_x, line_y1, name_x + name_budget, line_y2), name, font, COLORS["text"])
             if offense == side:
                 dot_x = name_x + self._text_width(draw, name, font) + 4
                 draw.ellipse((dot_x, line_y1 + 4, dot_x + 5, line_y1 + 9), fill=COLORS["amber"], outline=COLORS["border"], width=1)
             if score_text:
-                self._draw_text_in_box(draw, (x2 - 2 - score_w, line_y1, x2 - 2, line_y2), score_text, score_font, COLORS["text"], align="right")
+                ink = COLORS["text"]
+                if leader == side:
+                    draw.rounded_rectangle((score_right - score_w - KIT_LEAD_PAD, line_y1 + 1,
+                                            score_right + KIT_LEAD_PAD, line_y2 - 1), radius=3, fill=COLORS["text"])
+                    ink = COLORS["paper_text"]
+                self._draw_text_in_box(draw, (score_right - score_w, line_y1, score_right, line_y2), score_text,
+                                       score_font, ink, align="right")
         if not last:
             draw.line((x1, y2, x2, y2), fill=COLORS["line"], width=1)
 
