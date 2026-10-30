@@ -176,3 +176,30 @@ def test_wiki_globe_is_a_lit_sphere_with_a_glow():
     assert sum(lit[:3]) > sum(shaded[:3])
     # The blue glow just outside the disc, on its right.
     assert sphere.getpixel((94 + WIKI_GLOW_PAD + 1, 53))[3] > 0
+
+
+def test_the_header_names_each_source_by_its_logo_and_a_card_without_a_note_sets_its_title_right():
+    from plugins.daily_pop import render
+
+    for name, (file_name, height) in render.KEY_LOGOS.items():
+        assert render._logo(file_name, height, False) is not None, name
+    drawn = []
+    from utils.page_canvas import PageCanvas
+
+    original = PageCanvas.text
+
+    def capture(self, xy, text, size=14, color="ink", **kwargs):
+        drawn.append((str(text), xy[0], kwargs.get("anchor")))
+        return original(self, xy, text, size, color, **kwargs)
+
+    PageCanvas.text = capture
+    try:
+        render_page((800, 480), _payload(), {"_inkypi_theme": {"mode": "day"}}, NOW, {})
+    finally:
+        PageCanvas.text = original
+    texts = [text for text, _x, _anchor in drawn]
+    # No colour-square key labels beside the title (热歌 is the songs card's own title); 每日棋题 closes its
+    # row at the card's right.
+    assert not {"B站", "新番", "维基", "地球", "棋题"} & set(texts)
+    puzzle = next(entry for entry in drawn if entry[0] == "每日棋题")
+    assert puzzle[2] == "rm" and puzzle[1] == render.CARDS["puzzle"][2] - 10

@@ -39,8 +39,10 @@ TITLES = {"bilibili": "B站热门", "bangumi": "今日新番", "wiki": "维基�
 LOGOS = {"bilibili": (("bilibili_tv", "bilibili"), 19, "热门"), "bangumi": ("bangumi", 18, "今日新番"),
          "wiki": ("wikipedia", 20, "维基热读"), "epic": ("nasa", 20, "今日地球"),
          "songs": ("apple_music", 15, "热歌"), "puzzle": ("chesscom", 17, "每日棋题")}
-# Cards whose title leads their row and whose logo stands at its right end, naming the source.
-LOGO_RIGHT = {"epic", "songs", "puzzle"}
+# The header's key names each source by its logo (file in assets/logos, height) in the cards' order.
+KEY_LOGOS = {"bilibili": ("bilibili", 15), "bangumi": ("bangumi", 15), "wiki": ("wikipedia", 20),
+             "epic": ("nasa", 20), "songs": ("apple_music", 13), "puzzle": ("chesscom", 16)}
+KEY_GAP = 16
 # Cards whose source colour runs all the way round them, so the area stands out.
 RINGED = {"bilibili"}
 # Quiet doodles in the source's colour under a card's content.
@@ -127,8 +129,8 @@ def _logo(file_name, height, night):
 
 
 def _card(canvas, name, note="", *, title=None, logo=True):
-    """The card's frame, its source colour along the top and its title row (led by the source's
-    official logo); returns the content top."""
+    """The card's frame, its source colour along the top and its title row (the source's official
+    logo, then the title; a note at the row's end); returns the content top."""
     left, top, right, bottom = CARDS[name]
     ringed = name in RINGED
     canvas.draw.rounded_rectangle((left, top, right, bottom), radius=6, width=2 if ringed else 1,
@@ -139,18 +141,17 @@ def _card(canvas, name, note="", *, title=None, logo=True):
     x = left + 10
     file_name, height, logo_title = LOGOS.get(name, (None, 0, None))
     art = _logo(file_name, height, sum(canvas.color("paper")) < 200) if logo and file_name else None
-    end = right - 10
-    if art is not None and name in LOGO_RIGHT:
-        # The title leads the row; the logo closes it where the source's name was written.
-        canvas.image.paste(art, (end - art.width, round(middle - art.height / 2)), art)
-        end -= art.width + 6
-    elif art is not None:
+    label = title or (logo_title if art is not None else TITLES[name])
+    if art is not None:
         canvas.image.paste(art, (x, round(middle - art.height / 2)), art)
         x += art.width + 6
-    used = canvas.text((x, middle), title or (logo_title if art is not None else TITLES[name]), 14, anchor="lm")
+        if not note:
+            # No note to close the row: the title stands at its right end, the logo alone leading it.
+            canvas.text((right - 10, middle), label, 14, anchor="rm")
+            return top + BAR + 24
+    used = canvas.text((x, middle), label, 14, anchor="lm")
     if note:
-        width = end - x - used - 10 if name in LOGO_RIGHT else right - left - 110
-        canvas.text((end, middle), note, 11, "muted", anchor="rm", bold=False, width=width)
+        canvas.text((right - 10, middle), note, 11, "muted", anchor="rm", bold=False, width=right - left - 110)
     return top + BAR + 24
 
 
@@ -577,16 +578,25 @@ def _puzzle(canvas, payload, images):
 
 
 def _source_key(canvas, left, right):
-    """The header's key: each source's colour square and short name, as far as there is room."""
+    """The header's key: each source's official logo, parted by thin rules, as far as there is
+    room (its colour square and short name when the logo is missing)."""
     x = left
-    for name in ("bilibili", "bangumi", "wiki", "epic", "songs", "puzzle"):
+    night = sum(canvas.color("paper")) < 200
+    for index, name in enumerate(("bilibili", "bangumi", "wiki", "epic", "songs", "puzzle")):
+        file_name, height = KEY_LOGOS[name]
+        art = _logo(file_name, height, night)
         label = SHORT_NAMES[name]
-        width = 14 + canvas.width(label, 11, bold=False)
+        width = art.width if art is not None else 14 + canvas.width(label, 11, bold=False)
         if x + width > right:
             break
-        canvas.draw.rounded_rectangle((x, 21, x + 10, 31), radius=2, fill=BRANDS[name])
-        canvas.text((x + 14, 26), label, 11, "muted", anchor="lm", bold=False)
-        x += width + 10
+        if index:
+            canvas.rule((x - KEY_GAP / 2, 18, x - KEY_GAP / 2, 34))
+        if art is not None:
+            canvas.image.paste(art, (x, round(26 - art.height / 2)), art)
+        else:
+            canvas.draw.rounded_rectangle((x, 21, x + 10, 31), radius=2, fill=BRANDS[name])
+            canvas.text((x + 14, 26), label, 11, "muted", anchor="lm", bold=False)
+        x += width + KEY_GAP
 
 
 def render_page(dimensions, payload, settings, now, images):
