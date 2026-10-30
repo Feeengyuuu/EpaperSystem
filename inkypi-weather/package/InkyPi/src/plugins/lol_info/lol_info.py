@@ -27,6 +27,7 @@ from utils.app_utils import coerce_bool, get_base_ui_font
 from utils.http_client import get_http_session
 from utils.image_utils import text_width
 from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
+from utils.svg_logo import is_svg_url, svg_response_image
 from utils.theme_utils import get_theme_context
 from utils.glyph_text import font_supports_text
 
@@ -1392,7 +1393,8 @@ class LoLInfo(ProTrackerMixin, ProRenderMixin, RefreshOnDisplayPresentationMixin
 
         def fetch():
             response = get_http_session().get(url, timeout=25, stream=True)
-            return measured_image_response(response)
+            # HLTV serves some team logos as SVG: drawn once, they are cached as any other image.
+            return svg_response_image(response) if is_svg_url(url) else measured_image_response(response)
 
         image = cached_resource_image(path, fetch, ttl=30 * 24 * 3600,
                                       label="lol_images", read_only=not _ALLOW_PROVIDER_MEDIA.get())

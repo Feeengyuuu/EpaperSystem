@@ -122,6 +122,9 @@ CS2_HERO_FADE = (HERO_H - 40, HERO_H + 16)
 CS2_PHOTO_FADE = 22
 # From this Sniping score the AWP leads the loadout; otherwise the T rifle does.
 SNIPER_ROLE = 40
+# A team without any logo gets its initials in white on one of these grounds (chosen by its name),
+# each clear of the CS2 page's dark panels.
+TEAM_BADGE_FILLS = ((37, 99, 235), (190, 40, 52), (15, 118, 92), (118, 70, 196), (196, 110, 18))
 CS2_RIFLES = {"t": ("AK-47", "Galil AR", "SG 553"), "ct": ("M4A1-S", "M4A4", "FAMAS", "AUG")}
 CS2_PISTOLS = ("Desert Eagle", "USP-S", "Glock-18", "P250", "Five-SeveN", "Tec-9", "CZ75-Auto", "R8 Revolver")
 # A player's role tag: the AWP from this Sniping score, else their strongest other role.
@@ -140,6 +143,31 @@ def _team_key(name):
     plain = unicodedata.normalize("NFKD", str(name or "")).encode("ascii", "ignore").decode("ascii")
     key = "".join(word for word in re.findall(r"[a-z0-9]+", plain.lower()) if word not in TEAM_NAME_NOISE)
     return TEAM_ALIASES.get(key, key)
+
+
+@lru_cache(maxsize=64)
+def _team_badge(name, size):
+    """A team with no logo anywhere: its initials (or its short name) in white on a rounded square
+    of a colour its name picks; None for an opponent still to be decided."""
+    name = str(name or "").strip()
+    words = re.findall(r"[A-Za-z0-9]+", unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii"))
+    if not words or name.upper() in {"TBD", "TBA"}:
+        return None
+    joined = "".join(words)
+    label = (joined if len(joined) <= 3 else "".join(word[0] for word in words)[:3] if len(words) > 1
+             else joined[:2]).upper()
+    fill = TEAM_BADGE_FILLS[sum((index + 1) * ord(char) for index, char in enumerate(name)) % len(TEAM_BADGE_FILLS)]
+    scale = 4
+    side = size * scale
+    badge = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(badge)
+    draw.rounded_rectangle((0, 0, side - 1, side - 1), radius=side // 4, fill=(*fill, 255))
+    for points in range(round(side * 0.62), 6, -2):
+        font = get_base_ui_font(points, bold=True)
+        if draw.textlength(label, font=font) <= side * 0.84:
+            break
+    draw.text((side / 2, side / 2), label, font=font, fill=(255, 255, 255, 255), anchor="mm")
+    return badge.resize((size, size), Image.Resampling.LANCZOS)
 
 
 @lru_cache(maxsize=16)
@@ -963,8 +991,9 @@ class ProRenderMixin:
         region = image.crop((x0, y0, x1 + 1, y1 + 1))
         image.paste(Image.blend(region, Image.new("RGB", region.size, colors["panel"]), alpha), (x0, y0))
 
-    def _cs2_team_logo(self, url, label, size):
-        """The team's bundled logo when the sports dashboard has one, else HLTV's (None for an SVG)."""
+    def _cs2_team_logo(self, url, label, size, badge=False):
+        """The team's bundled logo when the sports dashboard has one, else HLTV's (an SVG drawn);
+        with ``badge``, a team with neither still gets a mark before its name."""
         path = _bundled_team_logos().get(_team_key(label))
         logo = None
         if path and os.path.isfile(path):
@@ -976,7 +1005,7 @@ class ProRenderMixin:
         if logo is None:
             logo = self._image_from_url(url, label)
         if logo is None or logo.width <= 1:
-            return None
+            return _team_badge(label, size) if badge else None
         return ImageOps.contain(logo.convert("RGBA"), (size, size), method=Image.Resampling.LANCZOS)
 
     @staticmethod
@@ -1298,7 +1327,7 @@ class ProRenderMixin:
             self._match_text(draw, (x0, y + 6), f"{when:%m/%d %H:%M}", "figure", 13, colors["cyan"])
             # "vs", then the opponent's logo right before its name; the event's own logo leads its title.
             name_x = x0 + round(self._match_text(draw, (x0, y + 21), "vs", "label", 12, colors["muted"])) + 5
-            team = self._cs2_team_logo(match.get("opponent_logo"), match.get("opponent"), 16)
+            team = self._cs2_team_logo(match.get("opponent_logo"), match.get("opponent"), 16, badge=True)
             if team is not None:
                 image.paste(team, (name_x + (16 - team.width) // 2, y + 13 + (16 - team.height) // 2), team)
                 name_x += 20
@@ -1312,7 +1341,8 @@ class ProRenderMixin:
             self._match_text(draw, (event_x, y + 27 + CS2_EVENT_LOGO[1] // 2), match.get("event"), "label", 12,
                              colors["muted"], width=x1 - event_x, min_size=9)
             y += 44
-        own_logo = self._cs2_team_logo(player.get("team_logo_night") or player.get("team_logo"), player.get("team"), 16)
+        own_logo = self._cs2_team_logo(player.get("team_logo_night") or player.get("team_logo"), player.get("team"), 16,
+                                       badge=True)
         # The latest win takes the slot's room, so one result fewer is listed above it.
         for match in (player.get("recent") or [])[:3 if win else 4]:
             self._draw_cs2_result(image, draw, match, own_logo, (x0, y, x1), colors, fonts,
@@ -1425,7 +1455,7 @@ class ProRenderMixin:
         y = y0 + text_top
         middle = y + 9
         name_x = x0 + 11 + round(self._match_text(draw, (x0 + 6, middle), "vs", "label", 12, colors["muted"]))
-        logo = self._cs2_team_logo(win.get("opponent_logo"), win.get("opponent"), 16)
+        logo = self._cs2_team_logo(win.get("opponent_logo"), win.get("opponent"), 16, badge=True)
         if logo is not None:
             image.paste(logo, (name_x + (16 - logo.width) // 2, y + 1 + (16 - logo.height) // 2), logo)
             name_x += 20
@@ -1540,7 +1570,7 @@ class ProRenderMixin:
                          anchor="lm")
         x = colon_x + 27
         # The opponent's logo keeps its slot when it does not load, so the names stay in a column.
-        logo = (team_logo or self._cs2_team_logo)(match.get("opponent_logo"), match.get("opponent"), 16)
+        logo = (team_logo or partial(self._cs2_team_logo, badge=True))(match.get("opponent_logo"), match.get("opponent"), 16)
         if logo is not None:
             image.paste(logo, (int(x) + (16 - logo.width) // 2, y + 3 + (16 - logo.height) // 2), logo)
         x += 21
@@ -1622,7 +1652,7 @@ class ProRenderMixin:
                            rank, fonts["small_bold"], colors["background"])
             else:
                 self._text(draw, (left, middle - 7), f"{rank:>2}", fonts["small_bold"], colors["muted"])
-            logo = self._cs2_team_logo(row.get("team_logo"), row.get("team"), 16)
+            logo = self._cs2_team_logo(row.get("team_logo"), row.get("team"), 16, badge=True)
             if logo is not None:
                 image.paste(logo, (int(left + 21 + (16 - logo.width) / 2), int(middle - logo.height / 2)), logo)
             self._single(draw, (left + 41, middle - 13), row["nick"], fonts["small_bold"], colors["ink"], 76, 8)

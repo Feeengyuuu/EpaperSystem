@@ -840,3 +840,44 @@ def test_the_owners_beaufort_takes_the_lol_page_by_weight_when_installed(plugin,
     assert fonts["body"].primary.getname()[0] == "Rubik" and fonts["section"].primary.getname()[0] == "Rubik"
     # Weights whose file is missing keep Cinzel.
     assert fonts["tiny"].primary.getname()[0] == "Cinzel" and plugin._id_font(40).getname()[0] == "Cinzel"
+
+
+def test_an_hltv_svg_team_logo_is_drawn_in_its_class_colours(tmp_path, monkeypatch):
+    svg = (b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><style type="text/css">.st0{fill:#D63831;}'
+           b'</style><rect class="st0" width="10" height="10"/></svg>')
+
+    class Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            yield svg
+
+    monkeypatch.setattr(lol_info_module, "get_http_session",
+                        lambda: type("Session", (), {"get": lambda self, *args, **kwargs: Response()})())
+    instance = LoLInfo({"id": "lol_info"})
+    instance._cache_dir = lambda: tmp_path
+
+    logo = instance._image_from_url("https://img-cdn.hltv.org/teamlogo/abc.svg?ixlib=java-2.1.0&s=1", "TYLOO")
+
+    # Its colour, not the black PyMuPDF leaves a <style> class.
+    assert logo.convert("RGB").getpixel((logo.width // 2, logo.height // 2)) == (214, 56, 49)
+
+
+def test_every_team_in_the_cs2_schedule_has_a_mark_before_its_name(plugin):
+    assert plugin._cs2_team_logo("", "Rare Atom", 16) is None
+    badge = plugin._cs2_team_logo("", "Rare Atom", 16, badge=True)
+    assert badge.size == (16, 16) and pro_render._team_badge("TBD", 16) is None
+    colors = plugin._render_colors({"mode": "night"})
+    image = Image.new("RGB", (800, 480), colors["background"])
+    player = {"upcoming": [{"opponent": "Rare Atom", "event": "IEM Chengdu 2026", "unix_ms": 1793098800000}],
+              "recent": [{"opponent": "Rare Atom", "event": "IEM Chengdu 2026", "score": "0 : 2", "won": False}]}
+
+    plugin._draw_cs2_matches(image, ImageDraw.Draw(image), player, (228, 168, 388, 462), colors, plugin._pro_fonts())
+
+    fills = set(pro_render.TEAM_BADGE_FILLS)
+    # "vs", then the badge right before the upcoming opponent's name; and in the result's opponent slot.
+    assert fills & {colour for _count, colour in image.crop((240, 201, 272, 217)).getcolors(maxcolors=1 << 16)}
+    assert fills & {colour for _count, colour in image.crop((300, 236, 330, 252)).getcolors(maxcolors=1 << 16)}
