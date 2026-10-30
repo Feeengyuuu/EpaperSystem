@@ -1,0 +1,17 @@
+{
+  "family": "Hind",
+  "why": "the typeface bart.gov sets its pages in (font-family: Hind, Arial, sans-serif), for BART's departures",
+  "source": "https://github.com/google/fonts/tree/main/ofl/hind",
+  "licence": "SIL Open Font License 1.1 (Hind-OFL.txt)",
+  "processing": "subset to Latin (U+0020-007E, U+00A0-00FF, dashes, quotes, bullet, ellipsis, middle dot) with fontTools; kern and liga kept",
+  "files": {
+    "Hind-SemiBold.ttf": {
+      "source_sha256": "1742a1b0aba97b49da1d3ee3af568fa997c59a3cfe73829f7bec293f416d25dd",
+      "sha256": "f88ee11a46a05065898018d335a2d4ddf02cd430e91b708142ff2e4a1178e572"
+    },
+    "Hind-Bold.ttf": {
+      "source_sha256": "330c54396bc27628c32e69b88654e41065722182c6f33b936a2a46d72c9d6774",
+      "sha256": "4e7ef974042b42f1d889925128bc9695d871748289a9a1093d01a0c3844085d4"
+    }
+  }
+}

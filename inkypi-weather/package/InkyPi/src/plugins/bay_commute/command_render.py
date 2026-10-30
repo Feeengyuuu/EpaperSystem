@@ -34,7 +34,9 @@ DISPLAY_FACE = (PLUGIN_ROOT.parent / "static" / "fonts" / "SpaceGrotesk-VF.ttf",
 CHART = (536, 274, 782, 344)
 BUOY_Y = 369
 BART_Y = 391
-BART_ROWS, BART_COLUMNS = 2, 2
+BART_ROWS, BART_ROW_STEP = 3, 14
+# The column (and its divider) end here, above the footer rule.
+BART_BOTTOM = 448
 PLACE_MARKS = {"san jose": ("san-jose.png", 31, ""),
                "redwood city": ("redwood-city.png", 18, ""),
                "alamo": ("contra-costa-seal.png", 18, "Contra Costa")}
@@ -57,6 +59,13 @@ def font(size, role="body", bold=True):
             return load_font(path, size)
         except OSError:
             pass
+    if role == "bart":
+        # BART's own typeface (bart.gov sets its pages in Hind), a Latin subset in assets/fonts.
+        try:
+            return load_font(ASSETS / "fonts" / ("Hind-Bold.ttf" if bold else "Hind-SemiBold.ttf"), size)
+        except OSError:
+            role = "number"
+            return font(size, role, bold)
     if role == "road":
         path = PLUGIN_ROOT / "bay_traffic_cams/assets/fonts/RG2014D.ttf"
         try:
@@ -405,24 +414,26 @@ def bart(page, payload, now):
     data = source.get("data") or {}
     page.rule((512, BART_Y - 6, 784, BART_Y - 6))
     page.logo("bart", 512, BART_Y - 1, 14)
-    # "Warm Springs/South Fremont" reads as its first name.
+    # "Warm Springs/South Fremont" reads as its first name, set like BART sets it.
     name = str(data.get("station") or "BART").split("/")[0].strip()
-    page.text((538, BART_Y), f"{name} 站", 11, width=170)
+    page.text((538, BART_Y - 1), name, 13, role="bart", width=170)
     note = "缓存" if source.get("state") == "stale_cache" else "实时发车"
     page.text((784, BART_Y + 1), note, 10, "muted", align="right", bold=False)
-    lines = coming_trains(data, now)[:BART_ROWS * BART_COLUMNS]
+    lines = coming_trains(data, now)[:BART_ROWS]
     if not lines:
         page.text((512, BART_Y + 22), "暂无发车信息" if data else "BART 发车暂不可用", 10, "muted", bold=False)
         return
-    width = 272 / BART_COLUMNS
+    # One destination a row, in BART's typeface: the line's colour, where it goes, its next trains.
+    # The rows share the column's height under the station evenly, however many trains are running.
+    band_top, band_bottom = BART_Y + 14, BART_BOTTOM
+    step = (band_bottom - band_top) / len(lines)
     for index, line in enumerate(lines):
-        column, row = index % BART_COLUMNS, index // BART_COLUMNS
-        x, y = 512 + column * width, BART_Y + 19 + row * 16
-        page.draw.ellipse((x, y + 2, x + 8, y + 10), fill=line["colour"])
-        times = " · ".join(stamp.astimezone(PACIFIC).strftime("%H:%M") for stamp in line["departures"][:2])
-        times_w = page.draw.textlength(times, font=font(10, "number"))
-        page.text((x + width - 8, y), times, 10, "blue", role="number", align="right")
-        page.text((x + 12, y), line["destination"], 10, width=width - 26 - times_w, bold=False)
+        y = round(band_top + index * step + (step - BART_ROW_STEP) / 2)
+        page.draw.ellipse((512, y + 2, 520, y + 10), fill=line["colour"])
+        times = " · ".join(stamp.astimezone(PACIFIC).strftime("%H:%M") for stamp in line["departures"][:3])
+        times_w = page.draw.textlength(times, font=font(12, "bart"))
+        page.text((784, y), times, 12, "blue", role="bart", align="right")
+        page.text((525, y), line["destination"], 12, role="bart", width=272 - 27 - times_w, bold=False)
 
 
 def footer(page, payload, now):

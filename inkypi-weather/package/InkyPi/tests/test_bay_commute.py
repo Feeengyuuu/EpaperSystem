@@ -460,8 +460,17 @@ def test_bart_departures_sit_under_the_buoy_and_never_decide_provenance(plugin, 
 
     monkeypatch.setattr(Canvas, "text", capture)
     with_bart = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW)
-    assert {"Warm Springs 站", "Daly City", "Berryessa", "22:35"} <= set(recorded)
+    assert {"Warm Springs", "Daly City", "Berryessa", "22:35"} <= set(recorded)
     without = render_page((800, 480), {**payload, "bart": {"state": "unavailable", "data": {}}},
                           {"_inkypi_theme": {"mode": "day"}}, NOW)
     assert with_bart.crop((510, 395, 790, 444)).tobytes() != without.crop((510, 395, 790, 444)).tobytes()
     assert with_bart.crop((0, 100, 460, 480)).tobytes() == without.crop((0, 100, 460, 480)).tobytes()
+
+
+def test_bart_rows_are_set_in_bart_typeface():
+    from plugins.bay_commute.command_render import ASSETS, font
+
+    assert font(12, "bart").getname()[0] == "Hind"
+    assert font(12, "bart", bold=False).getname() != font(12, "bart").getname()
+    record = json.loads((ASSETS / "fonts" / "Hind.source.json").read_text(encoding="utf-8"))
+    assert record["licence"].startswith("SIL Open Font License") and (ASSETS / "fonts" / "Hind-OFL.txt").is_file()
