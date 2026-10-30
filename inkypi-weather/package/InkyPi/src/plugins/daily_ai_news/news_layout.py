@@ -17,7 +17,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import ImageDraw
 
 from utils.fonts import load_font
 
@@ -89,10 +89,8 @@ TREND_ARROW_LENGTH = 8
 # CARD_BLEED px past the column's text on each side.
 CARD_TINT, BAND_TINT = {"day": 0.05, "night": 0.16}, {"day": 0.11, "night": 0.27}
 CARD_BLEED, CARD_RADIUS = 7, 7
-# The three blocks read apart: the lead on its red fading from LEAD_GRADIENT's left share to its
-# right one (the outlets' logos stand where it has all but gone), the stories on their sections'
-# cards, the markets on neutral cards of the page's ink.
-LEAD_GRADIENT = ({"day": 0.17, "night": 0.36}, {"day": 0.0, "night": 0.0})
+# The blocks read apart: the lead on the open page, the stories on their sections' cards, the
+# markets on neutral cards of the page's ink.
 
 
 class NewsPage:
@@ -188,20 +186,6 @@ class NewsPage:
         """A reading card of ``colour`` behind a column or a market strip."""
         self.d.rounded_rectangle(box, radius=CARD_RADIUS, fill=self.tint(colour, CARD_TINT))
 
-    def gradient_card(self, box, colour, shares):
-        """A card of ``colour`` fading from the left share of ``shares`` to the right one."""
-        left, top, right, bottom = [int(value) for value in box]
-        start, end = (self.tint(colour, share) for share in shares)
-        width, height = right - left, bottom - top
-        row = Image.new("RGB", (width, 1))
-        for x in range(width):
-            # Eased out: the colour stays a while at the left, then fades.
-            t = (x / max(1, width - 1)) ** 1.35
-            row.putpixel((x, 0), tuple(round(a + (b - a) * t) for a, b in zip(start, end)))
-        mask = Image.new("L", (width, height), 0)
-        ImageDraw.Draw(mask).rounded_rectangle((0, 0, width - 1, height - 1), radius=CARD_RADIUS, fill=255)
-        self.img.paste(row.resize((width, height)), (left, top), mask)
-
     def accent(self, role):
         """The page colour for an accent role, or the theme's ink for none."""
         return self.c[role] if role else self.c["ink"]
@@ -260,8 +244,6 @@ class NewsPage:
         if not lead:
             self.text((MARGIN, top + 28), "新闻源暂无更新", 20, True)
             return
-        self.gradient_card((MARGIN - CARD_BLEED, top - 4, width - MARGIN + CARD_BLEED, bottom - 4), c["lead"],
-                           LEAD_GRADIENT)
         seal_w, seal_h = SEAL_SIZE
         # The generated 头条 badge is 1:2; drawn as a plain seal when the file is missing.
         if not news_art.paste_badge(self.img, "seal", MARGIN + seal_w / 2, top + 9 + seal_h / 2, seal_h // 2, seal_h):
