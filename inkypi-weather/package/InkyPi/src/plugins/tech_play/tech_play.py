@@ -147,16 +147,19 @@ class TechPlay(BasePlugin):
     @staticmethod
     def _paper_images(papers, load, covers, common):
         """The shown papers' figures (of each paper's first few, the one whose shape best fills its
-        box) and their organisations' logos; each paper gains its ``figure`` and ``institution``."""
+        box) and their organisations' logos; each paper gains its ``figure`` and ``institution``.
+        The small lookups and logos come first, so a slow large figure never leaves them no time."""
         from .render import figure_misfit
 
-        images = {}
-        for paper in papers[:PICTURED_PAPERS]:
+        shown = papers[:PICTURED_PAPERS]
+        figures = {}
+        for paper in shown:
             details = load(Source("arxiv-paper", {"id": paper.get("id")},
                                   lambda ctx, paper_id=paper.get("id"): sources.fetch_arxiv_paper(paper_id, ctx),
                                   fresh_seconds=PAPER_SECONDS, usable_seconds=PAPER_SECONDS,
                                   validate=sources.valid_arxiv_paper, timeout_seconds=10,
                                   min_remaining_seconds=PAPER_MIN_SECONDS))["data"]
+            figures[id(paper)] = details.get("figures") or []
             affiliations = details.get("affiliations") or []
             if affiliations:
                 paper["institution"] = load(Source(
@@ -164,17 +167,18 @@ class TechPlay(BasePlugin):
                     lambda ctx, found=tuple(affiliations): sources.fetch_institution(found, ctx),
                     fresh_seconds=PAPER_SECONDS, usable_seconds=PAPER_SECONDS, validate=sources.valid_institution,
                     timeout_seconds=12, min_remaining_seconds=PAPER_MIN_SECONDS))["data"] or None
-            figures = details.get("figures") or []
-            found = load_thumbnails(figures, covers, size=FIGURE_PIXELS, max_bytes=FIGURE_MAX_BYTES, **common)
+        logos = [(paper.get("institution") or {}).get("logo") for paper in shown]
+        images = load_thumbnails([logo for logo in logos if logo], covers, size=LOGO_PIXELS, keep_alpha=True,
+                                 **common)
+        for paper in shown:
+            candidates = figures[id(paper)]
+            found = load_thumbnails(candidates, covers, size=FIGURE_PIXELS, max_bytes=FIGURE_MAX_BYTES, **common)
             if found:
-                best = min(found, key=lambda url: figure_misfit(found[url], figures.index(url)))
+                best = min(found, key=lambda url: figure_misfit(found[url], candidates.index(url)))
                 paper["figure"] = best
                 images[best] = found.pop(best)
                 for picture in found.values():
                     picture.close()
-            logo = (paper.get("institution") or {}).get("logo")
-            if logo:
-                images.update(load_thumbnails([logo], covers, size=LOGO_PIXELS, keep_alpha=True, **common))
         return images
 
     def render_cached_display(self, settings, device_config, *, resolved_theme_context):

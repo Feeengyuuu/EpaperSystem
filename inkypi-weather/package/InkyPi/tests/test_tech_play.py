@@ -355,12 +355,17 @@ def test_each_shown_paper_takes_its_best_fitting_figure_and_its_organisations_lo
     pictures = {"https://arxiv.org/html/1/wide.png": _picture((320, 60)),
                 "https://arxiv.org/html/1/square.png": _picture((300, 240)),
                 "https://upload.wikimedia.org/logo.png": _picture((200, 60))}
-    monkeypatch.setattr(tech_play, "load_thumbnails",
-                        lambda urls, *_args, **_kwargs: {url: pictures[url] for url in urls if url in pictures})
+    asked = []
+
+    def load_thumbnails(urls, *_args, **_kwargs):
+        asked.append(list(urls))
+        return {url: pictures[url].copy() for url in urls if url in pictures}
+
+    monkeypatch.setattr(tech_play, "load_thumbnails", load_thumbnails)
     details = {"arxiv-paper": {"figures": ["https://arxiv.org/html/1/wide.png", "https://arxiv.org/html/1/square.png"],
                                "affiliations": ["Meta FAIR"]},
                "institution": {"name": "Meta", "logo": "https://upload.wikimedia.org/logo.png"}}
-    papers = [{"id": "2610.00001", "title": "A"}]
+    papers = [{"id": "2610.00001", "title": "A"}, {"id": "2610.00002", "title": "B"}]
 
     images = tech_play.TechPlay._paper_images(papers, lambda spec: {"data": details[spec.name]}, tmp_path, {})
 
@@ -368,6 +373,9 @@ def test_each_shown_paper_takes_its_best_fitting_figure_and_its_organisations_lo
     assert papers[0]["figure"] == "https://arxiv.org/html/1/square.png"
     assert papers[0]["institution"]["name"] == "Meta"
     assert set(images) == {"https://arxiv.org/html/1/square.png", "https://upload.wikimedia.org/logo.png"}
+    # Every paper's logo loads before any large figure, so slow figures never leave the logos no time.
+    assert asked[0] == ["https://upload.wikimedia.org/logo.png"] * 2
+    assert all("arxiv.org" in url for urls in asked[1:] for url in urls)
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])
