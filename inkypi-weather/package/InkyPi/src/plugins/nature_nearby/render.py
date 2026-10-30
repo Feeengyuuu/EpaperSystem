@@ -12,6 +12,7 @@ from PIL import Image, ImageOps
 from utils.doodle_backdrop import paint_doodles
 from utils.flat_icons import draw_icon
 from utils.local_wordmark import paste_header_art, paste_local_wordmark
+from utils.fonts import load_font
 from utils.page_canvas import PageCanvas
 
 from .sources import ESTABLISHMENT, IUCN_CATEGORIES, group_info, local_now, parse_time
@@ -23,6 +24,12 @@ ASSETS = Path(__file__).resolve().parent / "assets"
 LOGO_MIN_CONTRAST = 2.0
 # The newest find's name: large enough to lead the card (owner: 20% over the old 23 px).
 HERO_NAME_SIZE = 28
+# A field guide's faces (tools/build_nature_fonts.py): the cards' titles and the species' names
+# in Noto Serif SC SemiBold, their scientific names in Lora Italic at LATIN_WEIGHT; the small
+# figures and notes stay in the page's sans. A missing file falls back to the page's face.
+FONT_DIR = Path(__file__).resolve().parents[2] / "static" / "fonts"
+FACES = {"serif": FONT_DIR / "NotoSerifSC-SemiBold-Nature.ttf", "latin": FONT_DIR / "Lora-Italic-VF.ttf"}
+LATIN_WEIGHT = 560
 HERO_PHOTO_HEIGHT = 132
 # Pure white or black paper and neutral grey rules: an off-white or tinted ground, or a tinted
 # grey, dithers into scattered yellow, blue or green dots on the panel. Accents are refined
@@ -48,6 +55,58 @@ HEADER = 28
 DOODLES = {icon: Path(__file__).resolve().parent / "assets" / "doodles" / f"{name}.png"
            for icon, name in (("leaf", "wildlife"), ("trophy", "fieldwork"), ("pulse", "wildlife"),
                               ("clock", "fieldwork"))}
+
+
+@lru_cache(maxsize=32)
+def _face(kind, size):
+    try:
+        font = load_font(FACES[kind], int(size))
+        if kind == "latin":
+            font.set_variation_by_axes([LATIN_WEIGHT])
+        return font
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def _covers(text):
+    """Whether the serif face sets every character of ``text``: it keeps GB 2312's hanzi, ASCII,
+    Latin-1 and the punctuation (tools/build_nature_fonts.py), so a rarer bird's name (鹀, 鸮)
+    is not."""
+    for char in str(text or ""):
+        code = ord(char)
+        if code <= 0xFF or 0x2000 <= code <= 0x206F or 0x3000 <= code <= 0x303F or 0xFF00 <= code <= 0xFFEF:
+            continue
+        if not 0x4E00 <= code <= 0x9FFF:
+            return False
+        try:
+            char.encode("gb2312")
+        except UnicodeEncodeError:
+            return False
+    return True
+
+
+class _FaceCanvas(PageCanvas):
+    """The page's canvas drawing in one of its field-guide faces: same picture, palette and
+    clipping and wrapping, only the font differs. Text the serif face cannot set whole is drawn
+    in the page's own face instead, rather than with a missing glyph's box."""
+
+    def __init__(self, page, kind):
+        self.palette, self.image, self.draw, self.family = page.palette, page.image, page.draw, page.family
+        self.kind, self.page = kind, page
+        self._fonts = {}
+
+    def font(self, size, bold=True):
+        return _face(self.kind, size) or super().font(size, bold)
+
+    def text(self, xy, text, size=14, color="ink", **kwargs):
+        if self.kind == "serif" and not _covers(text):
+            return self.page.text(xy, text, size, color, **kwargs)
+        return super().text(xy, text, size, color, **kwargs)
+
+    def wrap(self, text, size, width, max_lines, bold=True):
+        if self.kind == "serif" and not _covers(text):
+            return self.page.wrap(text, size, width, max_lines, bold)
+        return super().wrap(text, size, width, max_lines, bold)
 
 
 def _rgb(value):
@@ -124,7 +183,7 @@ def _card(canvas, box, bar, icon, title, detail="", logo=None):
         doodles = (left + 2, top + HEADER + 2, right - 2, bottom - 2)
         paint_doodles(canvas.image, doodles, DOODLES[icon], colour, radius=5, offset=doodles[:2])
     draw_icon(canvas.draw, icon, (left + 10, top + 7), 18, colour, canvas.color("paper"))
-    width = canvas.text((left + 34, top + 16), title, 16, anchor="lm")
+    width = canvas.serif.text((left + 34, top + 16), title, 16, anchor="lm")
     if detail:
         detail_w = canvas.text((right - 8, top + 16), detail, 11, "muted", anchor="rm", bold=False,
                                width=right - left - width - 60)
@@ -190,8 +249,8 @@ def _hero(canvas, payload, images, now):
     _photo(canvas, images, item["photo"], (left, top, right, top + HERO_PHOTO_HEIGHT), item["group"])
     y = top + HERO_PHOTO_HEIGHT + 18
     chip = _group_chip(canvas, right, y, item["group"], right_align=True)
-    canvas.text((left, y), _display_name(item), HERO_NAME_SIZE, anchor="lm", width=right - left - chip - 8)
-    canvas.text((left, y + 23), item["scientific"], 12, "muted", anchor="lm", bold=False, width=right - left)
+    canvas.serif.text((left, y), _display_name(item), HERO_NAME_SIZE, anchor="lm", width=right - left - chip - 8)
+    canvas.latin.text((left, y + 23), item["scientific"], 13, "muted", anchor="lm", width=right - left)
     # The species in more depth: its order and family, its Red List category and standing here.
     lineage = " · ".join(part for part in (taxon.get("order"), taxon.get("family"),
                                            ESTABLISHMENT.get(taxon.get("establishment"), "")) if part)
@@ -234,12 +293,12 @@ def _species(canvas, payload, images):
         text_width = x + width - text_left
         # The Chinese name, the scientific name under it (on two lines when the name takes one),
         # and the week's count at the foot, level with the photo's bottom.
-        names = canvas.wrap(_display_name(item), 13, text_width, 2)
+        names = canvas.serif.wrap(_display_name(item), 13, text_width, 2)
         for line_index, line in enumerate(names):
-            canvas.text((text_left, y + 6 + line_index * 16), line, 13, anchor="la")
+            canvas.serif.text((text_left, y + 6 + line_index * 16), line, 13, anchor="la")
         science_top = y + 8 + len(names) * 16
-        for line_index, line in enumerate(canvas.wrap(item["scientific"], 10, text_width, 3 - len(names), bold=False)):
-            canvas.text((text_left, science_top + line_index * 12), line, 10, "muted", anchor="la", bold=False)
+        for line_index, line in enumerate(canvas.latin.wrap(item["scientific"], 11, text_width, 3 - len(names))):
+            canvas.latin.text((text_left, science_top + line_index * 12), line, 11, "muted", anchor="la")
         _label, icon, tone = group_info(item["group"])
         draw_icon(canvas.draw, icon, (text_left, y + 59), 15, canvas.color(tone), canvas.color("paper"))
         canvas.text((text_left + 19, y + 67), f"{item['count']} 次", 18, anchor="lm")
@@ -310,8 +369,8 @@ def _groups_with_birds(canvas, groups, total, birds, now):
         meta_w = min(150, canvas.width(meta, 10, False)) if meta else 0
         if meta:
             canvas.text((right, row), meta, 10, "muted", anchor="rm", bold=False, width=150)
-        canvas.text((left, row), bird.get("name") or bird.get("scientific") or "", 12, anchor="lm",
-                    width=right - left - meta_w - 6)
+        canvas.serif.text((left, row), bird.get("name") or bird.get("scientific") or "", 12, anchor="lm",
+                          width=right - left - meta_w - 6)
 
 
 def _recent(canvas, payload, images, now):
@@ -332,7 +391,7 @@ def _recent(canvas, payload, images, now):
         _label, icon, tone = group_info(item["group"])
         canvas.draw.ellipse((x + 3, top + 3, x + 21, top + 21), fill=canvas.color("paper"))
         draw_icon(canvas.draw, icon, (x + 5, top + 5), 14, canvas.color(tone), canvas.color("paper"))
-        canvas.text((x, top + 74), _display_name(item), 12, anchor="lm", width=width)
+        canvas.serif.text((x, top + 74), _display_name(item), 12, anchor="lm", width=width)
         stamp = parse_time(item["time"])
         meta = " · ".join(part for part in (ago(stamp, now).replace(" ", "") if stamp else "", item.get("place"))
                           if part)
@@ -346,6 +405,7 @@ def _recent(canvas, payload, images, now):
 def render_page(dimensions, payload, settings, now, images):
     now = local_now(now)
     canvas = PageCanvas(_palette(settings), family=settings.get("fontFamily") or "Microsoft YaHei")
+    canvas.serif, canvas.latin = _FaceCanvas(canvas, "serif"), _FaceCanvas(canvas, "latin")
     pasted = paste_local_wordmark(canvas.image, ASSETS / "title_wordmark.png", (12, 4, 232, 50), align="left")
     title_right = pasted[2] if pasted else 16 + canvas.text((16, 27), "湾区德鲁伊", 30, anchor="lm")
     # The page's source by its own logo, then the area it covers.

@@ -1,0 +1,18 @@
+{
+  "NotoSerifSC-SemiBold-Nature.ttf": {
+    "source": "https://github.com/google/fonts/raw/main/ofl/notoserifsc/NotoSerifSC%5Bwght%5D.ttf",
+    "source_sha256": "050080d9255a86808f2945bffac582b31ef32bc36411ce29563b4961670c66f9",
+    "licence": "SIL Open Font License 1.1 (NotoSerifSC-OFL.txt)",
+    "weight": 600,
+    "characters": "GB 2312 hanzi (6763), ASCII, Latin-1, general/CJK/full-width punctuation",
+    "sha256": "34d5d11528597a50dde1a717ce940dc1d72fd754b28ac329a0ae8bac3457ea12",
+    "bytes": 3135372
+  },
+  "Lora-Italic-VF.ttf": {
+    "source": "https://github.com/google/fonts/raw/main/ofl/lora/Lora-Italic%5Bwght%5D.ttf",
+    "licence": "SIL Open Font License 1.1 (Lora-OFL.txt, https://github.com/google/fonts/raw/main/ofl/lora/OFL.txt)",
+    "modified": "no (copied unchanged; Lora is a reserved font name)",
+    "sha256": "22d8d8854b53807aa664ca34f2031a9ed57a1d0dea296b8b96cdd3aad937a2b3",
+    "bytes": 221232
+  }
+}

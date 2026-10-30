@@ -261,3 +261,24 @@ def test_birds_get_their_chinese_names_from_inaturalist(monkeypatch):
     assert items[0] == {"name": "棕榈鬼鸮", "name_en": "Northern Saw-whet Owl", "scientific": "Aegolius acadicus"}
     assert items[1]["name"] == "Western Tanager"  # the match was for another species
     assert calls == ["Aegolius acadicus", "Piranga ludoviciana"]  # an already-Chinese name is not looked up
+
+
+def test_species_are_named_in_a_field_guides_faces_and_rare_characters_keep_the_page_face():
+    from plugins.nature_nearby import render
+
+    assert render._face("serif", 13) is not None and render._face("latin", 11) is not None
+    assert render._covers("白冠带雀 Zonotrichia") and not render._covers("白冠带鹀") and not render._covers("棕榈鬼鸮")
+    drawn = []
+    original = render.PageCanvas.text
+
+    def capture(self, xy, text, size=14, color="ink", **kwargs):
+        drawn.append((type(self).__name__, getattr(self, "kind", ""), str(text)))
+        return original(self, xy, text, size, color, **kwargs)
+
+    render.PageCanvas.text = capture
+    try:
+        render_page((800, 480), _payload(), {"_inkypi_theme": {"mode": "day"}}, NOW, {})
+    finally:
+        render.PageCanvas.text = original
+    # The cards' titles go through the serif face.
+    assert ("_FaceCanvas", "serif", "最新发现") in drawn and ("_FaceCanvas", "serif", "本周热门物种") in drawn
