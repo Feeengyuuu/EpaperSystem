@@ -401,6 +401,36 @@ def test_earnings_rows_lead_with_the_holdings_mark():
     assert money_render._holding_logo(day, "ZZZZ", money_render.HOLDING_LOGO_SIZE) is None
 
 
+def test_earnings_dates_stand_in_two_columns_under_the_generated_calendar(monkeypatch):
+    canvas = PageCanvas(money_render._palette({}), family="Microsoft YaHei")
+    drawn, pasted = [], []
+    original_text, original_paste = canvas.text, canvas.image.paste
+    monkeypatch.setattr(canvas, "text", lambda xy, text, *args, **kwargs:
+                        drawn.append((round(xy[0]), round(xy[1]), text)) or original_text(xy, text, *args, **kwargs))
+    monkeypatch.setattr(canvas.image, "paste", lambda image, box=None, mask=None:
+                        pasted.append((image.size, box)) or original_paste(image, box, mask))
+    items = [{"symbol": symbol, "date": day, "hour": hour} for symbol, day, hour in (
+        ("GOOGL", "2026-10-28", "amc"), ("AAPL", "2026-11-02", "amc"), ("FIG", "2026-11-04", ""),
+        ("TTWO", "2026-11-09", ""), ("NVDA", "2026-11-17", "amc"))]
+
+    used = money_render._earnings(canvas, {"earnings": {"data": {"items": items}}}, NOW, 22, 390, 378,
+                                  money_render.EARNINGS_ROWS)
+
+    # Four dates in two rows: the nearest two down the left column, the next two down the right.
+    assert used == money_render.EARNINGS_ROWS == 2
+    symbols = {text: (x, y) for x, y, text in drawn if text in {"GOOGL", "AAPL", "FIG", "TTWO", "NVDA"}}
+    assert set(symbols) == {"GOOGL", "AAPL", "FIG", "TTWO"}
+    assert symbols["GOOGL"][1] == symbols["FIG"][1] < symbols["AAPL"][1] == symbols["TTWO"][1]
+    assert symbols["GOOGL"][0] < 206 < symbols["FIG"][0]
+    # Every cell keeps its after-close tag, and the dates drop their weekday together.
+    assert sum(text == "盘后" for *_, text in drawn) == 2
+    assert {text for *_, text in drawn if "/" in str(text)} == {"10/28", "11/02", "11/04", "11/09"}
+    # Each cell leads with 科技与游戏's generated calendar icon.
+    icon = money_render._calendar_icon()
+    assert icon.height == money_render.CALENDAR_ICON_HEIGHT
+    assert sum(size == icon.size for size, _box in pasted) == 4
+
+
 @pytest.mark.parametrize("night", [False, True])
 def test_macro_tiles_name_bls_by_its_official_logo(monkeypatch, night):
     canvas = PageCanvas(money_render._palette({"_inkypi_theme": {"mode": "night" if night else "day"}}),

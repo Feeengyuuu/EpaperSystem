@@ -51,6 +51,9 @@ SOURCE_LOGO_INKED = {"fred": False, "coingecko": False, "yahoo_finance": True}
 TILE_SOURCE_LOGOS, TILE_SOURCE_LOGO_HEIGHT = {"BLS": "bls", "FRED": "fred"}, 16
 MACRO_ICON_SIZE = 18
 EARNINGS_ROWS = 2
+# The earnings dates stand in two columns of EARNINGS_ROWS, the nearest first down the left one,
+# each led by the generated calendar 科技与游戏 marks release dates with (assets/icon-calendar.png).
+EARNINGS_COLUMNS, EARNINGS_COLUMN_GAP, CALENDAR_ICON_HEIGHT = 2, 10, 14
 # Each earnings row leads with the company's mark: the same files the stock tracker's Robinhood
 # holdings list shows (stocktracker/assets/logos/<symbol>.png), in a HOLDING_LOGO_SLOT-wide slot.
 HOLDING_LOGOS = Path(__file__).resolve().parents[1] / "stocktracker" / "assets" / "logos"
@@ -511,24 +514,59 @@ def _weekday_date(day):
 
 
 def _earnings(canvas, payload, now, left, right, top, rows):
-    items = upcoming_earnings(payload["earnings"]["data"].get("items"), now)[:rows]
+    """Up to EARNINGS_COLUMNS * ``rows`` coming earnings in columns side by side; returns the rows used."""
+    items = upcoming_earnings(payload["earnings"]["data"].get("items"), now)[:rows * EARNINGS_COLUMNS]
     if not items:
         canvas.text((left, top), "45 天内持仓无财报", 13, "muted", anchor="lm")
         return 1
-    for index, item in enumerate(items):
-        y = top + index * 19
-        draw_icon(canvas.draw, "calendar", (left, y - 7), 13, canvas.color("ink"), canvas.color("paper"))
-        canvas.text((left + 19, y), _weekday_date(item["date"]), 12, anchor="lm")
-        hour = EARNINGS_HOURS.get(item.get("hour"), "")
+    width = (right - left - EARNINGS_COLUMN_GAP * (EARNINGS_COLUMNS - 1)) / EARNINGS_COLUMNS
+    calendar = _calendar_icon()
+    lead = (calendar.width if calendar is not None else 14) + 4
+    cells = []
+    for item in items:
+        remaining = days_until(item["date"], now)
+        cells.append((item, _weekday_date(item["date"]), "今天" if remaining == 0 else f"{remaining}天后",
+                      EARNINGS_HOURS.get(item.get("hour"), "")))
+
+    def room(day, when, symbol, hour):
+        tag = canvas.width(hour, 11, bold=False) + 3 if hour else 0
+        return (lead + canvas.width(day, 11) + 4 + HOLDING_LOGO_SLOT + 1 + canvas.width(symbol, 12) + tag + 4
+                + canvas.width(when, 11, bold=False))
+
+    # The dates keep their weekday only when every cell has room for it, so the columns read alike.
+    weekday = all(room(day, when, item["symbol"], hour) <= width for item, day, when, hour in cells)
+    for index, (item, day, when, hour) in enumerate(cells):
+        column, row = divmod(index, rows)
+        x0, y = left + column * (width + EARNINGS_COLUMN_GAP), top + row * 19
+        x1 = x0 + width
+        if column:
+            canvas.rule((x0 - EARNINGS_COLUMN_GAP / 2, y - 8, x0 - EARNINGS_COLUMN_GAP / 2, y + 8))
+        if calendar is not None:
+            canvas.image.paste(calendar, (round(x0), round(y - calendar.height / 2)), calendar)
+        else:
+            draw_icon(canvas.draw, "calendar", (x0, y - 7), 13, canvas.color("ink"), canvas.color("paper"))
+        x = x0 + lead
+        end = x1 - canvas.text((x1, y), when, 11, "muted", anchor="rm", bold=False) - 4
+        x += canvas.text((x, y), day if weekday else day.split()[0], 11, anchor="lm") + 4
         logo = _holding_logo(canvas, item["symbol"], HOLDING_LOGO_SIZE)
         if logo is not None:
-            slot = left + 100 + (HOLDING_LOGO_SLOT - logo.width) / 2
-            canvas.image.paste(logo, (round(slot), round(y - logo.height / 2)), logo)
-        canvas.text((left + 104 + HOLDING_LOGO_SLOT, y), f"{item['symbol']} {hour}", 13, anchor="lm")
-        remaining = days_until(item["date"], now)
-        canvas.text((right, y), "今天" if remaining == 0 else f"{remaining} 天后", 12, "muted",
-                    anchor="rm", bold=False)
-    return len(items)
+            canvas.image.paste(logo, (round(x + (HOLDING_LOGO_SLOT - logo.width) / 2), round(y - logo.height / 2)), logo)
+            x += HOLDING_LOGO_SLOT + 1
+        x += canvas.text((x, y), item["symbol"], 12, anchor="lm", width=end - x) + 3
+        if hour and x + canvas.width(hour, 11, bold=False) <= end:
+            canvas.text((x, y), hour, 11, "muted", anchor="lm", bold=False)
+    return min(len(items), rows)
+
+
+def _calendar_icon():
+    """The generated calendar icon CALENDAR_ICON_HEIGHT tall, or None without the file."""
+    path = ASSETS / "icon-calendar.png"
+    if not path.is_file():
+        return None
+    with safe_open_image(path, limits=_LIMITS) as source:
+        image = source.convert("RGBA")
+    return image.resize((max(1, round(image.width * CALENDAR_ICON_HEIGHT / image.height)), CALENDAR_ICON_HEIGHT),
+                        Image.Resampling.LANCZOS)
 
 
 def _holding_logo(canvas, symbol, size, width=HOLDING_LOGO_SLOT):
