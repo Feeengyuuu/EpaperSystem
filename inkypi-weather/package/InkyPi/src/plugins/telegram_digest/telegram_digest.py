@@ -26,7 +26,7 @@ from runtime.long_task_executor import current_task_context
 from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import bounded_int, coerce_bool, get_base_ui_font
 from utils.http_client import get_http_session, provider_io_lease
-from utils.page_canvas import re_tokens
+from utils.page_canvas import NO_LINE_START, re_tokens
 from utils.safe_image import ImageLimits, safe_open_image
 
 logger = logging.getLogger(__name__)
@@ -62,7 +62,6 @@ REQUEST_TIMEOUT = (4, 18)
 TELEGRAM_MEDIA_IMAGE_LIMITS = ImageLimits(max_bytes=25 * 1024 * 1024)
 MAX_MEDIA_PIXELS = 1_200_000
 RESAMPLE = getattr(Image, "Resampling", Image).LANCZOS
-NO_LINE_START = set("，。、；：！？）」』】》〉…,.;:!?)]}%")
 
 
 def _json_safe_settings(settings):

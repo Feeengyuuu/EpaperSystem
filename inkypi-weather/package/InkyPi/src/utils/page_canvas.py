@@ -9,6 +9,10 @@ from PIL import Image, ImageDraw
 from utils.app_utils import get_base_ui_font, get_font
 
 
+# Closing punctuation never starts a line.
+NO_LINE_START = frozenset("，。、；：！？）」』】》〉…,.;:!?)]}%")
+
+
 def re_tokens(text):
     """Split into breakable units: a space-led Latin word, or one CJK character."""
     return re.findall(r"\s*[぀-ヿ㐀-鿿豈-﫿]|\s*[^\s぀-ヿ㐀-鿿豈-﫿]+",
@@ -47,15 +51,25 @@ class PageCanvas:
         return text.rstrip(" ,，·-") + "…"
 
     def wrap(self, text, size, width, max_lines, bold=True):
-        """Lines that fit ``width``: words break at spaces, CJK at characters; the last line ellipsizes."""
+        """Lines that fit ``width``: words break at spaces, CJK at characters, and closing punctuation
+        never starts a line (it takes the line's last word or character along, except on the last
+        line, which ellipsizes anyway); the last line ellipsizes."""
         font = self.font(size, bold)
         tokens = re_tokens(" ".join(str(text or "").split()))
-        lines, current, index = [], "", 0
+        # ``start`` is where the line's last token begins in ``current``.
+        lines, current, start, index = [], "", 0, 0
         while index < len(tokens) and len(lines) < max_lines:
             candidate = current + tokens[index] if current else tokens[index].lstrip()
             if not current or self.draw.textlength(candidate, font=font) <= width:
+                start = len(current)
                 current = candidate
                 index += 1
+                continue
+            carried = current[start:].lstrip()
+            if (tokens[index].lstrip()[:1] in NO_LINE_START and start and carried[:1] not in NO_LINE_START
+                    and len(lines) + 1 < max_lines):
+                lines.append(current[:start].rstrip())
+                current, start = carried, 0
                 continue
             lines.append(current)
             current = ""
