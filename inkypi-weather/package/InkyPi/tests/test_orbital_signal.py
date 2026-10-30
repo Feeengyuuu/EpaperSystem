@@ -1495,3 +1495,48 @@ def test_the_market_art_spans_the_panel_edge_to_edge(monkeypatch):
     assert boxes[0][0] == 463 and boxes[-1][2] >= 798
     assert all(right + 1 == following[0] for (_l, _t, right, _b), following in zip(boxes, boxes[1:]))
     assert len({box[2] - box[0] for box in boxes}) <= 2
+
+
+def test_space_news_skips_apod_and_stale_stories_newest_first():
+    from plugins.orbital_signal.sources import normalize_news
+
+    now = datetime(2026, 10, 30, 6, 0, tzinfo=timezone.utc)
+    payload = {"results": [
+        {"title": "APOD: 2026 October 30 - Haunting the Cepheus Flare", "news_site": "NASA",
+         "published_at": "2026-10-30T04:05:00Z"},
+        {"title": "Older story", "news_site": "SpaceNews", "published_at": "2026-10-20T04:05:00Z"},
+        {"title": "As it happened:  spacewalkers install new solar array", "news_site": "Spaceflight Now",
+         "published_at": "2026-10-29T23:45:33Z"},
+        {"title": "Vega Island Frozen in Fright", "news_site": "NASA", "published_at": "2026-10-30T04:01:00Z"},
+        {"title": "", "news_site": "ESA", "published_at": "2026-10-30T04:01:00Z"}]}
+
+    rows = normalize_news(payload, now=now)
+
+    assert [(row["site"], row["title"]) for row in rows] == [
+        ("NASA", "Vega Island Frozen in Fright"),
+        ("Spaceflight Now", "As it happened: spacewalkers install new solar array")]
+    assert OrbitalSignal._valid_news(rows[0]) and not OrbitalSignal._valid_news({"title": "x"})
+
+
+@pytest.fixture(autouse=True)
+def _no_space_news(monkeypatch):
+    """The footer headline's feed stays offline unless a test gives it stories."""
+    monkeypatch.setattr("plugins.orbital_signal.orbital_signal.fetch_space_news", lambda now=None: [])
+
+
+def test_the_headline_rides_along_without_touching_the_page_state(tmp_path, monkeypatch):
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    plugin._cache_dir = lambda create=True: tmp_path / "cache"
+    story = {"title": "Spacewalkers install new solar array", "site": "Spaceflight Now",
+             "published_at": (NOW - timedelta(hours=2)).isoformat()}
+    monkeypatch.setattr("plugins.orbital_signal.orbital_signal.fetch_launches",
+                        lambda now=None: normalize_launches(launch_payload(), now=NOW))
+    monkeypatch.setattr("plugins.orbital_signal.orbital_signal.fetch_market_events",
+                        lambda now=None: normalize_market_events(market_payload(), now=NOW))
+    monkeypatch.setattr("plugins.orbital_signal.orbital_signal.fetch_space_news", lambda now=None: [story])
+
+    payload = plugin._payload({}, FakeDeviceConfig(), NOW)
+
+    assert payload["news"] == [story]
+    assert set(payload["status"]["sources"]) == {"launches", "markets"}
+    assert plugin._valid_aggregate_payload(payload)

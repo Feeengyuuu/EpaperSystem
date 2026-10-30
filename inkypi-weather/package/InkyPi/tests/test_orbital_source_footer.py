@@ -89,3 +89,29 @@ def test_missing_source_asset_keeps_names_and_notice_readable(monkeypatch):
     footer.draw_footer(image, (0, 448, 800, 480), NIGHT_PALETTE,
                        get_base_ui_font(10, True), get_base_ui_font(9, True))
     assert values == ["SOURCES", "The Space Devs", "Polymarket", "CROWD PROBABILITY", "NOT ADVICE"]
+
+
+@pytest.mark.parametrize("palette", [DAY_PALETTE, NIGHT_PALETTE], ids=["day", "night"])
+def test_the_latest_space_story_runs_between_the_sources_and_the_notice(monkeypatch, palette):
+    image = Image.new("RGB", (800, 480), palette["paper"])
+    drawn = []
+    original_text = ImageDraw.ImageDraw.text
+
+    def text(draw, xy, value, *args, **kwargs):
+        drawn.append((value, draw.textbbox(xy, value, font=kwargs["font"])))
+        return original_text(draw, xy, value, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", text)
+    font = get_base_ui_font(10, bold=True)
+    story = {"title": "As it happened: spacewalkers install a new solar array on the station over six hours",
+             "site": "Spaceflight Now", "published_at": "2026-10-29T23:45:33+00:00"}
+
+    footer.draw_footer(image, (0, 448, 800, 480), palette, font, font, news=[story])
+
+    headline = next((value, box) for value, box in drawn if value.startswith("As it happened"))
+    notice = next(box for value, box in drawn if value == "CROWD PROBABILITY")
+    assert headline[0].endswith("…") and headline[1][2] < notice[0]
+    assert footer.news_mark("Spaceflight Now", None)[0] is not None
+    # A site without its own mark is named, behind the Spaceflight News API's logo.
+    logo, say_site = footer.news_mark("Space Scout", None)
+    assert logo is not None and say_site

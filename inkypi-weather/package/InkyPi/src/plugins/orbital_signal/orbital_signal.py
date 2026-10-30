@@ -35,7 +35,7 @@ from utils.app_utils import (
 
 from . import launch_photo
 from .market_style import BRAND_FADE_HEIGHT, market_background_color, market_header_palette, market_palette
-from .sources import _parse_time, _upload_url, _utc, fetch_launches, fetch_market_events
+from .sources import _parse_time, _upload_url, _utc, fetch_launches, fetch_market_events, fetch_space_news
 from .source_footer import draw_footer
 
 
@@ -538,9 +538,14 @@ class OrbitalSignal(BasePlugin):
             and 0 <= heat <= 100
         )
 
+    @staticmethod
+    def _valid_news(row):
+        return (isinstance(row, dict) and bool(str(row.get("title") or "").strip())
+                and bool(str(row.get("site") or "").strip()) and _parse_time(row.get("published_at")) is not None)
+
     @classmethod
     def _valid_items(cls, name, items):
-        validator = cls._valid_launch if name == "launches" else cls._valid_market
+        validator = {"launches": cls._valid_launch, "news": cls._valid_news}.get(name, cls._valid_market)
         if not isinstance(items, list):
             return []
         return [dict(row) for row in items if validator(row)]
@@ -745,6 +750,9 @@ class OrbitalSignal(BasePlugin):
             fixture["markets"],
             ttl_minutes,
         )
+        # The footer's headline is a garnish: it never counts toward the page's data state.
+        news, _news_state, _news_error = self._resolve_source(
+            "news", now, force, lambda: fetch_space_news(now=now), [], ttl_minutes)
         launches = [dict(row) for row in launches[:4]]
         if launches:
             launches[0] = self._hydrate_primary_launch_photo(launches[0])
@@ -753,6 +761,7 @@ class OrbitalSignal(BasePlugin):
             "schema": CACHE_SCHEMA,
             "launches": launches,
             "markets": [self._hydrate_market_marks(row) for row in markets[:3]],
+            "news": [dict(row) for row in news[:3]],
             "status": {
                 "aggregate": self._aggregate_status(states),
                 "sources": states,
@@ -823,7 +832,7 @@ class OrbitalSignal(BasePlugin):
             family,
         )
         self._draw_markets(draw, boxes["markets"], payload.get("markets") or [], palette, family, image=image)
-        self._draw_footer(image, boxes["footer"], palette, family)
+        self._draw_footer(image, boxes["footer"], palette, family, payload.get("news") or [])
         return image
 
     def _draw_header(self, image, draw, box, payload, now, palette, family):
@@ -1655,5 +1664,6 @@ class OrbitalSignal(BasePlugin):
         disc.paste(art, (0, 0), mask)
         return disc.resize((size, size), Image.Resampling.LANCZOS)
 
-    def _draw_footer(self, image, box, palette, family):
-        draw_footer(image, box, palette, self._font(10, True, family), self._font(9, True, family))
+    def _draw_footer(self, image, box, palette, family, news=()):
+        draw_footer(image, box, palette, self._font(10, True, family), self._font(9, True, family),
+                    news=[row for row in news if self._valid_news(row)])

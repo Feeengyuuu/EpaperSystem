@@ -10,6 +10,10 @@ from utils.http_client import get_http_session
 
 LAUNCHES_URL = "https://ll.thespacedevs.com/2.3.0/launches/upcoming/"
 MARKETS_URL = "https://gamma-api.polymarket.com/events"
+# The Spaceflight News API: recent spaceflight stories from NASA, ESA, SpaceNews, NASASpaceflight and
+# others. NASA's daily APOD posts are pictures, not news, and a story older than NEWS_MAX_AGE is stale.
+NEWS_URL = "https://api.spaceflightnewsapi.net/v4/articles/"
+NEWS_MAX_AGE = timedelta(days=3)
 REQUEST_TIMEOUT = (4, 18)
 USER_AGENT = "InkyPi OrbitalSignal/1.0"
 # Team logos for the leagues whose Polymarket logos are lettered tiles, with ESPN's codes
@@ -365,6 +369,35 @@ def normalize_market_events(payload, now=None, limit=3):
 
     rows.sort(key=lambda row: (-row["volume_24h"], -row["heat"], row["title"].casefold()))
     return rows[: max(0, int(limit))]
+
+
+def normalize_news(payload, now=None, limit=3):
+    """The newest spaceflight stories: their title, the site that ran them, and when."""
+    now_utc = _utc(now or datetime.now(timezone.utc))
+    rows = []
+    for raw in _mapping(payload).get("results") or []:
+        raw = _mapping(raw)
+        title, site = _text(raw.get("title")), _text(raw.get("news_site"))
+        published = _parse_time(raw.get("published_at"))
+        if not title or not site or published is None or title.startswith("APOD:"):
+            continue
+        if not timedelta(0) <= now_utc - published <= NEWS_MAX_AGE:
+            continue
+        rows.append({"title": " ".join(title.split())[:200], "site": site[:60], "published_at": published.isoformat()})
+    rows.sort(key=lambda row: row["published_at"], reverse=True)
+    return rows[:limit]
+
+
+def fetch_space_news(session=None, now=None):
+    session = session or get_http_session()
+    response = session.get(
+        NEWS_URL,
+        params={"limit": 20, "ordering": "-published_at"},
+        timeout=REQUEST_TIMEOUT,
+        headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+    )
+    response.raise_for_status()
+    return normalize_news(response.json(), now=now)
 
 
 def fetch_launches(session=None, now=None):

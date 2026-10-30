@@ -1,15 +1,24 @@
-"""Official source marks and a separate probability notice in the footer."""
+"""Official source marks, the latest space headline and a separate probability notice in the footer."""
 
 from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageOps
 
+from utils.local_wordmark import load_source_logo
 from utils.safe_image import safe_open_image
 
 
 ASSETS = Path(__file__).with_name("assets")
 SOURCE_LOGOS = {"space_devs": "the-space-devs-logo.png", "polymarket": "polymarket-logo.png"}
+# The news sites' own marks (assets/news, tools/build_source_logos.py) by the names the Spaceflight
+# News API gives them; another site's story is led by the API's own logo and the site's name.
+NEWS_SITES = {"NASA": "news-nasa", "ESA": "news-esa", "SpaceNews": "news-spacenews",
+              "NASASpaceflight": "news-nasaspaceflight", "Spaceflight Now": "news-spaceflight_now",
+              "Arstechnica": "news-arstechnica", "European Spaceflight": "news-european_spaceflight"}
+NEWS_MARK_HEIGHT = 14
+# Marks whose dark parts (ESA's navy) would vanish on the night ground take its ink there.
+NEWS_DARK_PARTS = {"news-esa"}
 
 
 @lru_cache(maxsize=2)
@@ -35,7 +44,23 @@ def source_logo(name, size, ink):
     return logo
 
 
-def draw_footer(image, box, palette, font, label_font):
+def _fit(draw, value, face, width):
+    if draw.textlength(value, font=face) <= width:
+        return value
+    while value and draw.textlength(value + "…", font=face) > width:
+        value = value[:-1]
+    return value.rstrip(" ,.:;-") + "…"
+
+
+def news_mark(site, ink):
+    """The site's mark NEWS_MARK_HEIGHT tall, and whether its name still needs saying."""
+    key = NEWS_SITES.get(site)
+    logo = load_source_logo(ASSETS / "news" / f"{key or 'snapi'}.png", NEWS_MARK_HEIGHT, ink,
+                            dark_parts=ink is not None and key in NEWS_DARK_PARTS)
+    return logo, key is None
+
+
+def draw_footer(image, box, palette, font, label_font, news=()):
     left, top, right, bottom = box
     draw = ImageDraw.Draw(image)
     draw.rectangle(box, fill=palette["paper"])
@@ -61,8 +86,9 @@ def draw_footer(image, box, palette, font, label_font):
     poly = source_logo("polymarket", (120, 16), palette["ink"])
     if poly is not None:
         image.paste(poly, (cursor, round(center_y - poly.height / 2)), poly)
+        cursor += poly.width
     else:
-        text(cursor, "Polymarket")
+        cursor = text(cursor, "Polymarket")
 
     # This is an interpretation notice, not a third data source or brand.
     first, second = "CROWD PROBABILITY", "NOT ADVICE"
@@ -72,3 +98,19 @@ def draw_footer(image, box, palette, font, label_font):
     separator_x = text(note_x, first, color=palette["muted"]) + 10
     draw.line((separator_x, center_y - 5, separator_x, center_y + 5), fill=palette["muted"], width=1)
     text(separator_x + 10, second)
+
+    # Between them, the latest spaceflight story, led by the mark of the site that ran it.
+    if news:
+        story = news[0]
+        cursor += 13
+        draw.line((cursor, center_y - 6, cursor, center_y + 6), fill=palette["muted"], width=1)
+        cursor += 13
+        night = sum(palette["paper"][:3]) < 200
+        mark, say_site = news_mark(story["site"], palette["ink"] if night else None)
+        if mark is not None:
+            image.paste(mark, (cursor, round(center_y - mark.height / 2)), mark)
+            cursor += mark.width + 6
+        headline = f"{story['site']}: {story['title']}" if say_site else story["title"]
+        room = note_x - 16 - cursor
+        if room > 40:
+            text(cursor, _fit(draw, headline, font, room))
