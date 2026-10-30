@@ -1608,6 +1608,75 @@ def test_a_refused_douyin_cookie_is_renewed_once_and_a_missing_room_is_named(mon
         False, "douyin_room_not_found", True)
 
 
+SPEED = "UCWsDFcIhY2DBi3GB5uykGXA"
+
+
+def _youtube_live_page(channel=SPEED, video="dQw4w9WgXcQ"):
+    player = {"videoDetails": {"isLive": True, "channelId": channel, "videoId": video,
+                               "title": "SPEED IN CHINA", "author": "IShowSpeed"}}
+    return ("<html><script>var ytInitialPlayerResponse = " + json.dumps(player) + ";var meta = 1;</script>"
+            '"videoOwnerRenderer":{"thumbnail":{"thumbnails":[{"url":"https://yt3.ggpht.com/speed=s48-c-k-c0x00ffffff-no"}]}}'
+            '"originalViewCount":"48211" "dateText":{"simpleText":"Started streaming 2 hours ago"}</html>')
+
+
+def _youtube_offline_page(name="IShowSpeed"):
+    return (f'<html><meta property="og:title" content="{name}">'
+            '<meta property="og:image" content="https://yt3.googleusercontent.com/speed-avatar"></html>')
+
+
+def _youtube_session(pages, calls):
+    class Response:
+        def __init__(self, text):
+            self.content = text.encode("utf-8")
+
+        def raise_for_status(self):
+            return None
+
+    class Session:
+        def get(self, url, **kwargs):
+            calls.append(url)
+            return Response(pages.pop(0))
+
+        def post(self, *args, **kwargs):
+            raise AssertionError("YouTube rooms never go to the aggregator")
+
+    return Session()
+
+
+def test_fetch_statuses_reads_youtube_channels_directly_without_the_aggregator(monkeypatch, tmp_path):
+    plugin = _plugin()
+    plugin._cache_dir = lambda: tmp_path
+    calls = []
+    pages = [_youtube_live_page(), _youtube_offline_page("Kai Cenat")]
+    monkeypatch.setattr(live_radar_module, "get_http_session", lambda: _youtube_session(pages, calls))
+    rooms = [{"platform": "youtube", "id": SPEED, "label": "", "isFav": False},
+             {"platform": "youtube", "id": "@KaiCenat", "label": "", "isFav": False}]
+
+    results = plugin._fetch_statuses(rooms, "https://example.test/batch", 9, True)
+
+    assert calls == [f"https://www.youtube.com/channel/{SPEED}/live", "https://www.youtube.com/@KaiCenat/live"]
+    assert [result["cache"] for result in results] == ["YOUTUBE_DIRECT", "YOUTUBE_DIRECT"]
+    live, offline = (result["status"] for result in results)
+    assert (live["isLive"], live["owner"], live["title"], live["heatValue"]) == (True, "IShowSpeed", "SPEED IN CHINA", 48211)
+    assert live["cover"] == "https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault_live.jpg"
+    assert live["avatar"] == "https://yt3.ggpht.com/speed=s176-c-k-c0x00ffffff-no"
+    assert abs(live["startTime"] / 1000 - (time.time() - 2 * 3600)) < 60
+    assert (offline["isLive"], offline["owner"], offline["avatar"], offline["cover"], offline["heatValue"]) == (
+        False, "Kai Cenat", "https://yt3.googleusercontent.com/speed-avatar", "", 0)
+
+
+def test_a_youtube_page_live_for_another_channel_or_naming_none_is_not_this_channels_stream():
+    plugin = _plugin()
+    room = {"platform": "youtube", "id": SPEED, "label": "", "isFav": False}
+
+    elsewhere = plugin._youtube_status_from_page(room, _youtube_live_page(channel="UC" + "x" * 22), True)
+
+    assert elsewhere["isLive"] is False and elsewhere["cover"] == ""
+    assert plugin._youtube_status_from_page(room, "<html>no channel here</html>", True) is None
+    with pytest.raises(ValueError):
+        plugin._youtube_live_page(None, "../../watch?v=x", 9)
+
+
 def test_load_cover_source_uses_shared_session_headers_and_cache(monkeypatch, tmp_path):
     plugin = _plugin()
     plugin._cache_dir = lambda: tmp_path

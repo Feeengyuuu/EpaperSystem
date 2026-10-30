@@ -45,8 +45,8 @@
 - Tech Pulse: OpenRouter's logo and icon from Commons (public domain), for the newest models, and
   their makers' marks: Commons where it has one, else the maker's own site icon.
 - LiveRadar's footer, the platforms it follows: bilibili直播's logo (the PNG its live site's navbar
-  script carries), Douyu's (the SVG symbol its site header script carries), Douyin's, Twitch's and
-  Kick's wordmarks from Commons (public domain), Picarto's mark (its header's year-round one, not the
+  script carries), Douyu's (the SVG symbol its site header script carries), Douyin's, YouTube's, Twitch's
+  and Kick's wordmarks from Commons (public domain), Picarto's mark (its header's year-round one, not the
   October or December one; white, kept as a black mask) and SOOP's logo from their own sites.
 - The cover pages' publishers and magazines (base_plugin/assets/publisher_logos, PUBLISHER_LOGOS):
   each one's logo as Wikidata names it on Commons (Marvel, DC, Kodansha, Rolling Stone, TIME, ...),
@@ -186,6 +186,8 @@ LOGOS = {
                 COMMONS_FILE.format(name="Twitch_logo_2019.svg"), PUBLIC_DOMAIN), [PLATFORM_LOGOS], 1.0),
     "kick": ((COMMONS.format(path="d/dd/Kick_logo.svg", name="Kick_logo.svg"),
               COMMONS_FILE.format(name="Kick_logo.svg"), PUBLIC_DOMAIN), [PLATFORM_LOGOS], 1.0),
+    "youtube": ((COMMONS.format(path="b/b8/YouTube_Logo_2017.svg", name="YouTube_Logo_2017.svg"),
+                 COMMONS_FILE.format(name="YouTube_Logo_2017.svg"), PUBLIC_DOMAIN), [PLATFORM_LOGOS], 1.0),
     "soop": (("https://res.sooplive.com/images/svg/soop_logo.svg", "https://www.sooplive.com/",
               "SOOP's logo from its own site header, shown to name the stream's platform"), [PLATFORM_LOGOS], 1.0),
     "kalshi": ((COMMONS.format(path="b/b8/Kalshi-logo-2026.svg", name="Kalshi-logo-2026.svg"),

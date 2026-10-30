@@ -77,6 +77,17 @@
         64
       ],
       "sha256": "45018fcbfe7b63a18658fec3c6bcbdbd58a7dad899fab6d9289435a4e0e02575"
+    },
+    "youtube": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b8/YouTube_Logo_2017.svg/500px-YouTube_Logo_2017.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:YouTube_Logo_2017.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "38c35192dfb89736b7bb7a1bbffdb760b71b820dc58f335b505d4ae38f002b97",
+      "size": [
+        286,
+        64
+      ],
+      "sha256": "c2499acd847261e1d4e17d70f8064d89b84b195369bfe23af5394e0a09740063"
     }
   }
 }

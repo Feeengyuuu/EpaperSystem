@@ -101,6 +101,29 @@ _LIVERADAR_BILIBILI_FENGGE_ROOM = {
     "id": "22230707",
     "isFav": False,
 }
+# Then the requested YouTube channels, LiveRadar's first: IShowSpeed, which the
+# Fengge migration leaves at settings revision 8 (unchanged on the device since,
+# its instance hash the same in every deploy round), then Kai Cenat at 9.
+_LIVERADAR_YOUTUBE_SPEED_MIGRATION = "liveradar_youtube_ishowspeed_v1"
+_LIVERADAR_YOUTUBE_SPEED_UUID_SHA256_PREFIX = "14c36f0ef259f0b5"
+_LIVERADAR_YOUTUBE_SPEED_STRUCTURAL_GENERATION = 1
+_LIVERADAR_YOUTUBE_SPEED_SETTINGS_REVISION = 8
+_LIVERADAR_YOUTUBE_SPEED_REFRESH_INTERVAL_SECONDS = 5 * 60
+_LIVERADAR_YOUTUBE_SPEED_ROOM = {
+    "platform": "youtube",
+    "id": "UCWsDFcIhY2DBi3GB5uykGXA",
+    "isFav": False,
+}
+_LIVERADAR_YOUTUBE_KAI_MIGRATION = "liveradar_youtube_kaicenat_v1"
+_LIVERADAR_YOUTUBE_KAI_UUID_SHA256_PREFIX = "14c36f0ef259f0b5"
+_LIVERADAR_YOUTUBE_KAI_STRUCTURAL_GENERATION = 1
+_LIVERADAR_YOUTUBE_KAI_SETTINGS_REVISION = 9
+_LIVERADAR_YOUTUBE_KAI_REFRESH_INTERVAL_SECONDS = 5 * 60
+_LIVERADAR_YOUTUBE_KAI_ROOM = {
+    "platform": "youtube",
+    "id": "UCoEmptob-eEGKk18c2VplJg",
+    "isFav": False,
+}
 _NEWSPAPER_REFILL_INTERVAL_SECONDS = 60 * 60
 _VEHICLE_STATUS_LEGACY_REFRESH_INTERVAL_SECONDS = 60 * 60
 _VEHICLE_STATUS_REFRESH_INTERVAL_SECONDS = 3 * 60 * 60
@@ -252,6 +275,8 @@ class Config:
         self._migrate_liveradar_bilibili_gcores_room()
         self._migrate_liveradar_douyin_room()
         self._migrate_liveradar_bilibili_fengge_room()
+        self._migrate_liveradar_youtube_speed_room()
+        self._migrate_liveradar_youtube_kai_room()
         self._migrate_runtime_balance_cadences()
         self._migrate_runtime_balance_soft_threshold(
             cadence_marker_preexisting=cadence_marker_preexisting,
@@ -416,6 +441,30 @@ class Config:
             settings_revision=_LIVERADAR_BILIBILI_FENGGE_SETTINGS_REVISION,
             refresh_interval=_LIVERADAR_BILIBILI_FENGGE_REFRESH_INTERVAL_SECONDS,
             room=_LIVERADAR_BILIBILI_FENGGE_ROOM,
+        )
+
+    def _migrate_liveradar_youtube_speed_room(self):
+        """Append IShowSpeed's YouTube channel to the same instance."""
+
+        self._append_liveradar_room(
+            migration=_LIVERADAR_YOUTUBE_SPEED_MIGRATION,
+            uuid_prefix=_LIVERADAR_YOUTUBE_SPEED_UUID_SHA256_PREFIX,
+            structural_generation=_LIVERADAR_YOUTUBE_SPEED_STRUCTURAL_GENERATION,
+            settings_revision=_LIVERADAR_YOUTUBE_SPEED_SETTINGS_REVISION,
+            refresh_interval=_LIVERADAR_YOUTUBE_SPEED_REFRESH_INTERVAL_SECONDS,
+            room=_LIVERADAR_YOUTUBE_SPEED_ROOM,
+        )
+
+    def _migrate_liveradar_youtube_kai_room(self):
+        """Append Kai Cenat's YouTube channel to the same instance."""
+
+        self._append_liveradar_room(
+            migration=_LIVERADAR_YOUTUBE_KAI_MIGRATION,
+            uuid_prefix=_LIVERADAR_YOUTUBE_KAI_UUID_SHA256_PREFIX,
+            structural_generation=_LIVERADAR_YOUTUBE_KAI_STRUCTURAL_GENERATION,
+            settings_revision=_LIVERADAR_YOUTUBE_KAI_SETTINGS_REVISION,
+            refresh_interval=_LIVERADAR_YOUTUBE_KAI_REFRESH_INTERVAL_SECONDS,
+            room=_LIVERADAR_YOUTUBE_KAI_ROOM,
         )
 
     def _append_liveradar_room(

@@ -1755,6 +1755,44 @@ def test_the_fengge_room_follows_the_douyin_room_once(monkeypatch, tmp_path):
     assert json.loads(config_path.read_text(encoding="utf-8"))["config_revision"] == first_revision
 
 
+def test_the_youtube_channels_follow_the_fengge_room_once(monkeypatch, tmp_path):
+    original, _rooms = _zack_ready_live_radar_config(
+        rooms_text="douyin|80596524973\nbilibili|22230707",
+        rooms_document={
+            "version": "3.1.1",
+            "rooms": [
+                {"platform": "douyin", "id": "80596524973", "isFav": False},
+                {"platform": "bilibili", "id": "22230707", "isFav": False},
+            ],
+        },
+    )
+    original["runtime_migrations"].update({"liveradar_twitch_zackrawrr_v1": True,
+                                           "liveradar_bilibili_545039_v1": True,
+                                           "liveradar_douyin_80596524973_v1": True,
+                                           "liveradar_bilibili_22230707_v1": True})
+    original["playlist_config"]["playlists"][0]["plugins"][0]["settings_revision"] = 8
+    _patch_live_radar_identity(monkeypatch, "_LIVERADAR_YOUTUBE_SPEED_UUID_SHA256_PREFIX",
+                               "_LIVERADAR_YOUTUBE_KAI_UUID_SHA256_PREFIX")
+
+    _config, config_path = _device_config(monkeypatch, tmp_path, original)
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    instance = saved["playlist_config"]["playlists"][0]["plugins"][0]
+    assert instance["plugin_settings"]["roomsText"].splitlines()[-3:] == [
+        "bilibili|22230707", "youtube|UCWsDFcIhY2DBi3GB5uykGXA", "youtube|UCoEmptob-eEGKk18c2VplJg"]
+    assert json.loads(instance["plugin_settings"]["roomsJson"])["rooms"][-2:] == [
+        {"platform": "youtube", "id": "UCWsDFcIhY2DBi3GB5uykGXA", "isFav": False},
+        {"platform": "youtube", "id": "UCoEmptob-eEGKk18c2VplJg", "isFav": False},
+    ]
+    assert instance["settings_revision"] == 10
+    assert saved["runtime_migrations"]["liveradar_youtube_ishowspeed_v1"] is True
+    assert saved["runtime_migrations"]["liveradar_youtube_kaicenat_v1"] is True
+
+    first_revision = saved["config_revision"]
+    Config()
+    assert json.loads(config_path.read_text(encoding="utf-8"))["config_revision"] == first_revision
+
+
 def test_douyin_room_migration_skips_an_instance_the_owner_edited_since(monkeypatch, tmp_path):
     original, _rooms = _zack_ready_live_radar_config()
     original["playlist_config"]["playlists"][0]["plugins"][0]["settings_revision"] = 9

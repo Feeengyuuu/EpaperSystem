@@ -3,6 +3,7 @@ from utils.resource_cache import cached_resource_image, measured_image_response,
 
 from contextvars import ContextVar
 from datetime import datetime, timezone
+from html import unescape
 from functools import lru_cache
 from urllib.parse import quote, urlsplit
 import hashlib
@@ -164,11 +165,26 @@ DOUYIN_API_HEADERS = {
 }
 DOUYIN_COOKIE_TTL_SECONDS = 24 * 3600
 DOUYIN_LIVE_STATUS = 2
+# YouTube, read straight from a channel's /live page with no key (the aggregator has no YouTube):
+# a live channel's page carries the stream's player response (its title, video and channel), the
+# viewers watching now and its owner's avatar; an offline one is the channel's own page (its name
+# and avatar in the og: tags). A room is a channel id (UC...) or an @handle.
+YOUTUBE_LIVE_URL = "https://www.youtube.com/{path}/live"
+YOUTUBE_CHANNEL_ID = re.compile(r"UC[\w-]{22}")
+YOUTUBE_HANDLE = re.compile(r"@?[\w.-]{3,40}")
+YOUTUBE_VIDEO_ID = re.compile(r"[\w-]{11}")
+YOUTUBE_PAGE_MAX_BYTES = 4 * 1024 * 1024
+YOUTUBE_HEADERS = {"User-Agent": COVER_HEADERS["User-Agent"], "Accept-Language": "en-US,en;q=0.8"}
+# A live stream's frame (YouTube refreshes it while the stream runs), as the card's snapshot.
+YOUTUBE_LIVE_FRAME_URL = "https://i.ytimg.com/vi/{video}/maxresdefault_live.jpg"
+YOUTUBE_STARTED = re.compile(r"Started streaming (\d+) (second|minute|hour)s? ago")
+YOUTUBE_STARTED_UNITS = {"second": 1, "minute": 60, "hour": 3600}
 
 PLATFORMS = {
     "douyu": {"label": "DOUYU", "short": "DY"},
     "bilibili": {"label": "BILIBILI", "short": "B"},
     "douyin": {"label": "DOUYIN", "short": "DYN"},
+    "youtube": {"label": "YOUTUBE", "short": "YT"},
     "twitch": {"label": "TWITCH", "short": "TW"},
     "kick": {"label": "KICK", "short": "K"},
     "picarto": {"label": "PICARTO", "short": "PA"},
@@ -179,6 +195,7 @@ PLATFORMS = {
 PLATFORM_BRAND_COLORS = {
     "bilibili": (0, 174, 236),
     "douyin": (254, 44, 85),
+    "youtube": (255, 0, 0),
     "twitch": (145, 70, 255),
     "douyu": (255, 119, 0),
     "kick": (83, 252, 24),
@@ -195,7 +212,7 @@ STATUS_TOTAL_DARK_OFFLINE_FILL = (88, 88, 88)
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 PLATFORM_ICON_FILES = {
     platform: os.path.join(PLUGIN_DIR, "platform_icons", f"{platform}.png")
-    for platform in ("douyu", "bilibili", "douyin", "twitch", "kick")
+    for platform in ("douyu", "bilibili", "douyin", "twitch", "kick", "youtube")
 }
 # Quiet doodles of each platform's world in its brand colour, under a live card's text panel
 # and an offline row, so the white room there says where the stream is.
@@ -206,7 +223,7 @@ PLATFORM_DOODLE_FILES = {
 PLATFORM_DOODLE_STRENGTH = 0.28
 # The footer names every platform LiveRadar follows by its official logo, transparent and in its own
 # colours (tools/build_source_logos.py; platform_logos.source.json), this tall and at most this far apart.
-FOOTER_PLATFORMS = ("bilibili", "douyu", "douyin", "twitch", "kick", "soop", "picarto")
+FOOTER_PLATFORMS = ("bilibili", "douyu", "douyin", "youtube", "twitch", "kick", "soop", "picarto")
 PLATFORM_LOGO_FILES = {
     platform: os.path.join(PLUGIN_DIR, "platform_logos", f"{platform}.png") for platform in FOOTER_PLATFORMS
 }
@@ -638,6 +655,27 @@ class LiveRadar(BasePlugin):
                 started,
                 douyin_rooms,
                 douyin_results,
+                source_error,
+            )
+
+        youtube_rooms = rooms_by_platform.pop("youtube", [])
+        if youtube_rooms:
+            started = self._source_health_elapsed_now()
+            source_error = None
+            try:
+                youtube_results = self._fetch_youtube_statuses_direct(session, youtube_rooms, timeout, fetch_avatars)
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                logger.warning("LiveRadar direct YouTube source unavailable: %s", exc.__class__.__name__)
+                source_error = exc
+                youtube_results = [self._missing_source_result(room) for room in youtube_rooms]
+            fetched_results.extend(youtube_results)
+            source_health["youtube"] = self._source_health_entry(
+                "youtube_direct",
+                started,
+                youtube_rooms,
+                youtube_results,
                 source_error,
             )
 
@@ -1219,6 +1257,120 @@ class LiveRadar(BasePlugin):
                 }
             )
         return results
+
+    def _fetch_youtube_statuses_direct(self, session, rooms, timeout, fetch_avatars):
+        results = []
+        for room in rooms:
+            room_id = str(room.get("id") or "")
+            try:
+                page = self._youtube_live_page(session, room_id, timeout)
+                status = self._youtube_status_from_page(room, page, fetch_avatars)
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                logger.warning("LiveRadar direct YouTube channel failed for %s: %s", room_id, exc.__class__.__name__)
+                results.append(
+                    {
+                        "ok": False,
+                        "platform": "youtube",
+                        "id": room_id,
+                        "error": "youtube_direct_channel_failed",
+                        "status": self._default_status(room, is_error=True),
+                    }
+                )
+                continue
+            if status is None:
+                results.append(
+                    {
+                        "ok": False,
+                        "platform": "youtube",
+                        "id": room_id,
+                        "error": "youtube_channel_not_found",
+                        "status": self._default_status(room, is_error=True),
+                    }
+                )
+                continue
+            results.append(
+                {"ok": True, "platform": "youtube", "id": room_id, "status": status, "cache": "YOUTUBE_DIRECT",
+                 "error": None}
+            )
+        return results
+
+    def _youtube_live_page(self, session, room_id, timeout):
+        """The channel's /live page: the live stream's watch page, or the channel's own when offline."""
+        if YOUTUBE_CHANNEL_ID.fullmatch(room_id):
+            path = f"channel/{room_id}"
+        elif YOUTUBE_HANDLE.fullmatch(room_id):
+            path = room_id if room_id.startswith("@") else f"@{room_id}"
+        else:
+            raise ValueError("not a YouTube channel id or handle")
+        response = session.get(
+            YOUTUBE_LIVE_URL.format(path=path),
+            timeout=self._bounded_status_timeout(timeout),
+            headers=YOUTUBE_HEADERS,
+        )
+        response.raise_for_status()
+        if len(response.content) > YOUTUBE_PAGE_MAX_BYTES:
+            raise RuntimeError("YouTube page too large")
+        return response.content.decode("utf-8", "replace")
+
+    @staticmethod
+    def _youtube_player_response(page):
+        """The page's ytInitialPlayerResponse, or {} (an offline channel's page has none)."""
+        start = page.find("ytInitialPlayerResponse = {")
+        if start < 0:
+            return {}
+        try:
+            value, _end = json.JSONDecoder().raw_decode(page, start + len("ytInitialPlayerResponse = "))
+        except ValueError:
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    def _youtube_status_from_page(self, room, page, fetch_avatars):
+        """The card status from a channel's /live page, or None when it names no channel."""
+        room_id = str(room.get("id") or "")
+        details = self._youtube_player_response(page).get("videoDetails")
+        details = details if isinstance(details, dict) else {}
+        same_channel = not YOUTUBE_CHANNEL_ID.fullmatch(room_id) or details.get("channelId") == room_id
+        live = details.get("isLive") is True and same_channel
+        video_id = str(details.get("videoId") or "")
+
+        def meta(name):
+            match = re.search(rf'<meta property="og:{name}" content="([^"]*)"', page)
+            return unescape(match.group(1)) if match else ""
+
+        if live:
+            owner = str(details.get("author") or "")
+            avatar = re.search(r'"videoOwnerRenderer":\{"thumbnail":\{"thumbnails":\[\{"url":"([^"]+)"', page)
+            # The owner's avatar comes 48 px; the same image 176 px is a size the card can shrink.
+            avatar = avatar.group(1).replace("=s48-", "=s176-") if avatar else ""
+            viewers = re.search(r'"originalViewCount":"(\d+)"', page)
+            started = YOUTUBE_STARTED.search(page)
+        elif details:
+            # Another channel's stream: not this one's, and its tags name that stream, not this channel.
+            owner, avatar, viewers, started = "", "", None, None
+        else:
+            owner, avatar, viewers, started = meta("title"), meta("image"), None, None
+        if not live and not owner and not details:
+            return None
+        start_ms = None
+        if started:
+            seconds = int(started.group(1)) * YOUTUBE_STARTED_UNITS[started.group(2)]
+            start_ms = int((time.time() - seconds) * 1000)
+        return {
+            "isLive": live,
+            "isReplay": False,
+            "title": str(details.get("title") or "") if live else "",
+            "owner": owner or room.get("label") or room_id,
+            "cover": YOUTUBE_LIVE_FRAME_URL.format(video=video_id) if live and YOUTUBE_VIDEO_ID.fullmatch(video_id) else "",
+            "avatar": avatar if fetch_avatars else "",
+            "heatValue": int(viewers.group(1)) if viewers else 0,
+            "isError": False,
+            # The page says when the stream started only as "N minutes/hours ago" (older: a date).
+            "startTime": start_ms,
+            "platform": "youtube",
+            "id": room_id,
+        }
 
     def _douyin_cookie_path(self):
         return self._cache_dir() / "douyin_cookie.json"
