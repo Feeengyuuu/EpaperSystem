@@ -393,7 +393,9 @@ def _ranking(canvas, papers, images, chinese, first_rank):
     canvas.draw.rounded_rectangle(RANKING, radius=6, outline=canvas.color("rule"), width=1)
     _doodles(canvas, (left + 1, top + 31, right - 1, bottom - 1), canvas.color("paper"), offset=(211, 37))
     canvas.draw.rectangle((left + 8, top + 9, left + 12, top + 23), fill=HF_YELLOW)
-    canvas.text((left + 18, top + 16), "今日榜单", 14, anchor="lm")
+    # The papers are arXiv's: its logo follows the heading.
+    heading = canvas.text((left + 18, top + 16), "今日榜单", 14, anchor="lm")
+    _paste_logo(canvas, "arxiv", left + 18 + heading + 8, top + 16, 14)
     canvas.text((right - 10, top + 16), "按社区点赞", 10, "muted", anchor="rm", bold=False)
     canvas.rule((left + 8, top + 30, right - 8, top + 30))
     row_h = (bottom - top - 34) / RANKING_ROWS
