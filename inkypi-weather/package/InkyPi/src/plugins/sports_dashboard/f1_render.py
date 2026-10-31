@@ -17,6 +17,7 @@ from functools import lru_cache
 import json
 import math
 import os
+import unicodedata
 
 from PIL import Image, ImageDraw, ImageStat
 
@@ -28,6 +29,8 @@ SportsDashboard = None
 
 F1_BAND_HEIGHT = 52
 F1_TIMELINE_HEIGHT = 50
+# A circuit's own logo stands this tall in place of its official name on the race band.
+F1_CIRCUIT_LOGO_HEIGHT = 15
 F1_ROW_HEIGHT = 15
 F1_TEAM_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "f1_teams")
 F1_GRID_DIR = os.path.join(LOCAL_DECOR_DIR, "f1_grid")
@@ -241,7 +244,7 @@ class F1RenderMixin:
         self._draw_text_in_box(draw, (badge[2] + 10, name_y, text_x2, name_y + 21), name, name_font, COLORS["text"])
         text_end = badge[2] + 10 + self._text_width(draw, name, name_font)
         if facts:
-            text_end = max(text_end, self._draw_f1_circuit_facts(draw, (badge[2] + 10, y1 + 24, text_x2, y2 - 4), race, facts, flag))
+            text_end = max(text_end, self._draw_f1_circuit_facts(image, draw, (badge[2] + 10, y1 + 24, text_x2, y2 - 4), race, facts, flag))
         else:
             city = ", ".join(part for part in (race.get("locality"), race.get("country")) if part)
             round_label = f"ROUND {race.get('round')}" if flag and race.get("round") else ""
@@ -516,10 +519,10 @@ class F1RenderMixin:
         draw.line((x1, y1 + 19, x2, y1 + 19), fill=COLORS["border"], width=1)
         return y1 + 23
 
-    def _draw_f1_circuit_facts(self, draw, box, race, facts, flag):
-        """Under the Grand Prix: a chequered flag with the circuit's Chinese and official names,
-        then a pin and the city, the lap's length, the race's laps and the round; returns where
-        the words end."""
+    def _draw_f1_circuit_facts(self, image, draw, box, race, facts, flag):
+        """Under the Grand Prix: a chequered flag with the circuit's Chinese name and its own logo
+        (else its official name), then a pin and the city, the lap's length, the race's laps and
+        the round; returns where the words end."""
         x1, y1, x2, _y2 = [int(value) for value in box]
         circuit, city, length, laps = facts
         small = self._font(9, False)
@@ -529,16 +532,26 @@ class F1RenderMixin:
         self._draw_text_in_box(draw, (x, y1, x2, y1 + 12), circuit, circuit_font, COLORS["text"])
         x += self._text_width(draw, circuit, circuit_font) + 6
         official = str(race.get("circuit_name") or "")
-        if official and x2 - x > 40:
+        # The circuit's own logo in place of its official name, where it has one and it still reads.
+        logo = self._kit_venue_logo(
+            unicodedata.normalize("NFKD", official).encode("ascii", "ignore").decode(), (x2 - x, F1_CIRCUIT_LOGO_HEIGHT)
+        ) if official and x2 - x > 40 else None
+        if logo is not None and logo.height >= F1_CIRCUIT_LOGO_HEIGHT - 4:
+            image.paste(logo, (x, y1 + 6 - logo.height // 2), logo)
+            official_end = x + logo.width
+        elif official and x2 - x > 40:
             official, official_font = self._fit_text_ellipsis(draw, official, x2 - x, 8, bold=False, min_size=7)
             self._draw_text_in_box(draw, (x, y1 + 1, x2, y1 + 12), official, official_font, COLORS["muted"])
+            official_end = x + self._text_width(draw, official, official_font)
+        else:
+            official_end = x - 6
         row_y = y1 + 13
         items = [("pin", city), ("length", f"{length:.3f} km")]
         if laps:
             items.append(("laps", f"{laps} 圈"))
         if race.get("round") and flag:
             items.append((None, f"第 {race['round']} 站"))
-        end = x - 6 if not (official and x2 - x > 40) else x + self._text_width(draw, official, official_font)
+        end = official_end
         x = x1
         for icon, label in items:
             label_x = x + (14 if icon else 0)

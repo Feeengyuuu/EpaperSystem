@@ -2651,6 +2651,223 @@
         480,
         34
       ]
+    },
+    "circuit_of_the_americas": {
+      "file": "Circuit of the Americas logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Circuit_of_the_Americas_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/23/Circuit_of_the_Americas_logo.svg/960px-Circuit_of_the_Americas_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "340ab296005f328def018f4d02f5335674a11684",
+      "source_png_sha256": "5ef4f284459888ca6086d89686c17ab649325e09f966c176d3b25c5987ec1bcf",
+      "sha256": "4c478175dc1cffa76f28909e85ef969abc3b5ac51b8ff36fe3264495892cb8b8",
+      "size": [
+        143,
+        48
+      ]
+    },
+    "circuit_de_barcelona_catalunya": {
+      "source": "https://www.circuitcat.com/wp-content/themes/morillas-child/assets/img/LOGO_CIRCUIT_DE_CATALUNYA_BY_FIRA-positiu.png",
+      "page": "https://www.circuitcat.com/en/",
+      "licence": "Circuit de Barcelona-Catalunya's logo from its own site header, shown to name the circuit",
+      "source_sha256": "4704add7cd4284a0941d086fe2c6267d0719276f38e7fffc0383724ee95d587d",
+      "sha256": "347af6b992c89a26be56b40e59761c53583b450b0bb94028442f5d31f0c551b1",
+      "size": [
+        309,
+        48
+      ]
+    },
+    "hungaroring": {
+      "file": "Logo for Hungaroring.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Logo_for_Hungaroring.png",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d4/Logo_for_Hungaroring.png/960px-Logo_for_Hungaroring.png",
+      "licence": "CC BY-SA 4.0",
+      "original_sha1": "7170ca50023c2d9afb3c824a4985ddd9ec5157ee",
+      "source_png_sha256": "8411c840c1eb802a74aa066a811d2aee4771fd83d28070126f1de935b7a2d33b",
+      "sha256": "49eb62a4ae1712afcd9184db4f186ba45d7d97efabfef8fffea7ef79b9d838fc",
+      "size": [
+        117,
+        48
+      ]
+    },
+    "imola_circuit": {
+      "file": "EnzoEDinoFerrariImolaLogo.png",
+      "page": "https://en.wikipedia.org/wiki/File:EnzoEDinoFerrariImolaLogo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/5/50/EnzoEDinoFerrariImolaLogo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "69deb470d48067355defa37332991d3473ae8837",
+      "source_png_sha256": "959916683a2458aa097915c44d7ffe98f9d304abb690b1633b720ba9effec750",
+      "sha256": "cfdf47a19d89be04793fa6184735e76e92a625e9416284592fffdca2519d7bd4",
+      "size": [
+        143,
+        48
+      ]
+    },
+    "jeddah_corniche_circuit": {
+      "file": "Jeddah Corniche Circuit Logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Jeddah_Corniche_Circuit_Logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a2/Jeddah_Corniche_Circuit_Logo.svg/960px-Jeddah_Corniche_Circuit_Logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "0fd25ffc05ec40d920b0bdaa3a518e672f2a0a61",
+      "source_png_sha256": "17e57758a00cfdaa833ecae76b2a4b88969f250ded338f2ce3c1c0aeefcff398",
+      "sha256": "b26ea8e402984c5fb8c3e16385f9e71a62ecc539090b07487612ffe61355096f",
+      "size": [
+        96,
+        48
+      ]
+    },
+    "lusail_international_circuit": {
+      "source": "https://www.lcsc.qa/themes/custom/lusail/logo.svg",
+      "page": "https://www.lcsc.qa/",
+      "licence": "Lusail International Circuit's logo from its own site header, shown to name the circuit",
+      "source_sha256": "0645d42202721d73921b14205b21151be05dd224a306e4a43a21b6b700fefac5",
+      "sha256": "1b00772a97ca5a71036c394060b0a53737c5dd2d72106beb10b390943b39e03b",
+      "size": [
+        480,
+        39
+      ]
+    },
+    "madring": {
+      "file": "MADRING logo horizontal.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:MADRING_logo_horizontal.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9d/MADRING_logo_horizontal.svg/960px-MADRING_logo_horizontal.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "666341bf686f361399727d84cf55a8fc8df4b882",
+      "source_png_sha256": "daadbba497674274630fb38e41c912b93b6b7717b1184c9527bcc3364d4aa55d",
+      "sha256": "974ae0182b9911e4b5ce4b02864880e95b3994c2a61c7136ac53f34a597a7283",
+      "size": [
+        322,
+        48
+      ]
+    },
+    "miami_international_autodrome": {
+      "file": "Miami International Autodrome Logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Miami_International_Autodrome_Logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/4/45/Miami_International_Autodrome_Logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "9da4c9e5648b82e93238051f0e277082d726797f",
+      "source_png_sha256": "53cf0ddecc15b75bf82a5fb787f69302ffadc18b0261fbe7a389354c49fd6fcb",
+      "sha256": "b2f314c068f5bf813e55d8c5aba3fdc9e404b3cd5b75bc1e8963f028cfbf67f7",
+      "size": [
+        127,
+        48
+      ]
+    },
+    "monza_circuit": {
+      "file": "Autodromo Nazionale Monza circuit logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Autodromo_Nazionale_Monza_circuit_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/f/f1/Autodromo_Nazionale_Monza_circuit_logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "835898d8c59b7382c5434a1f5a0c473dc185efa2",
+      "source_png_sha256": "9462927c27d2f1b9740689c824dd1ce1d2b1d51433a7afc3a10a52a337f15bc9",
+      "sha256": "c08fc22c452c389c3a86c20356cb848a56abe03f14e3b18dc9d19d4c5e399fe7",
+      "size": [
+        48,
+        48
+      ]
+    },
+    "red_bull_ring": {
+      "file": "Logo for Red Bull Ring.png",
+      "page": "https://en.wikipedia.org/wiki/File:Logo_for_Red_Bull_Ring.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/8/86/Logo_for_Red_Bull_Ring.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "64310cd925b44669d43cbf545bded3de36ef23b4",
+      "source_png_sha256": "72a7c13bbf7ea6f2e584c6bb68b4423a09e66d13e8bb3c1bd2153554de3f3c75",
+      "sha256": "7a91d997123cd6ba09c12af1708a7ecd397a70e2075324ae2935a9936e5148f1",
+      "size": [
+        115,
+        48
+      ]
+    },
+    "autodromo_hermanos_rodriguez": {
+      "file": "Autodromo Hermanos Rodriguez 2017 logo.gif",
+      "page": "https://en.wikipedia.org/wiki/File:Autodromo_Hermanos_Rodriguez_2017_logo.gif",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/0/08/Autodromo_Hermanos_Rodriguez_2017_logo.gif",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "44a8832d4051c838960c4cd885416341410b8911",
+      "source_png_sha256": "6e4653f14280f05650695d40a14b76d47974b8ee706f82f399a2a06940967f49",
+      "sha256": "eb8f50dd76e5a3cb585801956df082268a1c862bce20ecacd654f3ceed3381e5",
+      "size": [
+        160,
+        48
+      ]
+    },
+    "sepang_international_circuit": {
+      "file": "Petronas Sepang International Circuit logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Petronas_Sepang_International_Circuit_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/d/da/Petronas_Sepang_International_Circuit_logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "89ea5483bae99a960db0d741c8688bf6580d2696",
+      "source_png_sha256": "52f1143760f0c17725dfeb756132f244510fed9c8a50f367db8aa1c050019264",
+      "sha256": "e1851f0c51281582812e67488f2bcffebc191ac9f0baeb2ab2ed82902783ff08",
+      "size": [
+        113,
+        48
+      ]
+    },
+    "silverstone_circuit": {
+      "file": "Silverstone Circuit logo.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Silverstone_Circuit_logo.png",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/27/Silverstone_Circuit_logo.png/960px-Silverstone_Circuit_logo.png",
+      "licence": "Public domain",
+      "original_sha1": "f6741e613614f6406372bb73c5e0d04506ba7f54",
+      "source_png_sha256": "d32adaf76a630e877c00c357c6d116dde9fde8da3662261f0283cdc3ee33641c",
+      "sha256": "967ba49ed449ad0c6c466fd6f1215b5f8940c92851875e599c4eeb10efdc4a88",
+      "size": [
+        314,
+        48
+      ]
+    },
+    "circuit_de_spa_francorchamps": {
+      "file": "Logo Circuit de Spa Francorchamps.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Logo_Circuit_de_Spa_Francorchamps.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/06/Logo_Circuit_de_Spa_Francorchamps.svg/960px-Logo_Circuit_de_Spa_Francorchamps.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "2b5f54667dc2263b112874b18f8d1879b88b62ba",
+      "source_png_sha256": "ab856bc06b226706072de8d88440e693b549199af379378abdf64633d089a0e2",
+      "sha256": "85da9fc2d9738965a312b7414cc27cc0fdc6ba686d5723dc5696e01a692db1f7",
+      "size": [
+        140,
+        48
+      ]
+    },
+    "suzuka_circuit": {
+      "file": "Suzuka Circuit logo (2022).svg",
+      "page": "https://en.wikipedia.org/wiki/File:Suzuka_Circuit_logo_(2022).svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/a/a4/Suzuka_Circuit_logo_%282022%29.svg/960px-Suzuka_Circuit_logo_%282022%29.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "6518e6ab4129d36533485b4da2e43b1708761749",
+      "source_png_sha256": "6e85552810551507051f49d0439a8d14bc8ce9208bc3f6a4f1ed40ad76ff80e6",
+      "sha256": "3167278fff0220fcc0fc1fabc9e44b56f52ef7622abe364f42e71f118a9e3764",
+      "size": [
+        480,
+        43
+      ]
+    },
+    "yas_marina_circuit": {
+      "source": "https://www.yasmarinacircuit.com/documents/2642013/2663360/YMC_logo.svg/e35c1312-677b-353b-6a99-063ad44b5c3f",
+      "page": "https://www.yasmarinacircuit.com/en",
+      "licence": "Yas Marina Circuit's logo from its own site header, shown to name the circuit",
+      "source_sha256": "1558015a60a56798592cd072f8195046f74e4e409e079abe7bfa560196f2fe23",
+      "processing": "white lettering (for its dark header) set near-black; cropped to the alpha bounding box, scaled to 48 px high",
+      "sha256": "c653580a4bee611df4aaa4b75b7b82de89b9689f2ba9f1046117e3249097e39b",
+      "size": [
+        480,
+        46
+      ]
+    },
+    "circuit_zandvoort": {
+      "file": "Circuit Zandvoort Logo.jpg",
+      "page": "https://commons.wikimedia.org/wiki/File:Circuit_Zandvoort_Logo.jpg",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/d/d4/Circuit_Zandvoort_Logo.jpg",
+      "licence": "CC BY-SA 4.0",
+      "original_sha1": "d85221ae9b130527d10eb1612933e77e324cdbd0",
+      "source_png_sha256": "7479b956d2765674321ac4135c8a7ccd8a7f586101ce1147c097e0f00fcc60f0",
+      "processing": "white ground to alpha (colour-to-alpha), cropped to the alpha bounding box, scaled to 48 px high",
+      "sha256": "4d28ef2815efb850a8c07257c638b816072c4c937c62899439ea2801c048eccd",
+      "size": [
+        64,
+        48
+      ]
     }
   }
 }

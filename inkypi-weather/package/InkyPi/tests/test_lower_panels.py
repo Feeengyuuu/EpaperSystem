@@ -1160,6 +1160,32 @@ def test_f1_live_panel_shows_the_session_order(boxes):
     assert any(text.startswith("LIVE · ") for text in texts)
 
 
+def test_f1_band_shows_the_circuits_own_logo_in_place_of_its_official_name(boxes):
+    from plugins.sports_dashboard.f1_render import F1_CIRCUIT_LOGO_HEIGHT, F1_CIRCUITS
+
+    plugin = _plugin()
+    facts = F1_CIRCUITS["rodriguez"]
+    image = Image.new("RGB", (420, 30), DAY_COLORS["panel"])
+    race = {"circuit_id": "rodriguez", "circuit_name": "Autódromo Hermanos Rodríguez"}
+    end = plugin._draw_f1_circuit_facts(image, ImageDraw.Draw(image), (0, 0, 420, 30), race, facts, None)
+
+    texts = [text for _box, text, _font in boxes]
+    assert facts[0] in texts
+    assert not any("Rodr" in text for text in texts)
+    logo = plugin._kit_venue_logo("Autodromo Hermanos Rodriguez", (420, F1_CIRCUIT_LOGO_HEIGHT))
+    assert logo is not None and logo.height == F1_CIRCUIT_LOGO_HEIGHT
+    # The logo stands right of the Chinese name, and the band's words end with it.
+    name_end = 14 + plugin._text_width(ImageDraw.Draw(image), facts[0], plugin._font(10, True))
+    assert end >= name_end + 6 + logo.width - 1
+    drawn = image.crop((name_end + 6, 0, name_end + 6 + logo.width, F1_CIRCUIT_LOGO_HEIGHT)).get_flattened_data()
+    assert sum(pixel != DAY_COLORS["panel"] for pixel in drawn) > 50
+
+    boxes.clear()
+    race = {"circuit_id": "albert_park", "circuit_name": "Albert Park Grand Prix Circuit"}
+    plugin._draw_f1_circuit_facts(image, ImageDraw.Draw(image), (0, 0, 420, 30), race, F1_CIRCUITS["albert_park"], None)
+    assert "Albert Park Grand Prix Circuit" in [text for _box, text, _font in boxes]
+
+
 def _f1_order_cars(width, rows):
     plugin = _plugin()
     races = []
