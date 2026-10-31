@@ -52,6 +52,10 @@
   each one's logo as Wikidata names it on Commons (Marvel, DC, Kodansha, Rolling Stone, TIME, ...),
   else the one its own site's header serves (BOOM!, Oni, Yen Press, DC Thomson, ...), white lettering
   made for dark headers set dark for the page to ink, and a white ground cleared from the edge.
+- 科技与游戏's coming games (tech_play/assets/platforms): the marks of the platforms whose colours frame
+  them, from Commons (public domain): Windows' for PC, PlayStation's (its ® dropped), Xbox's sphere and
+  the Nintendo Switch logo's joy-con mark (its wordmark cut off), each kept as a black mask the page
+  tints in that platform's frame colour.
 
 SVGs are drawn by a headless Chrome or Edge (tools/build_planet_now_logos.py). Each is cropped
 to its visible pixels and scaled to at most 64 px tall into the plugin's assets;
@@ -592,8 +596,54 @@ def _picarto(records):
         "source_sha256": hashlib.sha256(content).hexdigest(), "processing": note})
 
 
+GAME_PLATFORMS = PLUGINS / "tech_play" / "assets" / "platforms"
+# Each platform family's Commons file and the share of its height kept from the top (the Switch
+# logo's joy-con mark over its wordmark).
+CONSOLES = {"pc": ("8/87/Windows_logo_-_2021.svg", 1.0), "ps": ("0/00/PlayStation_logo.svg", 1.0),
+            "xbox": ("f/f9/Xbox_one_logo.svg", 1.0), "switch": ("5/5d/Nintendo_Switch_Logo.svg", 0.68)}
+
+
+def _main_parts(image, share=0.02):
+    """``image`` without its small separate parts, each under ``share`` of the drawn area (a ® beside a mark)."""
+    mask = image.getchannel("A").point(lambda value: 255 if value > 16 else 0)
+    pixels = mask.load()
+    label = 0
+    for y in range(mask.height):
+        for x in range(mask.width):
+            if pixels[x, y] == 255 and label < 254:
+                label += 1
+                ImageDraw.floodfill(mask, (x, y), label)
+    counts = mask.histogram()
+    total = sum(counts[1:label + 1])
+    kept = mask.point(lambda value: 255 if 0 < value <= label and counts[value] >= total * share else 0)
+    return _visible(Image.merge("RGBA", (*image.split()[:3], ImageChops.multiply(image.getchannel("A"), kept))))
+
+
+def _console(key):
+    """A builder for a game platform's mark, kept as a black mask the page tints in its frame colour."""
+    path, keep = CONSOLES[key]
+    name = path.rsplit("/", 1)[1]
+
+    def build(records):
+        url = COMMONS.format(path=path, name=name)
+        content = _fetch(url)
+        art = _visible(_art(url, content))
+        steps = []
+        if keep < 1:
+            art = _visible(art.crop((0, 0, art.width, round(art.height * keep))))
+            steps.append(f"the top {keep:.0%} kept (the mark, not the wordmark)")
+        art = _main_parts(art)
+        steps += ["small separate parts (a ®) dropped", "kept as a black mask the page tints in the platform's colour"]
+        _write(records, GAME_PLATFORMS, key, _fit(_knockout(art)), {
+            "source": url, "page": COMMONS_FILE.format(name=name), "licence": PUBLIC_DOMAIN,
+            "source_sha256": hashlib.sha256(content).hexdigest(), "processing": "; ".join(steps)})
+
+    return build
+
+
 COMPOSED = {"wikipedia_zh": _wikipedia_zh, "chineseposters": _chineseposters, "smk": _smk,
-            "bilibili": _bilibili, "douyu": _douyu, "picarto": _picarto}
+            "bilibili": _bilibili, "douyu": _douyu, "picarto": _picarto,
+            **{key: _console(key) for key in CONSOLES}}
 
 
 def _edge_ground(image):

@@ -1,0 +1,52 @@
+{
+  "logos": {
+    "pc": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/87/Windows_logo_-_2021.svg/500px-Windows_logo_-_2021.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Windows_logo_-_2021.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "77fe3616f90e00db6f83ea320862bc184cad1f91f11a9055eb6f4f4385c52373",
+      "processing": "small separate parts (a \u00ae) dropped; kept as a black mask the page tints in the platform's colour",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "455dfeb9ed492e820b512b976e088dc0af29f2059ed3ee3ebe11f61f31cb73c6"
+    },
+    "ps": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/00/PlayStation_logo.svg/500px-PlayStation_logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:PlayStation_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "cc9dbbb990d0f85633ee5127067f3f6d35531d4febd06d15c76d19a72dda095e",
+      "processing": "small separate parts (a \u00ae) dropped; kept as a black mask the page tints in the platform's colour",
+      "size": [
+        83,
+        64
+      ],
+      "sha256": "9e38a0608b7c1f5cb40d7af7d9ec636955b1c3743764a78f994998aa72e488a4"
+    },
+    "xbox": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f9/Xbox_one_logo.svg/500px-Xbox_one_logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Xbox_one_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "10fae488061345a58e5a7de50b253ad466e4b0308352b1cc812ee64c0ea10fbb",
+      "processing": "small separate parts (a \u00ae) dropped; kept as a black mask the page tints in the platform's colour",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "7a5b09bc277690c7b6c1ef7538e737f938d5bab7216dde24ea0a72fba66baff2"
+    },
+    "switch": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5d/Nintendo_Switch_Logo.svg/500px-Nintendo_Switch_Logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Nintendo_Switch_Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "1cd74cf4a515debcbed6e3f8b1ed1fb5ef3dee394ba204252eb99de093a1ccb3",
+      "processing": "the top 68% kept (the mark, not the wordmark); small separate parts (a \u00ae) dropped; kept as a black mask the page tints in the platform's colour",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "fee0ec0a066eed3bdae48f777a0ed08dad2977880a00afedfdc0909fe85c1faf"
+    }
+  }
+}

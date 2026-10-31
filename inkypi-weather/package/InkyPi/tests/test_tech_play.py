@@ -193,6 +193,20 @@ def test_platforms_group_into_families_in_a_fixed_order():
     assert platform_families(None) == []
 
 
+def test_every_platform_has_its_official_mark_for_the_legend():
+    import json
+
+    from plugins.tech_play import render
+
+    folder = render.ASSETS / "platforms"
+    record = json.loads((folder / "platforms.source.json").read_text(encoding="utf-8"))["logos"]
+    for family in render.PLATFORMS:
+        key = family.lower()
+        assert record[key]["licence"].startswith("Public domain")
+        mark = render._asset_icon(f"platforms/{key}", render.LEGEND_MARK)
+        assert mark is not None and mark.height == render.LEGEND_MARK
+
+
 def test_a_coming_game_is_framed_in_its_platforms_colours_side_by_side():
     from plugins.tech_play import render
 

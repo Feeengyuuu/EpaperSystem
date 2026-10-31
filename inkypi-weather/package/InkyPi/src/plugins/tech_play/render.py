@@ -84,6 +84,9 @@ STRIP_H = 20
 # (their legend replaces the card's detail). Phones, VR headsets and the like are left out.
 PLATFORM_FRAME = 2
 PLATFORMS = ("PC", "PS", "Xbox", "Switch")
+# The legend's platform marks stand this tall (odd, so the gap between Windows' panes falls on a
+# pixel of its own), this far apart.
+LEGEND_MARK, LEGEND_GAP = 13, 9
 
 
 def _rgb(value):
@@ -182,7 +185,7 @@ def _strip_art(name, max_width, height):
 def _card(canvas, box, bar, title, *, logo=None, icon=None, detail="", chip=None, legend=()):
     """A card in its own colour: a solid band across the top, a frame and header rule in that
     colour, the source's official logo (or a generated icon on the band where there is none),
-    the title and a detail (or, in its place, a ``legend`` of (label, colour) swatches)."""
+    the title and a detail (or, in its place, a ``legend`` of (platform, colour) marks)."""
     left, top, right, bottom = box
     colour = canvas.color(bar)
     canvas.draw.rounded_rectangle(box, radius=7, outline=colour, width=2)
@@ -219,13 +222,20 @@ def _card(canvas, box, bar, title, *, logo=None, icon=None, detail="", chip=None
 
 
 def _legend(canvas, right, y, entries):
-    """(label, colour) swatches, each a solid square before its label, ending at ``right``; returns
-    the width they take."""
+    """Each (platform, colour) as the platform's official mark in that colour (assets/platforms; a
+    swatch and its name without one), ending at ``right``; returns the width they take."""
     x = right
-    for index, (label, colour) in enumerate(reversed(entries)):
-        x -= canvas.text((x, y), label, 11, "muted", anchor="rm", bold=False) + 3
+    for index, (family, colour) in enumerate(reversed(entries)):
+        if index:
+            x -= LEGEND_GAP
+        mark = _asset_icon(f"platforms/{family.lower()}", LEGEND_MARK)
+        if mark is not None:
+            x -= mark.width
+            _paste(canvas, _inked(mark, canvas.color(colour)), (x, y - mark.height / 2))
+            continue
+        x -= canvas.text((x, y), family, 11, "muted", anchor="rm", bold=False) + 3
         canvas.draw.rounded_rectangle((x - 9, y - 4.5, x, y + 4.5), radius=2, fill=canvas.color(colour))
-        x -= 9 + (8 if index < len(entries) - 1 else 0)
+        x -= 9
     return right - x
 
 
