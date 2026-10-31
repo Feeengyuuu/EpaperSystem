@@ -61,11 +61,12 @@ def cut_ground(logo, tolerance=30, least=0.04):
     return mark.crop(alpha.getbbox())
 
 
-def peel_plate(mark, tolerance=30, ring_share=0.85, least=0.04):
+def peel_plate(mark, tolerance=30, ring_share=0.85, least=0.04, solid=0.55):
     """A cut-out logo (RGBA) without the plate its letters sit on (Valve's white box round its red
-    letters): when at least ``ring_share`` of its outline is one colour, that colour is cut away from
-    the outline in, as long as at least ``least`` of the logo is left (a mark all of one colour
-    stays as it is). Cropped to what is left."""
+    letters): when at least ``ring_share`` of its outline is one colour, and that colour fills at
+    least ``solid`` of a frame spanning the whole logo, it is cut away from the outline in, as long
+    as at least ``least`` of the logo is left (a mark all of one colour stays as it is). Cropped to
+    what is left."""
     rgba = mark.convert("RGBA")
     width, height = rgba.size
     pixels = rgba.load()
@@ -102,6 +103,13 @@ def peel_plate(mark, tolerance=30, ring_share=0.85, least=0.04):
             if point not in plate and visible(*point) and near(point):
                 plate.add(point)
                 stack.append(point)
+    # A plate is a solid frame round the whole logo (Valve's box), not its own letters drawn in
+    # that colour (Eternity's white ET, PUBG's white letters on their black ground).
+    xs, ys = [x for x, _y in plate], [y for _x, y in plate]
+    spans = (max(xs) - min(xs) + 1) * (max(ys) - min(ys) + 1)
+    whole = (min(x for x, _y in shown), min(y for _x, y in shown), max(x for x, _y in shown), max(y for _x, y in shown))
+    if len(plate) < spans * solid or any(abs(a - b) > 2 for a, b in zip((min(xs), min(ys), max(xs), max(ys)), whole)):
+        return rgba
     # The plate's blend into its letters (their antialiased rims) goes with it: two pixels in, while
     # still well nearer the plate's colour than the letters'.
     for _step in range(2):
@@ -119,6 +127,27 @@ def peel_plate(mark, tolerance=30, ring_share=0.85, least=0.04):
                 pixels[x, y] = (*pixels[x, y][:3], 0)
     box = rgba.getchannel("A").point(lambda value: 255 if value > 16 else 0).getbbox()
     return rgba.crop(box) if box else rgba
+
+
+def legible(mark, least=25, lowest=7, specks=0.2, speck=3):
+    """Whether a cut-out logo still reads at the size it is shown: at least ``least`` solid pixels,
+    ``lowest`` pixels tall, and no more than ``specks`` of it in loose bits of ``speck`` pixels or
+    fewer (what fine lettering crumbles into)."""
+    from PIL import ImageDraw
+
+    solid = mark.getchannel("A").point(lambda value: 255 if value > 128 else 0)
+    count = solid.histogram()[255]
+    if count < least or mark.height < lowest:
+        return False
+    pixels, loose, label = solid.load(), 0, 0
+    for y in range(solid.height):
+        for x in range(solid.width):
+            if pixels[x, y] == 255 and label < 250:
+                label += 1
+                ImageDraw.floodfill(solid, (x, y), label)
+    sizes = solid.histogram()
+    loose = sum(sizes[value] for value in range(1, label + 1) if sizes[value] <= speck)
+    return loose <= count * specks
 
 
 def developer_clans(store_items):

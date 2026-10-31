@@ -287,12 +287,15 @@ class LiveOverviewMixin:
         """The studio's logo (its Steam avatar) at ``xy``; returns its width. Off its avatar's flat
         ground it stands STUDIO_CUT_H tall and up to STUDIO_CUT_W wide on the page, in its own
         colours unless they melt into the page (then in its ink); an avatar with no flat ground (a
-        photo) stays a STUDIO_MARK square with rounded corners."""
+        photo), or whose cut-out would not read at that size, stays a STUDIO_MARK square with rounded
+        corners."""
         cut = steam_studios.cut_ground(logo)
         cut = steam_studios.peel_plate(cut) if cut is not None else None
-        if cut is not None:
-            mark = _on_page(ImageOps.contain(cut, (STUDIO_CUT_W, STUDIO_CUT_H), method=Image.Resampling.LANCZOS),
-                            tuple(colors["paper"][:3]), tuple(colors["ink"][:3]))
+        shown = ImageOps.contain(cut, (STUDIO_CUT_W, STUDIO_CUT_H), method=Image.Resampling.LANCZOS) if cut else None
+        # Off its ground it must still read at this size; fine lettering that crumbles into specks
+        # keeps its published square instead.
+        if shown is not None and steam_studios.legible(shown):
+            mark = _on_page(shown, tuple(colors["paper"][:3]), tuple(colors["ink"][:3]))
             x, y = round(xy[0]), round(xy[1] + (STUDIO_MARK - mark.height) / 2)
             image.paste(mark, (x, y), mark)
             return mark.width
