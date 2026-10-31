@@ -438,7 +438,12 @@ class ScorebugKitMixin:
     def _kit_venue_logo(self, venue, size):
         """The venue's official logo fitted to ``size`` and inked for the theme's card, else None."""
         key = VENUE_LOGO_KEYS.get(re.sub(r"[^a-z0-9]", "", str(venue or "").lower()))
-        logo = self._load_local_logo(os.path.join(LOCAL_VENUE_LOGO_DIR, f"{key}.png"), size, alpha_threshold=8) if key else None
+        return self._kit_print_logo(os.path.join(LOCAL_VENUE_LOGO_DIR, f"{key}.png") if key else None, size)
+
+    def _kit_print_logo(self, path, size):
+        """A logo printed for a white ground (a venue's, a Grand Prix's) fitted to ``size`` and inked
+        for the theme's card, else None."""
+        logo = self._load_local_logo(path, size, alpha_threshold=8) if path else None
         if not logo:
             return None
         # The logos are print art for a white ground, so a light card shows them as

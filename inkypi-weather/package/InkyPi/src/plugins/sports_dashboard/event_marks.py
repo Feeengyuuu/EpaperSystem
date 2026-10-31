@@ -106,14 +106,21 @@ class EventMarksMixin:
         return SportsDashboard._event_mark_file(f"f1/{circuit}.png") if circuit else None
 
     @staticmethod
+    def _f1_grand_prix_mark_path(race):
+        """The Grand Prix's name as its promoter letters it, for a circuit with no logo of its own."""
+        circuit = re.sub(r"[^a-z0-9_]", "", str((race or {}).get("circuit_id") or "").lower())
+        return SportsDashboard._event_mark_file(f"f1/gp/{circuit}.png") if circuit else None
+
+    @staticmethod
     def _f1_country_flag_path(race):
         iso = F1_COUNTRY_FLAGS.get(str((race or {}).get("country") or "").strip().lower())
         return SportsDashboard._event_mark_file(f"f1/flags/{iso}.png") if iso else None
 
     # Drawing -------------------------------------------------------------------
 
-    def _draw_event_mark(self, image, path, box, align="center", line_art=False):
-        """Fit a mark into box; returns the drawn box or None.
+    def _draw_event_mark(self, image, path, box, align="center", line_art=False, keep_ground=False):
+        """Fit a mark into box; returns the drawn box or None. A flag keeps its ground (``keep_ground``):
+        Japan's white field is the flag, not a background to clear.
 
         Line art (circuit outlines) is re-inked in the theme's ink and panel
         colours. On dark themes a colour logo gets a thin light contour that
@@ -123,7 +130,7 @@ class EventMarksMixin:
         if not path:
             return None
         x1, y1, x2, y2 = [int(value) for value in box]
-        mark = self._load_local_logo(path, (max(1, x2 - x1), max(1, y2 - y1)), alpha_threshold=8)
+        mark = self._load_local_logo(path, (max(1, x2 - x1), max(1, y2 - y1)), alpha_threshold=8, keep_ground=keep_ground)
         if not mark:
             return None
         if line_art:

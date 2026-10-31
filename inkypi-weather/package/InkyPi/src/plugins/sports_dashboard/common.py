@@ -4313,10 +4313,12 @@ class SportsDashboardCommonMixin:
         return LOCAL_BRAND_LOGO_IMAGE_LIMITS
 
     @staticmethod
-    def _load_local_logo(path, size, alpha_threshold=1):
+    def _load_local_logo(path, size, alpha_threshold=1, keep_ground=False):
+        """A local logo fitted to ``size``; an opaque one's flat light corner colour is cleared unless
+        ``keep_ground`` (a flag, whose white field is part of it)."""
         if not path or not os.path.exists(path):
             return None
-        cache_key = (path, tuple(size), alpha_threshold)
+        cache_key = (path, tuple(size), alpha_threshold) + (("ground",) if keep_ground else ())
         if cache_key in TEAM_LOGO_CACHE:
             cached = TEAM_LOGO_CACHE[cache_key]
             record_asset_metric("memory_hits" if cached is not None else "negative_hits")
@@ -4325,7 +4327,7 @@ class SportsDashboardCommonMixin:
             record_asset_metric("local_decodes")
             limits = SportsDashboard._local_logo_image_limits(path)
             with closing(safe_open_image(path, limits=limits)) as source:
-                logo = SportsDashboard._logo_with_transparent_background(source)
+                logo = source.convert("RGBA") if keep_ground else SportsDashboard._logo_with_transparent_background(source)
             try:
                 if alpha_threshold > 1:
                     with closing(logo.getchannel("A")) as alpha:

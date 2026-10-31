@@ -1180,10 +1180,27 @@ def test_f1_band_shows_the_circuits_own_logo_in_place_of_its_official_name(boxes
     drawn = image.crop((name_end + 6, 0, name_end + 6 + logo.width, F1_CIRCUIT_LOGO_HEIGHT)).get_flattened_data()
     assert sum(pixel != DAY_COLORS["panel"] for pixel in drawn) > 50
 
+    # A street circuit without a logo of its own shows its Grand Prix's lettered name instead.
     boxes.clear()
     race = {"circuit_id": "albert_park", "circuit_name": "Albert Park Grand Prix Circuit"}
     plugin._draw_f1_circuit_facts(image, ImageDraw.Draw(image), (0, 0, 420, 30), race, F1_CIRCUITS["albert_park"], None)
-    assert "Albert Park Grand Prix Circuit" in [text for _box, text, _font in boxes]
+    assert "Albert Park Grand Prix Circuit" not in [text for _box, text, _font in boxes]
+    assert SportsDashboard._f1_grand_prix_mark_path(race).endswith("albert_park.png")
+    # With neither, the official name stays.
+    boxes.clear()
+    race = {"circuit_id": "bahrain", "circuit_name": "Bahrain International Circuit"}
+    plugin._draw_f1_circuit_facts(image, ImageDraw.Draw(image), (0, 0, 420, 30), race, F1_CIRCUITS["bahrain"], None)
+    assert "Bahrain International Circuit" in [text for _box, text, _font in boxes]
+
+
+def test_f1_flags_keep_their_white_fields():
+    plugin = _plugin()
+    image = Image.new("RGB", (80, 50), (20, 24, 32))
+    path = SportsDashboard._f1_country_flag_path({"country": "Japan"})
+    drawn = plugin._draw_event_mark(image, path, (0, 0, 48, 34), keep_ground=True)
+    # The whole 3:2 flag, its white field included, not the red disc alone.
+    assert drawn is not None and abs((drawn[2] - drawn[0]) / (drawn[3] - drawn[1]) - 1.5) < 0.1
+    assert min(image.getpixel((drawn[0] + 2, drawn[1] + 2))) > 230
 
 
 def _f1_order_cars(width, rows):
@@ -1440,9 +1457,9 @@ def test_layouts_draw_their_competition_marks(monkeypatch):
     drawn = []
     original = SportsDashboard._draw_event_mark
 
-    def capture(self, image, path, box, align="center", line_art=False):
+    def capture(self, image, path, box, align="center", line_art=False, **kwargs):
         drawn.append(Path(path).name if path else None)
-        return original(self, image, path, box, align=align, line_art=line_art)
+        return original(self, image, path, box, align=align, line_art=line_art, **kwargs)
 
     monkeypatch.setattr(SportsDashboard, "_draw_event_mark", capture)
     plugin = _plugin()

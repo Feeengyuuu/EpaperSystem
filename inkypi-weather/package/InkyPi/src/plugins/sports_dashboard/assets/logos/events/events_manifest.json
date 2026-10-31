@@ -1,5 +1,5 @@
 {
-  "note": "Competition marks and F1 circuit outlines, trimmed and downsized; drawn from local files only.",
+  "note": "Competition marks and F1 circuit outlines, trimmed and downsized; drawn from local files only; f1/gp: the Grand Prix's name cut from its promoter's official lockup (no Formula 1 mark, title sponsor or year), white lettering set dark, for circuits without a logo of their own.",
   "assets": {
     "mlb/2026_alcs.png": {
       "source_url": "https://content.sportslogos.net/logos/53/482/full/-alcs-logo-primary-2026-48294262026.png",
@@ -602,6 +602,51 @@
       "runtime_dimensions": [
         220,
         135
+      ]
+    },
+    "f1/gp/vegas.png": {
+      "source_url": "https://www.f1lasvegasgp.com/app/uploads/2026/03/logo-2026.png",
+      "source_sha256": "f1e99991eab7a12386f243bb1386915bff7629ef415c74908fee6dd7f9b99cd2",
+      "runtime_sha256": "ed636e6d20305bad0b709ce22e6aa94bab7312e00a0e47b24cc5548bd24b9ff9",
+      "runtime_dimensions": [
+        300,
+        17
+      ]
+    },
+    "f1/gp/marina_bay.png": {
+      "source_url": "https://storage.singaporegp.sg//web/logos/2027-sgp-logo.svg",
+      "source_sha256": "5b2076e5ce5942054c2c59822b19d862f93d7e7c777086fecef291e6c7990422",
+      "runtime_sha256": "a9e53ece9ea2c1256549cc6d7f6423db311bf945b814ccc23767b6c5e2bb80ea",
+      "runtime_dimensions": [
+        300,
+        17
+      ]
+    },
+    "f1/gp/albert_park.png": {
+      "source_url": "https://www.grandprix.com.au/resources/v1.5.4/i/elements/agpc-logo.webp",
+      "source_sha256": "71fa2386ebb4a09bfa915ee3e47095f4aa2cd20e3844077887bb9a0b83a1d59d",
+      "runtime_sha256": "ab62bcf586d017cc6eadbc5d71f12dde7c8fcd76a4a10cba3089f937be83d0e5",
+      "runtime_dimensions": [
+        300,
+        33
+      ]
+    },
+    "f1/gp/baku.png": {
+      "source_url": "https://www.bakucitycircuit.com/_nuxt/logo-horizontal.C9kwvVMW.svg",
+      "source_sha256": "e1633cc8786a8f88ca0ff45159b655e49d700c5bd2140b2376064507231c3a84",
+      "runtime_sha256": "21f4060ad30c0b27832681e3a5b270630e3bf2f4c5b2edcdc987676c1803040a",
+      "runtime_dimensions": [
+        300,
+        24
+      ]
+    },
+    "f1/gp/villeneuve.png": {
+      "source_url": "https://gpcanada.ca/wp-content/uploads/2026/09/2027_f1_etg_canada_sponsor_podium_positive.png",
+      "source_sha256": "eece7eeaaaafe8cedb81aadfbfa65b156a841094605784fe5fd55fee8da60355",
+      "runtime_sha256": "a6a8ca001c310ec3f46646e845d0d14781b075b4ee368a6b25be570d6cb26db5",
+      "runtime_dimensions": [
+        207,
+        48
       ]
     }
   }

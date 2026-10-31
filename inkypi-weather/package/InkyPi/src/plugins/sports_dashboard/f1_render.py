@@ -31,6 +31,8 @@ F1_BAND_HEIGHT = 52
 F1_TIMELINE_HEIGHT = 50
 # A circuit's own logo stands this tall in place of its official name on the race band.
 F1_CIRCUIT_LOGO_HEIGHT = 15
+# A wide one may come out shorter to fit the line, down to this (a one-line Grand Prix name still reads).
+F1_CIRCUIT_LOGO_MIN_HEIGHT = 7
 F1_ROW_HEIGHT = 15
 F1_TEAM_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "f1_teams")
 F1_GRID_DIR = os.path.join(LOCAL_DECOR_DIR, "f1_grid")
@@ -216,7 +218,8 @@ class F1RenderMixin:
         paint_card_backdrop(image, card_backdrop_box(x1, y1, x2, y2), "motorsport", COLORS["panel"])
         # The host flag identifies the Grand Prix, as on F1's own race cards;
         # keep its proportions and outline it so white fields stay visible.
-        flag = self._draw_event_mark(image, SportsDashboard._f1_country_flag_path(race), (x1 + 14, y1 + 9, x1 + 62, y2 - 9), align="center")
+        flag = self._draw_event_mark(image, SportsDashboard._f1_country_flag_path(race), (x1 + 14, y1 + 9, x1 + 62, y2 - 9), align="center",
+                                     keep_ground=True)
         if flag:
             draw.rectangle((flag[0] - 1, flag[1] - 1, flag[2], flag[3]), outline=COLORS["border"], width=1)
             badge = (x1 + 14, y1 + 8, flag[2], y2 - 9)
@@ -499,7 +502,8 @@ class F1RenderMixin:
         x1, y1, x2 = box
         draw.rectangle((x1, y1 + 2, x1 + 8, y1 + 17), fill=COLORS[spec.accent], outline=COLORS["border"], width=1)
         x = x1 + 13
-        flag = self._draw_event_mark(image, SportsDashboard._f1_country_flag_path(race), (x, y1 + 4, x + 21, y1 + 16), align="left")
+        flag = self._draw_event_mark(image, SportsDashboard._f1_country_flag_path(race), (x, y1 + 4, x + 21, y1 + 16), align="left",
+                                     keep_ground=True)
         if flag:
             draw.rectangle((flag[0] - 1, flag[1] - 1, flag[2], flag[3]), outline=COLORS["border"], width=1)
             x = flag[2] + 5
@@ -521,7 +525,7 @@ class F1RenderMixin:
 
     def _draw_f1_circuit_facts(self, image, draw, box, race, facts, flag):
         """Under the Grand Prix: a chequered flag with the circuit's Chinese name and its own logo
-        (else its official name), then a pin and the city, the lap's length, the race's laps and
+        (else its Grand Prix's lettered name, else its official name), then a pin and the city, the lap's length, the race's laps and
         the round; returns where the words end."""
         x1, y1, x2, _y2 = [int(value) for value in box]
         circuit, city, length, laps = facts
@@ -532,11 +536,14 @@ class F1RenderMixin:
         self._draw_text_in_box(draw, (x, y1, x2, y1 + 12), circuit, circuit_font, COLORS["text"])
         x += self._text_width(draw, circuit, circuit_font) + 6
         official = str(race.get("circuit_name") or "")
-        # The circuit's own logo in place of its official name, where it has one and it still reads.
-        logo = self._kit_venue_logo(
-            unicodedata.normalize("NFKD", official).encode("ascii", "ignore").decode(), (x2 - x, F1_CIRCUIT_LOGO_HEIGHT)
-        ) if official and x2 - x > 40 else None
-        if logo is not None and logo.height >= F1_CIRCUIT_LOGO_HEIGHT - 4:
+        # The circuit's own logo in place of its official name (else its Grand Prix's lettered name),
+        # where there is one and it still reads.
+        logo = None
+        if official and x2 - x > 40:
+            size = (x2 - x, F1_CIRCUIT_LOGO_HEIGHT)
+            logo = (self._kit_venue_logo(unicodedata.normalize("NFKD", official).encode("ascii", "ignore").decode(), size)
+                    or self._kit_print_logo(SportsDashboard._f1_grand_prix_mark_path(race), size))
+        if logo is not None and logo.height >= F1_CIRCUIT_LOGO_MIN_HEIGHT:
             image.paste(logo, (x, y1 + 6 - logo.height // 2), logo)
             official_end = x + logo.width
         elif official and x2 - x > 40:
