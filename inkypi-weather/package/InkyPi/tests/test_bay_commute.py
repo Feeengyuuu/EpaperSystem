@@ -495,6 +495,14 @@ def test_bart_rows_lead_from_destination_to_times_along_the_line_level_with_the_
     bullet = [row for row in range(y - 6, y + 16)
               if any(image.getpixel((column, row)) != image.getpixel((505, row)) for column in range(512, 524))]
     assert abs((min(bullet) + max(bullet)) / 2 - (y + 4)) <= 1
+    # The station's stop ring before its name shares its outline between the lines calling there.
+    name_x, name_y, _width = rows["Warm Springs"]
+    ring = image.crop((name_x - 16, name_y - 4, name_x - 2, name_y + 13)).get_flattened_data()
+
+    def near(colour):
+        return any(sum(abs(a - b) for a, b in zip(pixel, colour)) < 30 for pixel in ring)
+
+    assert near((0xff, 0x99, 0x33)) and near(green)
 
 
 def test_bart_rows_are_set_in_bart_typeface():

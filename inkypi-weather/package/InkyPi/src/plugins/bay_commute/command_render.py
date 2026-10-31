@@ -36,8 +36,10 @@ CHART = (536, 261, 782, 344)
 BUOY_Y = 369
 BART_Y = 391
 BART_ROWS, BART_ROW_STEP = 3, 14
-# A destination's leader to its times is drawn only with at least this much room (px).
+# A destination's leader to its times is drawn only with at least this much room (px); the
+# station's stop ring before its name is this wide.
 BART_LEADER_MIN = 14
+STATION_RING = 12
 # The column (and its divider) end here, above the footer rule.
 BART_BOTTOM = 448
 PLACE_MARKS = {"san jose": ("san-jose.png", 31, ""),
@@ -424,9 +426,12 @@ def bart(page, payload, now):
     data = source.get("data") or {}
     page.rule((512, BART_Y - 6, 784, BART_Y - 6))
     page.logo("bart", 512, BART_Y - 1, 14)
-    # "Warm Springs/South Fremont" reads as its first name, set like BART sets it.
+    # "Warm Springs/South Fremont" reads as its first name, set like BART sets it, after its stop
+    # ring in the colours of the lines that call there.
     name = str(data.get("station") or "BART").split("/")[0].strip()
-    page.text((538, BART_Y - 1), name, 13, role="bart", width=170)
+    colours = list(dict.fromkeys(line["colour"] for line in data.get("lines") or [] if line.get("colour")))
+    name_x = 538 + (station_ring(page, 538, BART_Y + 4, colours) + 4 if colours else 0)
+    page.text((name_x, BART_Y - 1), name, 13, role="bart", width=170)
     note = "缓存" if source.get("state") == "stale_cache" else "实时发车"
     page.text((784, BART_Y + 1), note, 10, "muted", align="right", bold=False)
     lines = coming_trains(data, now)[:BART_ROWS]
@@ -461,6 +466,24 @@ def bart(page, payload, now):
             page.draw.line((start, middle, stop - 3, middle), fill=line["colour"], width=2)
             page.draw.ellipse((stop - 4, middle - 3, stop + 2, middle + 3), fill=page.palette["paper"],
                               outline=line["colour"], width=2)
+
+
+def station_ring(page, x, middle, colours):
+    """A station's mark as BART's map marks a stop, at x and centred on ``middle``: a ring on the
+    paper whose outline the lines that call there share evenly, clockwise from the top (one line,
+    one colour all round), drawn at four times the size for round arcs; returns its width."""
+    scale, size = 4, STATION_RING
+    ring = Image.new("RGBA", (size * scale, size * scale), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(ring)
+    box = (0, 0, size * scale - 1, size * scale - 1)
+    draw.ellipse(box, fill=page.palette["paper"])
+    sweep = 360 / len(colours)
+    for index, colour in enumerate(colours):
+        start = -90 + index * sweep
+        draw.arc(box, start, start + sweep, fill=colour, width=3 * scale)
+    ring = ring.resize((size, size), Image.Resampling.LANCZOS)
+    page.image.paste(ring, (x, round(middle - size / 2)), ring)
+    return size
 
 
 def footer(page, payload, now):
