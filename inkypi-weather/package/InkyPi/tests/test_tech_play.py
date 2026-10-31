@@ -221,6 +221,12 @@ def test_a_coming_game_is_framed_in_its_platforms_colours_side_by_side():
     middle = render.UPCOMING_CARD[1] + render.HEADER + 4 + 23
     assert image.getpixel((left, middle)) == (0, 112, 209)
     assert image.getpixel((left + width, middle)) == (16, 124, 16)
+    # Its date row ends in the two platforms' marks, Xbox's last, in the same colours.
+    row = middle - 23 + 70
+    marks = image.crop((left + width - 40, row - 6, left + width + 1, row + 6)).get_flattened_data()
+    assert sum(pixel == (0, 112, 209) for pixel in marks) > 10
+    assert sum(pixel == (16, 124, 16) for pixel in image.crop(
+        (left + width - render.ROW_MARK, row - 6, left + width + 1, row + 6)).get_flattened_data()) > 10
 
 
 def test_a_service_links_to_its_state_by_a_live_wire_or_a_cut_one():

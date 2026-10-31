@@ -85,8 +85,9 @@ STRIP_H = 20
 PLATFORM_FRAME = 2
 PLATFORMS = ("PC", "PS", "Xbox", "Switch")
 # The legend's platform marks stand this tall (odd, so the gap between Windows' panes falls on a
-# pixel of its own), this far apart.
+# pixel of its own), this far apart; each game's own, after its date, smaller and closer.
 LEGEND_MARK, LEGEND_GAP = 13, 9
+ROW_MARK, ROW_GAP = 11, 3
 
 
 def _rgb(value):
@@ -221,6 +222,13 @@ def _card(canvas, box, bar, title, *, logo=None, icon=None, detail="", chip=None
     canvas.rule((left + 8, top + HEADER, right - 8, top + HEADER), colour)
 
 
+def _platform_mark(canvas, family, height):
+    """A platform family's official mark (assets/platforms) ``height`` px tall in the colour that
+    frames its games, or None."""
+    mark = _asset_icon(f"platforms/{family.lower()}", height)
+    return _inked(mark, canvas.color(f"platform_{family.lower()}")) if mark is not None else None
+
+
 def _legend(canvas, right, y, entries):
     """Each (platform, colour) as the platform's official mark in that colour (assets/platforms; a
     swatch and its name without one), ending at ``right``; returns the width they take."""
@@ -228,10 +236,10 @@ def _legend(canvas, right, y, entries):
     for index, (family, colour) in enumerate(reversed(entries)):
         if index:
             x -= LEGEND_GAP
-        mark = _asset_icon(f"platforms/{family.lower()}", LEGEND_MARK)
+        mark = _platform_mark(canvas, family, LEGEND_MARK)
         if mark is not None:
             x -= mark.width
-            _paste(canvas, _inked(mark, canvas.color(colour)), (x, y - mark.height / 2))
+            _paste(canvas, mark, (x, y - mark.height / 2))
             continue
         x -= canvas.text((x, y), family, 11, "muted", anchor="rm", bold=False) + 3
         canvas.draw.rounded_rectangle((x - 9, y - 4.5, x, y + 4.5), radius=2, fill=canvas.color(colour))
@@ -617,8 +625,18 @@ def _upcoming(canvas, payload, images, now):
             _paste(canvas, calendar_mark, (x, top + 63))
         else:
             draw_icon(canvas.draw, "calendar", (x, top + 64), 11, canvas.color("ink"), canvas.color("paper"))
-        # The release date in bold ink (the platforms are the picture's frame).
-        canvas.text((x + 15, top + 70), when, 12, anchor="lm", width=width - 15)
+        # The release date in bold ink, then the game's platforms by their marks at the row's right
+        # end; when they leave too little room, the date goes without its weekday.
+        marks = [mark for mark in (_platform_mark(canvas, family, ROW_MARK) for family in families[index]) if mark]
+        marks_width = sum(mark.width for mark in marks) + ROW_GAP * max(0, len(marks) - 1)
+        room = width - 15 - (marks_width + 5 if marks else 0)
+        if stamp and canvas.width(when, 12) > room:
+            when = f"{stamp.astimezone(now.tzinfo):%m/%d}"
+        canvas.text((x + 15, top + 70), when, 12, anchor="lm", width=room)
+        mark_x = x + width - marks_width
+        for mark in marks:
+            _paste(canvas, mark, (mark_x, top + 70 - mark.height / 2))
+            mark_x += mark.width + ROW_GAP
 
 
 def _initials(name):
