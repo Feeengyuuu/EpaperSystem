@@ -26,6 +26,8 @@ SECTION_TOP = 62
 ROWS_TOP = 90
 COVER = (112, 52)
 COVER_RADIUS = 6
+# A studio's logo leads a row's second line this wide.
+STUDIO_MARK = 13
 METRIC_W = 112
 NAME_SIZES = (17, 16, 15, 14, 13, 12, 11)
 # The top three ranks wear medals; the rest an ink disc.
@@ -251,7 +253,11 @@ class LiveOverviewMixin:
         secondary = str(game.get("secondary_name") or "")
         developer = str(store.get("developer") or "")
         genres = " / ".join(store.get("genres") or [])
-        facts = " · ".join(part for part in ((secondary, genres, developer) if secondary else (developer, genres)) if part)
+        # With its studio's logo, line two starts with the studio the logo stands for.
+        studio = self._decode_data_image(store.get("studio_logo")) if developer else None
+        order = (developer, secondary, genres) if studio is not None else (
+            (secondary, genres, developer) if secondary else (developer, genres))
+        facts = " · ".join(part for part in order if part)
         name_y, detail_y = (top + 3, top + 41) if facts else (top + 11, top + 35)
         # The name runs on to the figure beside it, smaller before it is cut short.
         name_width = right - hero_w - 10 - text_x
@@ -261,9 +267,24 @@ class LiveOverviewMixin:
         draw.text((text_x, name_y + (17 - name_font.size) // 2), self._overview_clip(draw, name, name_font, name_width),
                   font=name_font, fill=colors["ink"])
         if facts:
-            draw.text((text_x, top + 24), self._overview_clip(draw, facts, self._font(10), text_right - text_x),
+            facts_x = text_x
+            if studio is not None:
+                facts_x += self._overview_studio_logo(image, (text_x, top + 23), studio) + 4
+            draw.text((facts_x, top + 24), self._overview_clip(draw, facts, self._font(10), text_right - facts_x),
                       font=self._font(10), fill=colors["muted"])
         self._overview_detail_line(image, draw, (text_x, detail_y, text_right), game, store, trending, colors)
+
+    @staticmethod
+    def _overview_studio_logo(image, xy, logo):
+        """The studio's logo (its Steam avatar, a square) at ``xy``, STUDIO_MARK wide with rounded
+        corners; returns its width."""
+        size = STUDIO_MARK
+        mark = ImageOps.fit(logo.convert("RGB"), (size * 4, size * 4), method=Image.Resampling.LANCZOS)
+        mask = Image.new("L", mark.size, 0)
+        ImageDraw.Draw(mask).rounded_rectangle((0, 0, size * 4 - 1, size * 4 - 1), radius=10, fill=255)
+        image.paste(mark.resize((size, size), Image.Resampling.LANCZOS), (round(xy[0]), round(xy[1])),
+                    mask.resize((size, size), Image.Resampling.LANCZOS))
+        return size
 
     def _overview_cover(self, image, draw, xy, game, colors):
         """The store art with rounded corners on a hairline shadow."""

@@ -18,6 +18,7 @@ from plugins.steam_daily_art.presentation_bank import (
     settings_key,
     settings_fingerprint,
 )
+from plugins.base_plugin import steam_studios
 from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
 from utils.app_utils import get_font
 from utils.safe_image import ImageLimits, safe_open_image
@@ -64,12 +65,11 @@ STEAM_TAG_LIST_URL = "https://api.steampowered.com/IStoreService/GetTagList/v1/"
 SHELF_LANGUAGE = "schinese"
 # Store facts cached under an older shape are fetched again.
 SHELF_DETAILS_VERSION = 3
-# A studio's logo: its creator clan's Steam avatar, from the clan's public profile.
-STEAM_CLAN_XML_URL = "https://steamcommunity.com/gid/{gid}/memberslistxml/?xml=1"
-CLAN_STEAMID_BASE = 103582791429521408
-STUDIO_AVATAR_RE = re.compile(
-    r"<avatarFull>\s*(?:<!\[CDATA\[)?\s*(https://avatars\.(?:[a-z]+\.)?steamstatic\.com/[0-9a-f]{40}_full\.jpg)"
-)
+# A studio's logo: its creator clan's Steam avatar, from the clan's public profile (shared with
+# Steam Charts, plugins.base_plugin.steam_studios).
+STEAM_CLAN_XML_URL = steam_studios.CLAN_XML_URL
+CLAN_STEAMID_BASE = steam_studios.CLAN_STEAMID_BASE
+STUDIO_AVATAR_RE = steam_studios.AVATAR_RE
 STUDIO_LOGO_TTL = 30 * 24 * 3600
 STUDIO_LOGO_SIZE = 48
 MAX_STUDIO_PAGE_BYTES = 512 * 1024

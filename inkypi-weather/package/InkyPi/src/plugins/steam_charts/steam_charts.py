@@ -1,5 +1,6 @@
 from utils.resource_cache import cached_resource_image, prune_resource_images
 import hashlib
+from plugins.base_plugin import steam_studios
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
 from plugins.steam_charts.overview_page import LiveOverviewMixin
@@ -79,6 +80,14 @@ STEAM_CAPSULE_URL = "https://cdn.akamai.steamstatic.com/steam/apps/{appid}/capsu
 STEAM_HEADER_URL = "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/{appid}/header.jpg"
 STEAM_CAPSULE_TIMEOUT = 15
 STEAM_CAPSULE_CACHE_SIZE = 128
+# Studio logos (the developer's Steam creator clan avatar, plugins.base_plugin.steam_studios): the
+# clans kept a week and each logo a month in the media cache's state file, at most this many new
+# logos a refresh, kept this size; the newest MAX_STUDIOS of each.
+STUDIO_STATE_FILE = "studios.json"
+STUDIO_CLAN_TTL, STUDIO_LOGO_TTL = 7 * 24 * 3600, 30 * 24 * 3600
+MAX_NEW_STUDIO_LOGOS, MAX_STUDIOS = 2, 200
+STUDIO_LOGO_SIZE = 48
+STUDIO_PAGE_BYTES = 512 * 1024
 STEAM_STORE_TIMEOUT = 20
 STEAM_STORE_METADATA_TTL = 6 * 3600
 STEAM_PRIMARY_GAME_LANGUAGE = "schinese"
@@ -1320,6 +1329,93 @@ class SteamCharts(LiveOverviewMixin, BasePlugin):
                 continue
 
             game["image"] = self._resolve_cover_image(app_id, primary, secondary)
+        if include_images:
+            self._attach_studio_logos(games)
+
+    def _attach_studio_logos(self, games):
+        """Each game's studio logo (store["studio_logo"], a data URI) where its developer's Steam
+        creator clan has an avatar: the clans asked for in one batch a week, each logo kept a month,
+        at most MAX_NEW_STUDIO_LOGOS new ones a refresh (Steam's community pages rate-limit)."""
+        try:
+            state_path = self.cache_dir(leaf="media") / STUDIO_STATE_FILE
+            state = self._read_studio_state(state_path)
+            clans = self._developer_clans(games, state)
+            budget = MAX_NEW_STUDIO_LOGOS
+            for game in games:
+                clan = clans.get(str(game.get("app_id")))
+                if clan and isinstance(game.get("store"), dict):
+                    logo, budget = self._studio_logo(clan, state, budget)
+                    if logo:
+                        game["store"]["studio_logo"] = logo
+            atomic_write_json(state_path, state)
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("Steam studio logos unavailable: %s", type(exc).__name__)
+
+    @staticmethod
+    def _read_studio_state(path):
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {"clans": {}, "logos": {}}
+        return {key: dict(state.get(key) or {}) for key in ("clans", "logos")} if isinstance(state, dict) else {
+            "clans": {}, "logos": {}}
+
+    def _developer_clans(self, games, state):
+        """{app id: creator clan} for these games, from GetItems for those not asked within a week."""
+        now = time.time()
+        known = state["clans"]
+        appids = [str(game.get("app_id")) for game in games if str(game.get("app_id") or "").isdecimal()]
+        stale = [appid for appid in appids if now - float((known.get(appid) or {}).get("at") or 0) > STUDIO_CLAN_TTL]
+        if stale:
+            query = {"ids": [{"appid": int(appid)} for appid in stale],
+                     "context": {"language": STEAM_PRIMARY_GAME_LANGUAGE, "country_code": "US"},
+                     "data_request": {"include_basic_info": True}}
+            payload = get_http_client().request_json(
+                "GET", steam_studios.STORE_ITEMS_URL,
+                params={"input_json": json.dumps(query, separators=(",", ":"))}, timeout=STEAM_STORE_TIMEOUT,
+            ).data
+            response = payload.get("response") if isinstance(payload, dict) else None
+            found = steam_studios.developer_clans((response or {}).get("store_items"))
+            for appid in stale:
+                known[appid] = {"clan": found.get(appid, ""), "at": now}
+            state["clans"] = dict(sorted(known.items(), key=lambda pair: float(pair[1].get("at") or 0))[-MAX_STUDIOS:])
+        return {appid: state["clans"][appid]["clan"] for appid in appids if (state["clans"].get(appid) or {}).get("clan")}
+
+    def _studio_logo(self, clan, state, budget):
+        """(The studio's logo as a data URI or "", the new-fetch budget left). A logo is kept a month;
+        a failed fetch keeps whatever was kept and stops this refresh's fetching."""
+        path = self.cache_dir(leaf="media") / f"studio_{clan}.png"
+        entry = state["logos"].get(clan) or {}
+        if entry and time.time() - float(entry.get("at") or 0) < STUDIO_LOGO_TTL or budget <= 0:
+            return (self._png_data_uri(path) if (entry.get("url") or not entry) and path.is_file() else ""), budget
+        try:
+            page = get_http_client().request_bytes(
+                "GET", steam_studios.clan_page_url(clan), timeout=STEAM_STORE_TIMEOUT, max_bytes=STUDIO_PAGE_BYTES,
+            ).data.decode("utf-8", "replace")
+            url = steam_studios.avatar_url(page)
+            if url:
+                payload = get_http_client().request_bytes(
+                    "GET", url, timeout=STEAM_CAPSULE_TIMEOUT, max_bytes=STEAM_CAPSULE_IMAGE_LIMITS.max_bytes,
+                ).data
+                logo = safe_open_image(payload, limits=STEAM_CAPSULE_IMAGE_LIMITS).convert("RGB")
+                logo.resize((STUDIO_LOGO_SIZE, STUDIO_LOGO_SIZE), Image.Resampling.LANCZOS).save(path)
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("Steam studio logo lookup failed: %s", type(exc).__name__)
+            return (self._png_data_uri(path) if path.is_file() else ""), 0
+        state["logos"][clan] = {"at": time.time(), "url": url}
+        state["logos"] = dict(sorted(state["logos"].items(), key=lambda pair: float(pair[1].get("at") or 0))[-MAX_STUDIOS:])
+        return (self._png_data_uri(path) if url else ""), budget - 1
+
+    @staticmethod
+    def _png_data_uri(path):
+        try:
+            return "data:image/png;base64," + base64.b64encode(path.read_bytes()).decode("ascii")
+        except OSError:
+            return ""
 
     @staticmethod
     def _store_facts(details):

@@ -147,6 +147,8 @@ def test_region_fallback_supplies_localized_name_cover_and_caches_without_warnin
     monkeypatch.setattr(module, "get_http_client", Client)
     plugin = SteamCharts({"id": "steam_charts"})
     monkeypatch.setattr(plugin, "cache_dir", lambda **kwargs: tmp_path)
+    # The studio logos ask Steam's other services; their own tests cover them.
+    monkeypatch.setattr(plugin, "_attach_studio_logos", lambda games: None)
     for _ in range(2):
         games = [{"app_id": 2315040, "name": "Torchlight: Infinite"}]
         plugin._apply_store_metadata(games)

@@ -234,3 +234,104 @@ def test_the_header_names_steamcharts_by_its_site_icon():
     corner = [image.getpixel((x, y)) for x in range(690, 760) for y in range(8, 27)]
     assert any(green > 150 and red < 140 and blue < 110 for red, green, blue in corner)
     assert overview_page.SOURCE_ICON_PATH.is_file()
+
+
+class _Steam:
+    """Steam's store, its clan pages and its avatar CDN: what a studio logo lookup asks for."""
+
+    def __init__(self, clans, avatars, refuse=()):
+        self.clans, self.avatars, self.refuse, self.asked = clans, avatars, set(refuse), []
+
+    def request_json(self, method, url, params=None, **_kwargs):
+        query = json.loads(params["input_json"])
+        self.asked.append("items")
+        items = [{"appid": entry["appid"], "basic_info": {"developers": [
+            {"name": "Studio", "creator_clan_account_id": self.clans.get(entry["appid"], 0)}]}}
+            for entry in query["ids"]]
+        return type("R", (), {"data": {"response": {"store_items": items}}})()
+
+    def request_bytes(self, method, url, **_kwargs):
+        from io import BytesIO
+
+        from PIL import Image
+
+        if "memberslistxml" in url:
+            clan = str(int(url.split("/gid/")[1].split("/")[0]) - 103582791429521408)
+            self.asked.append(f"clan {clan}")
+            if clan in self.refuse:
+                raise RuntimeError("429")
+            avatar = self.avatars.get(clan, "")
+            page = f"<avatarFull><![CDATA[{avatar}]]></avatarFull>" if avatar else "<memberList/>"
+            return type("R", (), {"data": page.encode()})()
+        self.asked.append("avatar")
+        buffer = BytesIO()
+        Image.new("RGB", (184, 184), (200, 30, 30)).save(buffer, format="JPEG")
+        return type("R", (), {"data": buffer.getvalue()})()
+
+
+def test_rows_get_their_studios_logos_a_few_new_ones_a_refresh_and_kept(tmp_path, monkeypatch):
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path))
+    avatar = "https://avatars.fastly.steamstatic.com/" + "a" * 40 + "_full.jpg"
+    steam = _Steam({730: 4, 570: 4, 578080: 7, 1: 9, 2: 0}, {"4": avatar, "7": avatar, "9": ""})
+    monkeypatch.setattr("plugins.steam_charts.steam_charts.get_http_client", lambda: steam)
+    plugin = _plugin()
+
+    def games():
+        return [{"app_id": app_id, "store": {"developer": "Studio"}} for app_id in (730, 570, 578080, 1, 2)]
+
+    first = games()
+    plugin._attach_studio_logos(first)
+    # One batch for the clans; Valve's logo once for both its games, then PUBG's (two new a refresh).
+    assert steam.asked == ["items", "clan 4", "avatar", "clan 7", "avatar"]
+    assert [bool(game["store"].get("studio_logo")) for game in first] == [True, True, True, False, False]
+
+    second = games()
+    plugin._attach_studio_logos(second)
+    # The next refresh asks only for the studio still unknown (one without an avatar), then keeps all.
+    assert steam.asked[5:] == ["clan 9"]
+    assert second[0]["store"]["studio_logo"].startswith("data:image/png;base64,")
+    plugin._attach_studio_logos(games())
+    assert len(steam.asked) == 6
+
+
+def test_a_refused_studio_page_stops_the_lookups_until_the_next_refresh(tmp_path, monkeypatch):
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path))
+    steam = _Steam({730: 4, 578080: 7}, {"7": "https://avatars.steamstatic.com/" + "b" * 40 + "_full.jpg"}, refuse={"4"})
+    monkeypatch.setattr("plugins.steam_charts.steam_charts.get_http_client", lambda: steam)
+    games = [{"app_id": app_id, "store": {"developer": "Studio"}} for app_id in (730, 578080)]
+
+    _plugin()._attach_studio_logos(games)
+
+    assert steam.asked == ["items", "clan 4"]
+    assert not any(game["store"].get("studio_logo") for game in games)
+
+
+def test_a_rows_studio_logo_leads_its_second_line_with_the_studio_first(monkeypatch):
+    import base64
+    from io import BytesIO
+
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.new("RGB", (48, 48), (200, 30, 30)).save(buffer, format="PNG")
+    logo = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+    plugin = _plugin()
+    drawn = []
+    original = ImageDraw.ImageDraw.text
+
+    def capture(self, xy, text, *args, **kwargs):
+        drawn.append((str(text), xy))
+        return original(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture)
+    game = {"rank": 1, "name": "影之刃零", "secondary_name": "Phantom Blade Zero", "current_players": 321_591,
+            "peak_24h": 775_647, "spark": [1, 2, 3],
+            "store": {"genres": ["动作"], "developer": "S-GAME", "studio_logo": logo}}
+    image = plugin._render_live_overview((800, 480), [{"table_variant": "trending", "games": []},
+                                                      {"table_variant": "top_games", "games": [game]}], {}, {"mode": "day"}, "")
+
+    text, (x, y) = next(item for item in drawn if item[0].startswith("S-GAME"))
+    # The studio first, then the English name (the line is cut to the row).
+    assert text.startswith("S-GAME · Phantom")
+    # The logo stands just before it, on the same line.
+    assert image.getpixel((round(x) - overview_page.STUDIO_MARK // 2 - 4, round(y) + 6)) == (200, 30, 30)
