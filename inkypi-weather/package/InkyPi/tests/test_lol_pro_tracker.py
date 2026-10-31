@@ -895,6 +895,19 @@ def test_an_upcoming_event_without_its_own_logo_shows_its_organisers_or_a_badge(
                                   fallback=False) is None
 
 
+def test_every_won_map_has_its_games_emblem_with_its_source_recorded():
+    import hashlib
+
+    assets = Path(lol_info_module.__file__).with_name("assets")
+    records = json.loads((assets / "pro_tracker_assets.json").read_text(encoding="utf-8"))
+    for map_id in bo3_stats.MAP_NAMES:
+        path = assets / "map_icons" / f"{map_id}.png"
+        assert records[f"map_icons/{map_id}.png"]["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+        with Image.open(path) as emblem:
+            assert emblem.mode == "RGBA" and max(emblem.size) <= 64 and emblem.getchannel("A").getextrema()[0] == 0
+    assert (assets / pro_render.HLTV_LOGO).is_file()
+
+
 def test_every_organiser_logo_has_its_source_recorded():
     import json as _json
 

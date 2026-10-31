@@ -81,6 +81,8 @@ PHOTO_ZOOM = 1.18
 # The win under its photo: the tag row, the opponent line, one row per map (its art chip
 # WIN_MAP_CHIP), and the rows over which the photo fades into the page above the text.
 WIN_TAG_H, WIN_HEADER_H, WIN_ROW_H, WIN_MAP_CHIP, WIN_FADE = 26, 20, 16, (24, 13), 26
+# A won map's emblem (assets/map_icons, the game's own) after its name stands this tall.
+WIN_MAP_ICON = 14
 # The LoL card: the ranked form chart's axes and the tag each one's strength earns; the pro
 # corner's champion splash and dragon colours; pro results older than LOL_STAGE_DAYS (and a
 # next series further off) count as out of season.
@@ -112,6 +114,8 @@ MATCH_FACES = {"score": "BarlowCondensed-Bold.ttf", "figure": "BarlowCondensed-S
 CS2_RATING_DIGITS, CS2_RATING_AT = 35, (620, 83)
 # HLTV's own mark leads the Top 20 board's title.
 HLTV_LOGO, BOARD_LOGO_SIZE = "hltv-logo.png", 22
+# ...and the hero's ranking line, this tall.
+HERO_HLTV_LOGO = 15
 # The CS2 page's middle carries the loadout, so its game logo keeps the band's top-left corner
 # and the bodyshot starts below it.
 TITLE_H = 42
@@ -941,11 +945,20 @@ class ProRenderMixin:
         if team_logo is not None:
             image.paste(team_logo, (x, 123), team_logo)
             team_x += 28
-        team_line = f"{player.get('team') or '无战队'} · HLTV {data.get('top20_year')} 第 {player.get('rank', '-')} 名"
-        self._text(draw, (team_x, 125), team_line, fonts["small_bold"], colors["gold"])
+        # The team, then HLTV's own mark before its ranking of the player.
+        team_text = f"{player.get('team') or '无战队'} · "
+        rank_text = f"HLTV {data.get('top20_year')} 第 {player.get('rank', '-')} 名"
+        self._text(draw, (team_x, 125), team_text, fonts["small_bold"], colors["gold"])
+        rank_x = team_x + self._text_width(draw, team_text, fonts["small_bold"])
+        hltv = self._asset_logo(HLTV_LOGO, (HERO_HLTV_LOGO, HERO_HLTV_LOGO))
+        if hltv is not None:
+            image.paste(hltv, (round(rank_x), 132 - hltv.height // 2), hltv)
+            rank_x += hltv.width + 4
+        self._text(draw, (rank_x, 125), rank_text, fonts["small_bold"], colors["gold"])
+        team_line_right = rank_x + self._text_width(draw, rank_text, fonts["small_bold"])
         # The guns of the recent loadout fill the band between the name block and the rating
         # (the generated shooter props when HLTV saw none).
-        text_right = max(name_right, team_x + self._text_width(draw, team_line, fonts["small_bold"]),
+        text_right = max(name_right, team_line_right,
                          name_x + self._text_width(draw, " · ".join(part for part in (player.get("name"), age) if part),
                                                    fonts["text"]))
         guns_box = (int(text_right) + 20, 12, 600, 146)
@@ -1559,8 +1572,17 @@ class ProRenderMixin:
             self._match_text(draw, (kd_right, middle), f"{row['kills']}-{row.get('deaths', 0)}", "figure", 13,
                              colors["muted"], anchor="rm")
         name_x = x0 + chip_w + 5
-        self._single(draw, (name_x, y), row.get("name") or row.get("english") or "", fonts["small_bold"],
-                     colors["ink"] if won else colors["muted"], kd_right - 30 - name_x, 8)
+        name = row.get("name") or row.get("english") or ""
+        name_w = kd_right - 30 - name_x
+        # The map's own icon (its emblem in the game's map picker) follows its name while there is room.
+        emblem = self._asset_logo(f"map_icons/{row.get('map')}.png", (WIN_MAP_ICON, WIN_MAP_ICON))             if row.get("map") in MAP_NAMES else None
+        if emblem is not None:
+            name_w -= WIN_MAP_ICON + 4
+        self._single(draw, (name_x, y), name, fonts["small_bold"], colors["ink"] if won else colors["muted"], name_w, 8)
+        if emblem is not None:
+            shown = self._text_width(draw, name, fonts["small_bold"])
+            icon_x = name_x + min(shown, name_w) + 4
+            image.paste(emblem, (round(icon_x), middle - emblem.height // 2), emblem)
 
     @staticmethod
     @lru_cache(maxsize=32)

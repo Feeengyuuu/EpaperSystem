@@ -184,5 +184,55 @@
     "owner": "Riot Games (LEC league logo for dark pages, lolesports.com getLeagues)",
     "sha256": "9f31aa4ca0227b2878f1f38b5c55efc8c2eb6ca4bcea68e5546e584070d093f1",
     "processing": "transparent margins trimmed, scaled to fit 96 px"
+  },
+  "map_icons/de_ancient.png": {
+    "source": "https://raw.githubusercontent.com/MurkyYT/cs2-map-icons/main/images/de_ancient.png",
+    "owner": "Valve (Counter-Strike 2 map icon from the game depot, via MurkyYT/cs2-map-icons)",
+    "sha256": "fef7fffeb1d656f246fd8b16732e377fde8c41ad89b21343a20eb28c53dcc5d5"
+  },
+  "map_icons/de_anubis.png": {
+    "source": "https://raw.githubusercontent.com/MurkyYT/cs2-map-icons/main/images/de_anubis.png",
+    "owner": "Valve (Counter-Strike 2 map icon from the game depot, via MurkyYT/cs2-map-icons)",
+    "sha256": "8418ceb58fa5a3067c1815f3e84bc09a46e65a2308d0bd070d97d39ca90ecfea"
+  },
+  "map_icons/de_cache.png": {
+    "source": "https://raw.githubusercontent.com/MurkyYT/cs2-map-icons/main/images/de_cache.png",
+    "owner": "Valve (Counter-Strike 2 map icon from the game depot, via MurkyYT/cs2-map-icons)",
+    "sha256": "119b6e229ace54450d3e19b70725c5018579a44bce8ddc9bd19e16d94e757c34"
+  },
+  "map_icons/de_dust2.png": {
+    "source": "https://raw.githubusercontent.com/MurkyYT/cs2-map-icons/main/images/de_dust2.png",
+    "owner": "Valve (Counter-Strike 2 map icon from the game depot, via MurkyYT/cs2-map-icons)",
+    "sha256": "5ae041e05b066ecfb35d8244069e710a2a653f1660b80ac78add1d99ef8dfc59"
+  },
+  "map_icons/de_inferno.png": {
+    "source": "https://raw.githubusercontent.com/MurkyYT/cs2-map-icons/main/images/de_inferno.png",
+    "owner": "Valve (Counter-Strike 2 map icon from the game depot, via MurkyYT/cs2-map-icons)",
+    "sha256": "a4e0553517f12c259c7ef233bd32ac8f5ad3e9f7dce28c8db6c4ad96abc1dd5c"
+  },
+  "map_icons/de_mirage.png": {
+    "source": "https://raw.githubusercontent.com/MurkyYT/cs2-map-icons/main/images/de_mirage.png",
+    "owner": "Valve (Counter-Strike 2 map icon from the game depot, via MurkyYT/cs2-map-icons)",
+    "sha256": "b0557156068e65faf024efc8514ab4e8d6407e56d4e2f5df283095a7dea2822b"
+  },
+  "map_icons/de_nuke.png": {
+    "source": "https://raw.githubusercontent.com/MurkyYT/cs2-map-icons/main/images/de_nuke.png",
+    "owner": "Valve (Counter-Strike 2 map icon from the game depot, via MurkyYT/cs2-map-icons)",
+    "sha256": "02d65268b598c53adbbe37d2bb07fc5f394cabb2463b654523aacf3c31716ed8"
+  },
+  "map_icons/de_overpass.png": {
+    "source": "https://raw.githubusercontent.com/MurkyYT/cs2-map-icons/main/images/de_overpass.png",
+    "owner": "Valve (Counter-Strike 2 map icon from the game depot, via MurkyYT/cs2-map-icons)",
+    "sha256": "fc4c8bc1ae827871197391ff91de2f4926748b02874840194961c0f1a601d736"
+  },
+  "map_icons/de_train.png": {
+    "source": "https://raw.githubusercontent.com/MurkyYT/cs2-map-icons/main/images/de_train.png",
+    "owner": "Valve (Counter-Strike 2 map icon from the game depot, via MurkyYT/cs2-map-icons)",
+    "sha256": "605c690e6e7e8a15f80d1ea418ef1d282127575691b7a9f89ad49738f5ea3b4f"
+  },
+  "map_icons/de_vertigo.png": {
+    "source": "https://raw.githubusercontent.com/MurkyYT/cs2-map-icons/main/images/de_vertigo.png",
+    "owner": "Valve (Counter-Strike 2 map icon from the game depot, via MurkyYT/cs2-map-icons)",
+    "sha256": "838624b79af4f9e078d6ff0b6a1ac0a3db2e0d58c6a08055f66c30910898ef43"
   }
 }
