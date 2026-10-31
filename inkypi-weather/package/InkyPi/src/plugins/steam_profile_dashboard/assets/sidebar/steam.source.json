@@ -1,0 +1,13 @@
+{
+  "steam.png": {
+    "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Steam_2016_logo_black.svg/960px-Steam_2016_logo_black.svg.png",
+    "page": "https://commons.wikimedia.org/wiki/File:Steam_2016_logo_black.svg",
+    "licence": "Public domain (Wikimedia Commons)",
+    "processing": "Steam's round mark cut from its black 2016 lockup (plugins/game_deals/assets/steam_logo.png); drawn as a mask the page tints in the caption's colour",
+    "size": [
+      64,
+      64
+    ],
+    "sha256": "092c47ca167c5c422ab858db874f1bae2dc249e98b8684b823a83164aa8db370"
+  }
+}

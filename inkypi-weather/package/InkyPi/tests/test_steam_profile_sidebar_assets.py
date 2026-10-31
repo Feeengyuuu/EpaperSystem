@@ -49,6 +49,17 @@ def test_assets_keep_their_transparency_and_are_readonly(assets, monkeypatch):
     assert [item.name for item in assets.iterdir()] == ["badges.png"]
 
 
+def test_steams_round_mark_leads_the_caption_in_its_colour():
+    import json
+
+    record = json.loads((sidebar_assets.ASSET_ROOT / "steam.source.json").read_text(encoding="utf-8"))["steam.png"]
+    assert record["licence"].startswith("Public domain")
+    mark = sidebar_assets.sidebar_asset("steam", console_renderer.STEAM_MARK)
+    assert mark is not None and mark.size == (console_renderer.STEAM_MARK,) * 2
+    # A one-colour mark: the page gives it the caption's colour.
+    assert {pixel[:3] for pixel in mark.get_flattened_data() if pixel[3] > 200} <= {(0, 0, 0)}
+
+
 def test_missing_corrupt_or_empty_artwork_safely_keeps_renderer_fallback(assets):
     (assets / "games.png").write_bytes(b"not a PNG")
     Image.new("RGBA", (20, 20)).save(assets / "friends.png")
@@ -82,9 +93,11 @@ def test_generated_assets_change_only_sidebar_and_level_stays_dynamic(monkeypatc
     monkeypatch.setattr(console_renderer, "sidebar_asset", generated)
     actual = console_renderer.render_console(plugin, data, (800, 480))
     assert set(requested) == {("games", 16), ("friends", 16), ("recent", 16), ("total", 16),
-                              ("badges", 20), ("xp", 20)}
+                              ("badges", 20), ("xp", 20), ("steam", console_renderer.STEAM_MARK)}
+    # Only the rail changes: the stats' icons, and Steam's mark before the caption under the name.
     bounds = ImageChops.difference(actual, baseline).getbbox()
-    assert bounds and bounds[2] <= 181 and bounds[1] >= 350
+    assert bounds and bounds[2] <= 181 and bounds[1] >= 212
+    assert ImageChops.difference(actual.crop((0, 226, 182, 350)), baseline.crop((0, 226, 182, 350))).getbbox() is None
     assert ImageChops.difference(actual.crop((182, 0, 800, 480)), baseline.crop((182, 0, 800, 480))).getbbox() is None
     # The rank card follows the level: another tier's border and number.
     other_level = console_renderer.render_console(plugin, dict(data, level=204), (800, 480))

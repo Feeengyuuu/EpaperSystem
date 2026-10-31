@@ -73,6 +73,8 @@ RAIL_SIZE = (181, 480)
 # The bordered plate behind the persona name and its STEAM PLAYER caption; it keeps the
 # left margin and the space above the name clear for the avatar frame.
 NAMEPLATE_BOX = (12, 175, 172, 228)
+# Steam's mark before the STEAM PLAYER caption stands this tall (the caption line's height).
+STEAM_MARK = 13
 # The hand-painted swipe under the persona name, in the same clear area.
 NAME_STROKE_BOX = (12, 175, 176, 211)
 # The ranked level card: the tier's promotion border round the level, and its ladder.
@@ -520,7 +522,14 @@ class _Console:
         persona = profile.get("personaname") or "Steam User"
         name = self._text_bitmap(persona, 147, 29, 29, WHITE, True, 1, 18, outline=TITLE_OUTLINE)
         self.text((19, 178, 166, 207), persona, prepared=name)
-        self.text((20, 212, 164, 225), "STEAM PLAYER", 10, self.c["muted"])
+        # Steam's round mark leads the caption, in the caption's colour (Steam's one-colour mark,
+        # which reads on any backdrop where its blue app icon sinks into the dark rail).
+        caption_x = 20
+        mark = sidebar_asset("steam", STEAM_MARK)
+        if mark is not None:
+            self.image.paste(Image.new("RGB", mark.size, self.c["muted"]), (caption_x, 212), mark)
+            caption_x += STEAM_MARK + 4
+        self.text((caption_x, 212, 164, 225), "STEAM PLAYER", 10, self.c["muted"])
         self.draw.line((14, 230, 167, 230), fill=self.c["border"])
         self.rank_card(data)
         owned = data.get("owned_games") or []

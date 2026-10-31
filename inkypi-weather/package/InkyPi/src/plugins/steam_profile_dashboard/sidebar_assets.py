@@ -11,13 +11,13 @@ from utils.safe_image import ImageLimits, safe_open_image
 ASSET_ROOT = Path(__file__).resolve().parent / "assets" / "sidebar"
 STROKE_ROOT = Path(__file__).resolve().parent / "assets" / "name_strokes"
 STROKE_COUNT = 4
-ASSET_NAMES = frozenset({"games", "friends", "recent", "total", "badges", "xp"})
+ASSET_NAMES = frozenset({"games", "friends", "recent", "total", "badges", "xp", "steam"})
 _LIMITS = ImageLimits(max_bytes=8 * 1024 * 1024, max_width=2048,
                       max_height=2048, max_pixels=4_194_304,
                       allowed_formats=frozenset({"PNG"}))
 
 
-@lru_cache(maxsize=6)
+@lru_cache(maxsize=7)
 def _source(name):
     if name not in ASSET_NAMES:
         return None
