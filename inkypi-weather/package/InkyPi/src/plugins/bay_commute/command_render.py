@@ -36,6 +36,8 @@ CHART = (536, 261, 782, 344)
 BUOY_Y = 369
 BART_Y = 391
 BART_ROWS, BART_ROW_STEP = 3, 14
+# A destination's leader to its times is drawn only with at least this much room (px).
+BART_LEADER_MIN = 14
 # The column (and its divider) end here, above the footer rule.
 BART_BOTTOM = 448
 PLACE_MARKS = {"san jose": ("san-jose.png", 31, ""),
@@ -437,18 +439,28 @@ def bart(page, payload, now):
     step = (band_bottom - band_top) / len(lines)
     for index, line in enumerate(lines):
         y = round(band_top + index * step + (step - BART_ROW_STEP) / 2)
+        # The bullet, the leader and the stop ring are all level with the middle of the row's
+        # capitals and figures (Hind's are 8 px tall at this size).
+        middle = y + 4
         # The line's lettered bullet, as BART prints it (its colours stay by night); a dot in the
         # line's colour for one without (the airport shuttle).
         bullet = source_logo(f"bart-{line['line']}", 12) if line.get("line") else None
         if bullet is not None:
-            page.image.paste(bullet, (512, y + 1), bullet)
+            page.image.paste(bullet, (512, middle - bullet.height // 2), bullet)
             bullet.close()
         else:
-            page.draw.ellipse((514, y + 3, 522, y + 11), fill=line["colour"])
+            page.draw.ellipse((514, middle - 4, 522, middle + 4), fill=line["colour"])
         times = " · ".join(stamp.astimezone(PACIFIC).strftime("%H:%M") for stamp in line["departures"][:3])
         times_w = page.draw.textlength(times, font=font(12, "bart"))
         page.text((784, y), times, 12, "blue", role="bart", align="right")
-        page.text((529, y), line["destination"], 12, role="bart", width=272 - 31 - times_w, bold=False)
+        name_w = page.text((529, y), line["destination"], 12, role="bart", width=272 - 31 - times_w, bold=False)
+        # The destination leads to its trains along its line, drawn as BART's map draws a line:
+        # a stripe in the line's colour into a stop ring before the times.
+        start, stop = 529 + name_w + 6, 784 - times_w - 7
+        if stop - start >= BART_LEADER_MIN:
+            page.draw.line((start, middle, stop - 3, middle), fill=line["colour"], width=2)
+            page.draw.ellipse((stop - 4, middle - 3, stop + 2, middle + 3), fill=page.palette["paper"],
+                              outline=line["colour"], width=2)
 
 
 def footer(page, payload, now):

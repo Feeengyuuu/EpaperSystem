@@ -470,6 +470,33 @@ def test_bart_departures_sit_under_the_buoy_and_never_decide_provenance(plugin, 
     assert with_bart.crop((0, 100, 460, 480)).tobytes() == without.crop((0, 100, 460, 480)).tobytes()
 
 
+def test_bart_rows_lead_from_destination_to_times_along_the_line_level_with_the_bullet(monkeypatch):
+    payload = {"roads": {"state": "live", "data": {"items": []}, "fetched_at": NOW.isoformat()},
+               "tides": {"state": "live", "data": tide_data(NOW), "fetched_at": NOW.isoformat()},
+               "buoy": {"state": "live", "data": sources.parse_buoy(BUOY_PAGE)},
+               "bart": {"state": "live", "data": sources.parse_bart(BART_PAYLOAD, NOW)},
+               "routes": [], "station": "9414523", "window_days": 7, "nearby_cameras": {}}
+    rows = {}
+    original = Canvas.text
+
+    def capture(self, xy, text, *args, **kwargs):
+        width = original(self, xy, text, *args, **kwargs)
+        rows[str(text)] = (round(xy[0]), round(xy[1]), width)
+        return width
+
+    monkeypatch.setattr(Canvas, "text", capture)
+    image = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW)
+    x, y, width = rows["Daly City"]
+    green = (0x33, 0x99, 0x33)
+    # The leader runs in the line's green from after the name, level with the capitals' middle.
+    leader = [row for row in range(y - 4, y + 14) if image.getpixel((x + round(width) + 20, row)) == green]
+    assert leader and min(leader) <= y + 4 <= max(leader)
+    # The lettered bullet is centred on that same middle.
+    bullet = [row for row in range(y - 6, y + 16)
+              if any(image.getpixel((column, row)) != image.getpixel((505, row)) for column in range(512, 524))]
+    assert abs((min(bullet) + max(bullet)) / 2 - (y + 4)) <= 1
+
+
 def test_bart_rows_are_set_in_bart_typeface():
     from plugins.bay_commute.command_render import ASSETS, font
 
