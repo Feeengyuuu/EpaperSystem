@@ -15,7 +15,9 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageOps
 
+from plugins.base_plugin import steam_studios
 from utils.flat_icons import draw_icon
+from utils.theme_utils import contrast_ratio
 
 ICON_DIR = Path(__file__).resolve().parent / "assets" / "icons"
 # SteamCharts' own site icon, SOURCE_ICON_SIZE square before its address in the header.
@@ -26,8 +28,14 @@ SECTION_TOP = 62
 ROWS_TOP = 90
 COVER = (112, 52)
 COVER_RADIUS = 6
-# A studio's logo leads a row's second line this wide.
+# A studio's logo leads a row's second line: a published square this wide, or, off its avatar's
+# flat ground, this tall and at most this wide, inked when its colours have less than this
+# contrast with the page.
 STUDIO_MARK = 13
+STUDIO_CUT_H, STUDIO_CUT_W = 11, 46
+STUDIO_MIN_CONTRAST = 2.0
+# ...unless at least this share of it already stands out (it keeps its own colours).
+STUDIO_KEEP_SHARE = 0.25
 METRIC_W = 112
 NAME_SIZES = (17, 16, 15, 14, 13, 12, 11)
 # The top three ranks wear medals; the rest an ink disc.
@@ -269,15 +277,25 @@ class LiveOverviewMixin:
         if facts:
             facts_x = text_x
             if studio is not None:
-                facts_x += self._overview_studio_logo(image, (text_x, top + 23), studio) + 4
+                facts_x += self._overview_studio_logo(image, (text_x, top + 23), studio, colors) + 6
             draw.text((facts_x, top + 24), self._overview_clip(draw, facts, self._font(10), text_right - facts_x),
                       font=self._font(10), fill=colors["muted"])
         self._overview_detail_line(image, draw, (text_x, detail_y, text_right), game, store, trending, colors)
 
     @staticmethod
-    def _overview_studio_logo(image, xy, logo):
-        """The studio's logo (its Steam avatar, a square) at ``xy``, STUDIO_MARK wide with rounded
-        corners; returns its width."""
+    def _overview_studio_logo(image, xy, logo, colors):
+        """The studio's logo (its Steam avatar) at ``xy``; returns its width. Off its avatar's flat
+        ground it stands STUDIO_CUT_H tall and up to STUDIO_CUT_W wide on the page, in its own
+        colours unless they melt into the page (then in its ink); an avatar with no flat ground (a
+        photo) stays a STUDIO_MARK square with rounded corners."""
+        cut = steam_studios.cut_ground(logo)
+        cut = steam_studios.peel_plate(cut) if cut is not None else None
+        if cut is not None:
+            mark = _on_page(ImageOps.contain(cut, (STUDIO_CUT_W, STUDIO_CUT_H), method=Image.Resampling.LANCZOS),
+                            tuple(colors["paper"][:3]), tuple(colors["ink"][:3]))
+            x, y = round(xy[0]), round(xy[1] + (STUDIO_MARK - mark.height) / 2)
+            image.paste(mark, (x, y), mark)
+            return mark.width
         size = STUDIO_MARK
         mark = ImageOps.fit(logo.convert("RGB"), (size * 4, size * 4), method=Image.Resampling.LANCZOS)
         mask = Image.new("L", mark.size, 0)
@@ -494,3 +512,22 @@ class LiveOverviewMixin:
         while text and draw.textlength(text + "…", font=font) > width:
             text = text[:-1]
         return text.rstrip() + "…" if text else ""
+
+
+
+def _on_page(mark, paper, ink):
+    """A studio mark off its ground, as it reads on the page: in its own colours while enough of it
+    stands out from the paper (what does not just melts in: Valve's white box, its red letters
+    left), else with its faint parts in the page's ink (a white logo on a white page)."""
+    visible = [pixel[:3] for pixel in mark.get_flattened_data() if pixel[3] > 128]
+    strong = sum(contrast_ratio(pixel, paper) >= STUDIO_MIN_CONTRAST for pixel in visible)
+    if visible and strong >= len(visible) * STUDIO_KEEP_SHARE:
+        return mark
+    inked = mark.copy()
+    pixels = inked.load()
+    for y in range(inked.height):
+        for x in range(inked.width):
+            red, green, blue, alpha = pixels[x, y]
+            if alpha and contrast_ratio((red, green, blue), paper) < STUDIO_MIN_CONTRAST:
+                pixels[x, y] = (*ink, alpha)
+    return inked

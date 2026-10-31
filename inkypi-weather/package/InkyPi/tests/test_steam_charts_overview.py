@@ -335,3 +335,18 @@ def test_a_rows_studio_logo_leads_its_second_line_with_the_studio_first(monkeypa
     assert text.startswith("S-GAME · Phantom")
     # The logo stands just before it, on the same line.
     assert image.getpixel((round(x) - overview_page.STUDIO_MARK // 2 - 4, round(y) + 6)) == (200, 30, 30)
+
+
+def test_a_studio_mark_that_melts_into_the_page_takes_its_ink_and_one_that_reads_keeps_its_colours():
+    from PIL import Image
+
+    paper, ink = (255, 255, 255), (20, 20, 20)
+    white = Image.new("RGBA", (10, 5), (255, 255, 255, 255))
+    assert overview_page._on_page(white, paper, ink).getpixel((1, 1))[:3] == ink
+    red = Image.new("RGBA", (10, 5), (244, 80, 77, 255))
+    assert overview_page._on_page(red, paper, ink).getpixel((1, 1))[:3] == (244, 80, 77)
+    # By night a dark mark turns to the page's light ink; its bright parts keep their colour.
+    mark = Image.new("RGBA", (10, 5), (30, 40, 60, 255))
+    mark.putpixel((9, 4), (230, 120, 20, 255))
+    night = overview_page._on_page(mark, (0, 0, 0), (240, 240, 240))
+    assert night.getpixel((1, 1))[:3] == (240, 240, 240) and night.getpixel((9, 4))[:3] == (230, 120, 20)

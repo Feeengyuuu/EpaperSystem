@@ -27,6 +27,100 @@ def avatar_url(page):
     return match.group(1) if match else ""
 
 
+def cut_ground(logo, tolerance=30, least=0.04):
+    """The logo off the flat ground its avatar square is published on (RGBA, cropped to what is
+    left): when the four corners share one colour, that colour is cut away from the edges in.
+    None when the avatar has no flat ground (a photo) or too little is left (under ``least``)."""
+    from PIL import Image, ImageChops, ImageDraw, ImageFilter
+
+    art = logo.convert("RGB")
+    width, height = art.size
+    points = ((0, 0), (width - 1, 0), (0, height - 1), (width - 1, height - 1))
+    corners = [art.getpixel(point) for point in points]
+    if max(max(channel) - min(channel) for channel in zip(*corners)) > tolerance:
+        return None
+    ground = tuple(sum(channel) // 4 for channel in zip(*corners))
+    near = Image.new("L", art.size, 0)
+    near.putdata([255 if max(abs(a - b) for a, b in zip(pixel, ground)) <= tolerance else 0
+                  for pixel in art.get_flattened_data()])
+    for corner in points:
+        if near.getpixel(corner) == 255:
+            ImageDraw.floodfill(near, corner, 128)
+    removed = near.point(lambda value: 255 if value == 128 else 0)
+    # The ground's blended rim (a JPEG's, an antialiased edge's) goes with it: pixels within two of
+    # the cut ground and still well nearer its colour than the mark's.
+    loose = Image.new("L", art.size, 0)
+    loose.putdata([255 if max(abs(a - b) for a, b in zip(pixel, ground)) <= tolerance * 3 else 0
+                   for pixel in art.get_flattened_data()])
+    removed = ImageChops.lighter(removed, ImageChops.multiply(removed.filter(ImageFilter.MaxFilter(5)), loose))
+    alpha = ImageChops.invert(removed)
+    if not alpha.getbbox() or alpha.histogram()[255] < width * height * least:
+        return None
+    mark = art.convert("RGBA")
+    mark.putalpha(alpha.filter(ImageFilter.GaussianBlur(1)))
+    return mark.crop(alpha.getbbox())
+
+
+def peel_plate(mark, tolerance=30, ring_share=0.85, least=0.04):
+    """A cut-out logo (RGBA) without the plate its letters sit on (Valve's white box round its red
+    letters): when at least ``ring_share`` of its outline is one colour, that colour is cut away from
+    the outline in, as long as at least ``least`` of the logo is left (a mark all of one colour
+    stays as it is). Cropped to what is left."""
+    rgba = mark.convert("RGBA")
+    width, height = rgba.size
+    pixels = rgba.load()
+
+    # The opaque core decides (a cut-out's soft rim blends the plate with the ground it came off).
+    def visible(x, y):
+        return 0 <= x < width and 0 <= y < height and pixels[x, y][3] > 200
+
+    steps = ((1, 0), (-1, 0), (0, 1), (0, -1))
+    shown = [(x, y) for y in range(height) for x in range(width) if visible(x, y)]
+    ring = [(x, y) for x, y in shown if any(not visible(x + dx, y + dy) for dx, dy in steps)]
+    if not ring:
+        return rgba
+    counts = {}
+    for x, y in ring:
+        key = tuple(channel // 32 for channel in pixels[x, y][:3])
+        counts[key] = counts.get(key, 0) + 1
+    common = max(counts, key=counts.get)
+    colour = tuple(sorted(pixels[x, y][index] for x, y in ring
+                          if tuple(channel // 32 for channel in pixels[x, y][:3]) == common)[counts[common] // 2]
+                   for index in range(3))
+
+    def near(point):
+        return max(abs(a - b) for a, b in zip(pixels[point][:3], colour)) <= tolerance
+
+    edge = [point for point in ring if near(point)]
+    if len(edge) < len(ring) * ring_share:
+        return rgba
+    plate, stack = set(edge), list(edge)
+    while stack:
+        x, y = stack.pop()
+        for dx, dy in steps:
+            point = (x + dx, y + dy)
+            if point not in plate and visible(*point) and near(point):
+                plate.add(point)
+                stack.append(point)
+    # The plate's blend into its letters (their antialiased rims) goes with it: two pixels in, while
+    # still well nearer the plate's colour than the letters'.
+    for _step in range(2):
+        rim = {(x + dx, y + dy) for x, y in plate for dx, dy in steps}
+        plate |= {point for point in rim - plate if visible(*point)
+                  and max(abs(a - b) for a, b in zip(pixels[point][:3], colour)) <= tolerance * 3}
+    if len(shown) - len(plate) < len(shown) * least:
+        return rgba
+    for x, y in plate:
+        pixels[x, y] = (*pixels[x, y][:3], 0)
+    # The plate's soft rim (its blurred edge) goes with it.
+    for y in range(height):
+        for x in range(width):
+            if pixels[x, y][3] <= 200:
+                pixels[x, y] = (*pixels[x, y][:3], 0)
+    box = rgba.getchannel("A").point(lambda value: 255 if value > 16 else 0).getbbox()
+    return rgba.crop(box) if box else rgba
+
+
 def developer_clans(store_items):
     """Each app's first developer's creator clan (account id, as text) from GetItems' items; apps
     whose developer has none are left out."""
