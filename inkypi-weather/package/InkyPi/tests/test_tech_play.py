@@ -184,6 +184,31 @@ def test_page_renders_without_any_images(mode):
     assert image.size == (800, 480)
 
 
+def test_platforms_group_into_families_in_a_fixed_order():
+    from plugins.tech_play.render import platform_families
+
+    assert platform_families(["Switch 2", "Series X|S", "iOS", "PS5", "Mac", "PC"]) == ["PC", "PS", "Xbox", "Switch"]
+    assert platform_families(["PS4", "PS5", "XONE"]) == ["PS", "Xbox"]
+    assert platform_families(["iOS", "Android"]) == []
+    assert platform_families(None) == []
+
+
+def test_a_coming_game_is_framed_in_its_platforms_colours_side_by_side():
+    from plugins.tech_play import render
+
+    payload = _payload()
+    payload["upcoming"]["data"] = {"source": "IGDB", "items": [
+        {"name": "Grand Theft Auto VI", "date": (NOW + timedelta(days=18)).isoformat(),
+         "platforms": ["PS5", "Series X|S"], "image": None}]}
+    image = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, {})
+
+    left = render.UPCOMING_CARD[0] + 8
+    width = (render.UPCOMING_CARD[2] - 8 - left - 8 * 3) // 4
+    middle = render.UPCOMING_CARD[1] + render.HEADER + 4 + 23
+    assert image.getpixel((left, middle)) == (0, 112, 209)
+    assert image.getpixel((left + width, middle)) == (16, 124, 16)
+
+
 def test_a_service_links_to_its_state_by_a_live_wire_or_a_cut_one():
     from plugins.tech_play import render
     from utils.page_canvas import PageCanvas

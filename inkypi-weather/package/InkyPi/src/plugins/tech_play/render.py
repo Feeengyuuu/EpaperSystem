@@ -36,6 +36,9 @@ DAY = {
     "accent": "#2554c7", "gold": "#e8a90c", "badge_ink": "#ffffff", "band": "#121a20",
     "status_bar": "#059669", "papers_bar": "#c81e32", "epic_bar": "#121a20", "upcoming_bar": "#2554c7",
     "speed_bar": "#e8a90c",
+    # Platform frames: the console makers' own colours (PlayStation blue, Xbox green, Nintendo red);
+    # PC has none of its own and takes the page's ink.
+    "platform_pc": "#121a20", "platform_ps": "#0070d1", "platform_xbox": "#107c10", "platform_switch": "#e60012",
 }
 NIGHT = {
     "paper": "#000000", "panel": "#1c2a35", "ink": "#edf1ea", "muted": "#c6d0d5", "rule": "#5a5a5a",
@@ -43,6 +46,7 @@ NIGHT = {
     "accent": "#7aa2ff", "gold": "#fbbf24", "badge_ink": "#000000", "band": "#05090c",
     "status_bar": "#34d399", "papers_bar": "#ff6b78", "epic_bar": "#edf1ea", "upcoming_bar": "#7aa2ff",
     "speed_bar": "#fbbf24",
+    "platform_pc": "#edf1ea", "platform_ps": "#0070d1", "platform_xbox": "#107c10", "platform_switch": "#e60012",
 }
 STATUS_TEXT = {"none": "正常", "minor": "轻微", "major": "故障", "critical": "严重", "maintenance": "维护",
                "unknown": "未知"}
@@ -76,6 +80,10 @@ SECTION_ART = {"status_bar": "section-status", "papers_bar": "section-papers", "
 # A minimal generated strip in the header room between a card's title and its detail, on its theme.
 SECTION_STRIPS = {"epic_bar": "strip-free", "upcoming_bar": "strip-upcoming", "speed_bar": "strip-speed"}
 STRIP_H = 20
+# A coming game's picture is framed this thick in its platforms' colours, side by side in this order
+# (their legend replaces the card's detail). Phones, VR headsets and the like are left out.
+PLATFORM_FRAME = 2
+PLATFORMS = ("PC", "PS", "Xbox", "Switch")
 
 
 def _rgb(value):
@@ -171,10 +179,10 @@ def _strip_art(name, max_width, height):
     return art if art.width <= max_width else ImageOps.contain(art, (int(max_width), height), Image.Resampling.LANCZOS)
 
 
-def _card(canvas, box, bar, title, *, logo=None, icon=None, detail="", chip=None):
+def _card(canvas, box, bar, title, *, logo=None, icon=None, detail="", chip=None, legend=()):
     """A card in its own colour: a solid band across the top, a frame and header rule in that
     colour, the source's official logo (or a generated icon on the band where there is none),
-    the title and a detail."""
+    the title and a detail (or, in its place, a ``legend`` of (label, colour) swatches)."""
     left, top, right, bottom = box
     colour = canvas.color(bar)
     canvas.draw.rounded_rectangle(box, radius=7, outline=colour, width=2)
@@ -198,7 +206,9 @@ def _card(canvas, box, bar, title, *, logo=None, icon=None, detail="", chip=None
         canvas.text((cursor + width / 2, top + 16), chip, 11, anchor="mm")
         cursor += width + 8
     detail_w = 0
-    if detail:
+    if legend:
+        detail_w = _legend(canvas, right - 8, top + 16, legend)
+    elif detail:
         detail_w = canvas.text((right - 8, top + 16), detail, 11, "muted", anchor="rm", bold=False,
                                width=right - 8 - cursor)
     strip = _strip_art(SECTION_STRIPS.get(bar, ""), right - 8 - detail_w - 14 - cursor, STRIP_H)
@@ -206,6 +216,17 @@ def _card(canvas, box, bar, title, *, logo=None, icon=None, detail="", chip=None
         room_left, room_right = cursor, right - 8 - detail_w - 14
         _paste(canvas, strip, (room_left + (room_right - room_left - strip.width) / 2, top + 17 - strip.height / 2))
     canvas.rule((left + 8, top + HEADER, right - 8, top + HEADER), colour)
+
+
+def _legend(canvas, right, y, entries):
+    """(label, colour) swatches, each a solid square before its label, ending at ``right``; returns
+    the width they take."""
+    x = right
+    for index, (label, colour) in enumerate(reversed(entries)):
+        x -= canvas.text((x, y), label, 11, "muted", anchor="rm", bold=False) + 3
+        canvas.draw.rounded_rectangle((x - 9, y - 4.5, x, y + 4.5), radius=2, fill=canvas.color(colour))
+        x -= 9 + (8 if index < len(entries) - 1 else 0)
+    return right - x
 
 
 # --- Left column -----------------------------------------------------------------------------------
@@ -505,6 +526,39 @@ def _epic(canvas, payload, images, now):
         _round_corners(canvas, (x, top, x + width, bottom), 8)
 
 
+def platform_families(platforms):
+    """The families of IGDB's platform abbreviations ('PS5', 'Series X|S', 'Switch 2', 'Mac'...) in
+    ``PLATFORMS`` order; platforms outside them are left out."""
+    found = set()
+    for name in platforms or ():
+        key = str(name).strip().lower()
+        if key in ("pc", "mac", "linux", "windows", "steamos"):
+            found.add("PC")
+        elif key.startswith("ps"):
+            found.add("PS")
+        elif key.startswith(("series x", "xbox", "xone", "x360", "xsx")):
+            found.add("Xbox")
+        elif key.startswith(("switch", "ns", "wii", "3ds")):
+            found.add("Switch")
+    return [family for family in PLATFORMS if family in found]
+
+
+def _platform_frame(canvas, box, families, radius):
+    """A thin frame round a game's picture in its platforms' colours, split side by side from left to
+    right (one platform frames it whole)."""
+    x0, y0, x1, y1 = (round(value) for value in box)
+    size = (x1 - x0 + 1, y1 - y0 + 1)
+    ring = Image.new("L", size, 0)
+    ImageDraw.Draw(ring).rounded_rectangle((0, 0, size[0] - 1, size[1] - 1), radius=radius, outline=255,
+                                           width=PLATFORM_FRAME)
+    colours = Image.new("RGB", size)
+    draw = ImageDraw.Draw(colours)
+    for index, family in enumerate(families):
+        draw.rectangle((round(size[0] * index / len(families)), 0, size[0], size[1]),
+                       fill=canvas.color(f"platform_{family.lower()}"))
+    canvas.image.paste(colours, (x0, y0), ring)
+
+
 def _upcoming(canvas, payload, images, now):
     data = payload["upcoming"]["data"]
     items = data.get("items", [])
@@ -514,12 +568,16 @@ def _upcoming(canvas, payload, images, now):
         # IGDB's logo is black lettering: it takes the page's ink, so it stays bright at night.
         logo = _inked(logo, canvas.color("ink"))
     detail = "IGDB 期待度排行" if source_name == "IGDB" else "Steam 热门即将推出" if source_name else ""
-    _card(canvas, UPCOMING_CARD, "upcoming_bar", "即将发售", logo=logo, detail=detail)
+    count, gap = 4, 8
+    families = [platform_families(item.get("platforms")) for item in items[:count]]
+    # The frames' colours, named in the header in place of the detail.
+    legend = [(family, f"platform_{family.lower()}") for family in PLATFORMS
+              if any(family in shown for shown in families)]
+    _card(canvas, UPCOMING_CARD, "upcoming_bar", "即将发售", logo=logo, detail=detail, legend=legend)
     left, right = UPCOMING_CARD[0] + 8, UPCOMING_CARD[2] - 8
     if not items:
         canvas.text((left, 260), "新作列表暂不可用", 14, "muted", anchor="lm")
         return
-    count, gap = 4, 8
     width = (right - left - gap * (count - 1)) // count
     top = UPCOMING_CARD[1] + HEADER + 4
     for index, item in enumerate(items[:count]):
@@ -538,6 +596,8 @@ def _upcoming(canvas, payload, images, now):
         if soon:
             _corner_chip(canvas, x + width, top, soon, "major" if soon in ("今天", "明天") else "upcoming_bar")
         _round_corners(canvas, box, 6)
+        if families[index]:
+            _platform_frame(canvas, box, families[index], 6)
         name_x = x + _game_icon(canvas, payload, images, item["name"], (x, top + 49), 14)
         canvas.text((name_x, top + 56), item["name"], 12, anchor="lm", width=x + width - name_x)
         when = (f"{stamp.astimezone(now.tzinfo):%m/%d} 周{WEEKDAYS[stamp.astimezone(now.tzinfo).weekday()]}"
@@ -547,12 +607,8 @@ def _upcoming(canvas, payload, images, now):
             _paste(canvas, calendar_mark, (x, top + 63))
         else:
             draw_icon(canvas.draw, "calendar", (x, top + 64), 11, canvas.color("ink"), canvas.color("paper"))
-        # The release date in bold ink; the platforms after it, muted.
-        date_width = canvas.text((x + 15, top + 70), when, 12, anchor="lm", width=width - 15)
-        platforms = "/".join(item.get("platforms") or [])
-        if platforms and width - 15 - date_width > 24:
-            canvas.text((x + 19 + date_width, top + 70), platforms, 10, "muted", anchor="lm", bold=False,
-                        width=width - 19 - date_width)
+        # The release date in bold ink (the platforms are the picture's frame).
+        canvas.text((x + 15, top + 70), when, 12, anchor="lm", width=width - 15)
 
 
 def _initials(name):
