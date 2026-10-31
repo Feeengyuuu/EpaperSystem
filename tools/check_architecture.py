@@ -36,6 +36,9 @@ BOUNDARIES = {
     "plugins/sports_dashboard/f1_domain.py": {
         "__future__", "collections.abc", "datetime", "typing",
     },
+    "plugins/sports_dashboard/f1_digest.py": {
+        "__future__", "collections.abc", "datetime", "typing",
+    },
     "plugins/sports_dashboard/event_ranking.py": {
         "__future__", "collections.abc", "datetime", "re",
     },

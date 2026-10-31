@@ -19,10 +19,16 @@ from .common import (
     timedelta,
     timezone,
 )
-from . import f1_domain
+from . import f1_digest, f1_domain
 from runtime.refresh_contracts import TaskCancelled
 
 SportsDashboard = None
+
+# OpenF1's calendar of sessions is fetched again after this; while a session runs (OpenF1 refuses
+# keyless callers) the summaries wait this long between tries; the newest this many are kept.
+F1_DIGEST_SESSIONS_TTL = timedelta(hours=6)
+F1_DIGEST_BLOCKED_WAIT = timedelta(minutes=15)
+F1_DIGEST_KEEP = 16
 
 # The season's results for the drivers' bars: Grand Prix then sprint pages, one per render.
 F1_FORM_SOURCES = ("current/results.json", "current/sprint.json")
@@ -329,6 +335,126 @@ class F1Mixin:
         if parsed.get("weather"):
             selected["weather"] = parsed["weather"]
         return selected
+
+    def _attach_f1_session_digests(self, selected, settings, now=None):
+        """Each finished session of the weekend, and the last Grand Prix's result, gets its OpenF1
+        summary ("digest", f1_digest): fetched once between sessions, then kept."""
+        if not selected or not self._bool_setting(settings, "f1OpenF1Enabled", True):
+            return selected
+        try:
+            digests, sessions = self._load_f1_session_digests(selected, settings, now or datetime.now(timezone.utc))
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("F1 session summaries unavailable: %s", exc)
+            return selected
+        for target in SportsDashboard._f1_digest_targets(selected):
+            match = f1_digest.match_session(sessions, target.get("start"))
+            digest = digests.get(str((match or {}).get("session_key") or ""))
+            if digest:
+                target["digest"] = digest
+        return selected
+
+    @staticmethod
+    def _f1_digest_targets(selected):
+        """The weekend's sessions and the last Grand Prix's result: dicts with a calendar "start"."""
+        targets = list((selected or {}).get("weekend_sessions") or [])
+        last = (selected or {}).get("last_result")
+        if isinstance(last, dict) and isinstance(last.get("start"), datetime):
+            targets.append(last)
+        return targets
+
+    def _load_f1_session_digests(self, selected, settings, now):
+        """(digests by session key, OpenF1's sessions for the targets' years). Between sessions it
+        fetches the year's sessions now and then and at most one missing digest per render; while
+        a session runs OpenF1 refuses keyless callers, so it waits a while and serves what it has."""
+        path = self._f1_digest_cache_path()
+        cache = self._read_json_file(path)
+        if cache.get("version") != f1_digest.DIGEST_VERSION:
+            cache = {"version": f1_digest.DIGEST_VERSION, "digests": {}, "sessions": []}
+        digests, sessions = cache.setdefault("digests", {}), cache.get("sessions") or []
+        blocked = f1_digest.parse_time(cache.get("blocked_until"))
+        if self._provider_cache_only(settings) or (blocked and now < blocked):
+            return digests, sessions
+        targets = SportsDashboard._f1_digest_targets(selected)
+        years = sorted({target["start"].year for target in targets if isinstance(target.get("start"), datetime)})
+        listed = f1_digest.parse_time(cache.get("sessions_fetched_at"))
+        changed = False
+        if years and (cache.get("years") != years or not listed or now - listed > F1_DIGEST_SESSIONS_TTL):
+            if self._f1_openf1_calls_left(settings, now) < len(years):
+                return digests, sessions
+            fetched = []
+            for year in years:
+                rows = self._f1_openf1_get(settings, "sessions", {"year": year})
+                if rows is None:
+                    cache["blocked_until"] = (now + F1_DIGEST_BLOCKED_WAIT).isoformat()
+                    self._write_f1_digest_cache(path, cache)
+                    return digests, sessions
+                fetched.extend(rows)
+            sessions = cache["sessions"] = fetched
+            cache.update(years=years, sessions_fetched_at=now.isoformat())
+            changed = True
+        for target in targets:
+            match = f1_digest.match_session(sessions, target.get("start"))
+            key = str((match or {}).get("session_key") or "")
+            if not key or key in digests or not f1_digest.historical(match, now):
+                continue
+            if self._f1_openf1_calls_left(settings, now) < (4 if f1_digest.is_race(match) else 2):
+                break
+            digest = self._fetch_f1_session_digest(settings, match)
+            if digest is None:
+                cache["blocked_until"] = (now + F1_DIGEST_BLOCKED_WAIT).isoformat()
+            elif digest.get("top"):
+                digests[key] = digest
+            changed = True
+            break
+        if changed:
+            # The newest sessions' summaries are the ones shown; older ones go.
+            kept = sorted(digests.items(), key=lambda item: str(item[1].get("date_end") or ""))[-F1_DIGEST_KEEP:]
+            cache["digests"] = dict(kept)
+            self._write_f1_digest_cache(path, cache)
+        return cache["digests"], sessions
+
+    def _fetch_f1_session_digest(self, settings, session):
+        """A finished session's summary, or None when OpenF1 refused (a session is running)."""
+        params = {"session_key": session.get("session_key")}
+        parts = {"results": "session_result", "drivers": "drivers"}
+        if f1_digest.is_race(session):
+            parts.update(stints="stints", race_control="race_control")
+        data = {}
+        for name, endpoint in parts.items():
+            rows = self._f1_openf1_get(settings, endpoint, params)
+            if rows is None:
+                return None
+            data[name] = rows
+        return f1_digest.session_digest(session, **data)
+
+    def _f1_openf1_get(self, settings, endpoint, params):
+        """One OpenF1 request, counted against the day's budget: its rows, or None when OpenF1
+        refuses keyless callers (a session is running)."""
+        try:
+            response = get_http_session().get(
+                f"{self._f1_openf1_base_url(settings)}/{endpoint}",
+                params=params,
+                headers={"Accept": "application/json", "User-Agent": "InkyPi/1.0"},
+                timeout=15,
+            )
+        finally:
+            self._record_f1_openf1_call(settings, datetime.now(timezone.utc))
+        if response.status_code in (401, 403):
+            return None
+        response.raise_for_status()
+        data = response.json()
+        return data if isinstance(data, list) else []
+
+    def _f1_digest_cache_path(self):
+        return self._sports_dashboard_cache_dir() / "f1_openf1_digests.json"
+
+    def _write_f1_digest_cache(self, path, cache):
+        try:
+            self._write_json_file(path, cache)
+        except OSError as exc:
+            logger.warning("Failed to write the F1 session summaries: %s", exc)
 
     def _load_f1_openf1_snapshot(self, settings):
         now_utc = datetime.now(timezone.utc)

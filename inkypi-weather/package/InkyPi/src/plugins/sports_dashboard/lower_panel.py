@@ -66,6 +66,7 @@ class LowerPanelMixin:
                     choice["games"], nba_source_state, hub_source_state,
                 )
             if kind == "f1":
+                self._attach_f1_session_digests(f1_selected, settings, now)
                 if f1_selected.get("live_session"):
                     self._attach_f1_openf1_snapshot(f1_selected, settings)
                 self._draw_f1_compact_panel(image, draw, box, f1_selected, f1_source_state, now)

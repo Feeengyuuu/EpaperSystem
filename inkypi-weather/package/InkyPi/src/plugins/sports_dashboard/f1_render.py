@@ -23,6 +23,7 @@ from PIL import Image, ImageDraw, ImageStat
 
 from .card_backdrops import card_backdrop_box, paint_card_backdrop, paint_list_backdrop
 from .common import COLORS, LOCAL_DECOR_DIR, LOCAL_F1_TITLE_WORDMARK_PATH, LOCAL_TEAM_LOGO_DIR, datetime, re
+from .f1_digest import lap_label
 from .scorebug_kit import ScorebugSpec
 
 SportsDashboard = None
@@ -48,6 +49,13 @@ F1_LOGO_SIZE = (20, 12)
 F1_PLACE_SIZE = (13, 10)
 # F1's own colour for the fastest lap.
 F1_FASTEST_LAP = (155, 60, 225)
+# Pirelli's compound colours (soft, medium, hard, intermediate, wet) for a driver's tyres, each a
+# disc this wide; the yellow of the safety-car boards; the rubber round each band.
+F1_TYRE_COLOURS = {"S": (218, 41, 28), "M": (255, 205, 0), "H": (242, 242, 238), "I": (67, 176, 42),
+                   "W": (0, 103, 173)}
+F1_TYRE_SIZE = 9
+F1_SAFETY_CAR = (255, 205, 0)
+F1_RUBBER = (24, 24, 24)
 # Constructor names (Jolpica, OpenF1) to the bundled team art; Racing Bulls before Red Bull.
 F1_TEAM_KEYS = (
     ("mclaren", "mclaren"),
@@ -176,7 +184,7 @@ class F1RenderMixin:
         live = bool(selected.get("live_session"))
         self._draw_f1_race_band(image, draw, (left, top, right, top + F1_BAND_HEIGHT), race, selected, now, spec)
         timeline_y = top + F1_BAND_HEIGHT + 4
-        self._draw_f1_weekend_timeline(draw, (left, timeline_y, right, timeline_y + F1_TIMELINE_HEIGHT), selected, now, spec)
+        self._draw_f1_weekend_timeline(image, draw, (left, timeline_y, right, timeline_y + F1_TIMELINE_HEIGHT), selected, now, spec)
         lower = timeline_y + F1_TIMELINE_HEIGHT + 4
         middle = (left + right) // 2
         self._draw_vertical_split(draw, middle + 4, lower + 2, bottom)
@@ -293,7 +301,9 @@ class F1RenderMixin:
         image.paste(COLORS["text"], origin, mask)
         return True
 
-    def _draw_f1_weekend_timeline(self, draw, box, selected, now, spec):
+    def _draw_f1_weekend_timeline(self, image, draw, box, selected, now, spec):
+        """The weekend's sessions on a line: each one's start under its node, a finished one's winner
+        (OpenF1's summary) in its place."""
         x1, y1, x2, y2 = [int(value) for value in box]
         sessions = list(selected.get("weekend_sessions") or [])[:6]
         if not sessions:
@@ -311,11 +321,43 @@ class F1RenderMixin:
             label, label_font = self._fit_f1_metric(draw, label, 52, 9, state in {"live", "next"} or label == "RACE", max_height=12)
             self._draw_centered_in_box(draw, (position - 26, y1, position + 26, y1 + 12), label, label_font, COLORS[spec.live] if state == "live" else COLORS["text"])
             self._draw_f1_session_node(draw, position, axis_y, state, label == "RACE", spec)
+            half = int(step / 2) - 2
+            slot = (max(x1, position - half), axis_y + 11, min(x2, position + half), axis_y + 24)
+            if state == "done" and len(sessions) > 1 and self._draw_f1_session_top(image, draw, slot, position, session.get("digest")):
+                continue
             start = session.get("start")
             if isinstance(start, datetime):
                 when = f"{start.strftime('%a').upper()} {SportsDashboard._format_time(start)}"
                 when, when_font = self._fit_f1_metric(draw, when, min(60, int(step) - 2) if len(sessions) > 1 else 60, 9, bold=state == "next")
                 self._draw_centered_in_box(draw, (position - 30, axis_y + 11, position + 30, axis_y + 24), when, when_font, COLORS["text"])
+
+    def _draw_f1_session_top(self, image, draw, slot, centre, digest):
+        """A finished session's winner centred on its node within ``slot``: the team's logo, the
+        driver's code (as F1's own graphics give it, so every node reads alike) and their best lap
+        (a race's: 冠军); False without a summary or the room."""
+        top = ((digest or {}).get("top") or [None])[0]
+        if not top or not top.get("code"):
+            return False
+        x1, y1, x2, y2 = slot
+        detail = "冠军" if digest.get("race") else lap_label(top.get("best"))
+        logo = self._f1_team_logo(top.get("team"))
+        logo_w = logo.width + 3 if logo is not None else 0
+        detail, detail_font = self._fit_f1_metric(draw, detail, 60, 9, False, max_height=12) if detail else ("", None)
+        detail_w = self._text_width(draw, detail, detail_font) + 3 if detail else 0
+        name_font = self._font(9, True)
+        name = top["code"]
+        width = logo_w + self._text_width(draw, name, name_font) + detail_w
+        if width > x2 - x1:
+            return False
+        x = int(min(max(x1, centre - width / 2), x2 - width))
+        if logo is not None:
+            image.paste(logo, (x, y1 + (y2 - y1 - logo.height) // 2), logo)
+        x += logo_w
+        self._draw_text_in_box(draw, (x, y1, x2, y2), name, name_font, COLORS["text"])
+        if detail:
+            x += self._text_width(draw, name, name_font) + 3
+            self._draw_text_in_box(draw, (x, y1, x2, y2), detail, detail_font, COLORS["text"])
+        return True
 
     def _draw_f1_session_node(self, draw, x, y, state, is_race, spec):
         radius = 8 if is_race else 6
@@ -416,6 +458,7 @@ class F1RenderMixin:
             self._draw_text_in_box(draw, (x1 + 4, y, x2, y + 14), "等待成绩", self._font(9, True), COLORS["muted"])
             return
         shown = rows[:max(0, (y2 + 1 - y) // F1_ROW_HEIGHT)]
+        tyres = ((race or {}).get("digest") or {}).get("tyres") or {}
         # Each driver's car (the team's official side view) races in the room the names leave,
         # the leader's nose before the widest gap.
         # Fit and measure the same font: longer official digits must not overlap names/cars.
@@ -459,6 +502,10 @@ class F1RenderMixin:
                 SportsDashboard._draw_f1_move_arrow(draw, mark_x, y + 7, gained > 0)
                 self._draw_text_in_box(draw, (mark_x + 7, y + 1, mark_x + moved_w, y + 13), moved, moved_font, COLORS["text"])
                 text_end = mark_x + moved_w
+            # The tyres it raced on, stint by stint, before its car (the race's OpenF1 summary).
+            compounds = tyres.get(str(row.get("driver_code") or "").upper()) or []
+            if compounds and text_end + 5 + len(compounds) * (F1_TYRE_SIZE + 2) < right:
+                text_end += 5 + SportsDashboard._draw_f1_tyres(draw, text_end + 5, y + 7, compounds)
             cars.append((team, y, text_end, SportsDashboard._f1_gap_seconds(row, position)))
             if gap:
                 self._draw_text_in_box(draw, (x2 - gap_w, y, x2, y + 13), gap, gap_font, COLORS["text"], align="right")
@@ -512,14 +559,23 @@ class F1RenderMixin:
         circuit = (F1_CIRCUITS.get(str(race.get("circuit_id") or "")) or ("",))[0]
         meta_font = self._font(9, False)
         title_font = self._font(13, True)
+        # Whether the safety car, the virtual one or the red flag came out (the race's OpenF1 summary),
+        # as long as the title keeps a readable size beside them.
+        control = (race.get("digest") or {}).get("control") or {}
+        boards = [(kind, control[kind]) for kind in ("SC", "VSC", "RED") if control.get(kind)]
+        boards_w = self._f1_race_control_width(draw, boards) + 6 if boards else 0
         for meta in (" · ".join(part for part in (SportsDashboard._f1_circuit_short(circuit), when) if part), when):
             meta_w = self._text_width(draw, meta, meta_font) if meta else 0
-            if self._text_width(draw, title, title_font) + meta_w + 8 <= x2 - x:
+            if self._text_width(draw, title, title_font) + meta_w + boards_w + 8 <= x2 - x:
                 break
-        title, fitted = self._fit_text(draw, title, x2 - x - meta_w - 6, 13, bold=True, min_size=9)
-        self._draw_text_in_box(draw, (x, y1, x2 - meta_w - 4, y1 + 18), title, fitted, COLORS["text"])
+        if boards and self._fit_text(draw, title, x2 - x - meta_w - boards_w - 6, 13, bold=True, min_size=9)[1].size < 11:
+            boards, boards_w = [], 0
+        title, fitted = self._fit_text(draw, title, x2 - x - meta_w - boards_w - 6, 13, bold=True, min_size=9)
+        self._draw_text_in_box(draw, (x, y1, x2 - meta_w - boards_w - 4, y1 + 18), title, fitted, COLORS["text"])
         if meta:
             self._draw_text_in_box(draw, (x2 - meta_w, y1 + 2, x2, y1 + 17), meta, meta_font, COLORS["text"], align="right")
+        if boards:
+            self._draw_f1_race_control(draw, x2 - meta_w - boards_w, y1 + 9, boards)
         draw.line((x1, y1 + 19, x2, y1 + 19), fill=COLORS["border"], width=1)
         return y1 + 23
 
@@ -691,6 +747,47 @@ class F1RenderMixin:
         draw.rectangle((x - 1, y - 7, x + 1, y - 5), fill=F1_FASTEST_LAP)
         draw.line((x, y + 1, x, y - 2), fill=(255, 255, 255), width=1)
         draw.line((x, y + 1, x + 2, y + 1), fill=(255, 255, 255), width=1)
+
+    @staticmethod
+    def _draw_f1_tyres(draw, x, y, compounds):
+        """A driver's tyres stint by stint from x, centred on y: each a Pirelli-coloured band on
+        black rubber; returns the width."""
+        size = F1_TYRE_SIZE
+        for index, compound in enumerate(compounds):
+            left, top = x + index * (size + 2), y - size // 2
+            draw.ellipse((left, top, left + size - 1, top + size - 1), fill=F1_RUBBER)
+            draw.ellipse((left + 1, top + 1, left + size - 2, top + size - 2), fill=F1_TYRE_COLOURS.get(compound, COLORS["panel"]))
+            draw.ellipse((left + 3, top + 3, left + size - 4, top + size - 4), fill=F1_RUBBER)
+        return len(compounds) * (size + 2) - 2
+
+    def _f1_race_control_width(self, draw, boards):
+        font = self._font(8, True)
+        width = 0
+        for kind, count in boards:
+            width += 10 if kind == "RED" else self._text_width(draw, kind, font) + 6
+            if count > 1:
+                width += self._text_width(draw, f"×{count}", font) + 2
+        return width + 4 * max(0, len(boards) - 1)
+
+    def _draw_f1_race_control(self, draw, x, y, boards):
+        """From x, centred on y: a yellow SC / VSC board and a red flag for each that came out,
+        with how many times when more than once."""
+        font = self._font(8, True)
+        for kind, count in boards:
+            if kind == "RED":
+                draw.line((x + 1, y - 6, x + 1, y + 6), fill=COLORS["text"], width=1)
+                draw.rectangle((x + 2, y - 6, x + 9, y - 1), fill=(225, 25, 30))
+                x += 10
+            else:
+                width = self._text_width(draw, kind, font) + 6
+                draw.rounded_rectangle((x, y - 6, x + width, y + 5), radius=2, fill=F1_SAFETY_CAR)
+                self._draw_centered_in_box(draw, (x, y - 6, x + width, y + 5), kind, font, F1_RUBBER)
+                x += width
+            if count > 1:
+                label = f"×{count}"
+                self._draw_text_in_box(draw, (x + 1, y - 6, x + 30, y + 6), label, font, COLORS["text"])
+                x += self._text_width(draw, label, font) + 2
+            x += 4
 
     @staticmethod
     def _draw_f1_move_arrow(draw, x, y, gained):

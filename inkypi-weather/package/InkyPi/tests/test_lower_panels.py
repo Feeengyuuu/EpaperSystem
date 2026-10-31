@@ -1193,6 +1193,35 @@ def test_f1_band_shows_the_circuits_own_logo_in_place_of_its_official_name(boxes
     assert "Bahrain International Circuit" in [text for _box, text, _font in boxes]
 
 
+def test_f1_finished_sessions_show_their_winners_and_the_last_race_its_tyres_and_safety_cars(boxes):
+    from plugins.sports_dashboard.f1_render import F1_TYRE_COLOURS
+
+    start = datetime(2026, 10, 30, 18, 30, tzinfo=timezone.utc)
+    sessions = [
+        {"label": "FP1", "start": start, "digest": {"race": False, "top": [{"code": "VER", "team": "Red Bull Racing", "best": 77.912}]}},
+        {"label": "Q", "start": start + timedelta(days=1)},
+        {"label": "RACE", "start": start + timedelta(days=2)},
+    ]
+    digest = {"race": True, "top": [{"code": "ANT", "team": "Mercedes"}], "tyres": {"ANT": ["M", "H"]},
+              "control": {"SC": 1, "VSC": 2, "RED": 0}}
+    last = {"race_name": "United States Grand Prix", "circuit_id": "americas", "country": "USA", "digest": digest,
+            "start": datetime(2026, 10, 25, 19, 0, tzinfo=timezone.utc),
+            "top": [{"position": 1, "driver_code": "ANT", "constructor": "Mercedes", "gap": "1:35:16.650", "grid": 1}]}
+    selected = {"status": "NEXT", "main_race": {"race_name": "Mexico City Grand Prix", "circuit_id": "rodriguez",
+                                                "sessions": sessions},
+                "weekend_sessions": sessions, "next_session": sessions[1], "last_result": last, "driver_standings": []}
+    plugin = _plugin()
+    image = Image.new("RGB", (555, 267), DAY_COLORS["panel"])
+    plugin._draw_f1_compact_panel(image, ImageDraw.Draw(image), (0, 0, 555, 267), selected, "JOLPICA CACHE",
+                                  start + timedelta(hours=20))
+
+    texts = [text for _box, text, _font in boxes]
+    assert {"VER", "1:17.912", "SC", "VSC", "×2"} <= set(texts)
+    assert not any(text.startswith("FRI") for text in texts)
+    row = image.crop((285, 185, 548, 205)).get_flattened_data()
+    assert F1_TYRE_COLOURS["M"] in row and F1_TYRE_COLOURS["H"] in row
+
+
 def test_f1_flags_keep_their_white_fields():
     plugin = _plugin()
     image = Image.new("RGB", (80, 50), (20, 24, 32))
