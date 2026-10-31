@@ -1,0 +1,109 @@
+{
+  "source": "GPT Image 2.5 Sunburst (Creative Claw image/gpt-image-2.5-sunburst), one transparent 1488x992 sheet, 3x2 grid, solid black silhouettes the page tints",
+  "sheet_sha256": "6468c73e25379a144865642fe44047af213179dff43d3c71d1e2b80957ef8a81",
+  "generated": "2026-10-31",
+  "icons": {
+    "politics": {
+      "cell": [
+        0,
+        0
+      ],
+      "bbox": [
+        72,
+        80,
+        463,
+        470
+      ],
+      "size": [
+        96,
+        96
+      ],
+      "sha256": "ff7f80d6158c1d51a15029e8ef94ec702fe3b6da9faf89d1de5552d8ecd5e03c"
+    },
+    "geopolitics": {
+      "cell": [
+        1,
+        0
+      ],
+      "bbox": [
+        112,
+        62,
+        384,
+        478
+      ],
+      "size": [
+        63,
+        96
+      ],
+      "sha256": "119497ba4787294a1d25bc05c579e2e3e055b2a51f732c1f45e25e6861b157ed"
+    },
+    "economy": {
+      "cell": [
+        2,
+        0
+      ],
+      "bbox": [
+        82,
+        117,
+        387,
+        456
+      ],
+      "size": [
+        86,
+        96
+      ],
+      "sha256": "bd563bfe2d75ceb542a9dfe9157d3520533b11c6456be3f84b466dc26f32b86b"
+    },
+    "tech": {
+      "cell": [
+        0,
+        1
+      ],
+      "bbox": [
+        91,
+        62,
+        444,
+        409
+      ],
+      "size": [
+        96,
+        94
+      ],
+      "sha256": "68adedc5f14ec14eac1e20cd2fe44cf1f5e361a054ba0dfc7956811ba8453a54"
+    },
+    "crypto": {
+      "cell": [
+        1,
+        1
+      ],
+      "bbox": [
+        69,
+        58,
+        427,
+        419
+      ],
+      "size": [
+        95,
+        96
+      ],
+      "sha256": "e0390214a14cc69a41021c561c59861da62494f89ddd64dadc613b45cdc28195"
+    },
+    "none": {
+      "cell": [
+        2,
+        1
+      ],
+      "bbox": [
+        74,
+        75,
+        395,
+        397
+      ],
+      "size": [
+        96,
+        96
+      ],
+      "sha256": "471bb7930fca80a84eae830d9049e075b8a765495809c87ceaf8bf245c82c278"
+    }
+  }
+}

@@ -62,6 +62,11 @@ ICON = 22
 # The left side's cards carry quiet doodles of their subject in their colour (assets/doodles): the
 # lead the forecasting itself, each tile its category's.
 CATEGORY_DOODLES = {"政治": "politics", "地缘": "geopolitics", "经济": "economy", "科技": "tech", "加密": "crypto"}
+# Each category's icon (assets/icons, a generated black silhouette by the same names) in its chip and,
+# for a market with no picture, in a tile of its colour; "none" marks a None outcome.
+CHIP_ICON = 11
+# The US states whose flags are bundled (assets/state_flags, by postal code) mark an outcome naming them.
+US_STATES = frozenset(path.stem.upper() for path in (ASSETS / "state_flags").glob("*.png"))
 DOODLE_STRENGTH = 0.24
 
 
@@ -211,10 +216,29 @@ def _emblem(canvas, picture, box, radius=6):
     return True
 
 
-def _chip(canvas, x, middle, text, fill, size=10):
-    width = canvas.width(text, size) + 10
+@lru_cache(maxsize=32)
+def _icon(name, size, colour):
+    """assets/icons/<name>.png (a black silhouette) ``size`` px at most, in ``colour``; None without it."""
+    path = ASSETS / "icons" / f"{name}.png"
+    if not path.is_file():
+        return None
+    with Image.open(path) as source:
+        alpha = source.convert("RGBA").getchannel("A")
+    alpha = ImageOps.contain(alpha, (size, size), Image.Resampling.LANCZOS)
+    icon = Image.new("RGBA", alpha.size, (*colour[:3], 255))
+    icon.putalpha(alpha)
+    return icon
+
+
+def _chip(canvas, x, middle, text, fill, size=10, icon=None):
+    """A label on a rounded tag of ``fill``, led by the category's icon when ``icon`` names one."""
+    mark = _icon(icon, CHIP_ICON, (255, 255, 255)) if icon else None
+    lead = mark.width + 3 if mark is not None else 0
+    width = canvas.width(text, size) + 10 + lead
     canvas.draw.rounded_rectangle((x, middle - 8, x + width, middle + 8), radius=4, fill=fill)
-    canvas.text((x + width / 2, middle), text, size, (255, 255, 255), anchor="mm")
+    if mark is not None:
+        canvas.image.paste(mark, (round(x + 5), round(middle - mark.height / 2)), mark)
+    canvas.text((x + lead + (width - lead) / 2, middle), text, size, (255, 255, 255), anchor="mm")
     return width
 
 
@@ -289,7 +313,7 @@ def _lead(canvas, payload, images):
     _emblem(canvas, picture, picture_box, radius=8)
     x = picture_box[2] + 10
     color = CATEGORY_COLORS.get(event["category"], POLYMARKET)
-    _chip(canvas, x, top + 18, f"今日最热 · {event['category']}", color)
+    _chip(canvas, x, top + 18, f"今日最热 · {event['category']}", color, icon=CATEGORY_DOODLES.get(event["category"]))
     canvas.text((right - 10, top + 18), f"24h 成交 {money_text(event['volume_24h'])}", 11, "ink", anchor="rm")
     for size in (17, 15, 14):
         lines = canvas.wrap(event["title"], size, right - 12 - x, 2)
@@ -315,16 +339,17 @@ def _lead(canvas, payload, images):
     if series:
         _week_chart(canvas, (chart_left, rows_top, right - 10, rows_bottom), series)
     row_h = (rows_bottom - rows_top) / max(1, len(outcomes))
+    # Each outcome's portrait, else its mark (the flags of the states it names, a ✓ / ✗, a None
+    # sign...), centred in a column as wide as the widest, the names lined up after it.
+    side = int(min(row_h - 6, 22))
+    rooms = [_mark_room(*_mark_source(event, outcome, images), side) for outcome in outcomes]
+    column = max(rooms, default=0)
+    x = left + 12 + column
+    name_w = LEAD_NAME_W - column
     for index, outcome in enumerate(outcomes):
         middle = rows_top + row_h * (index + 0.5)
         tint = POLYMARKET if index == 0 else (RUNNER_UP if index == 1 and series else canvas.color("muted"))
-        face = images.get(sources.safe_image_url(outcome.get("image")))
-        x = left + 12
-        if face is not None:
-            side = int(min(row_h - 6, 24))
-            _picture(canvas, face, (x, int(middle - side / 2), x + side, int(middle - side / 2) + side), radius=side // 2)
-            x += side + 6
-        name_w = LEAD_NAME_W - (x - left - 12)
+        _outcome_mark(canvas, event, outcome, images, left + 12 + (column - rooms[index]) // 2, middle, side, tint)
         canvas.text((x, middle - 5), outcome["name"], 12, anchor="lm", width=name_w)
         if outcome.get("volume_24h"):
             canvas.text((x, middle + 8), f"24h {money_text(outcome['volume_24h'])}", 9, "muted", anchor="lm",
@@ -342,11 +367,17 @@ MONTHS = ("January", "February", "March", "April", "May", "June", "July", "Augus
 
 
 def _outcome_kind(name):
-    """How a tile draws an outcome with no picture of its own: "yes" / "no", ("date", day) for a
-    "October 28" deadline, "level" for a price level ("↑ 82,500"), else None."""
+    """How an outcome with no picture of its own is marked: "yes" / "no", "none" for a None outcome,
+    ("states", codes) for one naming US states ("IA, KS"), ("date", day) for a "October 28" deadline,
+    "level" for a price level ("↑ 82,500"), else None."""
     text = str(name or "").strip()
     if text.lower() in ("yes", "no"):
         return text.lower()
+    if text.lower() in ("none", "neither", "no one", "nobody"):
+        return "none"
+    states = [part.strip().upper() for part in text.replace("&", ",").replace("/", ",").split(",")]
+    if states and all(part in US_STATES for part in states):
+        return ("states", tuple(states))
     words = text.split()
     if len(words) == 2 and words[0] in MONTHS and words[1].isdigit():
         return ("date", int(words[1]))
@@ -355,19 +386,34 @@ def _outcome_kind(name):
     return None
 
 
-def _outcome_mark(canvas, event, outcome, images, x, middle, side, color):
-    """The outcome's mark before its name in a tile: its own picture (a party's or company's logo),
-    a ✓ / ✗ for Yes / No, a small calendar page for a date, the event's own picture (the coin) for a
-    price level. Returns the room it took, or 0 without one."""
-    top = int(middle - side / 2)
+def _mark_source(event, outcome, images):
+    """What marks an outcome: its kind (see _outcome_kind) and its own picture, or for a price
+    level the event's (the coin); the picture is None without one."""
     kind = _outcome_kind(outcome["name"])
     picture = images.get(sources.safe_image_url(outcome.get("image")))
     if picture is None and kind == "level":
         picture = images.get(sources.safe_image_url(event.get("image")))
+    return kind, picture
+
+
+def _mark_room(kind, picture, side):
+    """The room an outcome's mark ``side`` px tall takes before its name, 0 without one."""
+    if picture is None and isinstance(kind, tuple) and kind[0] == "states":
+        flags = _flag_images(kind[1], side)
+        return (flags[0].width // 2 + 2 if len(flags) > 1 else 0) + flags[-1].width + 6
+    return side + 5 if picture is not None or kind in ("yes", "no", "none") or isinstance(kind, tuple) else 0
+
+
+def _outcome_mark(canvas, event, outcome, images, x, middle, side, color):
+    """The outcome's mark before its name: its own picture (a party's or company's logo), a ✓ / ✗
+    for Yes / No, a ⌀ for None, the flags of the states it names, a small calendar page for a date,
+    the event's own picture (the coin) for a price level. Returns the room it took, 0 without one."""
+    top = int(middle - side / 2)
+    kind, picture = _mark_source(event, outcome, images)
+    room = _mark_room(kind, picture, side)
     if picture is not None:
         _picture(canvas, picture, (x, top, x + side, top + side), radius=side // 2)
-        return side + 5
-    if kind in ("yes", "no"):
+    elif kind in ("yes", "no"):
         canvas.draw.ellipse((x, top, x + side, top + side), fill=canvas.color("up" if kind == "yes" else "down"))
         ink, inset, width = canvas.color("paper"), side * 0.28, max(2, side // 7)
         if kind == "yes":
@@ -376,8 +422,13 @@ def _outcome_mark(canvas, event, outcome, images, x, middle, side, color):
         else:
             canvas.draw.line((x + inset, top + inset, x + side - inset, top + side - inset), fill=ink, width=width)
             canvas.draw.line((x + inset, top + side - inset, x + side - inset, top + inset), fill=ink, width=width)
-        return side + 5
-    if isinstance(kind, tuple):
+    elif kind == "none":
+        icon = _icon("none", side, canvas.color("muted"))
+        if icon is not None:
+            canvas.image.paste(icon, (x + (side - icon.width) // 2, top + (side - icon.height) // 2), icon)
+    elif isinstance(kind, tuple) and kind[0] == "states":
+        _state_flags(canvas, kind[1], x, middle, side)
+    elif isinstance(kind, tuple):
         band = max(4, round(side * 0.3))
         canvas.draw.rounded_rectangle((x, top, x + side, top + side), radius=3, fill=(255, 255, 255),
                                       outline=color, width=1)
@@ -385,8 +436,29 @@ def _outcome_mark(canvas, event, outcome, images, x, middle, side, color):
         canvas.draw.rectangle((x, top + band - 2, x + side, top + band), fill=color)
         canvas.text((x + side / 2 + 0.5, top + band + (side - band) / 2), str(kind[1]), max(7, side - band - 3),
                     (0x12, 0x1A, 0x20), anchor="mm")
-        return side + 5
-    return 0
+    return room
+
+
+@lru_cache(maxsize=32)
+def _flag_images(states, side):
+    """The flags of the US states an outcome names (assets/state_flags), the first two: each ``side``
+    px tall at most, a little shorter when two share the room."""
+    flags = []
+    for code in states[:2]:
+        with Image.open(ASSETS / "state_flags" / f"{code.lower()}.png") as source:
+            flags.append(ImageOps.contain(source.convert("RGB"), (side * 2, side - (4 if len(states) > 1 else 0)),
+                                          Image.Resampling.LANCZOS))
+    return tuple(flags)
+
+
+def _state_flags(canvas, states, x, middle, side):
+    """The states' flags (_flag_images) edged with a hairline, a second one set over the first's
+    right half, a little lower."""
+    flags = _flag_images(states, side)
+    for index, flag in enumerate(flags):
+        left, top = x + index * (flags[0].width // 2 + 2), round(middle - side / 2) + index * 4
+        canvas.image.paste(flag, (left, top))
+        canvas.draw.rectangle((left, top, left + flag.width - 1, top + flag.height - 1), outline=canvas.color("rule"))
 
 
 def _tile(canvas, box, event, images):
@@ -399,13 +471,21 @@ def _tile(canvas, box, event, images):
                       color, strength=DOODLE_STRENGTH, radius=5, offset=(left, top))
     canvas.draw.rounded_rectangle((left, top, left + 4, bottom), radius=2, fill=color)
     picture_box = (left + 10, top + 8, left + 44, top + 42)
-    if not _picture(canvas, images.get(sources.safe_image_url(event.get("image"))), picture_box, radius=5):
-        # No picture: the category's colour and its first character, as a quiet badge.
-        canvas.draw.rounded_rectangle(picture_box, radius=5, fill=color)
-        canvas.text(((picture_box[0] + picture_box[2]) / 2, (picture_box[1] + picture_box[3]) / 2),
-                    event["category"][0], 18, (255, 255, 255), anchor="mm")
+    picture = images.get(sources.safe_image_url(event.get("image")))
+    if picture is not None:
+        _picture(canvas, picture, picture_box, radius=5)
+    else:
+        # No picture: the category's icon in its colour, standing on the page without a ground (else
+        # its first character on a quiet badge of that colour).
+        middle = ((picture_box[0] + picture_box[2]) / 2, (picture_box[1] + picture_box[3]) / 2)
+        icon = _icon(CATEGORY_DOODLES.get(event["category"], ""), picture_box[2] - picture_box[0] - 2, color)
+        if icon is not None:
+            canvas.image.paste(icon, (round(middle[0] - icon.width / 2), round(middle[1] - icon.height / 2)), icon)
+        else:
+            canvas.draw.rounded_rectangle(picture_box, radius=5, fill=color)
+            canvas.text(middle, event["category"][0], 18, (255, 255, 255), anchor="mm")
     x = picture_box[2] + 8
-    used = _chip(canvas, x, top + 16, event["category"], color, size=9)
+    used = _chip(canvas, x, top + 16, event["category"], color, size=9, icon=CATEGORY_DOODLES.get(event["category"]))
     meta = f"24h {money_text(event['volume_24h'])}" + (f" · 截止 {date_text(event['ends'])}" if event.get("ends") else "")
     canvas.text((x + used + 6, top + 16), meta, 9, "muted", anchor="lm", bold=False, width=right - 8 - x - used - 6)
     for number, line in enumerate(canvas.wrap(event["title"], 12, right - 8 - x, 2)):

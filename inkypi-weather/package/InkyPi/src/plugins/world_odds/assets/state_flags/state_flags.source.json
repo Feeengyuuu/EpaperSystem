@@ -1,0 +1,205 @@
+{
+  "source": "flagcdn.com (US state flags, public domain), w80 PNGs; flagcdn has no flag for DC",
+  "flags": {
+    "ak": {
+      "source": "https://flagcdn.com/w80/us-ak.png",
+      "sha256": "8690575a8ae97f4bdf2649b74dd7556379c93b938a7a173258358e5fcaecb9e9"
+    },
+    "al": {
+      "source": "https://flagcdn.com/w80/us-al.png",
+      "sha256": "2e5ec2ad5f576200b4e711b7f23ef7bc559189da38947081a4e76e9b24d9fdb9"
+    },
+    "ar": {
+      "source": "https://flagcdn.com/w80/us-ar.png",
+      "sha256": "420ea63fd1d053ab98c75c2428ba97fe16d272db5092b120f1de044982ec387b"
+    },
+    "az": {
+      "source": "https://flagcdn.com/w80/us-az.png",
+      "sha256": "72511f39310f04a6d6014159f9aaa175ddf911d6323f1f53d6491bdd5218f736"
+    },
+    "ca": {
+      "source": "https://flagcdn.com/w80/us-ca.png",
+      "sha256": "05ba318098f85b39844affb4d43c6aa86779ffe043409d58119833e99448d719"
+    },
+    "co": {
+      "source": "https://flagcdn.com/w80/us-co.png",
+      "sha256": "2d691b8602f666d6f88e2d5c8d033e3111504ca9e2917ac4494e909093ef0ae6"
+    },
+    "ct": {
+      "source": "https://flagcdn.com/w80/us-ct.png",
+      "sha256": "8e97b29d422ee1adff6ca515995cb9cf0ff0b120d0eb04c4c650b75189ad178e"
+    },
+    "de": {
+      "source": "https://flagcdn.com/w80/us-de.png",
+      "sha256": "9ce08287b8bf9edd967a0213e606c398943427be3a108204ef001a7eab87a424"
+    },
+    "fl": {
+      "source": "https://flagcdn.com/w80/us-fl.png",
+      "sha256": "924a516cd588b8af9254b906a131e76668fee5e66261a9554e6450f664c709a0"
+    },
+    "ga": {
+      "source": "https://flagcdn.com/w80/us-ga.png",
+      "sha256": "8d735fd4fddcea8f6677009d567d44b4e9f39e53b8a37f3531d40c6b3454b987"
+    },
+    "hi": {
+      "source": "https://flagcdn.com/w80/us-hi.png",
+      "sha256": "82c6a9aa4f46c8497da880092431ba19791ee5040b718e0c1045098c59cc794b"
+    },
+    "ia": {
+      "source": "https://flagcdn.com/w80/us-ia.png",
+      "sha256": "c73a1d2ef97eef33dc7d4d36fd5901311ef99f422fef21f73d8e113b6fd7aec5"
+    },
+    "id": {
+      "source": "https://flagcdn.com/w80/us-id.png",
+      "sha256": "9aebfbf4e315cb6b15a85848da9dc93831d30ffa1e9f8165eacc786ffcce909f"
+    },
+    "il": {
+      "source": "https://flagcdn.com/w80/us-il.png",
+      "sha256": "de8124962045a1bcf075fa21bd9f8c09563ce23994eaf53231f52c6d5a0088de"
+    },
+    "in": {
+      "source": "https://flagcdn.com/w80/us-in.png",
+      "sha256": "9d11947220257e8b5029d90ad49bc840b6dbb55649ff5ee40c8a9a1ff74ac451"
+    },
+    "ks": {
+      "source": "https://flagcdn.com/w80/us-ks.png",
+      "sha256": "920fc7e028a30b5512b1c767e9d87b3b6e36848d18381802be7aedfcf0e066bd"
+    },
+    "ky": {
+      "source": "https://flagcdn.com/w80/us-ky.png",
+      "sha256": "7d60a74a1fe1a7dba31ffebd41398b153a3b3b4bd30da90bf09a49785043ffcd"
+    },
+    "la": {
+      "source": "https://flagcdn.com/w80/us-la.png",
+      "sha256": "c74dc28876a99ad8c761c012bdccfaceffb7e8281c0175468339a546c860340c"
+    },
+    "ma": {
+      "source": "https://flagcdn.com/w80/us-ma.png",
+      "sha256": "948d31c77b5a26a0a7b4c1b62b4b87a43ec93b9dee993d9d4a4c3b669e468855"
+    },
+    "md": {
+      "source": "https://flagcdn.com/w80/us-md.png",
+      "sha256": "58835493162c0688587e52d615c0309f67538fa142bb08977ca6c28acd3c7e32"
+    },
+    "me": {
+      "source": "https://flagcdn.com/w80/us-me.png",
+      "sha256": "14b7cb1f6d76d9b40619bdc67b334a8e22e811c4182ff3e38495e625f6d28084"
+    },
+    "mi": {
+      "source": "https://flagcdn.com/w80/us-mi.png",
+      "sha256": "7a58beac332ec1e68c61210d92017ddf7dc8595d1cf8a2d47618aa50ecf81104"
+    },
+    "mn": {
+      "source": "https://flagcdn.com/w80/us-mn.png",
+      "sha256": "3e3012ab5fc918e029b3d5fd8cfd52f999e9741b9ac578ec9de6518fbf841ca1"
+    },
+    "mo": {
+      "source": "https://flagcdn.com/w80/us-mo.png",
+      "sha256": "9c47570eea0eb1508cc5968ff9b28d5ce4a7c75905347638ccc18258d34c4acd"
+    },
+    "ms": {
+      "source": "https://flagcdn.com/w80/us-ms.png",
+      "sha256": "363e953a644cf7adfd0889139acfb48ead54f3b6cd7843920608b447c3c43f81"
+    },
+    "mt": {
+      "source": "https://flagcdn.com/w80/us-mt.png",
+      "sha256": "a36f92099f1aa8d1d6372ea0024c685a44e8ad615f0b54a54562fa73314f2237"
+    },
+    "nc": {
+      "source": "https://flagcdn.com/w80/us-nc.png",
+      "sha256": "9f07621b2392acfe346e6e61e0812492ed3c64ef08217fab842a204c6a93171d"
+    },
+    "nd": {
+      "source": "https://flagcdn.com/w80/us-nd.png",
+      "sha256": "727442fcd79e2a73c0569cd2d52ce66f270fbf33c38ddadefd60f8485ef0ecc1"
+    },
+    "ne": {
+      "source": "https://flagcdn.com/w80/us-ne.png",
+      "sha256": "0ce431883587f9ec84574d97a499674d8c97685cac406af55e382341c4fd8b65"
+    },
+    "nh": {
+      "source": "https://flagcdn.com/w80/us-nh.png",
+      "sha256": "44498e837a608b9d165a0d49a747ab367e8fb6d7a2bef2412ba603215b46aca3"
+    },
+    "nj": {
+      "source": "https://flagcdn.com/w80/us-nj.png",
+      "sha256": "759f62840a1ff548feecb80ee98cdb9e94b76757328990750c642a5c821a7dfd"
+    },
+    "nm": {
+      "source": "https://flagcdn.com/w80/us-nm.png",
+      "sha256": "e9e4caafe25a3609e49c5f05237ecaad03eb25e413f3317a2b006cef44d2fc5c"
+    },
+    "nv": {
+      "source": "https://flagcdn.com/w80/us-nv.png",
+      "sha256": "3b89bda51f27e893957e6f59f1d2fba1dad2a557761d1f7a62300ef4e990e9dd"
+    },
+    "ny": {
+      "source": "https://flagcdn.com/w80/us-ny.png",
+      "sha256": "cf35811d9447930a1c3b5a4f9344743bfdcc709289e9f77b34508b23b4618b59"
+    },
+    "oh": {
+      "source": "https://flagcdn.com/w80/us-oh.png",
+      "sha256": "82891231ed309cf6c74b63d5699714676297f18fbbdbf7e68c6d6dad478deecb"
+    },
+    "ok": {
+      "source": "https://flagcdn.com/w80/us-ok.png",
+      "sha256": "8b73290e2f8aa84c70bef0dbb51344715959f2a8d86638079ab16629371fc2bd"
+    },
+    "or": {
+      "source": "https://flagcdn.com/w80/us-or.png",
+      "sha256": "11c3838d2035214cf4219f919e212dbd930dcf49e72972dc18b6120c859eafe1"
+    },
+    "pa": {
+      "source": "https://flagcdn.com/w80/us-pa.png",
+      "sha256": "d52448bb5b8d19f3cdb3bb8f0ebf07ae4996fcf3fbbf69c3ce7156aabafec05d"
+    },
+    "ri": {
+      "source": "https://flagcdn.com/w80/us-ri.png",
+      "sha256": "1267640b9ae1143e55388b343fb87ffa35838bde46e748ad1ccf7c3d03445e9d"
+    },
+    "sc": {
+      "source": "https://flagcdn.com/w80/us-sc.png",
+      "sha256": "65c9a97249ad9e9d7817f4aca86b6b15f7f92e252c1aaa05701bba5f474b895c"
+    },
+    "sd": {
+      "source": "https://flagcdn.com/w80/us-sd.png",
+      "sha256": "ec21f34f250cef1304f82dd81dfe918e5f253b6261d4bdd841515e03d7f7156e"
+    },
+    "tn": {
+      "source": "https://flagcdn.com/w80/us-tn.png",
+      "sha256": "6e1979270b3b0fca36bc7e0c4c6dc64f24af39be26e42523ecccb113ce1ad6aa"
+    },
+    "tx": {
+      "source": "https://flagcdn.com/w80/us-tx.png",
+      "sha256": "b959eb17494bcea73974449e49c9e2eb2ead8e4a783006a71ec5ec086183eace"
+    },
+    "ut": {
+      "source": "https://flagcdn.com/w80/us-ut.png",
+      "sha256": "ac05f32df57210b25c84746b98d393a3734f51dd002273fcd63ed05ec4f2bdc4"
+    },
+    "va": {
+      "source": "https://flagcdn.com/w80/us-va.png",
+      "sha256": "482b947c226a3139cd3676b045ef4fab259ec2d61791eed7f92abdae512bb38b"
+    },
+    "vt": {
+      "source": "https://flagcdn.com/w80/us-vt.png",
+      "sha256": "3d94f9be5386c201604aa856946baa54f64c5f04e095ba61d0377c07e132fd91"
+    },
+    "wa": {
+      "source": "https://flagcdn.com/w80/us-wa.png",
+      "sha256": "3dec7e7a5ba99f74918725ea686ed09ff2df3967914b7ceb3688e55bb38961a1"
+    },
+    "wi": {
+      "source": "https://flagcdn.com/w80/us-wi.png",
+      "sha256": "91013623729f17deabb0013fbf058257352b1c52840ab2fa1f4bf25daa4f3d83"
+    },
+    "wv": {
+      "source": "https://flagcdn.com/w80/us-wv.png",
+      "sha256": "ec3ec5531a8ef7a40c8eb9ae6a824b171a17a33c0874db5fc64ed2a947e8f1d3"
+    },
+    "wy": {
+      "source": "https://flagcdn.com/w80/us-wy.png",
+      "sha256": "6cce22eb8eddb0f2179ecce9dc7cd8a96423ae5706c4baa23d65605a5dc6e651"
+    }
+  }
+}

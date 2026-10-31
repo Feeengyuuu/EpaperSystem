@@ -107,6 +107,35 @@ def test_tile_outcomes_without_a_picture_get_a_drawn_mark():
         "yes", "no", ("date", 28), "level", None, None]
 
 
+def test_none_and_us_state_outcomes_get_their_own_marks():
+    from plugins.world_odds.render import CATEGORY_DOODLES, US_STATES, _icon, _mark_room, _outcome_kind
+
+    assert [_outcome_kind(name) for name in ("None", "IA, KS", "IA", "Ohio", "IA, Ohio")] == [
+        "none", ("states", ("IA", "KS")), ("states", ("IA",)), None, None]
+    assert len(US_STATES) == 50
+    assert all(_icon(name, 11, (255, 255, 255)) is not None for name in [*CATEGORY_DOODLES.values(), "none"])
+    # A second state's flag overlaps the first's right half.
+    one, two = _mark_room(("states", ("IA",)), None, 22), _mark_room(("states", ("IA", "KS")), None, 22)
+    assert one < two < one * 2
+    assert _mark_room("none", None, 22) == _mark_room("yes", None, 22) == 27
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_a_tile_without_a_picture_shows_its_category_icon_on_the_page(mode):
+    from PIL import ImageColor
+
+    from plugins.world_odds.render import DAY, LEAD, LEFT, NIGHT
+
+    tile = {"id": "t", "title": "Prime Minister of Israel after the next election?", "category": "地缘",
+            "volume_24h": 5e5, "image": None, "outcomes": [{"name": "Yes", "chance": 0.4, "change": 0.0}]}
+    image = render_page((800, 480), {"lead": None, "tiles": [tile], "board": {}}, {"_inkypi_theme": {"mode": mode}}, NOW, {})
+    left, top = LEFT[0], LEAD[3] + 8
+    track = ImageColor.getrgb((DAY if mode == "day" else NIGHT)["track"])
+    badge = image.convert("RGB").crop((left + 10, top + 8, left + 44, top + 42))
+
+    assert sum(1 for pixel in badge.get_flattened_data() if pixel == track) < 10
+
+
 @pytest.mark.parametrize("mode", ["day", "night"])
 def test_the_lead_card_is_framed_in_polymarket_blue_under_a_band(mode):
     from plugins.world_odds.render import LEAD, POLYMARKET
