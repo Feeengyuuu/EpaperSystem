@@ -1574,15 +1574,17 @@ class ProRenderMixin:
         name_x = x0 + chip_w + 5
         name = row.get("name") or row.get("english") or ""
         name_w = kd_right - 30 - name_x
-        # The map's own icon (its emblem in the game's map picker) follows its name while there is room.
-        emblem = self._asset_logo(f"map_icons/{row.get('map')}.png", (WIN_MAP_ICON, WIN_MAP_ICON))             if row.get("map") in MAP_NAMES else None
+        # The map's own icon (its emblem in the game's map picker) follows its name, centred on it.
+        emblem = None
+        if row.get("map") in MAP_NAMES:
+            emblem = self._asset_logo(f"map_icons/{row.get('map')}.png", (WIN_MAP_ICON, WIN_MAP_ICON))
         if emblem is not None:
             name_w -= WIN_MAP_ICON + 4
         self._single(draw, (name_x, y), name, fonts["small_bold"], colors["ink"] if won else colors["muted"], name_w, 8)
         if emblem is not None:
-            shown = self._text_width(draw, name, fonts["small_bold"])
-            icon_x = name_x + min(shown, name_w) + 4
-            image.paste(emblem, (round(icon_x), middle - emblem.height // 2), emblem)
+            fitted = self._fit_font(draw, name, fonts["small_bold"], name_w, 8)
+            _left, top, right, bottom = draw.textbbox((name_x, y), name, font=fitted)
+            image.paste(emblem, (round(right + 4), round((top + bottom - emblem.height) / 2)), emblem)
 
     @staticmethod
     @lru_cache(maxsize=32)
