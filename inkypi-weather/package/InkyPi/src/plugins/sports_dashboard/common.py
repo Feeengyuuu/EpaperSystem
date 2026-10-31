@@ -675,6 +675,8 @@ LOCAL_NCAA_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "ncaa_header_cutou
 SPORT_HEADER_CUTOUT_SCALE = 1.24
 SPORT_HEADER_CUTOUT_LEFT_BIAS = 0.45
 SPORT_HEADER_CUTOUT_TITLE_GAP = 104
+# A league's header gives the stage its game belongs to (its official logo) at most this wide.
+SPORT_STAGE_MARK_W = 96
 PGA_HEADER_CUTOUT_X_OFFSET = 22
 LOCAL_NBA_EMPTY_SLOT_FILLER_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_empty_slot_filler.png")
 LOCAL_NBA_CARD_PLACEHOLDER_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_card_placeholder.png")
@@ -3905,12 +3907,18 @@ class SportsDashboardCommonMixin:
             source_label, source_font = self._fit_text(draw, source_label, 112, 10, bold=True, min_size=7)
             draw.text((title_x, header_y + 24), source_label, font=source_font, fill=COLORS["muted"])
         status = str((card or {}).get("status") or "NEXT").upper()
+        # The stage the game belongs to (the Finals, a series, the Super Bowl...) by its official
+        # logo, before the status pill; the sport's strip takes what is left.
+        stage = self._draw_event_mark(
+            image, self._sport_stage_mark_path(sport, (card or {}).get("main")),
+            (x2 - 98 - SPORT_STAGE_MARK_W, header_y - 6, x2 - 98, header_y + 34), align="right",
+        )
         strip_drawn = self._draw_standalone_sport_header_cutout(
             image,
             sport,
             title_x + SPORT_HEADER_CUTOUT_TITLE_GAP,
             header_y - 6,
-            x2 - 92,
+            stage[0] - 8 if stage else x2 - 92,
             y1 + 48,
             accent,
         )

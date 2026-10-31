@@ -47,6 +47,16 @@ PGA_EVENT_MARKS = {
     ),
 }
 
+# The stage a league's game belongs to, as that stage's official logo for the panel's header: by
+# league and season (None: any season), a word in the game's ESPN note (or MLB series) and the
+# logo; first match wins. A stage with no logo here leaves the header's caption as it is.
+STAGE_MARKS = {
+    "MLB": {2026: (("wild card", "mlb/2026_postseason.png"), ("division series", "mlb/2026_postseason.png"),
+                   ("alds", "mlb/2026_postseason.png"), ("nlds", "mlb/2026_postseason.png"))},
+    "NFL": {2027: (("super bowl", "nfl/2027_super_bowl.png"),)},
+    "NCAA": {None: (("college football playoff", "ncaa/cfp.png"), ("cfp ", "ncaa/cfp.png"))},
+}
+
 
 # Jolpica's Location.country -> ISO code of the bundled host flag (F1's own
 # race cards identify each Grand Prix by its host flag).
@@ -86,6 +96,26 @@ class EventMarksMixin:
         if not re.search(r"(?<![A-Z])FINALS", headline):  # not "Semifinals"
             return None
         return SportsDashboard._event_mark_file(WNBA_FINALS_MARKS.get(SportsDashboard._event_mark_year(event)))
+
+    @staticmethod
+    def _sport_stage_mark_path(sport, event):
+        """The official logo of the stage ``event`` (a league's main game) belongs to, else None: a
+        series' or Finals' own mark, a PGA event's, then STAGE_MARKS by the game's note."""
+        sport = str(sport or "").upper()
+        if not event:
+            return None
+        if sport == "MLB" and SportsDashboard._mlb_series_mark_path(event):
+            return SportsDashboard._mlb_series_mark_path(event)
+        if sport == "WNBA":
+            return SportsDashboard._wnba_series_mark_path(event)
+        if sport == "PGA":
+            return SportsDashboard._pga_event_mark_path(event)
+        text = " ".join(str(event.get(key) or "") for key in ("series_game", "headline", "note")).lower() + " "
+        marks = STAGE_MARKS.get(sport, {})
+        for keyword, relative in (*marks.get(SportsDashboard._event_mark_year(event), ()), *marks.get(None, ())):
+            if keyword in text:
+                return SportsDashboard._event_mark_file(relative)
+        return None
 
     @staticmethod
     def _nba_event_mark_path(event):

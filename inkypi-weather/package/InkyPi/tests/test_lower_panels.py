@@ -1444,6 +1444,38 @@ def test_event_marks_are_looked_up_by_edition():
     assert SportsDashboard._f1_circuit_mark_path({"circuit_id": "nowhere"}) is None
     assert SportsDashboard._f1_country_flag_path({"country": "USA"}).endswith("us.png")
     assert SportsDashboard._f1_country_flag_path({"country": "UAE"}).endswith("ae.png")
+
+
+def test_a_leagues_stage_is_named_by_its_official_logo():
+    stage = SportsDashboard._sport_stage_mark_path
+    assert stage("WNBA", {"headline": "WNBA Finals - Game 7", "start": _at(2026)}).endswith("2026_finals.png")
+    assert stage("MLB", {"series_game": "World Series Game 5", "start": _at(2026)}).endswith("2026_world_series.png")
+    assert stage("MLB", {"series_game": "AL Wild Card Game 2", "start": _at(2026, 9, 30)}).endswith("2026_postseason.png")
+    assert stage("NFL", {"headline": "Super Bowl LXI", "start": _at(2027, 2, 14)}).endswith("2027_super_bowl.png")
+    assert stage("NCAA", {"headline": "College Football Playoff Semifinal at the Rose Bowl", "start": _at(2027, 1, 1)}).endswith("cfp.png")
+    assert stage("PGA", {"name_en": "Mexico Open at VidantaWorld", "start": _at(2026)}).endswith("2026_mexico_open.png")
+    # A regular-season game, or a stage with no logo, leaves the header as it is.
+    assert stage("NFL", {"headline": "", "start": _at(2026)}) is None
+    assert stage("NHL", {"headline": "NHL Winter Classic", "start": _at(2027, 1, 1)}) is None
+    assert stage("WNBA", None) is None
+
+
+def test_a_league_header_shows_its_stage_before_the_status(monkeypatch):
+    plugin = _plugin()
+    drawn = []
+    original = plugin._draw_event_mark
+
+    def record(image, path, box, *args, **kwargs):
+        drawn.append((Path(path).name if path else None, box))
+        return original(image, path, box, *args, **kwargs)
+
+    monkeypatch.setattr(plugin, "_draw_event_mark", record)
+    image = Image.new("RGB", (556, 268), DAY_COLORS["panel"])
+    card = {"status": "NEXT", "main": {"headline": "WNBA Finals - Game 7", "start": _at(2026)}}
+    plugin._draw_standalone_sport_header(image, ImageDraw.Draw(image), 0, 0, 555, "WNBA", card, "HUB LIVE")
+
+    name, box = drawn[0]
+    assert name == "2026_finals.png" and box[2] <= 555 - 98 and box[3] - box[1] >= 36
     assert SportsDashboard._f1_country_flag_path({"country": "Atlantis"}) is None
 
 

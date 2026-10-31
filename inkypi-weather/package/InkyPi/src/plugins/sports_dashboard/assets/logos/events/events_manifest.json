@@ -648,6 +648,33 @@
         207,
         48
       ]
+    },
+    "nfl/2027_super_bowl.png": {
+      "source_url": "https://thumb.wikimedia.org/wikipedia/en/thumb/e/ed/Super_Bowl_LXI_Logo.svg/960px-Super_Bowl_LXI_Logo.svg.png",
+      "source_sha256": "74f0a5338786e4985b7c8c7ab86bd1512e1744e570565edd6e163d8dede54266",
+      "runtime_sha256": "e300b88657ddce78bd416e49e261c0d7ac78f3f777485b7d123f62b4c10d1310",
+      "runtime_dimensions": [
+        61,
+        48
+      ]
+    },
+    "ncaa/cfp.png": {
+      "source_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/18/Logo_of_college_football_playoff.svg/960px-Logo_of_college_football_playoff.svg.png",
+      "source_sha256": "13551c924eceddae5616853849a6fa131f7b9293dbb92f29e5329f3699422eea",
+      "runtime_sha256": "3dcd7442ebd557a4f22e18adeb3c5fad7d1027627d9967e3411578f96ce194c5",
+      "runtime_dimensions": [
+        43,
+        48
+      ]
+    },
+    "mlb/2026_postseason.png": {
+      "source_url": "https://upload.wikimedia.org/wikipedia/en/f/fc/2026_MLB_Postseason_logo.png",
+      "source_sha256": "851a10148855dc899a566f550669086e4f123b70806a28e1ebec8d07984f4217",
+      "runtime_sha256": "4d564e824cbd2ea2511a358e82895b45bdcb98eac4994ef27c3c56f76b7420cb",
+      "runtime_dimensions": [
+        183,
+        48
+      ]
     }
   }
 }
