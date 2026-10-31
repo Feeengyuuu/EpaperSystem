@@ -19,9 +19,17 @@
   <input class="form-control" name="stationName" id="stationName" value="Redwood City" maxlength="48">
 </div>
 <div class="form-group">
-  <label class="form-label" for="bartStation">BART 车站代码</label>
+  <label class="form-label" for="bartMode">BART 车站</label>
+  <select name="bartMode" id="bartMode">
+    <option value="random">每次随机一站</option>
+    <option value="fixed">固定为下面的车站</option>
+  </select>
+  <small>潮汐下方显示该站各方向的下几班车、列车节数和晚点；随机时每次上屏换一个有车的站。</small>
+</div>
+<div class="form-group">
+  <label class="form-label" for="bartStation">BART 车站代码（固定时使用）</label>
   <input class="form-control" name="bartStation" id="bartStation" value="WARM" pattern="[A-Za-z0-9]{4}" maxlength="4">
-  <small>四个字母的站点代码（WARM = Warm Springs，FRMT = Fremont，见 <a href="https://api.bart.gov/docs/overview/abbrev.aspx" target="_blank" rel="noopener">BART 站点代码表</a>）。潮汐下方显示该站各方向的下几班车。</small>
+  <small>四个字母的站点代码（WARM = Warm Springs，FRMT = Fremont，见 <a href="https://api.bart.gov/docs/overview/abbrev.aspx" target="_blank" rel="noopener">BART 站点代码表</a>）。</small>
 </div>
 <div class="form-group">
   <label class="form-label" for="fontFamily">字体</label>
@@ -35,7 +43,7 @@
 </div>
 <script>
 document.addEventListener('DOMContentLoaded', () => {
-  for (const key of ['routes', 'windowDays', 'tideStation', 'stationName', 'bartStation', 'fontFamily', 'forceRefresh']) {
+  for (const key of ['routes', 'windowDays', 'tideStation', 'stationName', 'bartMode', 'bartStation', 'fontFamily', 'forceRefresh']) {
     const el = document.getElementById(key);
     const value = typeof pluginSettings !== 'undefined' ? pluginSettings[key] : undefined;
     if (value !== undefined) {

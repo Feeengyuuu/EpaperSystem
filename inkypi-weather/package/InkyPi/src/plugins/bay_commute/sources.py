@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import math
+import random
 import re
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -28,6 +29,10 @@ BART_COLOUR = re.compile(r"^#[0-9a-fA-F]{6}$")
 # The lines BART letters on its maps and signs (assets/logos/bart-<line>.png).
 BART_LINES = ("orange", "red", "yellow", "blue", "green")
 BART_DEPARTURES = 3
+# One reading of every station's departures (orig=ALL, about 100 KB) is kept and a station drawn
+# from it each time the page is made; a train this many seconds behind its schedule counts as late.
+BART_NETWORK_BYTES = 384 * 1024
+BART_LATE_SECONDS = 60
 COMPASS = {"N": "北", "NNE": "北东北", "NE": "东北", "ENE": "东东北", "E": "东", "ESE": "东东南", "SE": "东南",
            "SSE": "南东南", "S": "南", "SSW": "南西南", "SW": "西南", "WSW": "西西南", "W": "西", "WNW": "西西北",
            "NW": "西北", "NNW": "北西北"}
@@ -353,46 +358,81 @@ def bart_station_setting(value):
     return code if BART_CODE.match(code) else DEFAULT_BART_STATION
 
 
-def parse_bart(payload, now):
-    """A station's next trains by destination: the line's colour and when each train leaves, as
-    clock times (so a reading kept for a while still says when, not how long ago it said)."""
-    stations = (((payload or {}).get("root") or {}).get("station")) or []
-    station = stations[0] if isinstance(stations, list) and stations and isinstance(stations[0], dict) else {}
+def _int(value):
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _bart_station(station, now):
+    """One station's next trains by destination: the line's colour, when each train leaves (as clock
+    times, so a reading kept for a while still says when, not how long ago it said), how far behind
+    each runs, and the next train's cars and platform."""
     lines = []
     for etd in station.get("etd") or []:
         if not isinstance(etd, dict) or not str(etd.get("destination") or "").strip():
             continue
-        times, colour, direction, name = [], None, "", ""
+        trains, colour, direction, name = [], None, "", ""
         for estimate in etd.get("estimate") or []:
             if not isinstance(estimate, dict) or str(estimate.get("cancelflag")) == "1":
                 continue
             minutes = str(estimate.get("minutes") or "").strip()
-            try:
-                wait = 0 if minutes.lower() == "leaving" else int(minutes)
-            except ValueError:
+            wait = 0 if minutes.lower() == "leaving" else _int(minutes)
+            if wait is None:
                 continue
-            times.append((now + timedelta(minutes=wait)).isoformat())
+            trains.append(((now + timedelta(minutes=wait)).isoformat(), max(0, _int(estimate.get("delay")) or 0),
+                           _int(estimate.get("length")), str(estimate.get("platform") or "").strip()[:2]))
             colour = colour or (estimate.get("hexcolor") if BART_COLOUR.match(str(estimate.get("hexcolor") or "")) else None)
             direction = direction or str(estimate.get("direction") or "")
             name = name or str(estimate.get("color") or "").strip().lower()
-        if times:
+        if trains:
+            trains = sorted(trains)[:BART_DEPARTURES]
             lines.append({"destination": str(etd["destination"]).strip()[:40], "colour": colour or "#8c96a0",
-                          "line": name if name in BART_LINES else "",
-                          "direction": direction[:10], "departures": sorted(times)[:BART_DEPARTURES]})
-    if not station.get("name"):
-        raise ValueError("BART returned no station")
+                          "line": name if name in BART_LINES else "", "direction": direction[:10],
+                          "departures": [train[0] for train in trains], "delays": [train[1] for train in trains],
+                          "cars": trains[0][2], "platform": trains[0][3]})
     return {"station": str(station["name"])[:40], "code": str(station.get("abbr") or "")[:4],
             "time": now.isoformat(), "lines": lines}
 
 
-def fetch_bart(station, now, context):
+def parse_bart(payload, now):
+    """The first station of a BART departures reading (see _bart_station)."""
+    stations = (((payload or {}).get("root") or {}).get("station")) or []
+    station = stations[0] if isinstance(stations, list) and stations and isinstance(stations[0], dict) else {}
+    if not station.get("name"):
+        raise ValueError("BART returned no station")
+    return _bart_station(station, now)
+
+
+def parse_bart_network(payload, now):
+    """Every station's departures from one orig=ALL reading."""
+    stations = (((payload or {}).get("root") or {}).get("station")) or []
+    parsed = [_bart_station(station, now) for station in stations if isinstance(station, dict) and station.get("name")]
+    if not parsed:
+        raise ValueError("BART returned no stations")
+    return {"time": now.isoformat(), "stations": parsed}
+
+
+def pick_bart_station(network, code=None, choose=None):
+    """The station named by ``code`` from a network reading, else one drawn at random (by ``choose``,
+    random.choice) among those with trains to come; None when there is none."""
+    stations = [station for station in (network or {}).get("stations") or [] if station.get("lines")]
+    if code:
+        named = [station for station in (network or {}).get("stations") or [] if station.get("code") == code]
+        if named:
+            return named[0]
+    return (choose or random.choice)(stations) if stations else None
+
+
+def fetch_bart_network(now, context):
     context.raise_if_cancelled()
     response = get_http_client().request_json(
-        "GET", BART_URL, context=context, timeout=REQUEST_TIMEOUT, max_bytes=64 * 1024,
-        params={"cmd": "etd", "orig": bart_station_setting(station), "key": BART_PUBLIC_KEY, "json": "y"},
+        "GET", BART_URL, context=context, timeout=REQUEST_TIMEOUT, max_bytes=BART_NETWORK_BYTES,
+        params={"cmd": "etd", "orig": "ALL", "key": BART_PUBLIC_KEY, "json": "y"},
         headers={"User-Agent": USER_AGENT})
     context.raise_if_cancelled()
-    return parse_bart(response.data, now)
+    return parse_bart_network(response.data, now)
 
 
 def valid_bart(data):
@@ -401,15 +441,23 @@ def valid_bart(data):
                     and all(parse_time(stamp) for stamp in line["departures"]) for line in data["lines"]))
 
 
+def valid_bart_network(data):
+    stations = (data or {}).get("stations") if isinstance(data, dict) else None
+    return isinstance(stations, list) and 0 < len(stations) <= 80 and all(valid_bart(station) for station in stations)
+
+
 def coming_trains(data, now):
     """The lines whose next train has not left yet, soonest first, each with only its trains to come."""
     now = local_now(now)
     lines = []
     for line in (data or {}).get("lines") or []:
         departures = [parse_time(stamp) for stamp in line.get("departures") or []]
-        upcoming = [stamp for stamp in departures if stamp and (stamp - now).total_seconds() >= -30]
+        delays = list(line.get("delays") or []) + [0] * len(departures)
+        upcoming = [(stamp, delay) for stamp, delay in zip(departures, delays)
+                    if stamp and (stamp - now).total_seconds() >= -30]
         if upcoming:
-            lines.append({**line, "departures": upcoming})
+            lines.append({**line, "departures": [stamp for stamp, _delay in upcoming],
+                          "delays": [delay for _stamp, delay in upcoming]})
     return sorted(lines, key=lambda line: line["departures"][0])
 
 

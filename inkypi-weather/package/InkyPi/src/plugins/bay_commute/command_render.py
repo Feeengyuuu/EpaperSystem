@@ -15,7 +15,8 @@ from .map_view import draw_marker, render_map, source_logo
 from .render import ASSETS, FACILITIES, KINDS, draw_water, paste_sticker, source_label, tide_now
 from .direction_plaques import draw_direction
 from .sources import (
-    COMPASS, PACIFIC, coming_trains, local_now, next_tides, parse_time, rank_roads, road_state, select_roads,
+    BART_LATE_SECONDS, COMPASS, PACIFIC, coming_trains, local_now, next_tides, parse_time, rank_roads, road_state,
+    select_roads,
 )
 from .traffic_icons import draw_icon
 
@@ -432,9 +433,11 @@ def bart(page, payload, now):
     colours = list(dict.fromkeys(line["colour"] for line in data.get("lines") or [] if line.get("colour")))
     name_x = 538 + (station_ring(page, 538, BART_Y + 4, colours) + 4 if colours else 0)
     page.text((name_x, BART_Y - 1), name, 13, role="bart", width=170)
-    note = "缓存" if source.get("state") == "stale_cache" else "实时发车"
-    page.text((784, BART_Y + 1), note, 10, "muted", align="right", bold=False)
     lines = coming_trains(data, now)[:BART_ROWS]
+    # How many of the shown trains run late, in red, in place of 实时发车 (缓存 for a kept reading).
+    late = sum(delay >= BART_LATE_SECONDS for line in lines for delay in (line.get("delays") or [])[:3])
+    note = "缓存" if source.get("state") == "stale_cache" else f"{late} 班晚点" if late else "实时发车"
+    page.text((784, BART_Y + 1), note, 10, "red" if late and note != "缓存" else "muted", align="right", bold=False)
     if not lines:
         page.text((512, BART_Y + 22), "暂无发车信息" if data else "BART 发车暂不可用", 10, "muted", bold=False)
         return
@@ -455,13 +458,30 @@ def bart(page, payload, now):
             bullet.close()
         else:
             page.draw.ellipse((514, middle - 4, 522, middle + 4), fill=line["colour"])
-        times = " · ".join(stamp.astimezone(PACIFIC).strftime("%H:%M") for stamp in line["departures"][:3])
-        times_w = page.draw.textlength(times, font=font(12, "bart"))
-        page.text((784, y), times, 12, "blue", role="bart", align="right")
-        name_w = page.text((529, y), line["destination"], 12, role="bart", width=272 - 31 - times_w, bold=False)
+        stamps = line["departures"][:3]
+        delays = list(line.get("delays") or []) + [0] * len(stamps)
+        parts = [stamp.astimezone(PACIFIC).strftime("%H:%M") for stamp in stamps]
+        times_w = page.draw.textlength(" · ".join(parts), font=font(12, "bart"))
+        # The next trains as one right-aligned run, each in blue, a late one in red, parted by dots
+        # on the row's middle (Hind's own middle dot sits at its x-height, above the figures').
+        x = 784 - times_w
+        gap = page.draw.textlength(" · ", font=font(12, "bart"))
+        for part_index, (part, delay) in enumerate(zip(parts, delays)):
+            if part_index:
+                dot = x + gap / 2
+                page.draw.ellipse((dot - 1, middle - 1, dot + 1, middle + 1), fill=page.palette["blue"])
+                x += gap
+            x += page.text((x, y), part, 12, "red" if delay >= BART_LATE_SECONDS else "blue", role="bart")
+        # The next train's length after where it goes, as BART's platform signs give it.
+        cars = f"{line['cars']}节" if line.get("cars") else ""
+        cars_w = page.draw.textlength(cars, font=font(10, bold=False)) + 4 if cars else 0
+        name_w = page.text((529, y), line["destination"], 12, role="bart", width=272 - 31 - times_w - cars_w,
+                           bold=False)
+        if cars:
+            page.text((529 + name_w + 4, y - 1), cars, 10, "muted", bold=False)
         # The destination leads to its trains along its line, drawn as BART's map draws a line:
         # a stripe in the line's colour into a stop ring before the times.
-        start, stop = 529 + name_w + 6, 784 - times_w - 7
+        start, stop = 529 + name_w + cars_w + 6, 784 - times_w - 7
         if stop - start >= BART_LEADER_MIN:
             page.draw.line((start, middle, stop - 3, middle), fill=line["colour"], width=2)
             page.draw.ellipse((stop - 4, middle - 3, stop + 2, middle + 3), fill=page.palette["paper"],

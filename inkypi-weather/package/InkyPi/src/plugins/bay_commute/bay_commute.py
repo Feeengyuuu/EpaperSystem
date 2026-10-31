@@ -72,7 +72,7 @@ class BayCommute(BasePlugin):
         if name == "buoy":
             return sources.valid_buoy(data)
         if name == "bart":
-            return sources.valid_bart(data)
+            return sources.valid_bart_network(data)
         if name == "roads":
             rows = data.get("items")
             return (isinstance(rows, list) and len(rows) <= sources.MAX_CACHED_ROADS
@@ -182,11 +182,16 @@ class BayCommute(BasePlugin):
         buoy = self._source("buoy", {"station": sources.BUOY_STATION}, now,
                             allow_network=allow_network, force=force, context=context,
                             fetcher=lambda: sources.fetch_buoy(context))
-        # BART's departures, like the buoy, add to the page without deciding whether it counts as live.
-        bart_station = sources.bart_station_setting(settings.get("bartStation"))
-        bart = self._source("bart", {"station": bart_station}, now,
-                            allow_network=allow_network, force=force, context=context,
-                            fetcher=lambda: sources.fetch_bart(bart_station, now, context))
+        # BART's departures, like the buoy, add to the page without deciding whether it counts as live:
+        # one reading of the whole network, and from it a station drawn at random each time the page
+        # is made (or the one chosen in the settings).
+        network = self._source("bart", {"network": "ALL"}, now,
+                               allow_network=allow_network, force=force, context=context,
+                               fetcher=lambda: sources.fetch_bart_network(now, context))
+        fixed = str(settings.get("bartMode") or "random").strip().lower() == "fixed"
+        stop = sources.pick_bart_station(network.get("data"),
+                                         sources.bart_station_setting(settings.get("bartStation")) if fixed else None)
+        bart = {**network, "data": stop or {}}
         states = {roads["state"], tides["state"]}
         provenance = (SourceProvenance.LOCAL_FALLBACK if "unavailable" in states
                       else SourceProvenance.STALE_CACHE if "stale_cache" in states

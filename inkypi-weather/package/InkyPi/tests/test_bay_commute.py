@@ -112,11 +112,48 @@ BART_PAYLOAD = {"root": {"station": [{"name": "Warm Springs/South Fremont", "abb
 
 @pytest.fixture(autouse=True)
 def quiet_bart(monkeypatch):
-    """No test reaches BART: the station reads the departures above unless a test says otherwise."""
-    def bart(station, now, task):
+    """No test reaches BART: the network reads the departures above unless a test says otherwise."""
+    def bart(now, task):
         task.raise_if_cancelled()
-        return sources.parse_bart(BART_PAYLOAD, now)
-    monkeypatch.setattr(sources, "fetch_bart", bart)
+        return sources.parse_bart_network(BART_PAYLOAD, now)
+    monkeypatch.setattr(sources, "fetch_bart_network", bart)
+
+
+FREMONT = {"name": "Fremont", "abbr": "FRMT", "etd": [
+    {"destination": "Richmond", "estimate": [
+        {"minutes": "4", "platform": "2", "length": "6", "color": "ORANGE", "hexcolor": "#ff9933", "delay": "143",
+         "cancelflag": "0"},
+        {"minutes": "19", "platform": "2", "length": "5", "color": "ORANGE", "hexcolor": "#ff9933", "delay": "0",
+         "cancelflag": "0"}]}]}
+NETWORK_PAYLOAD = {"root": {"station": [BART_PAYLOAD["root"]["station"][0], FREMONT]}}
+
+
+def test_the_network_reading_keeps_each_trains_delay_and_the_next_trains_cars():
+    network = sources.parse_bart_network(NETWORK_PAYLOAD, NOW)
+
+    assert sources.valid_bart_network(network) and [station["code"] for station in network["stations"]] == ["WARM", "FRMT"]
+    richmond = sources.pick_bart_station(network, "FRMT")["lines"][0]
+    assert richmond["delays"] == [143, 0] and richmond["cars"] == 6 and richmond["platform"] == "2"
+    # Once the late train has gone its delay goes with it.
+    later = sources.coming_trains({"lines": [richmond]}, NOW + timedelta(minutes=10))
+    assert later[0]["delays"] == [0] and len(later[0]["departures"]) == 1
+    # Drawn at random among the stations with trains, or the one named.
+    assert sources.pick_bart_station(network, None, choose=lambda stations: stations[-1])["code"] == "FRMT"
+    assert sources.pick_bart_station(network, "WARM", choose=lambda stations: stations[-1])["code"] == "WARM"
+    assert sources.pick_bart_station({"stations": []}) is None
+
+
+def test_the_page_draws_a_bart_station_at_random_unless_one_is_fixed(plugin, monkeypatch):
+    mock_sources(monkeypatch, [])
+    monkeypatch.setattr(sources, "fetch_bart_network", lambda now, task: sources.parse_bart_network(NETWORK_PAYLOAD, now))
+    monkeypatch.setattr(sources.random, "choice", lambda stations: stations[-1])
+
+    drawn = plugin._payload(SETTINGS, NOW, allow_network=True, context=context())
+    fixed = plugin._payload({**SETTINGS, "bartMode": "fixed", "bartStation": "warm"}, NOW, allow_network=False,
+                            context=context())
+
+    assert drawn["bart"]["data"]["code"] == "FRMT" and fixed["bart"]["data"]["code"] == "WARM"
+    assert drawn["station"] == "9414523"
 
 
 def test_bart_departures_become_clock_times_and_drop_cancelled_and_departed_trains():
@@ -503,6 +540,26 @@ def test_bart_rows_lead_from_destination_to_times_along_the_line_level_with_the_
         return any(sum(abs(a - b) for a, b in zip(pixel, colour)) < 30 for pixel in ring)
 
     assert near((0xff, 0x99, 0x33)) and near(green)
+
+
+def test_bart_rows_give_the_next_trains_cars_and_mark_late_trains_red(monkeypatch):
+    fremont = sources.pick_bart_station(sources.parse_bart_network(NETWORK_PAYLOAD, NOW), "FRMT")
+    payload = {"roads": {"state": "live", "data": {"items": []}, "fetched_at": NOW.isoformat()},
+               "tides": {"state": "live", "data": tide_data(NOW), "fetched_at": NOW.isoformat()},
+               "buoy": {"state": "live", "data": sources.parse_buoy(BUOY_PAGE)},
+               "bart": {"state": "live", "data": fremont},
+               "routes": [], "station": "9414523", "window_days": 7, "nearby_cameras": {}}
+    recorded = []
+    original = Canvas.text
+
+    def capture(self, xy, text, size=13, color="ink", *args, **kwargs):
+        recorded.append((str(text), color))
+        return original(self, xy, text, size, color, *args, **kwargs)
+
+    monkeypatch.setattr(Canvas, "text", capture)
+    render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW)
+    late, on_time = [(NOW + timedelta(minutes=wait)).astimezone(sources.PACIFIC).strftime("%H:%M") for wait in (4, 19)]
+    assert {("1 班晚点", "red"), ("6节", "muted"), (late, "red"), (on_time, "blue")} <= set(recorded)
 
 
 def test_bart_rows_are_set_in_bart_typeface():
