@@ -1442,6 +1442,7 @@ class NBAMixin:
         )
         if not wordmark:
             return False
+        wordmark = self._kit_title_wordmark(wordmark)
         paste_x = int(x)
         paste_y = int(y + (int(max_height) - wordmark.height) / 2)
         image.paste(wordmark, (paste_x, paste_y), wordmark)

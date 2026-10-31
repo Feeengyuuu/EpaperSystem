@@ -435,6 +435,13 @@ class ScorebugKitMixin:
                     return
         self._draw_kit_footer(draw, (x1, y2 - 12, x2, y2), label)
 
+    def _kit_title_wordmark(self, wordmark):
+        """A league's title wordmark for the theme's panel: by night its type drawn dark for a light
+        page (MLB's, the WNBA's, the PGA TOUR's) takes the ink; its brand colours stay."""
+        if wordmark is None or _kit_luminance(COLORS["panel"]) >= 0.2:
+            return wordmark
+        return _kit_inked_where_faint(wordmark, COLORS["panel"])
+
     def _kit_venue_logo(self, venue, size):
         """The venue's official logo fitted to ``size`` and inked for the theme's card, else None."""
         key = VENUE_LOGO_KEYS.get(re.sub(r"[^a-z0-9]", "", str(venue or "").lower()))

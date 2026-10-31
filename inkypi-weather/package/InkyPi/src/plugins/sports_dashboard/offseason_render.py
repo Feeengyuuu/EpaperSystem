@@ -30,6 +30,7 @@ class OffseasonRenderMixin:
         )
         if not wordmark:
             return False
+        wordmark = self._kit_title_wordmark(wordmark)
         image.paste(
             wordmark,
             (int(x), int(y + (int(max_height) - wordmark.height) / 2)),

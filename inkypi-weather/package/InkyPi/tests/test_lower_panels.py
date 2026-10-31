@@ -1725,3 +1725,22 @@ def test_a_live_wall_card_carries_its_venue_logo_straight_on_its_top_band():
     # No context label: at the band's right end; a venue without a logo draws nothing.
     assert align_a == "right" and logo_a is not None and abs(logo_a[2] - (box_a[2] + 4)) <= 1
     assert align_b == "left" and logo_b is None
+
+
+def test_dark_league_wordmarks_take_the_ink_by_night_and_keep_their_brand_colours():
+    plugin = _plugin()
+    wordmark = Image.new("RGBA", (20, 6), (20, 20, 20, 255))
+    wordmark.putpixel((19, 5), (230, 90, 20, 255))
+    assert plugin._kit_title_wordmark(wordmark) is wordmark  # by day it stands as drawn
+    token = _ACTIVE_COLORS.set(DEEP_NIGHT_COLORS)
+    try:
+        night = plugin._kit_title_wordmark(wordmark)
+        assert night.getpixel((0, 0))[:3] == tuple(DEEP_NIGHT_COLORS["text"][:3])
+        assert night.getpixel((19, 5))[:3] == (230, 90, 20)
+        # The real WNBA title: its lettering reads on the night panel.
+        image = Image.new("RGB", (200, 40), DEEP_NIGHT_COLORS["panel"])
+        assert plugin._draw_wnba_title_wordmark(image, 0, 0, 154, 24)
+        lit = [pixel for pixel in image.get_flattened_data() if sum(pixel) > 500]
+        assert len(lit) > 100
+    finally:
+        _ACTIVE_COLORS.reset(token)
