@@ -488,6 +488,8 @@ VENUE_LOGO_KEYS = {
     "americafirstfield": "america_first_field", "americanairlinescenter": "american_airlines_center",
     "americanexpressstadium": "american_express_stadium", "americanfamilyfield": "american_family_field",
     "angelstadium": "angel_stadium", "arrowheadstadium": "arrowhead_stadium",
+    # ESPN names the Chiefs' home by its field's sponsor too.
+    "gehafieldatarrowheadstadium": "arrowhead_stadium",
     "attstadium": "at_t_stadium", "audifield": "audi_field",
     "autodromoenzoedinoferrari": "imola_circuit", "autodromohermanosrodriguez": "autodromo_hermanos_rodriguez",
     "autodromonazionaledimonza": "monza_circuit", "avivastadium": "aviva_stadium",

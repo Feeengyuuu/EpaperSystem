@@ -26,6 +26,9 @@ KIT_SCOREBOARD_ROW_HEIGHT = 26
 KIT_SCOREBOARD_STATE_WIDTH = 44
 # Under a row's kickoff today, its networks' logos stand this tall.
 KIT_SCOREBOARD_TV_HEIGHT = 9
+# A game yet to start shows its stadium's logo at the row's right, at most this wide, when its team
+# names leave at least the minimum (past this gap after the longer name).
+KIT_ROW_VENUE_MAX_W, KIT_ROW_VENUE_MIN_W, KIT_ROW_VENUE_GAP = 72, 24, 8
 # A live row's leading score sits in a solid ink box this far round its digits (the wall's
 # broadcast-scorebug mark); every row's scores keep the room, so all digits stay in one column.
 KIT_LEAD_PAD = 3
@@ -697,6 +700,8 @@ class ScorebugKitMixin:
         leader = SportsDashboard._wall_leader(event) if state == "live" else None
         score_right = x2 - 2 - KIT_LEAD_PAD
         team_x = state_x2 + 6
+        if state == "scheduled":
+            self._draw_kit_row_venue(image, draw, (team_x + 15, y1, score_right, y2), event, spec)
         for index, side in enumerate(("a", "b")):
             line_y1 = y1 + 1 + index * 12
             line_y2 = line_y1 + 12
@@ -725,6 +730,19 @@ class ScorebugKitMixin:
                                        score_font, ink, align="right")
         if not last:
             draw.line((x1, y2, x2, y2), fill=COLORS["line"], width=1)
+
+    def _draw_kit_row_venue(self, image, draw, box, event, spec):
+        """A game yet to start shows its stadium's own logo at the row's right, in the room its
+        scores will take, as long as both team names still fit there at full size."""
+        names_x, y1, right, y2 = [int(value) for value in box]
+        widest = max(self._text_width(draw, *self._kit_team_name(draw, spec, event, side, right - names_x, 11, True))
+                     for side in ("a", "b"))
+        room = right - (names_x + widest + KIT_ROW_VENUE_GAP)
+        if room < KIT_ROW_VENUE_MIN_W:
+            return
+        logo = self._kit_venue_logo(event.get("venue"), (min(room, KIT_ROW_VENUE_MAX_W), y2 - y1 - 4))
+        if logo is not None:
+            image.paste(logo, (right - logo.width, y1 + (y2 - y1 - logo.height) // 2), logo)
 
     def _draw_kit_day_slot(self, draw, box, previous, slot, following, spec):
         """An upcoming game on a later day as a timeline stop. The day's first

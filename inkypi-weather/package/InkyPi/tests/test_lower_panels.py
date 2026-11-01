@@ -723,6 +723,22 @@ def test_a_scoreboard_row_shows_todays_networks_as_their_logos(boxes):
     assert shown.tobytes() != plain.tobytes()
 
 
+def test_a_game_yet_to_start_shows_its_stadiums_logo_where_its_scores_will_go(boxes):
+    spec = _plugin()._football_spec("NFL")
+    games = [_ticker_game("MIN", "DET", 2, venue="Ford Field"), _ticker_game("KC", "DEN", 2, venue="Nowhere Park")]
+    image, _draw = _render(lambda plugin, image, draw: plugin._draw_kit_scoreboard_column(
+        image, draw, (300, 20, 540, 200), games, NOW, spec))
+    texts = [text for _box, text, _font in boxes]
+    boxes.clear()
+    plain, _draw = _render(lambda plugin, image, draw: plugin._draw_kit_scoreboard_column(
+        image, draw, (300, 20, 540, 200), [{**game, "venue": ""} for game in games], NOW, spec))
+
+    # Ford Field's logo stands at the right of its row; the names are drawn as without it.
+    assert image.crop((470, 20, 540, 200)).tobytes() != plain.crop((470, 20, 540, 200)).tobytes()
+    assert texts == [text for _box, text, _font in boxes]
+    assert SportsDashboard._kit_venue_logo(_plugin(), "GEHA Field at Arrowhead Stadium", (60, 20)) is not None
+
+
 @pytest.mark.parametrize("sport", ["MLB", "NBA", "WNBA", "NFL", "NCAA"])
 def test_every_ticker_sport_has_mascot_filler_art(sport):
     with Image.open(LOCAL_SPARE_FILLER_PATHS[sport]) as source:
