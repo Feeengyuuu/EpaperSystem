@@ -1,4 +1,5 @@
 {% extends "plugin.html" %}
+{% from "weather_glyphs.html" import glyph %}
 
 {% block content %}
 {% set v = view %}
@@ -28,7 +29,7 @@
     <header class="mw-top">
       {% if v.place_mark %}<div class="mw-place mw-place-mark"><img class="mw-place-day" src="{{ v.place_mark.day }}" alt="{{ title }}"><img class="mw-place-night" src="{{ v.place_mark.night }}" alt=""></div>{% else %}<div class="mw-place">{{ title }}</div>{% endif %}
       <div class="mw-date">{{ v.date }}</div>
-      {% if plugin_settings.displayRefreshTime == "true" and v.updated %}<div class="mw-updated">更新 {{ v.updated }}</div>{% endif %}
+      {% if plugin_settings.displayRefreshTime == "true" and v.updated %}<div class="mw-updated">{{ glyph("refresh") }}{{ v.updated }}</div>{% endif %}
     </header>
 
     <section class="mw-hero">
@@ -49,11 +50,11 @@
           <span>体感 {{ feels_like }}{{ deg }}</span>
         </div>
         <div class="mw-range">
-          <span class="mw-range-item"><svg class="mw-mini mw-mini-high" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l7 8h-4.5V21h-5v-9.5H5z" fill="currentColor"/></svg>最高 {{ v.high }}{{ deg }}</span>
-          <span class="mw-range-item"><svg class="mw-mini mw-mini-low" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.5l-7-8h4.5V3h5v9.5H19z" fill="currentColor"/></svg>最低 {{ v.low }}{{ deg }}</span>
+          <span class="mw-range-item"><svg class="mw-mini mw-mini-high" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l7 8h-4.5V21h-5v-9.5H5z" fill="currentColor"/></svg>{{ v.high }}{{ deg }}</span>
+          <span class="mw-range-item"><svg class="mw-mini mw-mini-low" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.5l-7-8h4.5V3h5v9.5H19z" fill="currentColor"/></svg>{{ v.low }}{{ deg }}</span>
         </div>
         {% if v.mascot.line %}<div class="mw-bubble">{{ v.mascot.line }}</div>{% endif %}
-        <div class="mw-tips">{% for tip in v.tips %}<span class="mw-tip">{{ tip }}</span>{% endfor %}</div>
+        <div class="mw-tips">{% for tip in v.tip_marks %}<span class="mw-tip">{{ glyph(tip.icon) }}{{ tip.label }}</span>{% endfor %}</div>
       </div>
     </section>
 
@@ -66,7 +67,7 @@
           <img src="{{ v.moon.icon }}" alt="">
           <div><div class="mw-big">{{ v.moon.name }}</div><div class="mw-small">亮面 {{ v.moon.percent }}%</div></div>
         </div>
-        <div class="mw-small mw-foot mw-countdown">{{ v.sun.countdown }}</div>
+        <div class="mw-small mw-foot mw-countdown">{{ glyph("hourglass") }}{{ v.sun.countdown }}</div>
         {% else %}
         <div class="mw-tile-title">{% if v.icons.sun %}<img class="mw-tile-icon" src="{{ v.icons.sun }}" alt="">{% endif %}日出日落</div>
         <svg class="mw-arc" viewBox="0 0 120 66">
@@ -74,8 +75,8 @@
           <line x1="6" y1="58" x2="114" y2="58" class="mw-horizon"/>
           {% if v.sun.x is defined %}<circle cx="{{ v.sun.x }}" cy="{{ v.sun.y }}" r="7" class="mw-sun"/>{% endif %}
         </svg>
-        <div class="mw-arc-times"><span>↑ {{ v.sun.rise }}</span><span>{{ v.sun.set }} ↓</span></div>
-        <div class="mw-foot"><div class="mw-small mw-countdown">{{ v.sun.countdown }}</div><div class="mw-daylight">白昼 {{ v.sun.daylight }}</div></div>
+        <div class="mw-arc-times"><span>{{ glyph("sunrise") }}{{ v.sun.rise }}</span><span>{{ glyph("sunset") }}{{ v.sun.set }}</span></div>
+        <div class="mw-foot"><div class="mw-small mw-countdown">{{ glyph("hourglass") }}{{ v.sun.countdown }}</div><div class="mw-daylight">{{ glyph("daylight") }}{{ v.sun.daylight }}</div></div>
         {% endif %}
       </div>
 
@@ -95,7 +96,7 @@
           <div><div class="mw-big">{{ v.wind.speed }}<span class="mw-unit">{{ v.wind.unit }}</span></div>
           <div class="mw-small">{{ v.wind.name }}</div></div>
         </div>
-        <div class="mw-foot mw-wind-sign">{{ v.wind.beaufort }}<span class="mw-dot" aria-hidden="true"></span>{{ v.wind.sign }}</div>
+        <div class="mw-foot mw-wind-sign">{{ glyph("leaf") }}{{ v.wind.beaufort }}<span class="mw-dot" aria-hidden="true"></span>{{ v.wind.sign }}</div>
         {% endif %}
       </div>
 
@@ -118,7 +119,7 @@
         {% if v.uv %}
         <div class="mw-big">{{ v.uv.value }} <span class="mw-word">{{ v.uv.label }}</span></div>
         <div class="mw-uv-bar"><span class="mw-uv-marker" style="left: {{ v.uv.marker }}%"></span></div>
-        <div class="mw-small mw-foot">{{ v.uv.advice }}</div>
+        <div class="mw-small mw-foot mw-uv-advice">{{ glyph("shield") }}{{ v.uv.advice }}</div>
         {% endif %}
       </div>
 
@@ -135,7 +136,7 @@
           <div><div class="mw-big">{{ v.humidity.value }}<span class="mw-unit">%</span></div><div class="mw-small">{{ v.humidity.feel }}</div></div>
         </div>
         {% endif %}
-        <div class="mw-foot mw-extra">{% if v.pressure %}<div>气压 {{ v.pressure.value }} {{ v.pressure.unit }}</div>{% endif %}{% if v.visibility %}<div>能见度 {{ v.visibility.value }} {{ v.visibility.unit }}</div>{% endif %}</div>
+        <div class="mw-foot mw-extra">{% if v.pressure %}<div>{{ glyph("gauge") }}{{ v.pressure.value }} {{ v.pressure.unit }}</div>{% endif %}{% if v.visibility %}<div>{{ glyph("eye") }}{{ v.visibility.value }} {{ v.visibility.unit }}</div>{% endif %}</div>
       </div>
 
       <div class="mw-tile mw-t-life">
@@ -143,7 +144,7 @@
         <div class="mw-tile-title">{% if v.icons.life %}<img class="mw-tile-icon" src="{{ v.icons.life }}" alt="">{% endif %}生活指数</div>
         <div class="mw-indices">
           {% for index in v.indices %}
-          <div class="mw-index"><span class="mw-index-name">{{ index.name }}</span><svg class="mw-stars" viewBox="0 0 74 12">{% for star in range(5) %}<polygon transform="translate({{ star * 15.5 }} 0)" points="6,0.6 7.6,4.2 11.5,4.5 8.5,7.1 9.4,11 6,8.9 2.6,11 3.5,7.1 0.5,4.5 4.4,4.2" class="mw-star {{ 'on' if star < index.stars else 'off' }}"/>{% endfor %}</svg></div>
+          <div class="mw-index"><span class="mw-index-name">{{ glyph(index.icon) }}{{ index.name }}</span><svg class="mw-stars" viewBox="0 0 74 12">{% for star in range(5) %}<polygon transform="translate({{ star * 15.5 }} 0)" points="6,0.6 7.6,4.2 11.5,4.5 8.5,7.1 9.4,11 6,8.9 2.6,11 3.5,7.1 0.5,4.5 4.4,4.2" class="mw-star {{ 'on' if star < index.stars else 'off' }}"/>{% endfor %}</svg></div>
           {% endfor %}
         </div>
       </div>
@@ -151,7 +152,7 @@
 
     <section class="mw-hours mw-t-hourly">
       {{ doodle("hourly", v.doodles.hourly, v.doodle_tile) }}
-      <div class="mw-section-title mw-hours-title">{% if v.icons.hourly %}<img class="mw-tile-icon" src="{{ v.icons.hourly }}" alt="">{% endif %}<span class="mw-section-name">24 小时</span><span class="mw-section-note">{% for part in v.summary %}{% if not loop.first %}<span class="mw-dot mw-note-dot" aria-hidden="true"></span>{% endif %}{{ part }}{% endfor %}</span>{% if v.best %}<span class="mw-best-chip">最佳出门 {{ v.best.day }}{{ v.best.start }}–{{ v.best.end }}</span>{% endif %}</div>
+      <div class="mw-section-title mw-hours-title">{% if v.icons.hourly %}<img class="mw-tile-icon" src="{{ v.icons.hourly }}" alt="">{% endif %}<span class="mw-section-name">24 小时</span><span class="mw-section-note">{% for part in v.summary %}{% if not loop.first %}<span class="mw-dot mw-note-dot" aria-hidden="true"></span>{% endif %}{{ glyph(part.icon, "mw-g-rain-cloud" if part.icon == "rain" else "") }}{{ part.text }}{% endfor %}</span>{% if v.best %}<span class="mw-best-chip">{{ glyph("walk") }}{{ v.best.day }}{{ v.best.start }}–{{ v.best.end }}</span>{% endif %}</div>
       {% if v.hourly.points %}
       <svg viewBox="0 0 {{ v.hourly.width }} {{ v.hourly.height }}" class="mw-chart">
         <defs><linearGradient id="mw-area-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="mw-area-top"/><stop offset="1" class="mw-area-foot"/></linearGradient>

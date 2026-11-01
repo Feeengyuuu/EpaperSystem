@@ -67,6 +67,10 @@ DRY_CURVE_BOTTOM = 86
 LABEL_STEP = 3
 # A drop this large (in Celsius) over the next 12 hours is worth a tip of its own.
 COOLING_TIP_C = 6
+# The umbrella and sun-cream tips as their pills show them: the icon (render/weather_glyphs.html)
+# says what it is about, the words what to do.
+TIP_MARKS = {"记得带伞": ("umbrella", "带伞"), "不用带伞": ("umbrella-off", "不用伞"),
+             "注意防晒": ("shield", "防晒"), "无需防晒": ("shield", "无需防晒")}
 
 
 # Each card's generated icon heading its title (with the card's own colour in the CSS).
@@ -121,6 +125,7 @@ def build_view(params, now, *, art_dir=None):
         "week": _week(forecast[1:8]),
     }
     celsius = _celsius(feels, units)
+    view["tip_marks"] = _tip_marks(view["tips"])
     view["best"] = _best_window(hourly, units)
     view["indices"] = _life_indices(view, scene, celsius, forecast[1:3])
     view["mascot"] = _mascot(view, scene, art_dir, celsius)
@@ -230,23 +235,23 @@ def _celsius(value, units):
 
 
 def _summary(hourly):
-    """The next 24 hours in short parts beside the chart's heading (the page dots them apart): when
-    rain may start (or that none is due) and when it is warmest, in time order, "明天" said once
-    (["明天 02:00 起可能有雨 63%", "13:00 最暖 18°"])."""
+    """The next 24 hours in short parts beside the chart's heading, each led by its icon (the page
+    dots them apart): when rain may start (or that none is due) and when it is warmest, in time
+    order, "明天" said once ([rain] "明天 02:00 起 63%", [warm] "13:00 18°")."""
     points = hourly.get("points") or []
     if not points:
         return []
     warmest = max(points, key=lambda point: point["temperature"])
-    events = [(points.index(warmest), warmest, f"最暖 {warmest['temperature']}°")]
+    events = [(points.index(warmest), warmest, "warm", f"{warmest['temperature']}°")]
     wet = next((point for point in points if point["rain_chance"] >= 40), None)
     if wet:
-        events.append((points.index(wet), wet, f"起可能有雨 {wet['rain_chance']}%"))
+        events.append((points.index(wet), wet, "rain", f"起 {wet['rain_chance']}%"))
     parts, tomorrow = [], False
-    for _index, point, text in sorted(events, key=lambda event: event[0]):
-        parts.append(f"{point['time'] if tomorrow else point['when']} {text}")
+    for _index, point, icon, text in sorted(events, key=lambda event: event[0]):
+        parts.append({"icon": icon, "text": f"{point['time'] if tomorrow else point['when']} {text}"})
         tomorrow = tomorrow or point["when"] != point["time"]
     if not wet:
-        parts.append("24 小时无雨")
+        parts.append({"icon": "umbrella-off", "text": "24 小时无雨"})
     return parts
 
 
@@ -271,6 +276,21 @@ def _tips(feels, units, hourly, uv_point, current, night):
     elif uv is not None:
         tips.append("无需防晒")
     return tips
+
+
+def _tip_marks(tips):
+    """Each tip as its pill shows it: an icon and the few words it still needs ("带伞" beside the
+    umbrella, "夜间 8°" beside the cold thermometer)."""
+    marks = []
+    for tip in tips:
+        if tip in TIP_MARKS:
+            icon, label = TIP_MARKS[tip]
+        elif tip.endswith("°"):
+            icon, label = "chill", tip.replace("低至", "").replace("降至", "")
+        else:
+            icon, label = ("tee" if tip in ("T 恤", "短袖") else "coat"), tip
+        marks.append({"icon": icon, "label": label})
+    return marks
 
 
 def _cooling(hourly, current, units):
@@ -617,8 +637,9 @@ def _life_indices(view, scene, celsius, next_days):
     wash = (1 if rain24 >= 40 else 2 if rainy_days else 5) - (1 if aqi_level >= 3 else 0)
     outdoor = 5 - (3 if rain6 >= 50 else 1 if rain6 >= 20 else 0) - comfort_penalty() \
         - (1 if uv >= 8 else 0) - (1 if aqi_level >= 3 else 0) - (1 if force >= 6 else 0) - (1 if night else 0)
-    return [{"name": name, "stars": max(1, min(5, value))}
-            for name, value in (("跑步", run), ("晾晒", dry), ("洗车", wash), ("户外", outdoor))]
+    return [{"name": name, "icon": icon, "stars": max(1, min(5, value))}
+            for name, icon, value in (("跑步", "run", run), ("晾晒", "laundry", dry), ("洗车", "car", wash),
+                                      ("户外", "outdoor", outdoor))]
 
 
 def _mascot(view, scene, art_dir, celsius):

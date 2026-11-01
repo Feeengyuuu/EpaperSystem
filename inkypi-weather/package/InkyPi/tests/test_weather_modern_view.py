@@ -49,7 +49,10 @@ def test_view_reads_conditions_tips_and_gauges():
     assert view["condition"] == "晴" and view["scene"] == "clear-day"
     assert view["scene_image"].endswith("clear-day.jpg")
     assert view["tips"] == ["厚外套", "不用带伞", "注意防晒"]
-    assert view["summary"][-1] == "24 小时无雨"
+    assert view["summary"][-1] == {"icon": "umbrella-off", "text": "24 小时无雨"}
+    # Each tip's pill: its icon and the words it still needs.
+    assert [(mark["icon"], mark["label"]) for mark in view["tip_marks"]] == [
+        ("coat", "厚外套"), ("umbrella-off", "不用伞"), ("shield", "防晒")]
     assert view["wind"]["name"] == "西南风 3 级" and view["wind"]["heading"] == 45
     assert view["aqi"]["label"] == "良" and view["aqi"]["ink"] == "#111418"
     assert len(view["aqi"]["segments"]) == 5
@@ -64,7 +67,7 @@ def test_rain_ahead_changes_summary_and_umbrella_tip():
     view = build_view(_params(now, rain=0.6, icon="10d"), now)
 
     # Rain first, as it comes first; the warmest hour after it.
-    assert view["summary"] == ["17:00 起可能有雨 60%", "23:00 最暖 21°"]
+    assert view["summary"] == [{"icon": "rain", "text": "17:00 起 60%"}, {"icon": "warm", "text": "23:00 21°"}]
     assert "记得带伞" in view["tips"]
     assert view["scene"] == "rain"
     assert view["hourly"]["any_rain"] is True
@@ -159,19 +162,20 @@ def test_an_evening_view_names_tomorrows_hours_as_tomorrow():
     # Tomorrow's 09:00-16:00 is the best time out, said as tomorrow's everywhere it shows.
     assert (view["best"]["day"], view["best"]["start"], view["best"]["end"]) == ("明天 ", "09:00", "16:00")
     assert view["mascot"]["line"] == "明天 09:00 后出门正好！"
-    assert view["summary"][0] == "明天 04:00 最暖 21°"
+    assert view["summary"][0] == {"icon": "warm", "text": "明天 04:00 21°"}
     points = view["hourly"]["points"]
     assert points[6]["when"] == "23:00" and points[7]["when"] == "明天 00:00"
     assert view["hourly"]["midnight"]["x"] == points[7]["x"]
     # 36 minutes to sunset reads in minutes; a fall to 10° overnight replaces the sun-cream tip.
     assert view["sun"]["countdown"] == "距日落 36分钟"
-    assert view["tips"][-1] == "夜间低至 10°"
+    assert view["tips"][-1] == "夜间低至 10°" and view["tip_marks"][-1] == {"icon": "chill", "label": "夜间 10°"}
 
     plugin = Weather({"id": "weather"})
     html = plugin.env.get_template("weather_modern.html").render(
         **params, view=view, width=800, height=480, theme={"mode": "day", "css": {}},
         plugin_settings={}, style_sheets=[], font_faces=[])
-    assert "最佳出门 明天 09:00–16:00" in html and "mw-midnight" in html
+    chip = html.split('<span class="mw-best-chip">', 1)[1].split("</span>", 1)[0]
+    assert "</svg>明天 09:00–16:00" in chip and "mw-midnight" in html
 
 
 def test_the_summary_says_tomorrow_once_and_the_heading_keeps_one_line():
@@ -181,13 +185,28 @@ def test_the_summary_says_tomorrow_once_and_the_heading_keeps_one_line():
     view = build_view(params, now, art_dir=str(ART_DIR))
 
     # Rain at 01:00 and the warmest hour at 04:00 are both tomorrow's: "明天" leads, once.
-    assert view["summary"] == ["明天 01:00 起可能有雨 63%", "04:00 最暖 21°"]
+    assert [part["text"] for part in view["summary"]] == ["明天 01:00 起 63%", "04:00 21°"]
     plugin = Weather({"id": "weather"})
     html = plugin.env.get_template("weather_modern.html").render(
         **params, view=view, width=800, height=480, theme={"mode": "day", "css": {}},
         plugin_settings={}, style_sheets=[], font_faces=[])
     assert '<span class="mw-section-name">24 小时</span>' in html and "mw-hours-title" in html
     assert "63%<span class=\"mw-dot mw-note-dot\"" in html and "·" not in html
+
+
+def test_readings_the_icons_name_drop_their_words():
+    now = LA.localize(datetime(2026, 10, 24, 12, 50))
+    params = _params(now)
+    view = build_view(params, now, art_dir=str(ART_DIR))
+    html = Weather({"id": "weather"}).env.get_template("weather_modern.html").render(
+        **params, view=view, width=800, height=480, theme={"mode": "day", "css": {}},
+        plugin_settings={"displayRefreshTime": "true"}, style_sheets=[], font_faces=[])
+
+    # A gauge and an eye say pressure and visibility, a sun the daylight, the arrows sunrise and set.
+    for word in ("气压", "能见度", "白昼", "更新", "↑", "↓", "最佳出门"):
+        assert word not in html, word
+    assert html.count('class="mw-g ') >= 15
+    assert [index["icon"] for index in view["indices"]] == ["run", "laundry", "car", "outdoor"]
 
 
 def test_wind_and_visibility_read_plainly():
@@ -296,7 +315,9 @@ def test_the_heros_readings_are_each_led_by_an_icon():
     assert 'class="mw-cond-icon"' in condition and condition.index("mw-cond-icon") < condition.index(view["condition"])
     assert condition.index("mw-mini-feels") < condition.index("体感")
     readings = html.split('<div class="mw-range">', 1)[1].split("</div>", 1)[0]
-    assert readings.index("mw-mini-high") < readings.index("最高") < readings.index("mw-mini-low") < readings.index("最低")
+    # The arrows say high and low: the readings are the degrees alone.
+    assert readings.index("mw-mini-high") < readings.index(f">{view['high']}°") < readings.index("mw-mini-low")
+    assert "最高" not in readings and "最低" not in readings
 
 
 def test_the_hero_illustration_follows_the_weather_the_hour_wind_and_heat():
