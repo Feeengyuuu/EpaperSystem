@@ -53,6 +53,12 @@ MAX_ACCOUNT_MEDIA_DOWNLOAD_LIMIT = 7
 ACCOUNT_MEDIA_PREFETCH_LIMIT = 1
 LEAD_PHOTO_MIN_SIDE = 800
 THUMB_PHOTO_MIN_SIDE = 320
+# A group's or channel's own picture (its small 160 px chat photo) leads its stories' source line:
+# fetched once per chat and photo (cache avatars/c<chat>_p<photo>.jpg, this many px), for at most
+# ACCOUNT_AVATAR_LIMIT new chats a refresh. Private chats keep their kind's icon.
+AVATAR_KINDS = frozenset({"group", "channel"})
+ACCOUNT_AVATAR_LIMIT = 12
+AVATAR_SIDE = 96
 DISPLAY_READ_KEY_LIMIT = 1000
 ACCOUNT_SCAN_LIMIT_CAP = 100
 DISPLAY_RENDER_SETTING = "_inkypiDisplayRender"
@@ -427,6 +433,7 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
         }
         messages = {}
         message_objects = {}
+        chat_entities = {}
         matched_dialogs = 0
         unread_total = 0
         scanned = 0
@@ -458,6 +465,7 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
                 if entity is None:
                     continue
                 chat = self._dialog_chat(dialog)
+                chat_entities[str(chat.get("id") or "")] = entity
                 # Focus chats offer twice the candidates, so they can fill their extra row.
                 focus = curator.rules.focus_weight(
                     {"chat_title": chat.get("title"), "chat_username": chat.get("username"), "chat_id": chat.get("id")})
@@ -523,6 +531,7 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
             logger.info("Telegram Digest curated %d stories; fetching media.", len(ordered))
             await self._hydrate_account_media(client, ordered, message_objects, existing, media_download_limit,
                                               time_left=time_left)
+            await self._hydrate_chat_avatars(client, ordered, chat_entities, time_left=time_left)
 
         payload = self._build_payload(
             settings,
@@ -607,6 +616,7 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
             "chat_title": self._clean_text(chat.get("title") or ""),
             "chat_username": self._clean_text(chat.get("username") or ""),
             "chat_kind": self._dialog_kind(dialog),
+            "chat_photo_id": self._chat_photo_id(dialog),
             "has_buttons": bool(getattr(message, "reply_markup", None) or getattr(message, "buttons", None)),
             "forwarded": bool(getattr(message, "fwd_from", None) or getattr(message, "forward", None)),
             "title": title,
@@ -684,6 +694,55 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
                 logger.warning("Could not cache Telegram account media for %s: %s", key, exc)
             finally:
                 downloaded += 1
+
+    async def _hydrate_chat_avatars(self, client, messages, entities, time_left=None):
+        """Each group's and channel's picture for its stories' source line (``chat_avatar``): the
+        cached copy of the chat's current photo, else its small size downloaded now."""
+        paths, fetched = {}, 0
+        for item in messages or []:
+            chat_id, photo_id = str(item.get("chat_id") or ""), str(item.get("chat_photo_id") or "")
+            if item.get("chat_kind") not in AVATAR_KINDS or not chat_id or not photo_id:
+                continue
+            if chat_id not in paths:
+                target = self._avatar_path(chat_id, photo_id)
+                entity = (entities or {}).get(chat_id)
+                if (not target.is_file() and entity is not None and fetched < ACCOUNT_AVATAR_LIMIT
+                        and (time_left is None or time_left() >= ACCOUNT_MEDIA_DOWNLOAD_TIMEOUT_SECONDS + 2)):
+                    fetched += 1
+                    try:
+                        data = await asyncio.wait_for(
+                            self._maybe_await(client.download_profile_photo(entity, file=bytes)),
+                            timeout=ACCOUNT_MEDIA_DOWNLOAD_TIMEOUT_SECONDS)
+                        if isinstance(data, (bytes, bytearray, memoryview)) and data:
+                            record_resource_event("telegram_media", downloads=1, downloaded_bytes=len(data))
+                            self._cache_avatar(data, target)
+                    except TaskCancelled:
+                        raise
+                    except Exception as exc:  # noqa: BLE001 - the chat keeps its kind's icon.
+                        logger.warning("Could not cache the Telegram picture of chat %s: %s", chat_id, exc)
+                paths[chat_id] = str(target) if target.is_file() else ""
+            item["chat_avatar"] = paths[chat_id]
+
+    def _avatar_path(self, chat_id, photo_id):
+        chat, photo = (re.sub(r"[^0-9-]+", "", str(part))[:24] for part in (chat_id, photo_id))
+        return self._cache_dir() / "avatars" / f"c{chat}_p{photo}.jpg"
+
+    def _cache_avatar(self, data, target):
+        """The chat's picture at AVATAR_SIDE, replacing its earlier one (a chat keeps one file)."""
+        target.parent.mkdir(parents=True, exist_ok=True)
+        image = safe_open_image(data, limits=TELEGRAM_MEDIA_IMAGE_LIMITS).convert("RGB")
+        image.thumbnail((AVATAR_SIDE, AVATAR_SIDE), RESAMPLE)
+        image.save(target, format="JPEG", quality=90)
+        chat = target.stem.split("_p", 1)[0]
+        for old in target.parent.glob(f"{chat}_p*.jpg"):
+            if old != target:
+                old.unlink(missing_ok=True)
+
+    @staticmethod
+    def _chat_photo_id(dialog):
+        """The id of the chat's current picture (a Telethon ChatPhoto's), "" without one."""
+        photo = getattr(getattr(dialog, "entity", None), "photo", None)
+        return str(getattr(photo, "photo_id", "") or "")
 
     def _account_media_download_queue(self, messages):
         queue = []

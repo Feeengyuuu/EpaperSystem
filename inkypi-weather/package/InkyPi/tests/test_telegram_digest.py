@@ -462,6 +462,13 @@ class FakeTelegramClient:
         type(self).download_calls.append(kwargs)
         return getattr(message, "media_bytes", b"")
 
+    async def download_profile_photo(self, entity, file=None, download_big=False):
+        type(self).avatar_calls.append({"chat": getattr(entity, "id", None), "file": file, "big": download_big})
+        return getattr(entity, "avatar_bytes", b"")
+
+
+FakeTelegramClient.avatar_calls = []
+
 
 class SessionFallbackTelegramClient(FakeTelegramClient):
     instances = []
@@ -931,6 +938,88 @@ def test_account_mode_fetches_unread_messages_and_caches_media(tmp_path, monkeyp
     assert FakeTelegramClient.instances[0].session_path == str(session_base)
     assert FakeTelegramClient.instances[0].api_id == 12345
     assert FakeTelegramClient.download_calls[0]["file"] is bytes
+
+
+def test_account_mode_gives_each_channel_story_its_chats_own_picture(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 6, 27, 18, 42, tzinfo=timezone.utc)
+    session_base = tmp_path / "telegram_account"
+    session_base.with_suffix(".session").write_text("authorized", encoding="utf-8")
+    entity = SimpleNamespace(id=-100123, username="daily_signal", title="Daily Signal",
+                             photo=SimpleNamespace(photo_id=-777),
+                             avatar_bytes=image_chunks(color=(200, 40, 40), size=(160, 160))[0])
+    dialog = SimpleNamespace(entity=entity, id=-100123, title="Daily Signal", unread_count=1)
+    message = SimpleNamespace(id=44, date=now, raw_text="频道快讯\n今天的重点", message="频道快讯\n今天的重点",
+                              photo=None, video=None, gif=None, document=None, out=False)
+    FakeTelegramClient.dialogs = [dialog]
+    FakeTelegramClient.messages_by_entity = {id(entity): [message]}
+    FakeTelegramClient.avatar_calls = []
+    FakeTelegramClient.instances = []
+    FakeTelegramClient.authorized = True
+    monkeypatch.setattr(plugin, "_telethon_client_class", lambda: FakeTelegramClient)
+
+    payload = plugin._payload(
+        {"accessMode": "account", "telegramApiId": "12345", "telegramApiHash": "hash-value",
+         "telegramSessionPath": str(session_base), "dialogFilter": "@daily_signal"},
+        DummyDeviceConfig(),
+        now,
+    )
+
+    avatar = Path(payload["messages"][0]["chat_avatar"])
+    # The small chat photo, fetched as bytes and kept per chat and photo (a negative id stays whole).
+    assert avatar.name == "c-100123_p-777.jpg" and avatar.is_file()
+    assert FakeTelegramClient.avatar_calls == [{"chat": -100123, "file": bytes, "big": False}]
+    with Image.open(avatar) as picture:
+        assert max(picture.size) <= 96
+
+
+def test_chat_pictures_are_fetched_once_replaced_when_changed_and_skipped_for_private_chats(tmp_path):
+    import asyncio
+
+    plugin = _plugin(tmp_path)
+    channel = SimpleNamespace(id=-1001, avatar_bytes=image_chunks(color=(30, 90, 200), size=(160, 160))[0])
+    friend = SimpleNamespace(id=55, avatar_bytes=image_chunks(color=(10, 10, 10), size=(160, 160))[0])
+    client = FakeTelegramClient("s", 1, "h")
+    FakeTelegramClient.avatar_calls = []
+
+    def stories(photo):
+        return [{"chat_id": "-1001", "chat_kind": "channel", "chat_photo_id": photo},
+                {"chat_id": "-1001", "chat_kind": "channel", "chat_photo_id": photo},
+                {"chat_id": "55", "chat_kind": "private", "chat_photo_id": "9"}]
+
+    first = stories("1")
+    asyncio.run(plugin._hydrate_chat_avatars(client, first, {"-1001": channel, "55": friend}))
+    assert len(FakeTelegramClient.avatar_calls) == 1  # one chat, two stories, the private chat skipped
+    assert first[0]["chat_avatar"] == first[1]["chat_avatar"] and "chat_avatar" not in first[2]
+
+    again = stories("1")
+    asyncio.run(plugin._hydrate_chat_avatars(client, again, {"-1001": channel}))
+    assert len(FakeTelegramClient.avatar_calls) == 1 and again[0]["chat_avatar"] == first[0]["chat_avatar"]
+
+    changed = stories("2")
+    asyncio.run(plugin._hydrate_chat_avatars(client, changed, {"-1001": channel}))
+    assert Path(changed[0]["chat_avatar"]).name == "c-1001_p2.jpg"
+    assert [path.name for path in (tmp_path / "avatars").iterdir()] == ["c-1001_p2.jpg"]
+
+
+def test_a_story_with_its_chats_picture_shows_it_as_a_disc_on_its_source_line(tmp_path):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 7, 13, 18, 0, tzinfo=timezone.utc)
+    avatar = tmp_path / "avatar.jpg"
+    Image.new("RGB", (96, 96), (220, 0, 180)).save(avatar)
+    theme = {"_inkypi_theme": _theme_context("day", requested_mode="day")}
+
+    def magenta(image):
+        return sum(1 for r, g, b in image.convert("RGB").get_flattened_data() if r > 190 and g < 40 and b > 150)
+
+    payload = plugin._sample_payload({}, now, "sample")
+    plain = magenta(plugin._render_page((800, 480), payload, theme, now))
+    for item in payload["messages"]:
+        item["chat_avatar"] = str(avatar)
+    shown = magenta(plugin._render_page((800, 480), payload, theme, now))
+
+    # Each of the sample's three stories leads its source line with the disc (a 14-16 px one).
+    assert len(payload["messages"]) == 3 and shown - plain > 3 * 100
 
 
 def test_account_mode_requests_newest_unread_message_first(tmp_path, monkeypatch):

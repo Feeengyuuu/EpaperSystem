@@ -61,6 +61,22 @@ def _page_icon(name, size):
         return None
 
 
+@lru_cache(maxsize=32)
+def _chat_avatar(path, size):
+    """A chat's cached picture as a ``size`` px disc (RGBA), or None when it cannot be read."""
+    if not path:
+        return None
+    try:
+        with Image.open(path) as source:
+            square = ImageOps.fit(source.convert("RGB"), (size * 4, size * 4), Image.Resampling.LANCZOS)
+    except OSError:
+        return None
+    mask = Image.new("L", square.size, 0)
+    ImageDraw.Draw(mask).ellipse((0, 0, square.width - 1, square.height - 1), fill=255)
+    square.putalpha(mask)
+    return square.resize((size, size), Image.Resampling.LANCZOS)
+
+
 class BriefingPageMixin:
     """Draws the page; the plugin supplies palette, fonts, text fitting and media helpers."""
 
@@ -443,7 +459,7 @@ class BriefingPageMixin:
                       font=body_font, fill=p["ink"])
         meta_font = self._f(11, "bold")
         meta_y = y0 + self._y(39)
-        icon_w = self._paste_icon(image, self._kind_icon(item), text_x, meta_y, self._x(14))
+        icon_w = self._paste_source_mark(image, item, text_x, meta_y, self._x(14))
         meta_x = text_x + (icon_w + self._x(4) if icon_w else 0)
         # The source line in ink: the topic's colour is the bar on the left, small text stays plain.
         draw.text((meta_x, meta_y), self._fit_text(draw, self._story_meta(item), meta_font, text_right - meta_x),
@@ -459,9 +475,19 @@ class BriefingPageMixin:
         image.paste(icon, (int(x), int(y)), icon)
         return icon.width
 
+    def _paste_source_mark(self, image, item, x, y, size):
+        """The chat's own picture as a disc when it is cached (a group's, a channel's), else its
+        kind's icon; returns its width."""
+        avatar = _chat_avatar(str(item.get("chat_avatar") or ""), max(8, int(size)))
+        if avatar is None:
+            return self._paste_icon(image, self._kind_icon(item), x, y, size)
+        image.paste(avatar, (int(x), int(y)), avatar)
+        return avatar.width
+
     def _paste_marks(self, image, item, x, y, size):
-        """The kind icon, then the 重要 mark when it applies; returns where the text goes."""
-        width = self._paste_icon(image, self._kind_icon(item), x, y, size)
+        """The chat's picture (or kind icon), then the 重要 mark when it applies; returns where the
+        text goes."""
+        width = self._paste_source_mark(image, item, x, y, size)
         x += width + self._x(4) if width else 0
         if self._important(item):
             width = self._paste_icon(image, "important", x, y, size)
