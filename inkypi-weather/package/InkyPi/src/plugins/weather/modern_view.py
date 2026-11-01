@@ -230,17 +230,24 @@ def _celsius(value, units):
 
 
 def _summary(hourly):
+    """The next 24 hours in short parts beside the chart's heading (the page dots them apart): when
+    rain may start (or that none is due) and when it is warmest, in time order, "明天" said once
+    (["明天 02:00 起可能有雨 63%", "13:00 最暖 18°"])."""
     points = hourly.get("points") or []
     if not points:
-        return ""
+        return []
     warmest = max(points, key=lambda point: point["temperature"])
-    parts = [f"{warmest['when']} 最暖 {warmest['temperature']}°"]
+    events = [(points.index(warmest), warmest, f"最暖 {warmest['temperature']}°")]
     wet = next((point for point in points if point["rain_chance"] >= 40), None)
     if wet:
-        parts.append(f"{wet['when']} 起可能有雨（{wet['rain_chance']}%）")
-    else:
-        parts.append("未来 24 小时无雨")
-    return "，".join(parts)
+        events.append((points.index(wet), wet, f"起可能有雨 {wet['rain_chance']}%"))
+    parts, tomorrow = [], False
+    for _index, point, text in sorted(events, key=lambda event: event[0]):
+        parts.append(f"{point['time'] if tomorrow else point['when']} {text}")
+        tomorrow = tomorrow or point["when"] != point["time"]
+    if not wet:
+        parts.append("24 小时无雨")
+    return parts
 
 
 def _tips(feels, units, hourly, uv_point, current, night):

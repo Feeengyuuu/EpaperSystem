@@ -151,7 +151,7 @@
 
     <section class="mw-hours mw-t-hourly">
       {{ doodle("hourly", v.doodles.hourly, v.doodle_tile) }}
-      <div class="mw-section-title">{% if v.icons.hourly %}<img class="mw-tile-icon" src="{{ v.icons.hourly }}" alt="">{% endif %}24 小时<span class="mw-section-note">{{ v.summary }}</span>{% if v.best %}<span class="mw-best-chip">最佳出门 {{ v.best.day }}{{ v.best.start }}–{{ v.best.end }}</span>{% endif %}</div>
+      <div class="mw-section-title mw-hours-title">{% if v.icons.hourly %}<img class="mw-tile-icon" src="{{ v.icons.hourly }}" alt="">{% endif %}<span class="mw-section-name">24 小时</span><span class="mw-section-note">{% for part in v.summary %}{% if not loop.first %}<span class="mw-dot mw-note-dot" aria-hidden="true"></span>{% endif %}{{ part }}{% endfor %}</span>{% if v.best %}<span class="mw-best-chip">最佳出门 {{ v.best.day }}{{ v.best.start }}–{{ v.best.end }}</span>{% endif %}</div>
       {% if v.hourly.points %}
       <svg viewBox="0 0 {{ v.hourly.width }} {{ v.hourly.height }}" class="mw-chart">
         <defs><linearGradient id="mw-area-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="mw-area-top"/><stop offset="1" class="mw-area-foot"/></linearGradient>
@@ -171,7 +171,7 @@
         {% endif %}
         <path d="{{ v.hourly.area }}" class="mw-area"/>
         {% for point in v.hourly.points %}{% if point.rain_height > 0 %}
-        <rect x="{{ point.x - v.hourly.bar_width / 2 }}" y="{{ v.hourly.rain_base - point.rain_height }}" width="{{ v.hourly.bar_width }}" height="{{ point.rain_height }}" class="mw-rain"/>
+        <rect x="{{ point.x - v.hourly.bar_width / 2 }}" y="{{ v.hourly.rain_base - point.rain_height }}" width="{{ v.hourly.bar_width }}" height="{{ point.rain_height }}" class="mw-rain{{ ' mw-on-sky' if v.night_sky and point.night else '' }}"/>
         {% endif %}{% endfor %}
         <path d="{{ v.hourly.path }}" class="mw-curve"/>
         {% for point in v.hourly.points %}{% if point.label %}

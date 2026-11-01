@@ -49,7 +49,7 @@ def test_view_reads_conditions_tips_and_gauges():
     assert view["condition"] == "晴" and view["scene"] == "clear-day"
     assert view["scene_image"].endswith("clear-day.jpg")
     assert view["tips"] == ["厚外套", "不用带伞", "注意防晒"]
-    assert view["summary"].endswith("未来 24 小时无雨")
+    assert view["summary"][-1] == "24 小时无雨"
     assert view["wind"]["name"] == "西南风 3 级" and view["wind"]["heading"] == 45
     assert view["aqi"]["label"] == "良" and view["aqi"]["ink"] == "#111418"
     assert len(view["aqi"]["segments"]) == 5
@@ -63,7 +63,8 @@ def test_rain_ahead_changes_summary_and_umbrella_tip():
     now = LA.localize(datetime(2026, 10, 24, 12, 0))
     view = build_view(_params(now, rain=0.6, icon="10d"), now)
 
-    assert "可能有雨（60%）" in view["summary"]
+    # Rain first, as it comes first; the warmest hour after it.
+    assert view["summary"] == ["17:00 起可能有雨 60%", "23:00 最暖 21°"]
     assert "记得带伞" in view["tips"]
     assert view["scene"] == "rain"
     assert view["hourly"]["any_rain"] is True
@@ -158,7 +159,7 @@ def test_an_evening_view_names_tomorrows_hours_as_tomorrow():
     # Tomorrow's 09:00-16:00 is the best time out, said as tomorrow's everywhere it shows.
     assert (view["best"]["day"], view["best"]["start"], view["best"]["end"]) == ("明天 ", "09:00", "16:00")
     assert view["mascot"]["line"] == "明天 09:00 后出门正好！"
-    assert view["summary"].startswith("明天 04:00 最暖 21°")
+    assert view["summary"][0] == "明天 04:00 最暖 21°"
     points = view["hourly"]["points"]
     assert points[6]["when"] == "23:00" and points[7]["when"] == "明天 00:00"
     assert view["hourly"]["midnight"]["x"] == points[7]["x"]
@@ -171,6 +172,22 @@ def test_an_evening_view_names_tomorrows_hours_as_tomorrow():
         **params, view=view, width=800, height=480, theme={"mode": "day", "css": {}},
         plugin_settings={}, style_sheets=[], font_faces=[])
     assert "最佳出门 明天 09:00–16:00" in html and "mw-midnight" in html
+
+
+def test_the_summary_says_tomorrow_once_and_the_heading_keeps_one_line():
+    now = LA.localize(datetime(2026, 10, 31, 17, 42))
+    params = _params(now)
+    params["hourly_forecast"][8]["precipitation"] = 0.63
+    view = build_view(params, now, art_dir=str(ART_DIR))
+
+    # Rain at 01:00 and the warmest hour at 04:00 are both tomorrow's: "明天" leads, once.
+    assert view["summary"] == ["明天 01:00 起可能有雨 63%", "04:00 最暖 21°"]
+    plugin = Weather({"id": "weather"})
+    html = plugin.env.get_template("weather_modern.html").render(
+        **params, view=view, width=800, height=480, theme={"mode": "day", "css": {}},
+        plugin_settings={}, style_sheets=[], font_faces=[])
+    assert '<span class="mw-section-name">24 小时</span>' in html and "mw-hours-title" in html
+    assert "63%<span class=\"mw-dot mw-note-dot\"" in html and "·" not in html
 
 
 def test_wind_and_visibility_read_plainly():
