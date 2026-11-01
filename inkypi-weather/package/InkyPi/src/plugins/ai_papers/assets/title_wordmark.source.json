@@ -1,0 +1,17 @@
+{
+  "asset": "title_wordmark.png",
+  "text": "AI 论文日报",
+  "scene": "AI 论文日报 in heavy rounded tech-magazine lettering: AI in Hugging Face yellow with a navy outline, 论文日报 in deep navy with a white inner line and a yellow offset shadow, a small paper sheet with a sparkle at the top right",
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "job_id": "c4718af8-58b7-4d54-ba41-aacfe399e363",
+  "generated": "2026-11-01",
+  "background": "transparent PNG, 2112x704",
+  "processing": "alpha below 40 cleared, cropped to the alpha bounding box, scaled to 96 px high with LANCZOS",
+  "rendering": "full colour at the page's top left, inside (10, 4)-(236, 50)",
+  "source_sha256": "05e503d7d8e9a3bbde0998c4ba67519c9a8c5e6e7cc78365b0e51ce45b645d95",
+  "sha256": "46146fbea51af7e57a6a250b5d5dc143029e0a4633c6ef402e51833af7791cc3",
+  "size": [
+    453,
+    96
+  ]
+}
