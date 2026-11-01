@@ -7,6 +7,7 @@ from .common import *
 from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_alias
 from .card_backdrops import card_backdrop_box, paint_card_backdrop, paint_list_backdrop
 from .esports_fonts import esports_role, esports_sidebar
+from .scorebug_kit import KIT_RESULT_EXTRA
 
 # Where each Worlds stage is played, by its days (first, last, venue): the sidebar bills a match's
 # ground by the venue's logo (assets/logos/venues). 2026: the Play-In at Riot Games Arena in Los
@@ -1739,12 +1740,14 @@ class EsportsRenderMixin:
         score = self._valve_score_label(event)
         if not event.get("feed_fresh", True):
             score = "STALE"
-        score, score_font = self._fit_text_ellipsis(draw, score, 40, 13, bold=True, min_size=9)
+        decided = event.get("feed_fresh", True) and self._hub_event_state(event) == "final"
+        score, score_font = self._fit_text_ellipsis(draw, score, 40 - (KIT_RESULT_EXTRA if decided else 0), 13, bold=True, min_size=9)
         icon_size = 17
         team_y1 = y + 21
         icon_y = y + 21
         center_x = (row_x1 + row_x2) / 2
-        self._draw_esports_match_text(draw, (center_x - 20, team_y1 - 1, center_x + 20, team_y1 + 18), score, score_font, COLORS["text"])
+        self._draw_kit_result_score(draw, (center_x - 20, team_y1 - 1, center_x + 20, team_y1 + 18), score, score_font,
+                                    winner=None if decided else "", draw_text=self._draw_esports_match_text)
         self._draw_valve_team_icon(image, draw, event, "a", row_x1 + 12, icon_y, icon_size)
         self._draw_valve_team_icon(image, draw, event, "b", row_x2 - 29, icon_y, icon_size)
         left_name_box = (row_x1 + 33, team_y1 - 1, center_x - 24, team_y1 + 18)
@@ -2547,8 +2550,9 @@ class EsportsRenderMixin:
         team_a, font_a = self._fit_text_ellipsis(draw, team_a_label, left_text_w, 12, bold=True, min_size=8)
         self._draw_esports_match_text(draw, (left_text_x, team_top, score_x - 6, team_bottom), team_a, font_a, colour_a, align="left")
         score = self._score_label(event)
-        score_text, score_font = self._fit_text(draw, score, score_w, 12, bold=True, min_size=9)
-        self._draw_esports_match_text(draw, (score_x, team_top, score_x + score_w, team_bottom), score_text, score_font, COLORS["text"])
+        score_text, score_font = self._fit_text(draw, score, score_w - KIT_RESULT_EXTRA, 12, bold=True, min_size=9)
+        self._draw_kit_result_score(draw, (score_x, team_top, score_x + score_w, team_bottom), score_text, score_font,
+                                    draw_text=self._draw_esports_match_text)
         right_logo_x = row_x2 - 10 - logo_size
         right_text_x2 = right_logo_x - 5
         right_text_x1 = score_x + score_w + 6

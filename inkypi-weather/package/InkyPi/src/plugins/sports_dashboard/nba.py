@@ -1998,8 +1998,11 @@ class NBAMixin:
             bold=True,
             min_size=NBA_INLINE_TEAM_MIN_FONT_SIZE,
         )
-        center_text, center_font = self._fit_text(draw, center_text, 54, 13, bold=True, min_size=9)
-        self._draw_centered_in_box(draw, (center_x - 27, y - 1, center_x + 27, y + 18), center_text, center_font, COLORS["text"])
+        # A final's winning score reads emerald, the losing one crimson.
+        winner = SportsDashboard._nba_winner_side(event)
+        center_text, center_font = self._fit_text(draw, center_text, 54 - (2 if winner else 0), 13, bold=True, min_size=9)
+        self._draw_kit_result_score(draw, (center_x - 27, y - 1, center_x + 27, y + 18), center_text, center_font,
+                                    winner=winner)
         self._draw_team_logo(image, draw, event.get("team_b_logo"), right_logo_x, y, logo_size, event["team_b"])
         team_b, font_b = self._fit_text(
             draw,

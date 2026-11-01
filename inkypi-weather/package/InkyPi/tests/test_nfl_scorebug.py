@@ -7,7 +7,7 @@ from PIL import Image, ImageDraw
 import pytest
 
 from plugins.sports_dashboard.common import _ACTIVE_COLORS, COLORS, DAY_COLORS, DEEP_NIGHT_COLORS
-from plugins.sports_dashboard.scorebug_kit import KIT_SCOREBOARD_ROW_HEIGHT
+from plugins.sports_dashboard.scorebug_kit import KIT_RESULT_INKS, KIT_SCOREBOARD_ROW_HEIGHT
 from plugins.sports_dashboard.sports_dashboard import SportsDashboard
 from tests.test_sports_dashboard import _plugin
 
@@ -445,10 +445,10 @@ def test_final_panel_marks_the_winner_and_lists_leaders(parsed, render):
     # The leader categories are icons (the pass, the run), not PASS / RUSH tags.
     assert {"C. Williams", "16/18, 172 YDS, 1 TD"} <= set(texts) and not {"PASS", "RUSH"} & set(texts)
     _assert_texts_fit(draw, render.boxes)
-    # The winner triangle sits at the right edge of the home (DEN) row.
+    # The winner's score and its triangle at the right edge of the home (DEN) row read emerald.
     card_right = 12 + 318 - 10
     home_row_middle = 57 + 31 + 10 + 33 + 15
-    assert image.getpixel((card_right - 2, home_row_middle)) == DAY_COLORS["text"]
+    assert image.getpixel((card_right - 2, home_row_middle)) == KIT_RESULT_INKS["win"][0]
 
 
 def test_pregame_panel_shows_kickoff_tiles_spread_and_season_leaders(parsed, render):

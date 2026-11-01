@@ -32,6 +32,14 @@ KIT_ROW_VENUE_MAX_W, KIT_ROW_VENUE_MIN_W, KIT_ROW_VENUE_GAP = 72, 24, 8
 # A live row's leading score sits in a solid ink box this far round its digits (the wall's
 # broadcast-scorebug mark); every row's scores keep the room, so all digits stay in one column.
 KIT_LEAD_PAD = 3
+# A decided game's numbers read in the result's colours, the winner's emerald and the loser's
+# crimson (day, then the brighter night tone), so a result reads at a glance without a box.
+KIT_RESULT_INKS = {"win": ((22, 150, 96), (74, 222, 148)), "loss": ((214, 62, 72), (255, 112, 118))}
+# A one-line "2-0" score parts into its two numbers and the mark between them.
+KIT_RESULT_SCORE_RE = re.compile(r"\s*(\d+)\s*([-:–])\s*(\d+)\s*")
+# How much wider a decided score draws than its plain text (a pixel either side of the mark), so a
+# caller can fit the text to its room less this.
+KIT_RESULT_EXTRA = 2
 KIT_TILE_HEIGHT = 36
 # The space either side of the rule between a TV tile's networks and its venue logo.
 KIT_TILE_VENUE_GAP = 7
@@ -72,6 +80,12 @@ def stat_icon_path(sport, label):
 KIT_SPARE_FILLER_MIN_HEIGHT = 50
 KIT_SPARE_STRIP_MIN_HEIGHT = 28
 KIT_SPARE_FILLER_MAX_HEIGHT = 130
+
+
+def _kit_result_ink(outcome):
+    """The colour of a decided game's "win" or "loss" number on the current page."""
+    day, night = KIT_RESULT_INKS[outcome]
+    return night if _kit_luminance(COLORS["panel"]) < 0.2 else day
 
 
 def _kit_luminance(rgb):
@@ -252,10 +266,12 @@ class ScorebugKitMixin:
         score = event.get(f"wins_{side}")
         score_text, score_font = self._fit_score(draw, "-" if score is None else str(score), score_box[2] - score_box[0], 26,
                                                 bold=not dimmed, min_size=16, sport=spec.sport, max_height=y2 - y1)
-        self._draw_text_in_box(draw, score_box, score_text, score_font, COLORS["text"], align="right")
+        # A final's winning score reads emerald with its arrow, the losing one crimson.
+        ink = _kit_result_ink("win" if winner == side else "loss") if winner else COLORS["text"]
+        self._draw_text_in_box(draw, score_box, score_text, score_font, ink, align="right")
         if winner == side:
             middle = (y1 + y2) // 2
-            draw.polygon([(x2, middle - 5), (x2, middle + 5), (x2 - 6, middle)], fill=COLORS["text"])
+            draw.polygon([(x2, middle - 5), (x2, middle + 5), (x2 - 6, middle)], fill=ink)
 
     def _draw_kit_pips(self, draw, x, y, filled, total, fill_key="amber"):
         """Timeout / foul style pips; returns the x after the last pip."""
@@ -655,6 +671,47 @@ class ScorebugKitMixin:
         if bar_x2 > split and right_ink != left_ink:
             draw.rectangle((split, middle - 3, bar_x2, middle + 3), fill=COLORS[right_ink], outline=COLORS["border"], width=1)
 
+    # Final scores ---------------------------------------------------------------
+
+    def _kit_result_layout(self, draw, text, font, winner=None):
+        """(parts, slot widths, winning part index) for a decided one-line score ("2-0"), the
+        winner taken from the numbers unless ``winner`` ("a" / "b", "" for none) says; None for a
+        draw, an undecided game or a score that is not two numbers."""
+        match = KIT_RESULT_SCORE_RE.fullmatch(str(text or ""))
+        if not match:
+            return None
+        parts = match.groups()
+        if winner is None:
+            first, second = int(parts[0]), int(parts[2])
+            winner = "a" if first > second else "b" if second > first else ""
+        if winner not in ("a", "b"):
+            return None
+        widths = [self._text_width(draw, part, font) for part in parts]
+        return parts, (widths[0], widths[1] + KIT_RESULT_EXTRA, widths[2]), 0 if winner == "a" else 2
+
+    def _kit_result_width(self, draw, text, font, winner=None):
+        """How wide ``_draw_kit_result_score`` draws ``text``."""
+        layout = self._kit_result_layout(draw, text, font, winner)
+        return sum(layout[1]) if layout else self._text_width(draw, text, font)
+
+    def _draw_kit_result_score(self, draw, box, text, font, align="center", winner=None, draw_text=None):
+        """A one-line final score in ``box``, the winner's number emerald and the loser's crimson, the
+        mark between them in ink; anything else (a draw, "vs", a live score) is drawn as it is.
+        ``draw_text`` (default ``_draw_text_in_box``) draws each piece."""
+        x1, y1, x2, y2 = box
+        draw_text = draw_text or self._draw_text_in_box
+        layout = self._kit_result_layout(draw, text, font, winner)
+        if layout is None:
+            draw_text(draw, box, text, font, COLORS["text"], align=align)
+            return
+        parts, slots, won = layout
+        total = sum(slots)
+        x = x2 - total if align == "right" else x1 if align == "left" else x1 + (x2 - x1 - total) / 2
+        for index, (part, slot) in enumerate(zip(parts, slots)):
+            ink = COLORS["text"] if index == 1 else _kit_result_ink("win" if index == won else "loss")
+            draw_text(draw, (x, y1, x + slot, y2), part, font, ink, align="center")
+            x += slot
+
     # Scoreboard column --------------------------------------------------------
 
     def _draw_kit_column_header(self, draw, x1, y1, x2, spec, title, counter=""):
@@ -731,7 +788,8 @@ class ScorebugKitMixin:
                 dot_x = name_x + self._text_width(draw, name, font) + 4
                 draw.ellipse((dot_x, line_y1 + 4, dot_x + 5, line_y1 + 9), fill=COLORS["amber"], outline=COLORS["border"], width=1)
             if score_text:
-                ink = COLORS["text"]
+                # A live game's leader sits in solid ink; a final's winner reads emerald, its loser crimson.
+                ink = _kit_result_ink("win" if winner == side else "loss") if winner else COLORS["text"]
                 if leader == side:
                     draw.rounded_rectangle((score_right - score_w - KIT_LEAD_PAD, line_y1 + 1,
                                             score_right + KIT_LEAD_PAD, line_y2 - 1), radius=3, fill=COLORS["text"])
@@ -872,12 +930,13 @@ class ScorebugKitMixin:
                 middle_text = f"{event.get('wins_a') if event.get('wins_a') is not None else '-'}-{event.get('wins_b') if event.get('wins_b') is not None else '-'}"
             middle_font = self._font(10, True)
             if state != "scheduled":
-                middle_text, middle_font = self._fit_score(draw, middle_text, min(68, (x2 - x1) / 3), 10,
+                middle_text, middle_font = self._fit_score(draw, middle_text, min(68, (x2 - x1) / 3) - KIT_RESULT_EXTRA, 10,
                                                           bold=True, sport=spec.sport, max_height=15)
-            middle_w = self._text_width(draw, middle_text, middle_font)
+            middle_w = self._kit_result_width(draw, middle_text, middle_font, winner)
             team_x1 = x1 + 60
             center = (team_x1 + x2) // 2
-            self._draw_text_in_box(draw, (center - middle_w // 2 - 1, top, center + middle_w // 2 + 2, top + 15), middle_text, middle_font, COLORS["text"], align="center")
+            self._draw_kit_result_score(draw, (center - middle_w // 2 - 1, top, center + middle_w // 2 + 2, top + 15),
+                                        middle_text, middle_font, winner=winner)
             # Each team's logo sits on the outer side of its name.
             logo_room = KIT_TICKER_LOGO_SIZE + KIT_TICKER_LOGO_GAP
             for side, box_side, align in (

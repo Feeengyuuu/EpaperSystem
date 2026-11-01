@@ -1,6 +1,7 @@
 """Actual matchup ink stays on the team axis with private and fallback faces."""
 
 from datetime import datetime, timezone
+import re
 
 from PIL import Image, ImageDraw, ImageFont
 import pytest
@@ -82,6 +83,22 @@ def test_mixed_team_name_retains_one_shared_baseline():
     assert result.crop(result.getbbox()).tobytes() == expected.crop(expected.getbbox()).tobytes()
 
 
+def merged_scores(labels):
+    """The labels with a decided score's pieces (number, mark, number; the winner's number on its
+    chip) read back as the one score they spell, its box and ink the pieces' union."""
+    merged = []
+    for value, box, ink, align in labels:
+        if merged and re.fullmatch(r"\d+|[-:]", value) and re.fullmatch(r"[\d:-]+", merged[-1][0]):
+            previous, last_box, last_ink, last_align = merged[-1]
+            if (last_box[1], last_box[3]) == (box[1], box[3]) and abs(last_box[2] - box[0]) <= 1:
+                merged[-1] = (previous + value, (last_box[0], box[1], box[2], box[3]),
+                              (min(last_ink[0], ink[0]), min(last_ink[1], ink[1]), max(last_ink[2], ink[2]),
+                               max(last_ink[3], ink[3])), last_align)
+                continue
+        merged.append((value, box, ink, align))
+    return merged
+
+
 def capture_matchups(monkeypatch, private):
     plugin = _plugin()
     monkeypatch.setattr(SportsDashboard, "_font", staticmethod(lambda size, bold=False: face(size, private)))
@@ -122,6 +139,7 @@ def test_valve_scores_share_team_axis_and_names_stay_in_mirrored_columns(monkeyp
         plugin._draw_valve_esports_focus_card(image, draw, 556, 244, 78,
                                             {"series": series, "event_name": "Test Event"}, event, now, (200, 20, 20))
         plugin._draw_valve_esports_recent_row(image, draw, 556, 244, 310, event, (200, 20, 20))
+    labels = merged_scores(labels)
     scores = [row for row in labels if row[0] == score]
     assert len(scores) == 2
     for item, (left, right) in zip(scores, (logos[:2], logos[2:])):
@@ -145,6 +163,7 @@ def test_lol_compact_names_and_scores_fit_between_mirrored_logos(monkeypatch, pr
     with type_scope("riot"):
         plugin._draw_lpl_next_row(image, draw, 556, 244, 275, event, now, league_key="WORLDS")
         plugin._draw_lpl_recent_result_row(image, draw, 556, 244, 402, event, league_key="WORLDS")
+    labels = merged_scores(labels)
     for y, value, pair in ((275, "VS", logos[:2]), (402, "0-2", logos[2:])):
         score = next(row for row in labels if row[0] == value)
         axis = pair[0][1] + pair[0][2] / 2

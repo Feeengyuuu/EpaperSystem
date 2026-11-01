@@ -1,7 +1,7 @@
 from .common import *
 from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_alias
 from .card_backdrops import card_backdrop_box, paint_card_backdrop, paint_list_backdrop
-from .scorebug_kit import _kit_inked_where_faint
+from .scorebug_kit import KIT_RESULT_EXTRA, _kit_inked_where_faint
 from .score_fonts import football_score_league
 from .tv_networks import tv_network_parts, tv_watch_rank
 
@@ -1263,9 +1263,10 @@ class WorldCupRenderMixin:
         score = self._worldcup_score_or_vs(event)
         score, score_font = self._fit_text(draw, score, score_w, 10, bold=True, min_size=7)
         if event.get("wins_a") is not None and event.get("wins_b") is not None:
-            score, score_font = self._fit_score(draw, score, score_w, 10, bold=True, sport="SOCCER", max_height=team_y2 - team_y1,
-                                               league=football_score_league(event, presentation))
-        self._draw_centered_in_box(draw, (left_score_edge, team_y1, right_score_edge, team_y2), score, score_font, COLORS["text"])
+            score, score_font = self._fit_score(draw, score, score_w - KIT_RESULT_EXTRA, 10, bold=True, sport="SOCCER",
+                                               max_height=team_y2 - team_y1, league=football_score_league(event, presentation))
+        # The winner's goals read emerald and the loser's crimson; a draw stays in ink.
+        self._draw_kit_result_score(draw, (left_score_edge, team_y1, right_score_edge, team_y2), score, score_font)
         if right_label:
             self._draw_worldcup_score_detail_chip(
                 draw,

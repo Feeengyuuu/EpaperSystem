@@ -1777,3 +1777,39 @@ def test_dark_league_wordmarks_take_the_ink_by_night_and_keep_their_brand_colour
         assert len(lit) > 100
     finally:
         _ACTIVE_COLORS.reset(token)
+
+
+WIN_INK, LOSS_INK = (scorebug_kit_module.KIT_RESULT_INKS[outcome][0] for outcome in ("win", "loss"))
+
+
+def _ink_columns(image, ink, box):
+    x1, y1, x2, y2 = box
+    return [x for x in range(x1, x2) if any(image.getpixel((x, y)) == ink for y in range(y1, y2))]
+
+
+def test_a_final_score_reads_the_winners_number_in_emerald_and_the_losers_in_crimson():
+    def score(text, winner=None):
+        image, _draw = _render(lambda plugin, image, draw: plugin._draw_kit_result_score(
+            draw, (0, 0, 80, 24), text, plugin._font(18, True), winner=winner))
+        return _ink_columns(image, WIN_INK, (0, 0, 81, 25)), _ink_columns(image, LOSS_INK, (0, 0, 81, 25))
+
+    # The home side's 17 wins on the right; the away side's 3 on the left.
+    (win, loss), (away_win, away_loss) = score("14-17"), score("3-0")
+    assert win and loss and min(win) > max(loss) and away_win and away_loss and max(away_win) < min(away_loss)
+    # A draw, a game still on (no winner given) and "vs" stay in ink.
+    for plain in (score("1-1"), score("14-7", winner=""), score("vs")):
+        assert plain == ([], [])
+
+
+def test_a_final_on_the_scoreboard_reads_its_winner_in_emerald_and_its_loser_in_crimson():
+    spec = _plugin()._football_spec("NFL")
+    final = _ticker_game("SEA", "DEN", -3, state="post", wins_a=14, wins_b=17)
+    image, _draw = _render(lambda plugin, image, draw: plugin._draw_kit_scoreboard_column(
+        image, draw, (300, 20, 540, 200), [final], NOW, spec))
+
+    def rows(ink):
+        return [y for y in range(43, 70) if any(image.getpixel((x, y)) == ink for x in range(480, 541))]
+
+    # The row's lines run from y 44 (SEA, 14) and 56 (DEN, 17); no box is drawn behind either.
+    assert rows(LOSS_INK) and max(rows(LOSS_INK)) < 56 and rows(WIN_INK) and min(rows(WIN_INK)) >= 56
+    assert not rows(DAY_COLORS["green"])

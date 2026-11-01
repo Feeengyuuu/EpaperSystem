@@ -915,3 +915,19 @@ def test_every_organiser_logo_has_its_source_recorded():
     records = _json.loads((folder / "cs2_organisers.source.json").read_text(encoding="utf-8"))["logos"]
     keys = {key for _prefix, key in pro_render.CS2_ORGANISERS}
     assert keys == {path.stem for path in folder.glob("*.png")} == set(records)
+
+
+def test_a_results_winning_number_reads_green_and_its_losing_number_red(plugin):
+    colors = plugin._render_colors({"mode": "night"})
+    fonts = plugin._pro_fonts()
+    for won in (True, False):
+        image = Image.new("RGB", (300, 24), colors["background"])
+        match = {"opponent": "BLG", "score": "2:0" if won else "0:2", "won": won}
+        plugin._draw_cs2_result(image, ImageDraw.Draw(image), match, None, (0, 0, 300), colors, fonts,
+                                team_logo=lambda *_args: None)
+        # The team's number left of the colon (x 66), the opponent's right of it; no chip behind them.
+        ours = {colour for _count, colour in image.crop((44, 0, 64, 24)).getcolors(4096)}
+        theirs = {colour for _count, colour in image.crop((69, 0, 90, 24)).getcolors(4096)}
+        assert (colors["green"] in ours, colors["red"] in theirs) == (won, won)
+        assert (colors["red"] in ours, colors["green"] in theirs) == (not won, not won)
+        assert image.getpixel((48, 3)) == colors["background"]

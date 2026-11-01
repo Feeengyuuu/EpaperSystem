@@ -782,12 +782,16 @@ class ProRenderMixin:
             image.paste(logo, (name_x + (16 - logo.width) // 2, y + 1 + (16 - logo.height) // 2), logo)
             name_x += 20
         ours_team, theirs_team = game.get("ours") or {}, game.get("theirs") or {}
-        score = (f"{ours_team.get('kills', 0)} : {theirs_team.get('kills', 0)}" if live
-                 else f"{(series.get('ours') or {}).get('wins') or 0} : {theirs.get('wins') or 0}")
-        score_w = self._text_width(draw, score, fonts["body"])
+        if live:
+            score = f"{ours_team.get('kills', 0)} : {theirs_team.get('kills', 0)}"
+            score_w = self._text_width(draw, score, fonts["body"])
+            self._text(draw, (x1 - 6 - score_w, y - 2), score, fonts["body"], colors["gold"])
+        else:
+            ours_wins, theirs_wins = (series.get("ours") or {}).get("wins") or 0, theirs.get("wins") or 0
+            score_w = self._draw_result_score(draw, x1 - 6, y - 2, ours_wins, theirs_wins, ours_wins > theirs_wins,
+                                              colors, fonts["body"])
         self._single(draw, (name_x, y), theirs.get("code") or "-", fonts["small_bold"], colors["ink"],
                      x1 - 12 - score_w - name_x, 8)
-        self._text(draw, (x1 - 6 - score_w, y - 2), score, fonts["body"], colors["gold"])
         y += rows[0]
         champion = (champions.get("by_id") or {}).get(str(game.get("champion") or "").lower()) or {}
         icon = self._icon_from_url(champion.get("icon_url"), 18, champion.get("name") or game.get("champion"))
@@ -1522,8 +1526,13 @@ class ProRenderMixin:
         if logo is not None:
             image.paste(logo, (name_x + (16 - logo.width) // 2, y + 1 + (16 - logo.height) // 2), logo)
             name_x += 20
-        score = " : ".join(part.strip() for part in str(win.get("score") or "").split(":"))
-        score_w = self._match_text(draw, (x1 - 6, middle), score, "score", 20, colors["gold"], anchor="rm")
+        # The series score in the result's colours: the team's number green, the opponent's red.
+        right = x1 - 6
+        if win.get("score"):
+            ours, theirs = ([part.strip() for part in str(win["score"]).split(":")] + ["-", "-"])[:2]
+            for part, fill in ((theirs, colors["red"]), (" : ", colors["muted"]), (ours, colors["green"])):
+                right -= self._match_text(draw, (right, middle), part, "score", 20, fill, anchor="rm")
+        score_w = x1 - 6 - right
         self._match_text(draw, (name_x, middle), self._fitted_name(draw, win.get("opponent") or "-", fonts["small_bold"],
                                                                   x1 - 12 - score_w - name_x),
                          "name", 15, colors["ink"], width=x1 - 12 - score_w - name_x, min_size=10)
@@ -1638,13 +1647,13 @@ class ProRenderMixin:
             image.paste(own_logo, (x + (16 - own_logo.width) // 2, y + 3 + (16 - own_logo.height) // 2), own_logo)
         x += 20
         ours, theirs = ([part.strip() for part in str(match.get("score") or "").split(":")] + ["-", "-"])[:2]
-        # The score in a fixed slot, its colon centred, so every row's score lines up.
+        # The score in a fixed slot, its colon centred, so every row's score lines up; the winner's
+        # number reads green and the loser's red.
         colon_x = x + 22
+        win, loss = colors["green"], colors["red"]
         self._match_text(draw, (colon_x, y + 11), ":", "score", 18, colors["muted"], anchor="mm")
-        self._match_text(draw, (colon_x - 5, y + 11), ours, "score", 18, colors["ink"] if won else colors["muted"],
-                         anchor="rm")
-        self._match_text(draw, (colon_x + 5, y + 11), theirs, "score", 18, colors["muted"] if won else colors["ink"],
-                         anchor="lm")
+        self._match_text(draw, (colon_x - 5, y + 11), ours, "score", 18, win if won else loss, anchor="rm")
+        self._match_text(draw, (colon_x + 5, y + 11), theirs, "score", 18, loss if won else win, anchor="lm")
         x = colon_x + 27
         # The opponent's logo keeps its slot when it does not load, so the names stay in a column.
         logo = (team_logo or partial(self._cs2_team_logo, badge=True))(match.get("opponent_logo"), match.get("opponent"), 16)
@@ -1653,6 +1662,17 @@ class ProRenderMixin:
         x += 21
         self._match_text(draw, (x, y + 11), self._fitted_name(draw, match.get("opponent") or "-", fonts["small_bold"], x1 - x),
                          "name", 15, colors["ink"] if won else colors["muted"], width=x1 - x, min_size=10)
+
+    def _draw_result_score(self, draw, right, top, ours, theirs, won, colors, font):
+        """``ours : theirs`` in ``font`` ending at ``right`` (its text top at ``top``): the team's
+        number green for a win and red for a loss, the opponent's the other colour, the colon
+        muted; returns the width it took."""
+        x = right
+        for part, fill in ((str(theirs), colors["red"] if won else colors["green"]), (" : ", colors["muted"]),
+                           (str(ours), colors["green"] if won else colors["red"])):
+            x -= self._text_width(draw, part, font)
+            self._text(draw, (x, top), part, font, fill)
+        return right - x
 
     def _fitted_name(self, draw, name, font, max_width, min_size=8):
         """``name`` when it fits ``max_width`` at ``min_size`` or larger; else a long team name's
