@@ -14,6 +14,18 @@
         480,
         480
       ]
+    },
+    "markets.png": {
+      "motifs": "ballot boxes, rising and falling line charts, stacked coins, dice, gauges, percent signs, trophies, calendar pages, checked speech bubbles, a magnifier over a bar chart",
+      "style": "doodle",
+      "job_id": "aa3b8e33-c76a-4d62-aaac-09da6abef396",
+      "generated": "2026-11-01",
+      "source_sha256": "f95e52d690f98411ef2e7fbe46fecb6291d80d11f8b15492ef03e2953e8d7ee4",
+      "sha256": "7f0f15720fe2268bc7bc582e6c2daf0923adca72beafb2573fe3c087482f734a",
+      "size": [
+        480,
+        480
+      ]
     }
   }
 }

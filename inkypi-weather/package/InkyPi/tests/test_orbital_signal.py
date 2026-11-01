@@ -1540,3 +1540,24 @@ def test_the_headline_rides_along_without_touching_the_page_state(tmp_path, monk
     assert payload["news"] == [story]
     assert set(payload["status"]["sources"]) == {"launches", "markets"}
     assert plugin._valid_aggregate_payload(payload)
+
+
+def test_the_markets_lie_on_their_own_doodles_each_market_on_a_card(monkeypatch):
+    import hashlib
+
+    from plugins.orbital_signal import orbital_signal as module
+
+    record = json.loads((module.MARKET_DOODLES.parent / "doodles.source.json").read_text(encoding="utf-8"))
+    assert record["assets"]["markets.png"]["sha256"] == hashlib.sha256(module.MARKET_DOODLES.read_bytes()).hexdigest()
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    payload = plugin._fixture_payload(NOW)
+    left, top, right, bottom = plugin._panel_boxes(800, 480)["markets"]
+    page = plugin._render_page((800, 480), payload, {}, NOW)
+    monkeypatch.setattr(module, "MARKET_DOODLES", module.MARKET_DOODLES.with_name("missing.png"))
+    plain = plugin._render_page((800, 480), payload, {}, NOW)
+
+    panel = (left, top + module.ART_TOP, right, bottom)
+    assert page.crop(panel).tobytes() != plain.crop(panel).tobytes()
+    # Each market's card is edged with the panel's rule down its left side, under its art.
+    edge = round(left + 12) + module.MARKET_CARD_INSET
+    assert plain.getpixel((edge, top + module.QUESTION_TOP + 60)) == module.market_palette(DAY_PALETTE)["rule"]

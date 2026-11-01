@@ -82,6 +82,11 @@ PHOTO_BOX = (16, 72, 124, 272)
 # Quiet launch doodles (rockets, gantries, fairings, trajectories) in the page's blue under the
 # launch panel, and each coming launch's provider logo under its stop, this tall at most.
 LAUNCH_DOODLES = Path(__file__).with_name("assets") / "doodles" / "launch.png"
+# The markets panel has its own (ballot boxes, charts, coins, dice, gauges) in Polymarket blue, and
+# each market's readings, question to facts, stand on a card of the panel colour that lets them
+# through at MARKET_CARD_ALPHA, so the three markets read apart and their text stays clear.
+MARKET_DOODLES = Path(__file__).with_name("assets") / "doodles" / "markets.png"
+MARKET_CARD_ALPHA, MARKET_CARD_RADIUS, MARKET_CARD_INSET = 214, 8, 3
 # A wordmark stands TIMELINE_LOGO_HEIGHT tall; a badge (narrower than 3.5:1) TIMELINE_BADGE_HEIGHT,
 # with the provider's short name after it, since a badge says little alone at this size.
 TIMELINE_LOGO_HEIGHT, TIMELINE_BADGE_HEIGHT = 11, 13
@@ -1436,6 +1441,9 @@ class OrbitalSignal(BasePlugin):
         for offset in range(min(BRAND_FADE_HEIGHT, bottom - top)):
             draw.line((left, top + offset, right - 1, top + offset),
                       fill=market_background_color(palette, offset))
+        if image is not None:
+            doodles = (left + 2, top + ART_TOP, right - 3, bottom - 2)
+            paint_doodles(image, doodles, MARKET_DOODLES, palette["blue"], offset=doodles[:2])
         draw.line((left, top, left, bottom - 1), fill=palette["rule"])
         # Polymarket's own logo heads the markets; the lettered title is the fallback.
         logo = self._polymarket_logo(POLYMARKET_LOGO_HEIGHT, heading) if image is not None else None
@@ -1464,10 +1472,23 @@ class OrbitalSignal(BasePlugin):
         art_w = (right - left - 2) / 3
         for index, market in enumerate(columns):
             col_left = left + 12 + index * column_w
-            if index:
+            # Each market's card sets it apart; a rule does without them.
+            if index and image is None:
                 draw.line((col_left, top + 48, col_left, columns_bottom), fill=palette["rule"], width=1)
             art_span = (round(left + 1 + index * art_w) + (1 if index else 0), round(left + 1 + (index + 1) * art_w))
             self._draw_market_column(draw, market, col_left, column_w, top, palette, family, image, art_span)
+
+    @staticmethod
+    def _draw_market_card(image, box, palette):
+        """A market's card: the panel colour over the art's fade and the doodles, letting them show
+        faintly through, edged with the panel's rule."""
+        x1, y1, x2, y2 = (int(value) for value in box)
+        size = (x2 - x1 + 1, y2 - y1 + 1)
+        mask = Image.new("L", (size[0] * 4, size[1] * 4), 0)
+        ImageDraw.Draw(mask).rounded_rectangle((0, 0, size[0] * 4 - 1, size[1] * 4 - 1), radius=MARKET_CARD_RADIUS * 4,
+                                               fill=MARKET_CARD_ALPHA)
+        image.paste(Image.new("RGB", size, palette["panel"]), (x1, y1), mask.resize(size, Image.Resampling.LANCZOS))
+        ImageDraw.Draw(image).rounded_rectangle(box, radius=MARKET_CARD_RADIUS, outline=palette["rule"], width=1)
 
     def _draw_market_column(self, draw, market, col_left, column_w, top, palette, family, image=None, art_span=None):
         """One market: its event's art across the top fading into the paper (the matchup's two logos
@@ -1479,6 +1500,9 @@ class OrbitalSignal(BasePlugin):
         art_box = (art_left, top + ART_TOP, art_right, top + ART_TOP + ART_H)
         if image is not None:
             self._paste_event_art(image, market.get("event_art") or market.get("event_mark"), art_box, palette)
+            card = (round(col_left) + MARKET_CARD_INSET, top + QUESTION_TOP - 6,
+                    round(col_left + column_w) - MARKET_CARD_INSET, top + MARKET_COLUMNS_HEIGHT + 4)
+            self._draw_market_card(image, card, palette)
         teams = [team for team in market.get("teams") or [] if isinstance(team, dict)]
         logos = [self._market_mark(team.get("mark"), MATCHUP_LOGO) for team in teams[:2]] if image is not None else []
         title = str(market.get("title") or "MARKET").upper()
