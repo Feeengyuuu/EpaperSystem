@@ -63,7 +63,34 @@ def test_two_days_rank_once_each_by_upvotes():
 
     assert [(paper["id"], paper["upvotes"]) for paper in papers] == [
         ("2610.00003", 152), ("2610.00002", 40), ("2610.00001", 5)]
-    assert sources.list_days(NOW) == ["2026-10-30", "2026-10-29"]
+    assert sources.list_days(NOW)[:2] == ["2026-10-30", "2026-10-29"]
+    assert len(sources.list_days(NOW)) == sources.LOOKBACK_DAYS
+
+
+def test_over_a_weekend_the_page_ranks_the_last_two_days_with_papers(monkeypatch, tmp_path):
+    from plugins.ai_papers.ai_papers import AiPapers
+
+    monkeypatch.setenv("AI_PAPERS_CACHE_DIR", str(tmp_path))
+    sunday = datetime(2026, 11, 1, 9, 20, tzinfo=sources.PACIFIC)
+    listed = {"2026-10-30": [_raw("2610.00001", "Friday", 50)], "2026-10-29": [_raw("2610.00002", "Thursday", 70)],
+              "2026-10-28": [_raw("2610.00003", "Wednesday", 99)]}
+    asked = []
+
+    def fetch_day(day, context):
+        asked.append(day)
+        return {"day": day, "papers": [sources.normalize_paper(raw, day) for raw in listed.get(day, [])]}
+
+    monkeypatch.setattr(sources, "fetch_day", fetch_day)
+    monkeypatch.setattr(sources, "fetch_arxiv_figure", lambda paper_id, context: {"urls": []})
+    payload = AiPapers({"id": "ai_papers"})._payload({}, sunday, allow_network=True, context=_context())
+
+    # Saturday's and Sunday's lists are empty: Friday's and Thursday's papers rank, Wednesday's is not asked.
+    assert asked == ["2026-11-01", "2026-10-31", "2026-10-30", "2026-10-29"]
+    assert [paper["title"] for paper in payload["papers"]] == ["Thursday", "Friday"]
+    assert payload["days"] == ["2026-10-30", "2026-10-29"]
+    assert render.days_label(payload["days"], sunday) == "10.30、10.29 两日"
+    assert render.days_label(["2026-10-30", "2026-10-29"], NOW) == "今昨两日"
+    assert render.render_page((800, 480), payload, {}, sunday, {}).size == (800, 480)
 
 
 def test_an_arxiv_figure_comes_from_the_numbered_figures_not_the_title_block(monkeypatch):

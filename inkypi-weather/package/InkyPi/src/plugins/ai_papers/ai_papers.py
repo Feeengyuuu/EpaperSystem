@@ -44,6 +44,8 @@ STILL_MAX_BYTES = 8 * 1024 * 1024
 AVATAR_PIXELS = (96, 96)
 # The translation request waits at most this long and runs only with this much of the refresh left.
 TRANSLATE_MIN_SECONDS = 35
+# Reaching back past an empty day (a weekend's) for another list needs this much of the refresh left.
+DAY_MIN_SECONDS = 20
 
 
 def _checkpoint(context):
@@ -75,12 +77,21 @@ class AiPapers(BasePlugin):
         force = allow_network and coerce_bool(settings.get("forceRefresh"), default=False)
         book = SourceBook(self._cache_subdir("sources"), CACHE_BUDGET, schema=CACHE_SCHEMA, max_bytes=512 * 1024,
                           checkpoint=_checkpoint)
-        results = [book.load(Source("papers", {"day": day}, lambda ctx, day=day: sources.fetch_day(day, ctx),
-                                    fresh_seconds=FRESH_SECONDS, usable_seconds=USABLE_SECONDS,
-                                    validate=sources.valid_day, timeout_seconds=15),
-                             now, allow_network=allow_network, context=context, force=force)
-                   for day in sources.list_days(now)]
-        papers = sources.ranked(result.get("data") for result in results)[:SHOWN]
+        # The latest days with papers, newest first: a weekend's empty lists are passed over.
+        results, listed = [], []
+        for day in sources.list_days(now):
+            if listed and context.remaining_seconds() < DAY_MIN_SECONDS:
+                break
+            result = book.load(Source("papers", {"day": day}, lambda ctx, day=day: sources.fetch_day(day, ctx),
+                                      fresh_seconds=FRESH_SECONDS, usable_seconds=USABLE_SECONDS,
+                                      validate=sources.valid_day, timeout_seconds=15),
+                               now, allow_network=allow_network, context=context, force=force)
+            results.append(result)
+            if (result.get("data") or {}).get("papers"):
+                listed.append(result)
+                if len(listed) == sources.DAYS:
+                    break
+        papers = sources.ranked(result.get("data") for result in listed)[:SHOWN]
         for paper in papers[:PICTURED]:
             if paper.get("image"):
                 continue
@@ -90,7 +101,7 @@ class AiPapers(BasePlugin):
                                       validate=sources.valid_figure, timeout_seconds=10),
                                now, allow_network=allow_network, context=context)
             paper["figures"] = (figure.get("data") or {}).get("urls") or []
-        return {"papers": papers, "days": [(result.get("data") or {}).get("day") for result in results],
+        return {"papers": papers, "days": [(result.get("data") or {}).get("day") for result in listed],
                 "states": [result.get("state") for result in results],
                 "provenance": combined_provenance(results)}
 

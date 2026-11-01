@@ -28,6 +28,10 @@ LIST_MAX_BYTES = 1536 * 1024
 ARXIV_MAX_BYTES = 2048 * 1024
 # The days the page ranks together: today's list fills through the day, yesterday's has its votes.
 DAYS = 2
+# Hugging Face lists no papers on weekends (a Saturday's and a Sunday's lists are empty), so the
+# page reaches back this many days for the latest DAYS that have papers (Monday morning, before
+# its list fills, back to the Thursday).
+LOOKBACK_DAYS = 5
 IMAGE_HOSTS = ("cdn-uploads.huggingface.co", "cdn-avatars.huggingface.co", "arxiv.org")
 STILL = re.compile(r"\.(?:png|jpe?g|gif|webp)$", re.I)
 ARXIV_ID = re.compile(r"^\d{4}\.\d{4,6}$")
@@ -64,9 +68,10 @@ def safe_image_url(value):
 
 
 def list_days(now):
-    """The UTC dates Hugging Face files the papers under, today's first."""
+    """The UTC dates Hugging Face files the papers under, today's first, as far back as the page
+    looks for DAYS with papers."""
     today = now.astimezone(timezone.utc).date()
-    return [(today - timedelta(days=offset)).isoformat() for offset in range(DAYS)]
+    return [(today - timedelta(days=offset)).isoformat() for offset in range(LOOKBACK_DAYS)]
 
 
 def normalize_paper(raw, day):

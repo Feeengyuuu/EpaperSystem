@@ -15,6 +15,7 @@ organisations' avatars lose their flat tiles. The cards carry a quiet doodle of 
 
 from __future__ import annotations
 
+from datetime import timedelta, timezone
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageOps
@@ -388,13 +389,13 @@ def _grid(canvas, papers, images, chinese):
         _card(canvas, (round(x0), round(y0), round(x0 + width), round(y0 + height)), index + 2, paper, images, chinese)
 
 
-def _ranking(canvas, papers, images, chinese, first_rank):
+def _ranking(canvas, papers, images, chinese, first_rank, title="今日榜单"):
     left, top, right, bottom = RANKING
     canvas.draw.rounded_rectangle(RANKING, radius=6, outline=canvas.color("rule"), width=1)
     _doodles(canvas, (left + 1, top + 31, right - 1, bottom - 1), canvas.color("paper"), offset=(211, 37))
     canvas.draw.rectangle((left + 8, top + 9, left + 12, top + 23), fill=HF_YELLOW)
     # The papers are arXiv's: its logo follows the heading.
-    heading = canvas.text((left + 18, top + 16), "今日榜单", 14, anchor="lm")
+    heading = canvas.text((left + 18, top + 16), title, 14, anchor="lm")
     _paste_logo(canvas, "arxiv", left + 18 + heading + 8, top + 16, 14)
     canvas.text((right - 10, top + 16), "按社区点赞", 10, "muted", anchor="rm", bold=False)
     canvas.rule((left + 8, top + 30, right - 8, top + 30))
@@ -418,6 +419,17 @@ def _ranking(canvas, papers, images, chinese, first_rank):
             canvas.rule((left + 10, y + row_h, right - 10, y + row_h), "track")
 
 
+def days_label(days, now):
+    """How the subtitle names the days ranked: 今昨两日 while they are today and yesterday (the UTC
+    dates Hugging Face files papers under), else their dates, as after a weekend ("10.30、10.29 两日")."""
+    days = [str(day) for day in days or [] if day]
+    today = now.astimezone(timezone.utc).date()
+    if not days or days == [(today - timedelta(days=offset)).isoformat() for offset in range(len(days))]:
+        return "今昨两日" if len(days) != 1 else "今日"
+    dates = "、".join(f"{day[5:7]}.{day[8:10]}" for day in days)
+    return f"{dates} 两日" if len(days) == 2 else f"{dates} "
+
+
 def render_page(dimensions, payload, settings, now, images):
     canvas = PageCanvas(_palette(settings), family=(settings or {}).get("fontFamily") or "Microsoft YaHei")
     placed = paste_local_wordmark(canvas.image, ASSETS / "title_wordmark.png", (10, 4, 236, 50), align="left")
@@ -430,7 +442,8 @@ def render_page(dimensions, payload, settings, now, images):
     canvas.rule((x, 18, x, 36))
     _paste_logo(canvas, "arxiv", x + 10, 27, 17)
     canvas.text((788, 19), f"{now:%m.%d} 周{WEEKDAYS[now.weekday()]} {now:%H:%M}", 16, anchor="rm")
-    canvas.text((788, 39), "Hugging Face 社区每日精选 · 今昨两日按点赞排", 10, "muted", anchor="rm", bold=False)
+    label = days_label(payload.get("days"), now)
+    canvas.text((788, 39), f"Hugging Face 社区每日精选 · {label}按点赞排", 10, "muted", anchor="rm", bold=False)
     canvas.rule((12, 52, 788, 52), "ink", 2)
     papers = payload.get("papers") or []
     chinese = payload.get("chinese") or {}
@@ -439,7 +452,8 @@ def render_page(dimensions, payload, settings, now, images):
     else:
         _lead(canvas, papers[0], images, chinese)
         _grid(canvas, papers[1:5], images, chinese)
-        _ranking(canvas, papers[5:], images, chinese, 6)
+        # Past a weekend the ranking is the latest days' (Friday's and Thursday's), not today's.
+        _ranking(canvas, papers[5:], images, chinese, 6, "今日榜单" if label.startswith("今") else "近日榜单")
     result = canvas.image
     if tuple(dimensions) != (800, 480):
         result = result.resize(tuple(dimensions), Image.Resampling.LANCZOS)
