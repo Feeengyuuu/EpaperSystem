@@ -706,6 +706,23 @@ def test_scoreboard_groups_later_games_under_one_day_tab_and_each_kickoff_once(b
     assert "13:05" in texts and "MON" in texts and "17:15" in texts
 
 
+def test_a_scoreboard_row_shows_todays_networks_as_their_logos(boxes):
+    spec = _plugin()._football_spec("NFL")
+
+    def column(broadcasts):
+        games = [_ticker_game(code, "CIN", 2, broadcast=broadcast) for code, broadcast in zip(("TEN", "IND"), broadcasts)]
+        boxes.clear()
+        image, _draw = _render(lambda plugin, image, draw: plugin._draw_kit_scoreboard_column(
+            image, draw, (300, 20, 540, 200), games, NOW, spec))
+        return image, [text for _box, text, _font in boxes]
+
+    shown, texts = column(["CBS", "Local"])
+    # CBS has a bundled logo and stands as it under the kickoff; a network without one stays in text.
+    assert "CBS" not in texts and "Local" in texts
+    plain, _texts = column(["", "Local"])
+    assert shown.tobytes() != plain.tobytes()
+
+
 @pytest.mark.parametrize("sport", ["MLB", "NBA", "WNBA", "NFL", "NCAA"])
 def test_every_ticker_sport_has_mascot_filler_art(sport):
     with Image.open(LOCAL_SPARE_FILLER_PATHS[sport]) as source:

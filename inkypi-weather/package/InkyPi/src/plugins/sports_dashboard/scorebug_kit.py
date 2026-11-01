@@ -24,6 +24,8 @@ KIT_SCOREBUG_SCORE_WIDTH = 44
 KIT_SCOREBUG_PERIOD_WIDTH = 17
 KIT_SCOREBOARD_ROW_HEIGHT = 26
 KIT_SCOREBOARD_STATE_WIDTH = 44
+# Under a row's kickoff today, its networks' logos stand this tall.
+KIT_SCOREBOARD_TV_HEIGHT = 9
 # A live row's leading score sits in a solid ink box this far round its digits (the wall's
 # broadcast-scorebug mark); every row's scores keep the room, so all digits stay in one column.
 KIT_LEAD_PAD = 3
@@ -404,19 +406,24 @@ class ScorebugKitMixin:
         """A series row's networks as small logos, right-aligned; the label in text without one."""
         x1, y1, x2, y2 = [int(value) for value in box]
         label = str(event.get("broadcast") or "").strip()
-        if not label:
+        if not label or self._draw_kit_small_broadcast(image, box, label, max(9, y2 - y1 - 3), align="right"):
             return
-        height = max(9, y2 - y1 - 3)
-        strip = Image.new("RGBA", (x2 - x1, height), (0, 0, 0, 0))
-        strip_draw = ImageDraw.Draw(strip)
-        if self._draw_kit_tv_logos(strip, strip_draw, (0, 0, strip.width, height), label, COLORS["panel"]):
-            bounds = strip.getchannel("A").getbbox()
-            if bounds:
-                used = strip.crop((0, 0, bounds[2], height))
-                image.paste(used, (x2 - used.width, y1 + (y2 - y1 - height) // 2), used)
-                return
         text, font = self._fit_text_ellipsis(draw, label, x2 - x1, 10, bold=False, min_size=8)
         self._draw_text_in_box(draw, (x1, y1, x2, y2), text, font, COLORS["text"], align="right")
+
+    def _draw_kit_small_broadcast(self, image, box, label, height, align="left"):
+        """A broadcast's networks as logos ``height`` tall in a row's ``box``, at its ``align`` side
+        and centred on it; False (nothing drawn) when none of them has a logo."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        strip = Image.new("RGBA", (max(1, x2 - x1), height), (0, 0, 0, 0))
+        if not self._draw_kit_tv_logos(strip, ImageDraw.Draw(strip), (0, 0, strip.width, height), label, COLORS["panel"]):
+            return False
+        bounds = strip.getchannel("A").getbbox()
+        if not bounds:
+            return False
+        used = strip.crop((0, 0, bounds[2], height))
+        image.paste(used, (x2 - used.width if align == "right" else x1, y1 + (y2 - y1 - height) // 2), used)
+        return True
 
     def _draw_kit_broadcast_logos(self, image, draw, box, label, height):
         """A broadcast's networks as logos ``height`` tall, centred in ``box``; the label as a
@@ -677,7 +684,10 @@ class ScorebugKitMixin:
             top_label, bottom_label, top_key = spec.hook("state_labels", event, now, default=("", "", "text"))
             top_label, top_font = self._fit_text(draw, top_label, KIT_SCOREBOARD_STATE_WIDTH - 4, 10, bold=True, min_size=8)
             self._draw_text_in_box(draw, (x1 + 2, y1 + 1, state_x2, y1 + 12), top_label, top_font, COLORS[top_key])
-            if bottom_label:
+            # Under today's kickoff its networks stand as their logos (CBS, FOX...), else in text.
+            broadcast = str(event.get("broadcast") or "").strip()
+            if bottom_label and not (bottom_label == broadcast and self._draw_kit_small_broadcast(
+                    image, (x1 + 2, y1 + 13, state_x2, y1 + 24), broadcast, KIT_SCOREBOARD_TV_HEIGHT)):
                 bottom_label, bottom_font = self._fit_text(draw, bottom_label, KIT_SCOREBOARD_STATE_WIDTH - 4, 9, bold=False, min_size=7)
                 self._draw_text_in_box(draw, (x1 + 2, y1 + 13, state_x2, y1 + 24), bottom_label, bottom_font, COLORS["text"])
         if state == "live" and spec.hook("row_flag", event, default=False):
