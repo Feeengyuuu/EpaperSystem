@@ -1574,8 +1574,12 @@ class ProRenderMixin:
             draw.rectangle((x0, y + 1, x0 + chip_w, y + 1 + chip_h), fill=colors["panel"])
         draw.rectangle((x0, y + 1, x0 + chip_w, y + 1 + chip_h), outline=colors["green"] if won else colors["red"])
         middle = y + 1 + chip_h // 2
-        self._match_text(draw, (x1, middle), f"{row.get('ours')}:{row.get('theirs')}", "score", 15,
-                         colors["green"] if won else colors["red"], anchor="rm")
+        # The map's rounds: the winner's green and the loser's red, the colon muted.
+        win, loss = colors["green"], colors["red"]
+        right = x1
+        for part, fill in ((f"{row.get('theirs')}", loss if won else win), (":", colors["muted"]),
+                           (f"{row.get('ours')}", win if won else loss)):
+            right -= self._match_text(draw, (right, middle), part, "score", 15, fill, anchor="rm")
         kd_right = x1 - 33
         if row.get("kills") is not None:
             self._match_text(draw, (kd_right, middle), f"{row['kills']}-{row.get('deaths', 0)}", "figure", 13,

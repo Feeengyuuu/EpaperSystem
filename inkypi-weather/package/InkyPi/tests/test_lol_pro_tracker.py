@@ -931,3 +931,19 @@ def test_a_results_winning_number_reads_green_and_its_losing_number_red(plugin):
         assert (colors["green"] in ours, colors["red"] in theirs) == (won, won)
         assert (colors["red"] in ours, colors["green"] in theirs) == (not won, not won)
         assert image.getpixel((48, 3)) == colors["background"]
+
+
+def test_a_won_maps_rounds_read_green_for_the_winner_and_red_for_the_loser(plugin):
+    colors = plugin._render_colors({"mode": "night"})
+    for row, winner_first in (({"map": "de_mirage", "name": "荒漠迷城", "won": True, "ours": 13, "theirs": 7}, True),
+                              ({"map": "de_nuke", "name": "核子危机", "won": False, "ours": 9, "theirs": 13}, False)):
+        image = Image.new("RGB", (220, 16), colors["background"])
+        plugin._draw_win_map(image, ImageDraw.Draw(image), row, (0, 0, 220), colors, plugin._pro_fonts())
+
+        def columns(colour):
+            return [x for x in range(150, 220) if any(image.getpixel((x, y)) == colour for y in range(16))]
+
+        # The team's rounds come first: green when it took the map, the opponent's red after the colon.
+        green, red = columns(colors["green"]), columns(colors["red"])
+        assert green and red
+        assert (max(green) < min(red)) if winner_first else (max(red) < min(green))
