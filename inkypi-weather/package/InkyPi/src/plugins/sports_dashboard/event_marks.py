@@ -179,9 +179,8 @@ class EventMarksMixin:
         return left, top, left + mark.width, top + mark.height
 
     @staticmethod
-    def _event_mark_halo(mark, color):
-        """The mark's silhouette grown by EVENT_MARK_HALO_PX, filled with color."""
-        pad = EVENT_MARK_HALO_PX
+    def _event_mark_halo(mark, color, pad=EVENT_MARK_HALO_PX):
+        """The mark's silhouette grown by ``pad`` pixels, filled with color."""
         alpha = Image.new("L", (mark.width + 2 * pad, mark.height + 2 * pad), 0)
         alpha.paste(mark.getchannel("A"), (pad, pad))
         grown = alpha.filter(ImageFilter.MaxFilter(2 * pad + 1)).point(lambda value: 255 if value >= 96 else 0)

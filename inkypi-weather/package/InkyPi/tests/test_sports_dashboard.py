@@ -7964,13 +7964,15 @@ def test_ncaa_standalone_panel_uses_college_specific_layout():
 
     plugin._fit_text = capture_fit_text
     plugin._draw_team_logo = capture_team_logo
+    plugin._football_team_logo = lambda *_args, **_kwargs: None
     plugin._draw_ncaa_standalone_panel(image, draw, (0, 0, 551, 267), card, "HUB LIVE", now)
 
     assert "Q4 1:18" in seen_texts
     assert "\u5fb7\u514b\u8428\u65af\u957f\u89d2\u725b" in seen_texts
     assert "\u5bc6\u6b47\u6839\u72fc\u737e" in seen_texts
     assert "2ND & 8" in seen_texts
-    assert "MICH 36" in seen_texts
+    # The ball spot names the half's owner: the school, then the yard line.
+    assert "\u5bc6\u6b47\u6839 36" in seen_texts
     assert ("https://example.com/ncaa-tex.png", 24, "TEX") in logo_calls
     assert ("https://example.com/ncaa-mich.png", 24, "MICH") in logo_calls
 

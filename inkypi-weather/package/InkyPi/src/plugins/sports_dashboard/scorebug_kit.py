@@ -619,25 +619,35 @@ class ScorebugKitMixin:
         text, font = self._fit_text_ellipsis(draw, text, x2 - x1, 9, bold=False, min_size=8)
         self._draw_centered_in_box(draw, box, text, font, COLORS["text"])
 
-    def _draw_kit_share_bar(self, draw, box, left_label, right_label, left_share, left_ink, right_ink, label="WIN"):
-        """Two-team share bar (win probability); labels in pure black."""
+    def _draw_kit_share_bar(self, draw, box, left_label, right_label, left_share, left_ink, right_ink, label="WIN",
+                            image=None, logos=(None, None)):
+        """Two-team share bar (win probability); labels in pure black, each team's logo on the outside of its label."""
         x1, y1, x2, y2 = [int(value) for value in box]
+        middle = (y1 + y2) // 2
         left_bold = left_share >= 0.5
-        left_font = self._font(9, left_bold)
-        right_font = self._font(9, not left_bold)
+        left_font = self._font(10, left_bold)
+        right_font = self._font(10, not left_bold)
         label_w = 0
         if label:
             label_w = 28
             self._draw_text_in_box(draw, (x1, y1, x1 + label_w, y2), label, self._font(8, False), COLORS["text"])
+        left_logo, right_logo = logos if image is not None else (None, None)
+        left_x, right_x = x1 + label_w, x2
+        if left_logo is not None:
+            image.paste(left_logo, (left_x, middle - left_logo.height // 2), left_logo)
+            left_x += left_logo.width + 3
+        if right_logo is not None:
+            right_x -= right_logo.width
+            image.paste(right_logo, (right_x, middle - right_logo.height // 2), right_logo)
+            right_x -= 3
         left_w = self._text_width(draw, left_label, left_font)
         right_w = self._text_width(draw, right_label, right_font)
-        self._draw_text_in_box(draw, (x1 + label_w, y1, x1 + label_w + left_w, y2), left_label, left_font, COLORS["text"])
-        self._draw_text_in_box(draw, (x2 - right_w, y1, x2, y2), right_label, right_font, COLORS["text"], align="right")
-        bar_x1 = x1 + label_w + left_w + 6
-        bar_x2 = x2 - right_w - 6
+        self._draw_text_in_box(draw, (left_x, y1, left_x + left_w, y2), left_label, left_font, COLORS["text"])
+        self._draw_text_in_box(draw, (right_x - right_w, y1, right_x, y2), right_label, right_font, COLORS["text"], align="right")
+        bar_x1 = left_x + left_w + 6
+        bar_x2 = right_x - right_w - 6
         if bar_x2 - bar_x1 < 20:
             return
-        middle = (y1 + y2) // 2
         split = int(round(bar_x1 + (bar_x2 - bar_x1) * max(0.0, min(1.0, left_share))))
         draw.rectangle((bar_x1, middle - 3, bar_x2, middle + 3), fill=COLORS["panel"], outline=COLORS["border"], width=1)
         if split > bar_x1:

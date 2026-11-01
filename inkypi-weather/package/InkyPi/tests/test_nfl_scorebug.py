@@ -323,6 +323,8 @@ def render(monkeypatch):
         return original(draw, box, text, font, color, align=align)
 
     monkeypatch.setattr(SportsDashboard, "_draw_text_in_box", staticmethod(capture))
+    # Offline: no team logos unless a test supplies its own.
+    monkeypatch.setattr(SportsDashboard, "_football_team_logo", lambda *_args, **_kwargs: None)
 
     def draw_panel(card, colors=DAY_COLORS, now=NOW, size=(556, 268)):
         plugin = _plugin()
@@ -350,7 +352,7 @@ def _assert_texts_fit(draw, boxes):
 def test_live_panel_draws_scorebug_tracker_and_scoreboard(parsed, render):
     image, draw, texts = render(_card(parsed, "live-away-ball"))
 
-    for expected in ("Q2 2:00", "Fox", "WEEK 6", "3RD & 17", "CHI 24", "5 PLAYS · 4 YDS · 3:45", "Two-Minute Warning", "CHI 79%", "21% ATL", "2 LIVE", "HALF"):
+    for expected in ("Q2 2:00", "Fox", "WEEK 6", "3RD & 17", "熊 24", "5 PLAYS · 4 YDS · 3:45", "Two-Minute Warning", "熊 79%", "21% 猎鹰", "2 LIVE", "HALF"):
         assert expected in texts
     assert "14" in texts and "7" in texts
     _assert_texts_fit(draw, render.boxes)
@@ -358,9 +360,10 @@ def test_live_panel_draws_scorebug_tracker_and_scoreboard(parsed, render):
 
 def test_drive_tracker_places_ball_drive_and_line_to_gain(parsed):
     plugin = _plugin()
+    plugin._football_team_logo = lambda *_args, **_kwargs: None
     event = _by_id(parsed, "live-away-ball")
     image = Image.new("RGB", (300, 30), DAY_COLORS["panel"])
-    plugin._draw_nfl_drive_tracker(ImageDraw.Draw(image), (0, 0, 299, 22), event)
+    plugin._draw_nfl_drive_tracker(image, ImageDraw.Draw(image), (0, 0, 299, 22), event)
 
     zone_w = max(14, int(299 * 0.08))
     field_x1, field_x2 = zone_w, 299 - zone_w
@@ -378,11 +381,12 @@ def test_drive_tracker_places_ball_drive_and_line_to_gain(parsed):
 
 def test_win_probability_bar_splits_at_the_away_share(parsed):
     plugin = _plugin()
+    plugin._football_team_logo = lambda *_args, **_kwargs: None
     event = _by_id(parsed, "live-away-ball")
     image = Image.new("RGB", (300, 14), DAY_COLORS["panel"])
     draw = ImageDraw.Draw(image)
 
-    assert plugin._draw_nfl_win_probability(draw, (0, 0, 299, 12), event)
+    assert plugin._draw_nfl_win_probability(image, draw, (0, 0, 299, 12), event)
 
     def longest_run(color):
         best = run = 0
@@ -393,7 +397,43 @@ def test_win_probability_bar_splits_at_the_away_share(parsed):
 
     away, home = longest_run(DAY_COLORS["text"]), longest_run(DAY_COLORS["red"])
     assert away / (away + home) == pytest.approx(0.7856, abs=0.06)
-    assert plugin._draw_nfl_win_probability(draw, (0, 0, 299, 12), {"win_pct_a": None}) is False
+    assert plugin._draw_nfl_win_probability(image, draw, (0, 0, 299, 12), {"win_pct_a": None}) is False
+
+
+def test_live_details_show_each_team_as_its_logo_and_nickname(parsed, render, monkeypatch):
+    """The end zones carry the teams' logos, the ball spot and the win odds read logo + nickname."""
+    sizes = []
+    stamps = {"a": (200, 0, 200, 255), "b": (0, 200, 200, 255)}
+
+    def logo(_self, _event, side, _sport, size):
+        sizes.append((side, size))
+        return Image.new("RGBA", (size, size - 6), stamps[side])
+
+    monkeypatch.setattr(SportsDashboard, "_football_team_logo", logo)
+    plugin = _plugin()
+    event = _by_id(parsed, "live-away-ball")
+    image = Image.new("RGB", (300, 30), DAY_COLORS["panel"])
+    plugin._draw_nfl_drive_tracker(image, ImageDraw.Draw(image), (0, 0, 299, 22), event)
+    # Each end zone shows its team's logo, outlined in the zone's text ink, not the team code.
+    assert image.getpixel((11, 11)) == stamps["a"][:3] and image.getpixel((287, 11)) == stamps["b"][:3]
+    assert DAY_COLORS["paper_text"] in {image.getpixel((x, 11)) for x in range(1, 6)}
+
+    _image, draw, texts = render(_card(parsed, "live-away-ball"))
+    assert {"熊 24", "熊 79%", "21% 猎鹰"} <= set(texts)
+    assert not {"CHI 24", "CHI 79%", "21% ATL"} & set(texts)
+    assert {("a", 18), ("b", 18), ("a", 16), ("b", 16)} <= set(sizes)
+    _assert_texts_fit(draw, render.boxes)
+
+
+def test_ball_spot_names_whose_half_it_is_in():
+    event = {"team_a_code": "KC", "team_b_code": "DEN"}
+
+    assert SportsDashboard._nfl_spot_parts({**event, "yard_line": "DEN 49"}) == ("b", "49")
+    assert SportsDashboard._nfl_spot_parts({**event, "yard_line": "kc 3"}) == ("a", "3")
+    assert SportsDashboard._nfl_spot_parts({**event, "yard_line": "50"}) == ("", "50")
+    assert SportsDashboard._nfl_spot_parts({**event, "yard_line": "LV 20"}) == ("", "20")
+    assert SportsDashboard._nfl_ball_yard({**event, "yard_line": "DEN 49"}) == 49
+    assert SportsDashboard._nfl_ball_yard({**event, "yard_line": "KC 30"}) == 70
 
 
 def test_final_panel_marks_the_winner_and_lists_leaders(parsed, render):

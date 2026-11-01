@@ -19,6 +19,10 @@ SportsDashboard = None
 
 FOOTBALL_TIMEOUTS_PER_HALF = 3
 NCAA_LIST_WIDTH = 214
+# Team logos in the live details: the end zones, the ball spot, the win odds.
+FOOTBALL_ZONE_LOGO = 18
+FOOTBALL_SPOT_LOGO = 18
+FOOTBALL_WIN_LOGO = 16
 FOOTBALL_SPEC_KEYS = {
     "NFL": ("nfl_accent", "nfl_live", "nfl_tag", "nfl_field_tint"),
     "NCAA": ("ncaa_accent", "ncaa_live", "ncaa_tag", "ncaa_field_tint"),
@@ -68,7 +72,7 @@ class FootballRenderMixin:
             y += 34
         details = (left, y + 4, right, bottom - 7)
         if state == "live":
-            self._draw_nfl_live_details(draw, details, event, "NCAA")
+            self._draw_nfl_live_details(image, draw, details, event, "NCAA")
         elif state == "final":
             self._draw_nfl_final_details(image, draw, details, event, "NCAA")
         else:
@@ -182,7 +186,7 @@ class FootballRenderMixin:
         rows_bottom = self._draw_kit_scorebug(image, draw, left, top + 31, right, event, state, spec)
         details = (left, rows_bottom + 6, right, bottom - 7)
         if state == "live":
-            self._draw_nfl_live_details(draw, details, event, sport)
+            self._draw_nfl_live_details(image, draw, details, event, sport)
         elif state == "final":
             self._draw_nfl_final_details(image, draw, details, event, sport)
         else:
@@ -224,20 +228,37 @@ class FootballRenderMixin:
 
     # Live details ------------------------------------------------------------
 
-    def _draw_nfl_live_details(self, draw, box, event, sport="NFL"):
+    def _draw_nfl_live_details(self, image, draw, box, event, sport="NFL"):
         x1, y1, x2, y2 = [int(value) for value in box]
-        self._draw_nfl_drive_tracker(draw, (x1, y1, x2, y1 + 22), event, sport)
+        self._draw_nfl_drive_tracker(image, draw, (x1, y1, x2, y1 + 22), event, sport)
         y = y1 + 27
-        if self._draw_nfl_situation_row(draw, (x1, y, x2, y + 16), event, sport):
+        if self._draw_nfl_situation_row(image, draw, (x1, y, x2, y + 16), event, sport):
             y += 20
         last_play = str(event.get("last_play") or "").strip()
         if last_play and y + 13 <= y2:
             self._draw_kit_labeled_line(draw, (x1, y, x2, y + 13), "LAST", last_play)
             y += 19
         if y + 12 <= y2:
-            self._draw_nfl_win_probability(draw, (x1, y, x2, y + 12), event, sport)
+            self._draw_nfl_win_probability(image, draw, (x1, y, x2, y + 12), event, sport)
 
-    def _draw_nfl_drive_tracker(self, draw, box, event, sport="NFL"):
+    def _football_team_logo(self, event, side, sport, size):
+        """The team's own logo fitted into ``size`` pixels, or None when it has none."""
+        fallback = SportsDashboard._event_team_logo_fallback(event, side, sport)
+        return self._load_local_team_logo(fallback, size) or self._load_team_logo_for_render(event.get(f"team_{side}_logo"), size)
+
+    def _football_inline_logo(self, event, side, sport, size):
+        """The team's logo for a line of text on the panel, its white strokes inked on a light page."""
+        logo = self._football_team_logo(event, side, sport, size)
+        return self._team_logo_for_panel(logo) if logo is not None else None
+
+    @staticmethod
+    def _football_short_team(event, side, sport):
+        """The team's short name: the nickname (酋长) in the NFL, the school in college."""
+        if str(sport or "").upper() == "NCAA":
+            return SportsDashboard._ncaa_school_label(event, side, include_rank=False, full=False)
+        return SportsDashboard._football_display_team(event, side, "NFL")
+
+    def _draw_nfl_drive_tracker(self, image, draw, box, event, sport="NFL"):
         x1, y1, x2, y2 = [int(value) for value in box]
         spec = self._football_spec(sport)
         draw.rounded_rectangle((x1, y1, x2, y2), radius=3, fill=COLORS[spec.tint], outline=COLORS["border"], width=1)
@@ -248,6 +269,16 @@ class FootballRenderMixin:
         for side, (zone_x1, zone_x2) in (("a", (x1 + 1, field_x1)), ("b", (field_x2, x2 - 1))):
             ink_key = self._kit_team_ink_key(event.get(f"team_{side}_color"), spec.accent)
             draw.rectangle((zone_x1, y1 + 1, zone_x2, y2 - 1), fill=COLORS[ink_key])
+            # The end zone is painted with the team's logo, outlined in the zone's text ink so it
+            # stands out from its own colour; the team code only when it has no logo.
+            logo = self._football_team_logo(event, side, sport, min(FOOTBALL_ZONE_LOGO, zone_x2 - zone_x1 - 2, y2 - y1 - 4))
+            if logo is not None:
+                left = (zone_x1 + zone_x2 + 1 - logo.width) // 2
+                top = (y1 + y2 + 1 - logo.height) // 2
+                halo = SportsDashboard._event_mark_halo(logo, COLORS[self._kit_ink_text_key(ink_key)], pad=1)
+                image.paste(halo, (left - 1, top - 1), halo)
+                image.paste(logo, (left, top), logo)
+                continue
             code = str(event.get(f"team_{side}_code") or "")[:4]
             code, fitted_font = self._fit_text(draw, code, zone_x2 - zone_x1 - 2, 8, bold=True, min_size=6)
             self._draw_centered_in_box(draw, (zone_x1, y1, zone_x2, y2), code, fitted_font or code_font, COLORS[self._kit_ink_text_key(ink_key)])
@@ -280,11 +311,12 @@ class FootballRenderMixin:
             draw.rectangle((target_x - 2, y1 + 1, target_x + 2, y2 - 1), fill=COLORS["amber"], outline=COLORS["border"], width=1)
         self._draw_nfl_football_icon(draw, field_x(ball) - 6, middle - 4, 12, 8)
 
-    def _draw_nfl_situation_row(self, draw, box, event, sport="NFL"):
+    def _draw_nfl_situation_row(self, image, draw, box, event, sport="NFL"):
         x1, y1, x2, y2 = [int(value) for value in box]
         spec = self._football_spec(sport)
         down = SportsDashboard._nfl_short_down_label(event)
         spot = str(event.get("yard_line") or "").strip()
+        spot_side, spot_yard = SportsDashboard._nfl_spot_parts(event)
         drive = SportsDashboard._nfl_drive_summary_label(event.get("drive_summary"))
         red_zone = bool(event.get("red_zone"))
         if not (down or spot or drive):
@@ -297,6 +329,13 @@ class FootballRenderMixin:
             draw.rounded_rectangle((x1, y1, x1 + chip_w, y2), radius=3, fill=chip_fill, outline=COLORS["border"], width=1)
             self._draw_centered_in_box(draw, (x1, y1, x1 + chip_w, y2), down, down_font, COLORS["paper_text"] if red_zone else COLORS["text"])
             cursor = x1 + chip_w + 6
+        if spot_side:
+            # "DEN 49" reads as the half's owner: its logo and nickname, then the yard line.
+            logo = self._football_inline_logo(event, spot_side, sport, FOOTBALL_SPOT_LOGO)
+            if logo is not None:
+                image.paste(logo, (cursor, (y1 + y2 + 1 - logo.height) // 2), logo)
+                cursor += logo.width + 3
+            spot = f"{self._football_short_team(event, spot_side, sport)} {spot_yard}".strip()
         if spot:
             spot, spot_font = self._fit_text(draw, spot, 76, 12, bold=True, min_size=9)
             self._draw_text_in_box(draw, (cursor, y1, cursor + 76, y2), spot, spot_font, COLORS[spec.live] if red_zone else COLORS["text"])
@@ -308,7 +347,7 @@ class FootballRenderMixin:
             self._draw_text_in_box(draw, (cursor, y1, x2, y2), drive, drive_font, COLORS[spec.live] if red_zone else COLORS["text"], align="right")
         return True
 
-    def _draw_nfl_win_probability(self, draw, box, event, sport="NFL"):
+    def _draw_nfl_win_probability(self, image, draw, box, event, sport="NFL"):
         away = event.get("win_pct_a")
         home = event.get("win_pct_b")
         if away is None or home is None or away + home <= 0:
@@ -317,11 +356,13 @@ class FootballRenderMixin:
         self._draw_kit_share_bar(
             draw,
             box,
-            f"{event.get('team_a_code') or 'AWAY'} {round(away * 100)}%",
-            f"{round(home * 100)}% {event.get('team_b_code') or 'HOME'}",
+            f"{self._football_short_team(event, 'a', sport)} {round(away * 100)}%",
+            f"{round(home * 100)}% {self._football_short_team(event, 'b', sport)}",
             away / (away + home),
             self._kit_team_ink_key(event.get("team_a_color"), spec.accent),
             self._kit_team_ink_key(event.get("team_b_color"), spec.accent),
+            image=image,
+            logos=tuple(self._football_inline_logo(event, side, sport, FOOTBALL_WIN_LOGO) for side in ("a", "b")),
         )
         return True
 
@@ -469,18 +510,29 @@ class FootballRenderMixin:
         event = event or {}
         if event.get("ball_yard") is not None:
             return event.get("ball_yard")
-        match = re.fullmatch(r"\s*([A-Za-z]{2,4})?\s*(\d{1,2})\s*", str(event.get("yard_line") or ""))
-        if not match:
-            return None
-        yard = int(match.group(2))
-        code = str(match.group(1) or "").upper()
-        if yard == 50:
+        side, yard = SportsDashboard._nfl_spot_parts(event)
+        if yard == "50":
             return 50
-        if code and code == str(event.get("team_b_code") or "").upper():
-            return yard
-        if code and code == str(event.get("team_a_code") or "").upper():
-            return 100 - yard
+        if side == "b":
+            return int(yard)
+        if side == "a":
+            return 100 - int(yard)
         return None
+
+    @staticmethod
+    def _nfl_spot_parts(event):
+        """("a" or "b", yard text) for an "ATL 19" spot: whose half the ball is in and the yard
+        line; the side is empty at midfield or when the code is neither team's."""
+        match = re.fullmatch(r"\s*([A-Za-z]{2,4})?\s*(\d{1,2})\s*", str((event or {}).get("yard_line") or ""))
+        if not match:
+            return "", ""
+        yard, code = match.group(2), str(match.group(1) or "").upper()
+        if yard == "50" or not code:
+            return "", yard
+        for side in ("a", "b"):
+            if code == str((event or {}).get(f"team_{side}_code") or "").upper():
+                return side, yard
+        return "", yard
 
     @staticmethod
     def _nfl_short_down_label(event):
