@@ -461,6 +461,19 @@
         48
       ]
     },
+    "rds": {
+      "article": "Réseau des sports",
+      "file": "RDS logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2a/RDS_logo.svg/960px-RDS_logo.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/2/2a/RDS_logo.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "9243444fb9f3a72323b35773580b6f3d1c403874",
+      "source_png_sha256": "6b0baec0e788423fce8ed8148937fc908638cc21f31af3618ac8276ff12e258d",
+      "sha256": "01ee720e141025ce943573c43243c35e381eb7c3e24be6d948d1e69908cc052f",
+      "size": [
+        192,
+        45
+      ]
+    },
     "sec_network": {
       "article": "SEC Network",
       "file": "SEC Network (2024).svg",
@@ -482,6 +495,19 @@
       "size": [
         112,
         48
+      ]
+    },
+    "sportsnet": {
+      "article": "Sportsnet",
+      "file": "Logo Sportsnet 2011.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7f/Logo_Sportsnet_2011.svg/960px-Logo_Sportsnet_2011.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/7/7f/Logo_Sportsnet_2011.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "91b9404b18b397c0dc798f25459295d009298843",
+      "source_png_sha256": "627815824b77eae69d5071c9d518bdacf78bd3efe98f71b72fe0443f6c3367b4",
+      "sha256": "8e5146fdfb14421109876fe1c35a367990dc45f900181aad32d1b0a7998e2a3e",
+      "size": [
+        192,
+        28
       ]
     },
     "tbs": {
@@ -521,6 +547,33 @@
       "size": [
         124,
         48
+      ]
+    },
+    "tsn": {
+      "article": "The Sports Network",
+      "file": "TSN Logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/90/TSN_Logo.svg/960px-TSN_Logo.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/9/90/TSN_Logo.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "6bfe18edaef0b31248fefe97f83c021c349daa56",
+      "source_png_sha256": "dc2efb71366b456002b6caee15f64588d9fe5438c1475819e4660bb2687d3c42",
+      "sha256": "377b0e074ef54b8a0a65cbc6d0c0b70b4f22e45032b91dee1f261469226056a1",
+      "size": [
+        192,
+        47
+      ]
+    },
+    "tva_sports": {
+      "article": "TVA Sports",
+      "file": "TVA Sports Logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/57/TVA_Sports_Logo.svg/960px-TVA_Sports_Logo.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/5/57/TVA_Sports_Logo.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "2e1a0b238fbd81b21128bd9f2cff3fe5021b0067",
+      "processing": "its two lines (TVA over SPORTS) set side by side, SPORTS at TVA's height (side_by_side_tva.py), so it reads at a row's height; then cropped and scaled as the others",
+      "source_png_sha256": "cccc0f53e33397bb323957ab0cf27138f12bfcb072ae211dbae3c2398087ffbf",
+      "sha256": "fd977c231dbf743921cc8d27ab742e98ae3c422508aabea8b52c45f246feb74d",
+      "size": [
+        192,
+        19
       ]
     },
     "universo": {

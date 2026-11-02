@@ -3,7 +3,7 @@ from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_ali
 from .card_backdrops import card_backdrop_box, paint_card_backdrop, paint_list_backdrop
 from .scorebug_kit import KIT_RESULT_EXTRA, _kit_inked_where_faint
 from .score_fonts import football_score_league
-from .tv_networks import tv_network_parts, tv_watch_rank
+from .tv_networks import tv_logo_width_ratio, tv_network_parts, tv_watch_rank
 
 SportsDashboard = None
 LOCAL_CLUB_TEAM_LOGO_SCHEME = "local-club://"
@@ -967,7 +967,8 @@ class WorldCupRenderMixin:
         x, shown = 0, []
         for name, key in sorted(parts, key=lambda part: tv_watch_rank(part[1])):
             path = os.path.join(LOCAL_TV_LOGO_DIR, f"{key}.png") if key else ""
-            logo = self._load_local_logo(path, (height * 4, height), alpha_threshold=8) if path and os.path.exists(path) else None
+            logo = (self._load_local_logo(path, (height * tv_logo_width_ratio(key), height), alpha_threshold=8)
+                    if path and os.path.exists(path) else None)
             if logo is not None and not shown and logo.width > strip.width:
                 # The first choice is never dropped for a smaller one: it is made smaller instead.
                 logo = self._load_local_logo(path, (strip.width, height), alpha_threshold=8)

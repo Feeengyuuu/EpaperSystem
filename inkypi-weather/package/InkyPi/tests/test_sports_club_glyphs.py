@@ -60,7 +60,7 @@ def test_club_separator_change_preserves_punctuation_inside_provider_names():
 def test_mls_upcoming_row_draws_supported_separator_in_both_themes(monkeypatch, palette):
     plugin = SportsDashboard({"id": "sports_dashboard"})
     # A network without a bundled logo stays named in the row's context line, separator and all.
-    adapted = plugin._club_football_worldcup_event(_mls_event(broadcast="TVA Sports", venue="Rice Park"), timezone.utc)
+    adapted = plugin._club_football_worldcup_event(_mls_event(broadcast="CHCH", venue="Rice Park"), timezone.utc)
     image = Image.new("RGB", (270, 40), palette["panel"])
     draw = ImageDraw.Draw(image)
     drawn = []
@@ -82,7 +82,7 @@ def test_mls_upcoming_row_draws_supported_separator_in_both_themes(monkeypatch, 
 
     # The ground has no logo: it reads as the soccer stadium icon and its name after the network.
     texts = [text for text, _font in drawn]
-    assert texts.index("TVA Sports") < texts.index("|") < texts.index("Rice Park")
+    assert texts.index("CHCH") < texts.index("|") < texts.index("Rice Park")
     metadata_fonts = [font for text, font in drawn if text == "|"]
     assert len(metadata_fonts) == 1
     font = metadata_fonts[0]

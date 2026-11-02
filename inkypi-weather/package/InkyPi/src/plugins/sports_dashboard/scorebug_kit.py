@@ -14,7 +14,7 @@ small text dither into specks.
 
 from .common import *
 from .card_backdrops import SPORT_BACKDROP_KINDS, card_backdrop_box, paint_card_backdrop
-from .tv_networks import tv_network_parts
+from .tv_networks import tv_logo_width_ratio, tv_network_parts
 
 SportsDashboard = None
 
@@ -463,14 +463,15 @@ class ScorebugKitMixin:
         """Each network of a broadcast label as its logo, left to right, with
         the name in text for a network without one. False when no logo applies."""
         x1, y1, x2, y2 = [int(value) for value in box]
-        parts = [(name, os.path.join(LOCAL_TV_LOGO_DIR, f"{key}.png") if key else None) for name, key in tv_network_parts(label)]
-        if not any(path and os.path.exists(path) for _name, path in parts):
+        parts = [(name, os.path.join(LOCAL_TV_LOGO_DIR, f"{key}.png") if key else None, tv_logo_width_ratio(key))
+                 for name, key in tv_network_parts(label)]
+        if not any(path and os.path.exists(path) for _name, path, _ratio in parts):
             return False
         height, x = y2 - y1, x1
-        for name, path in parts:
+        for name, path, ratio in parts:
             if x2 - x < 14:
                 break
-            logo = self._load_local_logo(path, (min(x2 - x, height * 4), height), alpha_threshold=8) if path else None
+            logo = self._load_local_logo(path, (min(x2 - x, height * ratio), height), alpha_threshold=8) if path else None
             if logo:
                 logo = _kit_inked_where_faint(logo, background)
                 image.paste(logo, (x, y1 + (height - logo.height) // 2), logo)

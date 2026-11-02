@@ -29,6 +29,8 @@ def test_streaming_comes_first_and_spanish_language_feeds_last():
     ("NBCSN", ["nbcsn"]), ("NHL Net", ["nhl_network"]), ("Disney+ / Hulu", ["disney_plus", "hulu"]),
     ("ION", ["ion"]), ("YouTube", ["youtube"]), ("SECN+", ["sec_network_plus"]),
     ("SEC Network +", ["sec_network_plus"]), ("B1G+", ["b1g_plus"]), ("ACCNX", ["accnx"]), ("MW+", ["mw_plus"]),
+    # Canada's, as the MLS and NHL feeds write them.
+    ("TVA Sports", ["tva_sports"]), ("TSN4", ["tsn"]), ("SN1 / RDS", ["sportsnet", "rds"]), ("Sportsnet", ["sportsnet"]),
 ])
 def test_every_national_network_espn_names_reads_as_its_logo(label, keys):
     assert [key for _name, key in tv_network_parts(label)] == keys
