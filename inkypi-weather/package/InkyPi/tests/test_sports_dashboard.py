@@ -4372,9 +4372,10 @@ def test_right_region_renders_official_ti_live_over_waiting_lpl(monkeypatch, tmp
     assert yan_logo_red_pixels >= 8
     assert yan_logo_white_pixels >= 45
     assert yan_fallback_blue_pixels == 0
-    # The face-off sits on the plain card under a rule: no stadium art behind the teams.
+    # The face-off sits under a rule on Dota 2's own arena (its jade forest climbs the left edge).
     assert conflicted.getpixel((676, 164)) == COLORS["line"]
-    assert conflicted.getpixel((582, 240)) == COLORS["panel"]
+    red, green, _blue = conflicted.getpixel((582, 240))
+    assert green > red
 
 
 def test_right_esports_ignores_retired_ewc_setting_and_loads_valve(monkeypatch):

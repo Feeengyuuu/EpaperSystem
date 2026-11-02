@@ -212,12 +212,12 @@ def test_lol_upcoming_incomplete_odds_do_not_invent_a_price(monkeypatch, odds):
     assert {row[0] for row in labels}.isdisjoint({"4.88", "1.26"})
 
 
-def test_cs2_focus_card_sets_each_name_under_its_logo_on_a_plain_card(monkeypatch):
+def test_cs2_focus_card_sets_each_name_under_its_logo_over_its_own_arena(monkeypatch):
     from plugins.sports_dashboard import esports_render
 
     plugin, labels, logos = capture_matchups(monkeypatch, False)
     painted = []
-    monkeypatch.setattr(esports_render, "paint_card_backdrop", lambda *args, **kwargs: painted.append(args))
+    monkeypatch.setattr(esports_render, "paint_card_backdrop", lambda image, box, kind, *args, **kwargs: painted.append(kind))
     monkeypatch.setattr(plugin, "_draw_valve_focus_event_logo", lambda *args: False)
     now = datetime(2026, 11, 1, 23, tzinfo=timezone.utc)
     event = {"start": now, "series": "CS", "state": "unstarted", "team_a": "Natus Vincere", "team_b": "Team Falcons",
@@ -226,10 +226,29 @@ def test_cs2_focus_card_sets_each_name_under_its_logo_on_a_plain_card(monkeypatc
     with type_scope("cs2"):
         plugin._draw_valve_esports_focus_card(image, ImageDraw.Draw(image), 556, 244, 78,
                                             {"series": "CS", "event_name": "Test Event"}, event, now, (200, 20, 20))
-    # No stadium art behind the face-off; each full name is centred under its own logo, and the
+    # The card stands on CS2's own arena; each full name is centred under its own logo, and the
     # score kind waits for a score.
-    assert not painted
+    assert painted == ["cs2"]
     for name, (x, _y, size) in zip(("Natus Vincere", "Team Falcons"), logos[:2]):
         ink = next(row for row in labels if row[0] == name)[2]
         assert abs((ink[0] + ink[2]) / 2 - (x + size / 2)) <= 2
     assert "MAPS" not in [row[0] for row in labels]
+
+
+def test_each_esport_card_stands_on_its_own_arena(monkeypatch):
+    from plugins.sports_dashboard import esports_render
+
+    plugin = _plugin()
+    painted = []
+    monkeypatch.setattr(esports_render, "paint_card_backdrop", lambda image, box, kind, *args, **kwargs: painted.append(kind))
+    monkeypatch.setattr(plugin, "_draw_team_logo", lambda *args, **kwargs: None)
+    monkeypatch.setattr(plugin, "_draw_valve_team_icon", lambda *args, **kwargs: None)
+    now = datetime(2026, 11, 1, 23, tzinfo=timezone.utc)
+    event = {"start": now, "state": "unstarted", "team_a": "Alpha", "team_b": "Omega"}
+    image = Image.new("RGB", (800, 480))
+    draw = ImageDraw.Draw(image)
+    for series in ("CS", "TI"):
+        plugin._draw_valve_esports_focus_card(image, draw, 556, 244, 78, {"series": series, "event_name": "Test Event"},
+                                            {**event, "series": series}, now, (200, 20, 20))
+    plugin._draw_lpl_focus_card(image, draw, 556, 244, 78, event, now, False, league_key="WORLDS")
+    assert painted == ["cs2", "dota2", "lol"]

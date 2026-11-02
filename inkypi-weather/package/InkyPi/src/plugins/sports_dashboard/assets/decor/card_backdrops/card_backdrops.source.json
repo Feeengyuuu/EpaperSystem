@@ -77,17 +77,6 @@
         320
       ]
     },
-    "tactical.png": {
-      "scene": "amber and slate shooter arena: crowds, LED screens, player booths",
-      "job_id": "2beb725c-49d6-4128-982c-ee3662fc70dd",
-      "ink_kept": 0.846,
-      "source_sha256": "13ed7e5e54b512642fefc1cdedbd196d2dba837e49f3d98cf85fa825d50a6496",
-      "sha256": "0d5f9750bcfa30090e7d83f4ba95dc63a5c844531d8cc8dd7d5a66e7ff9acba6",
-      "size": [
-        480,
-        400
-      ]
-    },
     "list_football.png": {
       "motifs": "tactics marks, balls, boots, whistles, corner flags, trophies (teal)",
       "job_id": "fdc0074c-16a0-4969-af06-c5e2de9495af",
@@ -169,6 +158,39 @@
       "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job 85acf42e-cd86-4160-9c45-3f558351dd51",
       "source_sha256": "8690b5171f4ea94139205098c26cb7d7dd7f7433469ab54a714c7c7de8cd9f3b",
       "sha256": "e332e037c3feba7386cef3df7ee787c9b9cf94c4fc1b005eede1abd4ebb304f0"
+    },
+    "cs2.png": {
+      "scene": "amber and slate shooter major: desert-town arches, a domed tower, crates and palms at the edges, player booths and LED screens on the stage at the foot",
+      "generator": "image/gpt-image-2.5-sunburst (Creative Claw), styled on tactical.png (the scene they replace), job e01ab5fd-b4c9-422c-b125-c6a059e03888",
+      "ink_kept": 0.78,
+      "source_sha256": "d92f5a12a45aa5bad62d817100d07e7dc6758f71af68f4b1be3731a006b29b05",
+      "sha256": "6e286e98fd205bf69be400a903f3a0de7c35d439265a05a227e26bbcb9f4aa5c",
+      "size": [
+        480,
+        384
+      ]
+    },
+    "dota2.png": {
+      "scene": "jade radiant forest temple on the left, crimson dire volcanic spires on the right, a shield trophy between the team booths at the foot",
+      "generator": "image/gpt-image-2.5-sunburst (Creative Claw), styled on tactical.png (the scene they replace), job d07a72f4-03d5-483e-b64b-e3f863889617",
+      "ink_kept": 0.604,
+      "source_sha256": "72c43a6194a7aae8d536872c566c17b88fa17a20f90100646a88fa5fa6b7a94a",
+      "sha256": "92460a6cbf0775ceb1a6b10674b445da25a2d3e7c3afc112ab51d64250c2a2a2",
+      "size": [
+        480,
+        384
+      ]
+    },
+    "lol.png": {
+      "scene": "blue side and red side: jungle turrets and banners at the edges, a glowing crystal between the booths on the stage at the foot, gold accents",
+      "generator": "image/gpt-image-2.5-sunburst (Creative Claw), styled on tactical.png (the scene they replace), job f0ea9303-0606-48fb-99f0-f8e5540be75e",
+      "ink_kept": 0.67,
+      "source_sha256": "914df45aa3b114b057c80a3fc285410e664f19d5279f59721a52829b1c6d00b9",
+      "sha256": "70e0f7294b61461e8d68beea0f6a0025f8ae445f7033cdd973fc2c263d063603",
+      "size": [
+        480,
+        384
+      ]
     }
   }
 }

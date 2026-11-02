@@ -21,8 +21,12 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 from utils.doodle_backdrop import exact_colour_mask
 
 CARD_BACKDROP_DIR = Path(__file__).resolve().parent / "assets" / "decor" / "card_backdrops"
-CARD_BACKDROP_KINDS = ("football", "basketball", "esports", "baseball", "gridiron", "golf", "motorsport", "tactical",
-                       "hockey")
+CARD_BACKDROP_KINDS = ("football", "basketball", "esports", "baseball", "gridiron", "golf", "motorsport", "hockey",
+                       "cs2", "dota2", "lol")
+# Each esport's own arena behind its featured card: CS2's and Dota 2's (the Valve card, by series)
+# and League of Legends' for every LoL league; other esports keep the shared arena.
+VALVE_BACKDROP_KINDS = {"cs": "cs2", "ti": "dota2"}
+LOL_BACKDROP_KIND = "lol"
 LIST_BACKDROP_KINDS = ("football", "basketball", "esports", "baseball", "gridiron", "golf", "motorsport", "hockey")
 # The art for each lower-left sport, by its scorebug spec name.
 SPORT_BACKDROP_KINDS = {

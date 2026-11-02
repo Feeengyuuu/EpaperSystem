@@ -81,7 +81,7 @@ def test_unknown_kinds_and_tiny_boxes_draw_nothing():
 
     assert not paint_card_backdrop(image, (0, 0, 39, 39), None, DAY_COLORS["panel"])
     assert not paint_card_backdrop(image, (0, 0, 5, 39), "football", DAY_COLORS["panel"])
-    assert not paint_list_backdrop(image, (0, 0, 39, 39), "tactical", DAY_COLORS["panel"], (DAY_COLORS["panel"],))
+    assert not paint_list_backdrop(image, (0, 0, 39, 39), "cs2", DAY_COLORS["panel"], (DAY_COLORS["panel"],))
     assert set(image.get_flattened_data()) == {DAY_COLORS["panel"]}
 
 

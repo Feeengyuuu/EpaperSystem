@@ -5,7 +5,8 @@ from PIL import ImageFilter
 
 from .common import *
 from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_alias
-from .card_backdrops import card_backdrop_box, paint_card_backdrop, paint_list_backdrop
+from .card_backdrops import (LOL_BACKDROP_KIND, VALVE_BACKDROP_KINDS, card_backdrop_box, paint_card_backdrop,
+                             paint_list_backdrop)
 from .esports_fonts import esports_role, esports_sidebar
 from .scorebug_kit import KIT_RESULT_EXTRA
 
@@ -1152,6 +1153,8 @@ class EsportsRenderMixin:
         draw.rounded_rectangle((card_x1 + 4, y + 4, card_x2 + 4, card_y2 + 4), radius=6, fill=COLORS["valve_shadow"])
         draw.rounded_rectangle((card_x1, y, card_x2, card_y2), radius=6, fill=COLORS["panel"], outline=COLORS["border"], width=2)
         draw.rectangle((card_x1 + 1, y + 1, card_x1 + 8, card_y2 - 1), fill=accent)
+        paint_card_backdrop(image, card_backdrop_box(card_x1, y, card_x2, card_y2),
+                            VALVE_BACKDROP_KINDS[self._valve_series_key(primary)], COLORS["panel"], radius=4)
 
         if not event:
             draw.text((card_x1 + 20, y + 58), "No Valve event", font=self._font(19, True), fill=COLORS["text"])
@@ -1278,8 +1281,8 @@ class EsportsRenderMixin:
                 event.get("source") or primary.get("source") or "Valve", subtitle, subtitle_font, accent,
             )
 
-        # A plain face-off under the header, no art behind it: each team's logo over its name in its
-        # own half of the card, the score (VS before the start) between the logos, then the stage.
+        # The face-off over the esport's arena: each team's logo over its name in its own half of
+        # the card, the score (VS before the start) between the logos, then the stage.
         center_x = (card_x1 + card_x2) / 2
         draw.line((card_x1 + 18, y + 86, card_x2 - 16, y + 86), fill=COLORS["line"], width=1)
         logo_size = VALVE_FACEOFF_LOGO
@@ -2161,7 +2164,7 @@ class EsportsRenderMixin:
         draw.rounded_rectangle((card_x1 + 4, y + 4, card_x2 + 4, card_y2 + 4), radius=6, fill=COLORS[config["shadow"]])
         draw.rounded_rectangle((card_x1, y, card_x2, card_y2), radius=6, fill=COLORS["panel"], outline=COLORS["border"], width=2)
         draw.rectangle((card_x1 + 1, y + 1, card_x1 + 8, card_y2 - 1), fill=accent)
-        paint_card_backdrop(image, card_backdrop_box(card_x1, y, card_x2, card_y2), "esports", COLORS["panel"], radius=4)
+        paint_card_backdrop(image, card_backdrop_box(card_x1, y, card_x2, card_y2), LOL_BACKDROP_KIND, COLORS["panel"], radius=4)
 
         if not event:
             draw.text((card_x1 + 20, y + 58), config["empty_schedule"], font=self._font(19, True), fill=COLORS["text"])
