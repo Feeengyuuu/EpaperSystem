@@ -1679,6 +1679,27 @@ def test_a_venue_line_puts_the_grounds_logo_between_its_words_else_draws_nothing
     assert SportsDashboard._stage_without_venue("第9轮 | ESPN+ | Chase Center", "Chase Center") == "第9轮 | ESPN+"
 
 
+def test_a_ground_without_a_logo_reads_as_its_sports_venue_icon_then_its_name(boxes):
+    game = _game("NCAA", venue="InfoCision Stadium", city="Akron, OH")
+    image, _draw = _render(lambda plugin, image, draw: plugin._draw_football_footer(
+        image, draw, (20, 200, 320, 212), game, "NCAA", include_tv=False))
+    name = next(box for box, text, _font in boxes if text == "InfoCision Stadium")
+    # The football stadium icon stands just left of the name: its green field.
+    icon = image.crop((name[0] - 2 - round(13 * 1.6), 200, name[0], 213)).get_flattened_data()
+    assert any(green > 120 and red < 90 and blue < 90 for red, green, blue in icon)
+    assert any(text == "Akron, OH" for _box, text, _font in boxes)
+    boxes.clear()
+    arena, _draw = _render(lambda plugin, image, draw: plugin._draw_kit_venue(
+        image, draw, (20, 20, 260, 34), "Accor Arena", kind="arena"))
+    name = next(box for box, text, _font in boxes if text == "Accor Arena")
+    assert len(set(arena.crop((name[0] - 22, 20, name[0] - 2, 34)).get_flattened_data())) > 3
+    # Without a kind the line still leaves the text to its caller.
+    drawn = []
+    _render(lambda plugin, image, draw: drawn.append(
+        plugin._draw_kit_venue_line(image, draw, (20, 20, 300, 34), "Accor Arena")))
+    assert drawn == [False]
+
+
 def test_club_cards_and_football_footers_show_the_ground_as_its_logo(boxes):
     club = {"start": NOW, "block": "第9轮 | Chase Center", "venue": "Chase Center", "broadcast": ""}
     image, _draw = _render(lambda plugin, image, draw: plugin._draw_club_card_header(

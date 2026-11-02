@@ -296,7 +296,7 @@ class BasketballRenderMixin:
             # The arena as its official logo after the headline (and the city after it).
             rest = SportsDashboard._kit_venue_label({**event, "venue": ""}, include_tv=False)
             if image is not None and self._draw_kit_venue_line(image, draw, (x1 + 4, y1, x2 - 4, y2), venue, headline, rest, size=10,
-                                         logo_height=min(14, y2 - y1)):
+                                         logo_height=min(14, y2 - y1), kind="arena"):
                 return
             parts = [
                 headline,
@@ -742,7 +742,7 @@ class BasketballRenderMixin:
             # With room for them, the leaders are set large: icon, name and the value with its unit.
             self._draw_kit_leader_rows(image, draw, left, y + 6, right, y2 - 14, event, leaders, spec, max_rows=2,
                                        large=y2 - 14 - (y + 6) >= 2 * 28)
-        self._draw_kit_venue(image, draw, (left, y2 - 14, right, y2 - 2), str(event.get("venue") or "").strip())
+        self._draw_kit_venue(image, draw, (left, y2 - 14, right, y2 - 2), str(event.get("venue") or "").strip(), kind="arena")
 
     # Labels ------------------------------------------------------------------
 

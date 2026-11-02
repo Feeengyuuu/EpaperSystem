@@ -80,7 +80,10 @@ def test_mls_upcoming_row_draws_supported_separator_in_both_themes(monkeypatch, 
     finally:
         _ACTIVE_COLORS.reset(token)
 
-    metadata_fonts = [font for text, font in drawn if text == "TVA Sports | Rice Park"]
+    # The ground has no logo: it reads as the soccer stadium icon and its name after the network.
+    texts = [text for text, _font in drawn]
+    assert texts.index("TVA Sports") < texts.index("|") < texts.index("Rice Park")
+    metadata_fonts = [font for text, font in drawn if text == "|"]
     assert len(metadata_fonts) == 1
     font = metadata_fonts[0]
     separator = font.getmask("|")

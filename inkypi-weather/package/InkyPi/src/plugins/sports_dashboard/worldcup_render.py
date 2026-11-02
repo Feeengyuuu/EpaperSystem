@@ -950,7 +950,7 @@ class WorldCupRenderMixin:
         venue = str(event.get("venue") or "").strip()
         if self._draw_kit_venue_line(image, draw, (x1 + 16, y1 + 27, x2 - 18, y1 + 27 + CLUB_CARD_VENUE_LOGO_HEIGHT),
                                      venue, self._stage_without_venue(stage, venue), size=9, bold=True,
-                                     align="left", separator="|", fill=COLORS["muted"]):
+                                     align="left", separator="|", fill=COLORS["muted"], kind="soccer"):
             return
         stage_text, stage_font = self._fit_text_ellipsis(draw, stage, x2 - x1 - 34, 9, bold=True, min_size=7)
         draw.text((x1 + 16, y1 + 28), stage_text, font=stage_font, fill=COLORS["muted"])
@@ -1426,7 +1426,7 @@ class WorldCupRenderMixin:
         if right - stage_x >= 24 and self._draw_kit_venue_line(
                 image, draw, (stage_x, y + 2, right, y + 2 + ROW_TV_LOGO_HEIGHT), venue,
                 self._stage_without_venue(stage, venue), size=9, bold=True, align="left", separator="|",
-                fill=COLORS["muted"]):
+                fill=COLORS["muted"], kind="soccer"):
             stage = ""
         stage_text, stage_font = self._fit_text_ellipsis(draw, stage, right - stage_x, 9, bold=True, min_size=7)
         if stage_text.strip(". ") and right - stage_x >= 16:

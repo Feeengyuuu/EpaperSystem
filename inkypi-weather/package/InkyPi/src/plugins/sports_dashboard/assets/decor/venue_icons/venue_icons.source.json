@@ -1,0 +1,26 @@
+{
+  "football.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job 83093637-505f-42e3-a282-6a9af1c719b4",
+    "source_sha256": "0a4301e3248870bb8bc5eecf5ca4d8046edc99ddba1481dadda5b0408e98fcd7",
+    "processing": "cut at clear columns, cropped to its ink, 64 px on its longer side",
+    "sha256": "fe53e427e1cf3632674f54ef2d668014055dcad11632588b7383d0670cbe5587"
+  },
+  "arena.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job 83093637-505f-42e3-a282-6a9af1c719b4",
+    "source_sha256": "0a4301e3248870bb8bc5eecf5ca4d8046edc99ddba1481dadda5b0408e98fcd7",
+    "processing": "cut at clear columns, cropped to its ink, 64 px on its longer side",
+    "sha256": "a06324f5c33fb8cdff0dc0a8a22b42af7032b8492a813cd3df5b7ca317bc08fb"
+  },
+  "ballpark.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job 83093637-505f-42e3-a282-6a9af1c719b4",
+    "source_sha256": "0a4301e3248870bb8bc5eecf5ca4d8046edc99ddba1481dadda5b0408e98fcd7",
+    "processing": "cut at clear columns, cropped to its ink, 64 px on its longer side",
+    "sha256": "a5b49e277a58d81bbab1a3579f5f8e380608344578463560433b493313316898"
+  },
+  "soccer.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job 83093637-505f-42e3-a282-6a9af1c719b4",
+    "source_sha256": "0a4301e3248870bb8bc5eecf5ca4d8046edc99ddba1481dadda5b0408e98fcd7",
+    "processing": "cut at clear columns, cropped to its ink, 64 px on its longer side",
+    "sha256": "b29abb8dbb40092d4d6f7e68e8a952cc017167d1b45818dc34a2f79e481f06fc"
+  }
+}

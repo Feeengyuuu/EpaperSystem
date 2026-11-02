@@ -397,10 +397,11 @@ class FootballRenderMixin:
         self._draw_football_footer(image, draw, (x1, y2 - 12, x2, y2), event, sport, include_tv=False)
 
     def _draw_football_footer(self, image, draw, box, event, sport, include_tv=True):
-        """The card's foot line, the stadium as its official logo where it has one."""
+        """The card's foot line, the stadium as its official logo where it has one, else as the
+        football stadium icon and its name."""
         venue = str((event or {}).get("venue") or "").strip()
         rest = SportsDashboard._football_footer_label({**(event or {}), "venue": ""}, sport, include_tv=include_tv)
-        if not self._draw_kit_venue_line(image, draw, box, venue, after=rest):
+        if not self._draw_kit_venue_line(image, draw, box, venue, after=rest, kind="football"):
             self._draw_kit_footer(draw, box, SportsDashboard._football_footer_label(event, sport, include_tv=include_tv))
 
     # Labels and geometry -----------------------------------------------------

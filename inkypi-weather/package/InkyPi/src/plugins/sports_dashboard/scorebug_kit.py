@@ -18,6 +18,20 @@ from .tv_networks import tv_network_parts
 
 SportsDashboard = None
 
+
+class _VenueName:
+    """A venue without an official logo, set as its sport's venue icon then its name: laid out like a
+    logo (by its width), drawn straight onto the page so the name keeps the page's own type."""
+
+    def __init__(self, icon, name, font, fill, text_width):
+        self.icon, self.name, self.font, self.fill = icon, name, font, fill
+        self.width, self.height = icon.width + KIT_VENUE_ICON_GAP + text_width, icon.height
+
+    def draw(self, kit, image, draw, x, y1, y2):
+        image.paste(self.icon, (x, y1 + (y2 - y1 - self.icon.height) // 2), self.icon)
+        kit._draw_text_in_box(draw, (x + self.icon.width + KIT_VENUE_ICON_GAP, y1, x + self.width, y2), self.name,
+                              self.font, self.fill)
+
 KIT_FEATURED_CARD_MAX_WIDTH = 318
 KIT_SCOREBUG_ROW_HEIGHT = 33
 KIT_SCOREBUG_SCORE_WIDTH = 44
@@ -26,6 +40,11 @@ KIT_SCOREBOARD_ROW_HEIGHT = 26
 KIT_SCOREBOARD_STATE_WIDTH = 44
 # Under a row's kickoff today, its networks' logos stand this tall; beside a live card's pill, this.
 KIT_SCOREBOARD_TV_HEIGHT, KIT_STATUS_TV_HEIGHT = 9, 13
+# A venue without an official logo reads as its sport's venue icon (assets/decor/venue_icons: a football
+# stadium, an indoor arena, a ballpark, a soccer stadium) then its name; the icon at most this tall and
+# KIT_VENUE_ICON_WIDE times as wide, KIT_VENUE_ICON_GAP before the name.
+VENUE_ICON_KINDS = ("football", "arena", "ballpark", "soccer")
+KIT_VENUE_ICON_HEIGHT, KIT_VENUE_ICON_WIDE, KIT_VENUE_ICON_GAP = 13, 1.6, 3
 # A game yet to start shows its stadium's logo at the row's right, at most this wide, when its team
 # names leave at least the minimum (past this gap after the longer name).
 KIT_ROW_VENUE_MAX_W, KIT_ROW_VENUE_MIN_W, KIT_ROW_VENUE_GAP = 72, 24, 8
@@ -543,8 +562,26 @@ class ScorebugKitMixin:
             logo = _kit_inked_where_faint(logo, COLORS["panel"])
         return logo or None
 
-    def _draw_kit_venue(self, image, draw, box, venue):
-        """The venue as its arena's official logo centred in ``box``, else its name as a footer line."""
+    def _kit_venue_icon(self, kind, height):
+        """``kind``'s venue icon (VENUE_ICON_KINDS) ``height`` tall, else None."""
+        if kind not in VENUE_ICON_KINDS:
+            return None
+        return self._load_local_logo(os.path.join(LOCAL_DECOR_DIR, "venue_icons", f"{kind}.png"),
+                                     (round(height * KIT_VENUE_ICON_WIDE), height), alpha_threshold=8)
+
+    def _kit_venue_name(self, draw, venue, kind, height, max_width, size, bold, fill):
+        """A venue without an official logo as its ``kind``'s icon and its name within ``max_width``
+        (a _VenueName), else None."""
+        icon = self._kit_venue_icon(kind, min(height, KIT_VENUE_ICON_HEIGHT)) if venue else None
+        room = max_width - (icon.width + KIT_VENUE_ICON_GAP if icon else 0)
+        if icon is None or room < 24:
+            return None
+        name, font = self._fit_text_ellipsis(draw, venue, room, size, bold=bold, min_size=7)
+        return _VenueName(icon, name, font, fill, self._text_width(draw, name, font))
+
+    def _draw_kit_venue(self, image, draw, box, venue, kind=None):
+        """The venue as its arena's official logo centred in ``box``, else as ``kind``'s venue icon and
+        its name, else its name as a footer line."""
         if not venue:
             return
         x1, y1, x2, y2 = [int(value) for value in box]
@@ -552,20 +589,28 @@ class ScorebugKitMixin:
         if logo:
             image.paste(logo, (x1 + (x2 - x1 - logo.width) // 2, y1 + (y2 - y1 - logo.height) // 2), logo)
             return
+        mark = self._kit_venue_name(draw, venue, kind, y2 - y1, x2 - x1, 9, False, COLORS["text"]) if kind else None
+        if mark is not None:
+            mark.draw(self, image, draw, x1 + (x2 - x1 - mark.width) // 2, y1, y2)
+            return
         self._draw_kit_footer(draw, box, venue)
 
     def _draw_kit_venue_line(self, image, draw, box, venue, before="", after="", *, size=9, bold=False,
-                             align="center", separator="·", logo_height=None, fill=None):
+                             align="center", separator="·", logo_height=None, fill=None, kind=None):
         """``before``, the venue's official logo in place of its name, and ``after`` on one line in
-        ``box`` (centred, or from its left), parted by ``separator``; False, with nothing drawn, when
-        the venue has no logo, so the caller keeps its text line."""
+        ``box`` (centred, or from its left), parted by ``separator``. A venue without a logo reads as
+        ``kind``'s venue icon and its name; False, with nothing drawn, when it has neither, so the
+        caller keeps its text line."""
         x1, y1, x2, y2 = [int(value) for value in box]
         before, after = str(before or "").strip(), str(after or "").strip()
         height = int(logo_height or (y2 - y1))
+        fill = COLORS["text"] if fill is None else fill
         logo = self._kit_venue_logo(venue, ((x2 - x1) // 2 if before or after else x2 - x1, height)) if venue else None
+        if logo is None and kind:
+            logo = self._kit_venue_name(draw, venue, kind, height, (x2 - x1) * 2 // 3 if before or after else x2 - x1,
+                                        size, bold, fill)
         if logo is None:
             return False
-        fill = COLORS["text"] if fill is None else fill
         join_font = self._font(size, bold)
         join_w = self._text_width(draw, separator, join_font) + 12
         # The home city after the venue, as its official emblem when it has one.
@@ -587,7 +632,10 @@ class ScorebugKitMixin:
         x = x1 if align == "left" else x1 + (x2 - x1 - total) // 2
         for index, piece in enumerate(pieces):
             if index == 1:
-                image.paste(logo, (x, y1 + (y2 - y1 - logo.height) // 2), logo)
+                if isinstance(logo, _VenueName):
+                    logo.draw(self, image, draw, x, y1, y2)
+                else:
+                    image.paste(logo, (x, y1 + (y2 - y1 - logo.height) // 2), logo)
                 x += logo.width
             if not piece:
                 continue
