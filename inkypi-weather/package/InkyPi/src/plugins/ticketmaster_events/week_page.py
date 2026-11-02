@@ -20,6 +20,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 from utils.doodle_backdrop import paint_doodles
 
+from .team_logos import read_title, team_logo
 from .venue_logos import paste_venue_logo
 from utils.theme_utils import contrast_ratio, relative_luminance
 
@@ -115,6 +116,13 @@ SLIP_TOP, SLIP_H = 28, 45
 THUMB = (52, 29)
 # A venue's official logo leads its place: within these boxes on a list row and in the lead card.
 SLIP_VENUE_LOGO, HERO_VENUE_LOGO = (34, 13), (44, 16)
+# A team's (or show's) logo leads its name in a title: as tall as the type plus TEAM_LOGO_RISE, at
+# most TEAM_LOGO_WIDE times as wide, TEAM_LOGO_GAP before the name. A list row's title takes the
+# first of SLIP_TITLE_SIZES that holds it, the teams by the first of NAME_FORMS that fits: as the
+# title writes them, a school by its place ('San Jose State'), then each by its short name.
+TEAM_LOGO_RISE, TEAM_LOGO_WIDE, TEAM_LOGO_GAP = 3, 1.5, 4
+SLIP_TITLE_SIZES = (15, 14)
+NAME_FORMS = ("full", "place", "short")
 STICKER = 21
 SLIP_PLACE_MIN, SLIP_FACT_GAP = 72, 8
 WEEK_BAND = (MARGIN, 428, 800 - MARGIN, 474)
@@ -449,12 +457,7 @@ class WeekPageMixin:
         if age_notice(subtitle):
             age, subtitle = age or age_notice(subtitle), ""
         text_x, text_w = px0 + 10, width - 10
-        title_font = self._font(TITLE_SIZES[-1], bold=True)
-        for size in TITLE_SIZES:
-            title_font = self._font(size, bold=True)
-            if len(self._wrap_full_text(draw, title, title_font, text_w)) <= 2:
-                break
-        lines = self._wrap_text(draw, title, title_font, text_w, 2)
+        title_font, lines, subtitle = self._featured_title(draw, event, title, subtitle, text_w, colors)
         text_h = 10 + len(lines) * (title_font.size + 4) + (SUBTITLE_SIZE + 6 if subtitle else 0) + 47
         poster_h = max(POSTER_H, min(POSTER_MAX, HERO[3] - 8 - SECTION_H - 16 - py0 - text_h))
         poster = self._load_event_image(event)
@@ -495,7 +498,7 @@ class WeekPageMixin:
         # What: the headliner, then the rest of the bill, beside a bar of the kind's colour.
         block_top = y = py0 + poster_h + 10
         for line in lines:
-            draw.text((text_x, y), line, fill=colors.get("title", colors["ink"]), font=title_font)
+            self._draw_runs(image, draw, line, text_x, y, title_font)
             y += title_font.size + 4
         if subtitle:
             subtitle_font = self._font(SUBTITLE_SIZE, bold=True)
@@ -514,9 +517,12 @@ class WeekPageMixin:
         place_x = px0 + 14
         logo_w = paste_venue_logo(image, event.venue_name, place_x, y + 8, HERO_VENUE_LOGO, colors["ink"], colors["paper"])
         place_x += logo_w + 5 if logo_w else 0
-        draw.text((place_x, y), self._fit_text(draw, self._place_line(event), meta_font,
-                                                px1 - place_x - (distance_w + 10 if distance else 0)),
-                  fill=colors["ink"], font=meta_font)
+        # The city goes before the venue's name is cut ('Chase Center', not 'Chase Center · San Fran...').
+        room = px1 - place_x - (distance_w + 10 if distance else 0)
+        place = self._place_line(event)
+        if draw.textlength(place, font=meta_font) > room:
+            place = event.venue_name or place
+        draw.text((place_x, y), self._fit_text(draw, place, meta_font, room), fill=colors["ink"], font=meta_font)
         y += 22
         # The facts as chips: the price solid, the kind edged in its colour.
         fact_font = self._font(12, bold=True)
@@ -542,6 +548,40 @@ class WeekPageMixin:
             drawn = True
         return y + 20 if drawn else y - 4
 
+    def _featured_title(self, draw, event, title, subtitle, width, colors):
+        """(font, lines, subtitle) for the featured card, each of at most two lines a list of runs.
+        A game gives each team a line after its logo, 'vs.' ending the first, named in the first of
+        NAME_FORMS that fits, and what leads or follows the game is the subtitle; a title a known team or
+        show leads hangs beside its logo; any other wraps as it is, at the largest size that keeps
+        it to two lines."""
+        teams = self._title_teams(event)
+        ink = colors.get("title", colors["ink"])
+        if teams and teams.is_game:
+            subtitle = " · ".join(part for part in (teams.prefix, teams.trailing) if part)
+            for form in NAME_FORMS:
+                for size in TITLE_SIZES:
+                    font = self._font(size, bold=True)
+                    lines = self._game_lines(teams, form, font, colors)
+                    if all(self._runs_width(draw, line, font) <= width for line in lines):
+                        return font, lines, subtitle
+            return font, [self._fit_runs(draw, line, font, width) for line in lines], subtitle
+        lead = teams.sides[0] if teams else None
+        if lead and not subtitle and lead.rest:
+            # 'Harlem Globetrotters 2026 World Tour': the show, then the tour.
+            title, subtitle = lead.text, lead.rest
+        for size in TITLE_SIZES:
+            font = self._font(size, bold=True)
+            logo = self._title_logo(lead.team, font, colors) if lead else None
+            indent = logo.width + TEAM_LOGO_GAP if logo else 0
+            if len(self._wrap_full_text(draw, title, font, width - indent)) <= 2:
+                break
+        lines = []
+        for index, text in enumerate(self._wrap_text(draw, title, font, width - indent, 2)):
+            # The logo leads the first line; the second hangs under the first's text.
+            lead_runs = [("logo", logo, logo.width), ("space", TEAM_LOGO_GAP)] if logo and index == 0 else []
+            lines.append((lead_runs or ([("space", indent)] if indent else [])) + [("text", text, ink)])
+        return font, lines, subtitle
+
     @staticmethod
     def _draw_pin(draw, tip, fill, hole):
         """A map pin ``tip`` its point: a round head over a point, with a hole."""
@@ -562,15 +602,96 @@ class WeekPageMixin:
 
     def _kind_text(self, event):
         """'音乐 · 摇滚': the segment and the kind in Chinese (a genre with no Chinese name as
-        Ticketmaster gives it); "" when Ticketmaster names neither."""
+        Ticketmaster gives it; a game's sport as its title says it, '体育 · 女排'); "" when
+        Ticketmaster names neither."""
         segment = SEGMENT_LABELS.get((event.segment or "").lower(), event.segment or "")
         label, _icon = kind_of(event)
+        teams = self._title_teams(event)
+        if teams and teams.sport:
+            label = teams.sport
         if kind_key(event) == "comedy" and segment == "音乐":
             return label
         if label == segment:
             genre = event.genre if event.genre and event.genre.lower() != (event.segment or "").lower() else ""
             label = genre if genre and genre.casefold() != "other" else ""
         return " · ".join(part for part in (segment, label) if part)
+
+    # -- titles that name teams: each team's logo before its name ---------------------------
+    @staticmethod
+    def _title_teams(event):
+        return read_title(event.title or "", event.segment or "", event.genre or "", (event.extra or {}).get("subgenre") or "")
+
+    def _title_logo(self, team, font, colors):
+        """``team``'s logo as tall as ``font``'s type plus TEAM_LOGO_RISE (None without one)."""
+        if team is None:
+            return None
+        height = font.size + TEAM_LOGO_RISE
+        return team_logo(team, (round(height * TEAM_LOGO_WIDE), height), colors["mode"] == "dark",
+                         tuple(colors["paper"]), tuple(colors["ink"]))
+
+    def _side_runs(self, side, form, font, colors, slot=0):
+        """A side's logo (centred in ``slot`` when given, so both teams' names line up), then its
+        name in ``form`` (NAME_FORMS): as the title writes it with what follows, by its place (a
+        school; others by their short name), or by its short name."""
+        logo = self._title_logo(side.team, font, colors)
+        team = side.team
+        if form == "full" or team is None:
+            name = " ".join(part for part in (side.text, side.rest) if part)
+        else:
+            name = (team.place if form == "place" else "") or team.short or side.text
+        if logo is not None:
+            lead = [("logo", logo, max(slot, logo.width)), ("space", TEAM_LOGO_GAP)]
+        else:
+            lead = [("space", slot + TEAM_LOGO_GAP)] if slot else []
+        return lead + [("text", name, colors.get("title", colors["ink"]))]
+
+    def _game_lines(self, teams, form, font, colors):
+        """A game in two lines, each team after its logo, the logos in one column: 'vs.' ends the first."""
+        logos = [self._title_logo(side.team, font, colors) for side in teams.sides]
+        slot = max((logo.width for logo in logos if logo is not None), default=0)
+        first, second = (self._side_runs(side, form, font, colors, slot) for side in teams.sides)
+        return [first + [("text", f" {teams.joiner}", colors["muted"])], second]
+
+    def _title_runs(self, teams, form, font, colors):
+        """A list row's title in one line: what leads the game, each side after its logo, 'vs.'
+        between them, what follows; past the ``full`` form only the teams, by shorter names."""
+        ink = colors.get("title", colors["ink"])
+        short = form != "full"
+        runs = [("text", f"{teams.prefix} ", ink)] if teams.prefix and not short else []
+        for index, side in enumerate(teams.sides):
+            if index:
+                runs.append(("text", f" {teams.joiner} ", colors["muted"]))
+            runs += self._side_runs(side, form, font, colors)
+        if teams.trailing and not short:
+            runs.append(("text", f" {teams.trailing}", ink))
+        return runs
+
+    def _runs_width(self, draw, runs, font):
+        return sum(draw.textlength(run[1], font=font) if run[0] == "text" else run[2] if run[0] == "logo" else run[1]
+                   for run in runs)
+
+    def _fit_runs(self, draw, runs, font, width):
+        """``runs`` with their last text cut to end within ``width``."""
+        *head, (_kind, text, fill) = runs
+        room = width - self._runs_width(draw, head, font)
+        return [*head, ("text", self._fit_text(draw, text, font, max(room, 10)), fill)]
+
+    @staticmethod
+    def _draw_runs(image, draw, runs, x, y, font):
+        """Text and logos along a line from (x, y), each logo centred on the type's capitals."""
+        _left, top, _right, bottom = draw.textbbox((x, y), "H", font=font)
+        middle = (top + bottom) / 2
+        for run in runs:
+            if run[0] == "text":
+                draw.text((x, y), run[1], fill=run[2], font=font)
+                x += draw.textlength(run[1], font=font)
+            elif run[0] == "logo":
+                logo, slot = run[1], run[2]
+                image.paste(logo, (round(x + (slot - logo.width) / 2), round(middle - logo.height / 2)), logo)
+                x += slot
+            else:
+                x += run[1]
+        return x
 
     @staticmethod
     def _more_text(event):
@@ -698,7 +819,8 @@ class WeekPageMixin:
         draw.rectangle((thumb_x, thumb_y, tile_right + 4, sy0 + 43), fill=kind_colour)
         self._paste_event_image(image, event, (thumb_x, thumb_y, THUMB[0], THUMB[1]), colors)
         label, icon = kind_of(event)
-        label = label or "未分类"
+        teams = self._title_teams(event)
+        label = (teams.sport if teams and teams.sport else label) or "未分类"
         label_font = self._font(11, bold=True)
         label = self._fit_text(draw, label, label_font, THUMB[0] - 4)
         draw.text((thumb_x + (THUMB[0] - draw.textlength(label, font=label_font)) / 2, sy0 + 31),
@@ -711,9 +833,7 @@ class WeekPageMixin:
         draw.rectangle((sx0, sy0 + 2, tile_right + 4, sy0 + 43), outline=kind_colour, width=1)
         text_x, right = tile_right + 9, sx1 - 3
         # The title has the full text-column width; prices no longer shorten the artist name.
-        title_font = self._font(15, bold=True)
-        draw.text((text_x, sy0 + 3), self._fit_text(draw, event.title, title_font, right - text_x),
-                  fill=colors["ink"], font=title_font)
+        self._draw_slip_title(image, draw, event, (text_x, sy0 + 3), right - text_x, colors)
         # Reserve the complete distance and important facts before fitting the venue.
         meta_font = self._font(11, bold=True)
         distance = f" · {event.distance}" if event.distance else ""
@@ -748,6 +868,19 @@ class WeekPageMixin:
             draw.rounded_rectangle((x, y - 1, x + fact_w, y + 12), radius=2, fill=fill)
             draw.text((x + 4, y), text, fill=fact_ink, font=meta_font)
             x += fact_w + SLIP_FACT_GAP
+
+    def _draw_slip_title(self, image, draw, event, origin, width, colors):
+        """The title in one line at the first of SLIP_TITLE_SIZES that holds it whole: a game's
+        teams after their logos, named in the first of NAME_FORMS that fits; cut only when none does."""
+        teams = self._title_teams(event)
+        for form in (NAME_FORMS if teams and teams.is_game else NAME_FORMS[:1]):
+            for size in SLIP_TITLE_SIZES:
+                font = self._font(size, bold=True)
+                runs = (self._title_runs(teams, form, font, colors) if teams
+                        else [("text", event.title or "", colors["ink"])])
+                if self._runs_width(draw, runs, font) <= width:
+                    return self._draw_runs(image, draw, runs, *origin, font)
+        return self._draw_runs(image, draw, self._fit_runs(draw, runs, font, width), *origin, font)
 
     def _slip_facts(self, event, now):
         """[(text, alarm)] to know before buying, most important first: a sale stopped or a date
