@@ -12,6 +12,8 @@ hierarchy is carried by weight and size; the muted tone and solid red behind
 small text dither into specks.
 """
 
+from PIL import ImageFilter
+
 from .common import *
 from .card_backdrops import SPORT_BACKDROP_KINDS, card_backdrop_box, paint_card_backdrop
 from .tv_networks import tv_logo_width_ratio, tv_network_parts
@@ -62,9 +64,11 @@ KIT_RESULT_EXTRA = 2
 KIT_TILE_HEIGHT = 36
 # The space either side of the rule between a TV tile's networks and its venue logo.
 KIT_TILE_VENUE_GAP = 7
-# Raised glass panels over a card's stadium art: how much of the fill covers the art, and the
-# ink shadow's offset down and to the right.
-KIT_GLASS_ALPHA = 0.74
+# Raised frosted-glass panels over a card's stadium art: the art beneath blurred this much (so its
+# detail does not dither into specks behind the type), how much of the fill covers it, and the ink
+# shadow's offset down and to the right.
+KIT_GLASS_BLUR = 2
+KIT_GLASS_ALPHA = 0.6
 KIT_GLASS_SHADOW = 2
 KIT_TICKER_ROW_HEIGHT = 17
 KIT_TICKER_LOGO_SIZE = 12
@@ -347,9 +351,9 @@ class ScorebugKitMixin:
     # Details ------------------------------------------------------------------
 
     def _draw_kit_glass(self, image, box, fill, radius=4, alpha=KIT_GLASS_ALPHA):
-        """A raised translucent panel at ``box``: a hard ink shadow down and to the right
-        (only where the panel does not cover it), ``fill`` letting the art beneath show
-        through, a light sheen along its top edge and an ink outline."""
+        """A raised frosted-glass panel at ``box``: a hard ink shadow down and to the right
+        (only where the panel does not cover it), the art beneath blurred and showing through
+        ``fill``, a light sheen along its top edge and an ink outline."""
         x1, y1, x2, y2 = [int(value) for value in box]
         offset = KIT_GLASS_SHADOW
         size = (x2 - x1 + 1 + offset, y2 - y1 + 1 + offset)
@@ -358,6 +362,8 @@ class ScorebugKitMixin:
         shadow = Image.new("L", size, 0)
         ImageDraw.Draw(shadow).rounded_rectangle((offset, offset, size[0] - 1, size[1] - 1), radius=radius, fill=255)
         image.paste(COLORS["border"], (x1, y1, x1 + size[0], y1 + size[1]), ImageChops.subtract(shadow, panel))
+        frost = image.crop((x1, y1, x1 + size[0], y1 + size[1])).filter(ImageFilter.GaussianBlur(KIT_GLASS_BLUR))
+        image.paste(frost, (x1, y1), panel)
         image.paste(fill, (x1, y1, x1 + size[0], y1 + size[1]), panel.point(lambda value: round(value * alpha)))
         draw = ImageDraw.Draw(image)
         sheen = tuple(round(channel + (255 - channel) * 0.6) for channel in fill)

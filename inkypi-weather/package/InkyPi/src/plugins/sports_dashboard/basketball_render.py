@@ -195,7 +195,8 @@ class BasketballRenderMixin:
                 ("O/U", str(event.get("over_under") or "").replace("O/U", "").strip() or "--"),
             ]
             # The venue already sits on the strip above the tiles.
-            self._draw_kit_tiles(draw, (x1, lower_y1 + 4, split_x, y2), tiles, spec, tile_h=min(KIT_TILE_HEIGHT + 10, y2 - lower_y1 - 8), image=image)
+            self._draw_kit_tiles(draw, (x1, lower_y1 + 4, split_x, y2), tiles, spec, tile_h=min(KIT_TILE_HEIGHT + 10, y2 - lower_y1 - 8),
+                                 image=image, glass=True)
         else:
             self._draw_basketball_leader_duel(draw, (x1, lower_y1, split_x, y2), event, spec, image=image)
         self._draw_kit_ticker(image, draw, (split_x + 14, lower_y1 - 2, x2, y2), others, now, spec)
@@ -733,7 +734,7 @@ class BasketballRenderMixin:
                 ("TIP-OFF", SportsDashboard._kit_countdown_label(event.get("start"), now)),
                 ("O/U", str(event.get("over_under") or "").replace("O/U", "").strip() or "--"),
             ]
-            tiles_bottom = self._draw_kit_tiles(draw, (left, y + 4, right, y2), tiles, spec)
+            tiles_bottom = self._draw_kit_tiles(draw, (left, y + 4, right, y2), tiles, spec, image=image, glass=True)
             # The networks as their official logos in the room under the tiles.
             self._draw_kit_broadcast_logos(image, draw, (left, tiles_bottom + 4, right, y2 - 15),
                                            str(event.get("broadcast") or "").strip(), WNBA_CARD_TV_LOGO_HEIGHT)

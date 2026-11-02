@@ -1679,6 +1679,21 @@ def test_a_venue_line_puts_the_grounds_logo_between_its_words_else_draws_nothing
     assert SportsDashboard._stage_without_venue("第9轮 | ESPN+ | Chase Center", "Chase Center") == "第9轮 | ESPN+"
 
 
+def test_a_glass_tile_lets_the_card_art_show_through_frosted():
+    def glass(plugin, image, draw):
+        for x in range(0, 60, 4):
+            draw.line((x, 0, x, 39), fill=(255, 255, 255), width=2)
+        plugin._draw_kit_glass(image, (8, 8, 42, 32), (200, 40, 40))
+
+    image, _draw = _render(lambda plugin, image, draw: (draw.rectangle((0, 0, 60, 40), fill=(0, 0, 0)), glass(plugin, image, draw)))
+    inside = image.crop((12, 12, 38, 28)).get_flattened_data()
+    reds = [red for red, _green, _blue in inside]
+    # The art shows through the fill (not the fill alone), its black-and-white stripes blurred to an
+    # even tone rather than dithering behind the type.
+    assert all(pixel != (200, 40, 40) for pixel in inside)
+    assert max(reds) - min(reds) < 40
+
+
 def test_a_ground_without_a_logo_reads_as_its_sports_venue_icon_then_its_name(boxes):
     game = _game("NCAA", venue="InfoCision Stadium", city="Akron, OH")
     image, _draw = _render(lambda plugin, image, draw: plugin._draw_football_footer(
