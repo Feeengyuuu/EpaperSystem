@@ -12,6 +12,19 @@ from .scorebug_kit import KIT_RESULT_EXTRA
 
 # The CS2 / Valve focus card's face-off: each team's logo stands this tall over its name.
 VALVE_FACEOFF_LOGO = 40
+# Match feeds credited on the Valve card as "SOURCE: <feed>", drawn as their official marks: PandaScore's
+# wordmark, else the feed's own icon (assets/logos/sources) before its name.
+VALVE_SOURCE_FEEDS = {"pandascore", "opendota", "hltv"}
+VALVE_FEED_ICONS = {"opendota": ("opendota.png", "OpenDota"), "hltv": ("hltv.png", "HLTV")}
+# Where a Valve event's arena stage runs (by its name and the days of that stage on the device's
+# clock, a day early so Asia's afternoons count), for the venue's logo on the card; an event or day
+# not here shows none.
+VALVE_EVENT_VENUES = (
+    ("BLAST Rivals 2026 Season 2", "2026-11-12", "2026-11-15", "AsiaWorld-Expo"),
+    ("PGL Major Singapore 2026", "2026-12-09", "2026-12-13", "Singapore Indoor Stadium"),
+)
+# The venue's logo stands where the Valve card's event caption would, at most this tall.
+VALVE_VENUE_LOGO_H = 28
 
 # Where each Worlds stage is played, by its days (first, last, venue): the sidebar bills a match's
 # ground by the venue's logo (assets/logos/venues). 2026: the Play-In at Riot Games Arena in Los
@@ -1232,7 +1245,13 @@ class EsportsRenderMixin:
             )
             caption = str(primary.get("event_logo_caption") or "").strip()
             caption_box = (meta_x1, y + 36, meta_x2, y + 60)
-            if primary.get("auto_follow"):
+            # On the days an arena stage runs, its official logo stands in the caption's place (the
+            # event's own logo at the left already names the event).
+            middle = (caption_box[1] + caption_box[3]) // 2
+            venue_box = (meta_x1, middle - VALVE_VENUE_LOGO_H // 2, meta_x2, middle + VALVE_VENUE_LOGO_H // 2)
+            if self._draw_valve_venue(image, venue_box, primary, event):
+                pass
+            elif primary.get("auto_follow"):
                 self._draw_cs2_event_caption(draw, caption_box, caption)
             else:
                 caption, caption_font = self._fit_text_ellipsis(
@@ -1314,6 +1333,28 @@ class EsportsRenderMixin:
         detail = self._valve_match_detail_label(event)
         detail, detail_font = self._fit_text_ellipsis(draw, detail, card_x2 - card_x1 - 44, 10, bold=True, min_size=7)
         self._draw_centered_in_box(draw, (card_x1 + 20, y + 166, card_x2 - 20, y + 182), detail, detail_font, COLORS["text"])
+
+    @staticmethod
+    def _valve_event_venue(primary, event):
+        """The arena hosting this match of the Valve event, from VALVE_EVENT_VENUES, or None."""
+        name = re.sub(r"[^a-z0-9]", "", str((primary or {}).get("event_name") or "").lower())
+        start = (event or {}).get("start")
+        if not name or not isinstance(start, datetime):
+            return None
+        day = start.date().isoformat()
+        return next((venue for event_name, first, last, venue in VALVE_EVENT_VENUES
+                     if name.startswith(re.sub(r"[^a-z0-9]", "", event_name.lower())) and first <= day <= last), None)
+
+    def _draw_valve_venue(self, image, box, primary, event):
+        """The arena's official logo centred in ``box``; the box it took, or None without one."""
+        venue = self._valve_event_venue(primary, event)
+        x1, y1, x2, y2 = [int(value) for value in box]
+        logo = self._kit_venue_logo(venue, (x2 - x1, y2 - y1)) if venue else None
+        if logo is None:
+            return None
+        left, top = x1 + (x2 - x1 - logo.width) // 2, y1 + (y2 - y1 - logo.height) // 2
+        image.paste(logo, (left, top), logo)
+        return left, top, left + logo.width, top + logo.height
 
     def _draw_valve_focus_event_logo(self, image, box, primary):
         primary = primary or {}
@@ -1431,8 +1472,9 @@ class EsportsRenderMixin:
     @staticmethod
     def _valve_source_attribution(source):
         value = str(source or "Valve").strip() or "Valve"
-        if value.casefold() == "pandascore":
-            return "SOURCE: PANDASCORE"
+        # A match feed with an official mark is credited as it, its logo standing for the name.
+        if value.casefold() in VALVE_SOURCE_FEEDS:
+            return f"SOURCE: {value.upper()}"
         value = value.upper()
         return "OFFICIAL TRACK" if "OFFICIAL" in value else f"{value} TRACK"
 
@@ -1441,9 +1483,32 @@ class EsportsRenderMixin:
         if str(primary.get("series") or "").upper() == "CS" and str(source).strip().casefold() == "pandascore":
             if self._draw_cs2_provider_label(image, draw, box, "PANDASCORE", color, attribution=True):
                 return
+        if self._draw_valve_feed_credit(image, draw, box, source, color):
+            return
         if self._draw_source_credit(image, draw, box, fallback, color, size=8, min_size=6):
             return
         self._draw_text_in_box(draw, box, fallback, font, color)
+
+    def _draw_valve_feed_credit(self, image, draw, box, source, color):
+        """"Source:" then the feed's official icon, as tall as the row allows, and its name; False for a
+        feed without an icon or a row too small for it."""
+        icon_file, name = VALVE_FEED_ICONS.get(str(source or "").strip().casefold(), (None, None))
+        x1, y1, x2, y2 = [int(value) for value in box]
+        side = y2 - y1 + 3
+        icon = self._load_local_logo(os.path.join(ESPORTS_SOURCE_LOGO_DIR, icon_file), (side, side), alpha_threshold=8)             if icon_file else None
+        if icon is None:
+            return False
+        label_font, name_font = self._font(8, True), self._font(9, True)
+        label_w = int(ceil(self._text_width(draw, "Source:", label_font)))
+        name_w = int(ceil(self._text_width(draw, name, name_font)))
+        if label_w + 4 + icon.width + 3 + name_w > x2 - x1:
+            return False
+        self._draw_text_in_box(draw, (x1, y1, x1 + label_w, y2), "Source:", label_font, color)
+        icon_x = x1 + label_w + 4
+        image.paste(icon, (icon_x, y1 + (y2 - y1 - icon.height) // 2), icon)
+        name_x = icon_x + icon.width + 3
+        self._draw_text_in_box(draw, (name_x, y1, name_x + name_w, y2), name, name_font, COLORS["text"])
+        return True
 
     def _draw_cs2_provider_label(self, image, draw, box, label, color, *, attribution=False):
         """Draw the bundled official wordmark and retain the feed's status text."""

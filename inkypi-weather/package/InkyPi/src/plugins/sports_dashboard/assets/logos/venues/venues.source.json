@@ -2868,6 +2868,32 @@
         64,
         48
       ]
+    },
+    "asiaworld_expo": {
+      "page": "https://www.asiaworld-expo.com/",
+      "source_url": "https://www.asiaworld-expo.com/AsiaWorldExpoLocal/media/AWE/assets/images/common/logo.svg",
+      "licence": "The venue's own trademark from its official site; shown to name the venue",
+      "source_svg_sha256": "2ca41652757a441b93b0c7bfdd64afc67cb878493f51b134670d2d5d236e9b54",
+      "processing": "official SVG rasterised at 4x with transparent alpha (PyMuPDF), cropped to the alpha bounding box, scaled to 48 px high with LANCZOS",
+      "sha256": "6b504e4f100864b7c445d6444e311bd64392337f64006433ad800cc7df29d6a3",
+      "size": [
+        188,
+        48
+      ],
+      "use": "BLAST Rivals 2026 Season 2 playoffs (AsiaWorld-Expo, Hong Kong, 13-15 Nov 2026)"
+    },
+    "the_kallang": {
+      "page": "https://www.thekallang.com.sg/venues-facilities/singapore-indoor-stadium",
+      "source_url": "https://www.thekallang.com.sg/content/dam/tkg/sprint-assets/global/logo-tkg-black.svg",
+      "licence": "The venue's own trademark from its official site; shown to name the venue",
+      "source_svg_sha256": "5dc1afc12d25991355afa513c67e58849aedc554ded4a8a878a763df053fa057",
+      "processing": "official SVG rasterised at 4x with transparent alpha (PyMuPDF), cropped to the alpha bounding box, scaled to 48 px high with LANCZOS",
+      "sha256": "4d647f23e18a7bdb617f9e5d0da9acc268443f9a3a02d828e60e4b965997f3ea",
+      "size": [
+        53,
+        48
+      ],
+      "use": "PGL Major Singapore 2026 finals at the Singapore Indoor Stadium (10-13 Dec 2026); the stadium is run and branded by The Kallang and has no mark of its own on its official page"
     }
   }
 }

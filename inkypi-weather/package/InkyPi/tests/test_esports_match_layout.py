@@ -252,3 +252,31 @@ def test_each_esport_card_stands_on_its_own_arena(monkeypatch):
                                             {**event, "series": series}, now, (200, 20, 20))
     plugin._draw_lpl_focus_card(image, draw, 556, 244, 78, event, now, False, league_key="WORLDS")
     assert painted == ["cs2", "dota2", "lol"]
+
+
+def test_valve_feeds_are_credited_by_their_marks_and_arenas_by_their_days():
+    from plugins.sports_dashboard.esports_render import VALVE_EVENT_VENUES
+
+    attribution = SportsDashboard._valve_source_attribution
+    assert [attribution(name) for name in ("PandaScore", "OpenDota", "HLTV", "Dota 2 Official")] == [
+        "SOURCE: PANDASCORE", "SOURCE: OPENDOTA", "SOURCE: HLTV", "OFFICIAL TRACK"]
+
+    def venue(name, day):
+        return SportsDashboard._valve_event_venue({"event_name": name}, {"start": datetime.fromisoformat(f"{day}T20:00:00")})
+
+    # The arena shows only on the days its stage runs there: BLAST's Hong Kong playoffs, the Major's final days.
+    assert venue("BLAST Rivals 2026 Season 2", "2026-11-13") == "AsiaWorld-Expo"
+    assert venue("BLAST Rivals 2026 Season 2", "2026-11-10") is None
+    assert venue("PGL Major Singapore 2026", "2026-12-12") == "Singapore Indoor Stadium"
+    assert venue("PGL Major Singapore 2026 Stage 1", "2026-11-25") is None
+    plugin = _plugin()
+    assert all(plugin._kit_venue_logo(name, (100, 28)) is not None for _event, _first, _last, name in VALVE_EVENT_VENUES)
+
+
+@pytest.mark.parametrize("source,drawn", [("OpenDota", True), ("HLTV", True), ("Liquipedia", False)])
+def test_a_valve_feed_with_an_icon_is_credited_by_it_and_its_name(source, drawn):
+    plugin = _plugin()
+    image = Image.new("RGB", (200, 20), (255, 255, 255))
+    assert plugin._draw_valve_feed_credit(image, ImageDraw.Draw(image), (4, 4, 196, 15), source, (40, 90, 200)) is drawn
+    # The icon sits after "Source:", so the row holds more than the text's two inks when it is drawn.
+    assert (len(image.getcolors(maxcolors=20 * 200)) > 40) is drawn

@@ -131,6 +131,30 @@
         84,
         64
       ]
+    },
+    "opendota": {
+      "source_url": "https://www.opendota.com/assets/images/logo.png",
+      "official_site": "https://www.opendota.com/",
+      "processing": "The site's own logo tile as published (its light-blue ground is part of the mark), LANCZOS to 96 px.",
+      "rights": "OpenDota trademark, used to identify the data source of Dota 2 matches.",
+      "source_sha256": "e580e4c820453efe1101a763aeee05f9cbbc60326183829a02f609a004dd1844",
+      "sha256": "8ee764e435170d1ee409a4ece20dfc7dcc8c18c7b90f2c240d49918f613838d1",
+      "size": [
+        96,
+        96
+      ]
+    },
+    "hltv": {
+      "source_url": "https://www.hltv.org/img/static/TopSmallLogo2x.png",
+      "official_site": "https://www.hltv.org/",
+      "processing": "The site's own small logo as bundled for the pro tracker (lol_info/assets/hltv-logo.png).",
+      "rights": "HLTV.org trademark, used to identify the data source of CS2 matches.",
+      "source_sha256": "c039d4a7bca50d1e4853f2e638578e54bf897aafad7d8e55fe699850ccfa2b89",
+      "sha256": "f63ff8e50542ae19041aec16045ad1e2d754d320237fb34f3360b5cf0b23a052",
+      "size": [
+        92,
+        92
+      ]
     }
   }
 }

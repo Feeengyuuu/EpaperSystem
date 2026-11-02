@@ -596,6 +596,10 @@ VENUE_LOGO_KEYS = {
     "wrigleyfield": "wrigley_field", "wwkarena": "wwk_arena",
     "xfinitymobilearena": "xfinity_mobile_arena", "yankeestadium": "yankee_stadium",
     "yasmarinacircuit": "yas_marina_circuit",
+    # Esports arenas the Valve card names (the CS2 events' playoffs).
+    "asiaworldexpo": "asiaworld_expo",
+    # The Kallang runs and brands the stadium, which has no mark of its own.
+    "singaporeindoorstadium": "the_kallang",
 }
 # A home city's official emblem (its seal, else its arms, logo or flag) stands in for its name after a
 # venue logo, by every scoreboard spelling of it with only its letters and digits, lower case
