@@ -46,13 +46,24 @@ TV_NETWORK_ALIASES = {
     "disney_plus": ("disneyplus",),
     "universo": ("universo",),
     "fandango": ("fandango", "fandangoathome"),
+    "nbcsn": ("nbcsn", "nbcsportsnetwork"),
+    "nhl_network": ("nhlnet", "nhlnetwork", "nhln"),
+    "hulu": ("hulu",),
+    "ion": ("ion", "iontv", "iontelevision"),
+    "youtube": ("youtube",),
+    # The conferences' streams, as ESPN writes them ("SECN+", "SEC Network +", "B1G+", "ACCNX", "MW+").
+    "sec_network_plus": ("secnplus", "secnetworkplus"),
+    "b1g_plus": ("b1gplus", "bigtenplus"),
+    "accnx": ("accnx", "accnetworkextra"),
+    "mw_plus": ("mwplus",),
 }
 TV_NETWORK_KEYS = {alias: key for key, aliases in TV_NETWORK_ALIASES.items() for alias in aliases}
 # Where a viewer in the US most likely watches, first: the streaming services, then the other
 # networks as the feed lists them, the Spanish-language feeds last. A row with room for one logo
 # shows the first.
 TV_STREAMING_KEYS = ("espn_plus", "peacock", "paramount_plus", "prime_video", "apple_tv", "netflix", "hbo_max",
-                     "disney_plus", "dazn", "fandango")
+                     "disney_plus", "hulu", "dazn", "fandango", "youtube", "sec_network_plus", "b1g_plus", "accnx",
+                     "mw_plus")
 TV_SPANISH_KEYS = ("espn_deportes", "universo")
 
 

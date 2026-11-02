@@ -24,8 +24,8 @@ KIT_SCOREBUG_SCORE_WIDTH = 44
 KIT_SCOREBUG_PERIOD_WIDTH = 17
 KIT_SCOREBOARD_ROW_HEIGHT = 26
 KIT_SCOREBOARD_STATE_WIDTH = 44
-# Under a row's kickoff today, its networks' logos stand this tall.
-KIT_SCOREBOARD_TV_HEIGHT = 9
+# Under a row's kickoff today, its networks' logos stand this tall; beside a live card's pill, this.
+KIT_SCOREBOARD_TV_HEIGHT, KIT_STATUS_TV_HEIGHT = 9, 13
 # A game yet to start shows its stadium's logo at the row's right, at most this wide, when its team
 # names leave at least the minimum (past this gap after the longer name).
 KIT_ROW_VENUE_MAX_W, KIT_ROW_VENUE_MIN_W, KIT_ROW_VENUE_GAP = 72, 24, 8
@@ -204,9 +204,11 @@ class ScorebugKitMixin:
 
     # Status row ---------------------------------------------------------------
 
-    def _draw_kit_status_row(self, draw, x1, y, x2, spec, state, pill, context="", right="", right_icon=None):
+    def _draw_kit_status_row(self, draw, x1, y, x2, spec, state, pill, context="", right="", right_icon=None,
+                             image=None, broadcast=""):
         """Pill, context and a right-aligned note; ``right_icon(x, y)`` draws a
-        14 px mark just left of the note."""
+        14 px mark just left of the note. A ``broadcast`` context (a live game's networks) reads as
+        its networks' logos on ``image``, the label in type only when none of them has one."""
         # Live keeps the dashboard's LIVE-pill idiom (light pill, red block,
         # black text): solid red behind small text dithers into specks.
         marker = 9 if state == "live" else 0
@@ -229,6 +231,10 @@ class ScorebugKitMixin:
                 right_w += 18
                 right_icon(x2 - right_w, y + 2)
         budget = x2 - right_w - 10 - (x1 + pill_w + 8)
+        if broadcast and image is not None and budget > 16 and self._draw_kit_small_broadcast(
+                image, (x1 + pill_w + 8, y, x1 + pill_w + 8 + budget, y + 18), broadcast, KIT_STATUS_TV_HEIGHT):
+            return
+        context = context or broadcast
         if context and budget > 16:
             context, context_font = self._fit_text_ellipsis(draw, context, budget, 11, bold=True, min_size=8)
             self._draw_text_in_box(draw, (x1 + pill_w + 8, y, x1 + pill_w + 8 + budget, y + 18), context, context_font, COLORS["text"])

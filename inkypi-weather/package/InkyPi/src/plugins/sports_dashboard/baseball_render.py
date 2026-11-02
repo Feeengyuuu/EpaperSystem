@@ -81,11 +81,13 @@ class BaseballRenderMixin:
         x1, y1, x2, y2 = [int(value) for value in box]
         state = SportsDashboard._hub_event_state(event)
         left, top, right, bottom = self._draw_kit_card(draw, box, spec, state, image=image)
-        context = str(event.get("broadcast") or "").strip() if state == "live" else SportsDashboard._mlb_context_label(event, state)
+        broadcast = str(event.get("broadcast") or "").strip() if state == "live" else ""
+        context = "" if state == "live" else SportsDashboard._mlb_context_label(event, state)
         series = self._mlb_first_fitting(draw, [SportsDashboard._mlb_series_label(event, full) for full in (True, False)], 110, 11, bold=False)
         series_side = SportsDashboard._mlb_series_side(event)
         series_logo = (lambda x, y: self._draw_mlb_team_logo(image, draw, event, series_side, x, y, 14, spec)) if series_side else None
-        self._draw_kit_status_row(draw, left, top + 8, right, spec, state, SportsDashboard._mlb_pill_label(event, now), context, series, series_logo)
+        self._draw_kit_status_row(draw, left, top + 8, right, spec, state, SportsDashboard._mlb_pill_label(event, now), context, series,
+                                  series_logo, image=image, broadcast=broadcast)
         table_bottom = self._draw_mlb_line_table(image, draw, (left, top + 33, right), event, state, spec)
         y = table_bottom + 6
         footer = (left, bottom - 6 - MLB_FOOTER_HEIGHT, right, bottom - 6)

@@ -353,8 +353,10 @@ def _assert_texts_fit(draw, boxes):
 def test_live_panel_draws_scorebug_tracker_and_scoreboard(parsed, render):
     image, draw, texts = render(_card(parsed, "live-away-ball"))
 
-    for expected in ("Q2 2:00", "Fox", "WEEK 6", "3RD & 17", "熊 24", "5 PLAYS · 4 YDS · 3:45", "Two-Minute Warning", "熊 79%", "21% 猎鹰", "2 LIVE", "HALF"):
+    for expected in ("Q2 2:00", "WEEK 6", "3RD & 17", "熊 24", "5 PLAYS · 4 YDS · 3:45", "Two-Minute Warning", "熊 79%", "21% 猎鹰", "2 LIVE", "HALF"):
         assert expected in texts
+    # Beside the live pill Fox's broadcast reads as the network's logo, not its name.
+    assert "Fox" not in texts
     assert "14" in texts and "7" in texts
     _assert_texts_fit(draw, render.boxes)
 

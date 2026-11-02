@@ -61,8 +61,9 @@ class FootballRenderMixin:
         self._draw_kit_status_row(
             draw, left, top + 8, right, spec, state,
             SportsDashboard._nfl_status_pill_label(event, now),
-            SportsDashboard._nfl_status_context_label(event, state),
+            "" if state == "live" else SportsDashboard._nfl_status_context_label(event, state),
             SportsDashboard._ncaa_header_badge_label(event) or self._football_header_week_label(card, event),
+            image=image, broadcast=SportsDashboard._nfl_status_context_label(event, state) if state == "live" else "",
         )
         y = top + 32
         for index, side in enumerate(("a", "b")):
@@ -180,8 +181,9 @@ class FootballRenderMixin:
         self._draw_kit_status_row(
             draw, left, top + 8, right, spec, state,
             SportsDashboard._nfl_status_pill_label(event, now),
-            SportsDashboard._nfl_status_context_label(event, state),
+            "" if state == "live" else SportsDashboard._nfl_status_context_label(event, state),
             right_label,
+            image=image, broadcast=SportsDashboard._nfl_status_context_label(event, state) if state == "live" else "",
         )
         rows_bottom = self._draw_kit_scorebug(image, draw, left, top + 31, right, event, state, spec)
         details = (left, rows_bottom + 6, right, bottom - 7)

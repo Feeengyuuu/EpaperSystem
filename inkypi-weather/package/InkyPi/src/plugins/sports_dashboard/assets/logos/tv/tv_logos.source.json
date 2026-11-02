@@ -28,6 +28,16 @@
         48
       ]
     },
+    "accnx": {
+      "source": "ESPN's own logo for the network, from its scoreboard API (competitions[].geoBroadcasts[].media.logo)",
+      "original": "https://a.espncdn.com/guid/f3b48d90-e60f-37fd-9581-5a763786784c/logos/default.png",
+      "source_png_sha256": "4b8f360db4c84f2e4a00b23134a87791057d12eeb3c44b74f55d6037bf75b771",
+      "sha256": "7b919748ceccedb934568742a218de523be76ea0c7e9d58a409178b1d3c5cde4",
+      "size": [
+        146,
+        48
+      ]
+    },
     "apple_tv": {
       "article": "Apple TV (streaming service)",
       "file": "Apple TV (logo).svg",
@@ -38,6 +48,16 @@
       "sha256": "62dc8366c7883be404811147baf57d261ca358685dbde7b7609e5f24caf0d10a",
       "size": [
         103,
+        48
+      ]
+    },
+    "b1g_plus": {
+      "source": "the inline SVG brand logo in bigtenplus.com's site header, drawn by a headless browser",
+      "original": "https://www.bigtenplus.com/",
+      "source_png_sha256": "d33b0f675ebf517515041eb75ab21bcaa941c306f20b685d499e86a52c23b064",
+      "sha256": "d2123183a7dd00d0626b3011ac8c7272f2fd4a404c96c2147789d59ad1e5afb7",
+      "size": [
+        169,
         48
       ]
     },
@@ -275,6 +295,32 @@
         48
       ]
     },
+    "hulu": {
+      "article": "Hulu",
+      "file": "Hulu logo (2018).svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f9/Hulu_logo_%282018%29.svg/960px-Hulu_logo_%282018%29.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/f/f9/Hulu_logo_%282018%29.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "6d29ace009d7cdab1f2a1476b3c604b12d4e09c8",
+      "source_png_sha256": "23191e55d96d2250608a8dcac0d7be6b31eceadfa5255cfee8d2e58e924f6e60",
+      "sha256": "fdb5ff798a186e474d7a29ecda5c5b0fcfc02144dba82f9ced6e3e6a7784b7bb",
+      "size": [
+        145,
+        48
+      ]
+    },
+    "ion": {
+      "article": "Ion Television",
+      "file": "Ion logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/28/Ion_logo.svg/960px-Ion_logo.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/2/28/Ion_logo.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "1bcb76ea664bd69e180ee0f3cfd7277bc5c7d69d",
+      "source_png_sha256": "1b39f0ccb359091262adc63116229565870434cfb0823ba385e7704832f04ba2",
+      "sha256": "287ca67909baec4414cffc0c8c55ec3d08df3e9b22e3b00db5800cc37ac994be",
+      "size": [
+        84,
+        48
+      ]
+    },
     "mlb_network": {
       "article": "MLB Network",
       "file": "MLBNetworkLogo.svg",
@@ -285,6 +331,16 @@
       "sha256": "00334a70bebe7e5c5dd01bd3b44dcc100725507e23221c55042d7a6dae4cbb2d",
       "size": [
         47,
+        48
+      ]
+    },
+    "mw_plus": {
+      "source": "the MW+ promo logo on the Mountain West's site (themw.com)",
+      "original": "https://themw.com/images/2026/6/26/MW_220x124.png",
+      "source_png_sha256": "9ae0a9e745d7d6e44330baddc2215ee341d4ea15d13f1d8ffe551986e1c9fc99",
+      "sha256": "974a099fb49477cc64ca20a85ca7839059a9ea62d21a53dd93ea004dd1c35abf",
+      "size": [
+        62,
         48
       ]
     },
@@ -314,6 +370,19 @@
         47
       ]
     },
+    "nbcsn": {
+      "article": "NBCSN",
+      "file": "NBCSN 2025.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5c/NBCSN_2025.svg/960px-NBCSN_2025.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/5/5c/NBCSN_2025.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "3a0c2b3492f5c9cffaf4ebe5a8679f55b535bbef",
+      "source_png_sha256": "789183df74351fc219de4486d7d5bb0c63cbfca7925e3321627a21f982bcbc76",
+      "sha256": "8a4747b81d11dfa73129b739bfd7c49165cbcb345ee7bb7e60e9533ecfaa1943",
+      "size": [
+        192,
+        34
+      ]
+    },
     "netflix": {
       "article": "Netflix",
       "file": "Netflix 2015 logo.svg",
@@ -337,6 +406,19 @@
       "sha256": "61ab642681def62b9a7fefc17b6aab7134917d87c995c46d07f14e743f04ec20",
       "size": [
         123,
+        48
+      ]
+    },
+    "nhl_network": {
+      "article": "NHL Network (American TV channel)",
+      "file": "NHL Network 2012.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f4/NHL_Network_2012.svg/960px-NHL_Network_2012.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/f/f4/NHL_Network_2012.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "fb1a890391a74f0132f545773a8ff459a9dea8c9",
+      "source_png_sha256": "4689ccfb9faab962d8b173f6deb0320fdf12215c78070d013d381fab411110d6",
+      "sha256": "4f86dabd02bbec217566f01977563e099e01c8c2092048fea2fe76b522582636",
+      "size": [
+        66,
         48
       ]
     },
@@ -389,6 +471,16 @@
       "sha256": "4c7983a64fa97b0236480b9d8c317bb87765a7ee47f6bcd580de674d0a87a387",
       "size": [
         93,
+        48
+      ]
+    },
+    "sec_network_plus": {
+      "source": "ESPN's own logo for the network, from its scoreboard API (competitions[].geoBroadcasts[].media.logo)",
+      "original": "https://a.espncdn.com/guid/d1e3d7c4-8e72-37f3-b9b9-515573fd5526/logos/default.png",
+      "source_png_sha256": "66b8dd9f418862a368beabe7a184b3c3f559a6bcce439b44145d37157e04e3e2",
+      "sha256": "2cb2cb6c1613bdf503c05913fac9f5ba2fd56518bbb7760ffd9c7db0702f1e41",
+      "size": [
+        112,
         48
       ]
     },
@@ -455,6 +547,17 @@
       "size": [
         110,
         48
+      ]
+    },
+    "youtube": {
+      "article": "YouTube",
+      "file": "YouTube Logo 2017.svg",
+      "original": "https://commons.wikimedia.org/wiki/File:YouTube_Logo_2017.svg",
+      "source_png_sha256": "f20c4d6f5b248e3acf68d72e2dd5e3ab9d43abac5e2455d2e2b7c02a2d5c5edb",
+      "sha256": "834110275d9f6f782360b9832cb6eca03494e06c97ba14d8822f2f7ba4369ebb",
+      "size": [
+        192,
+        43
       ]
     }
   }

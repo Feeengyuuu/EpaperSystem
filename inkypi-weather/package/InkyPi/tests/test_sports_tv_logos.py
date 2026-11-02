@@ -1,13 +1,15 @@
 """Where to watch on the football cards: the networks' logos beside the status pill and after a row's date."""
 
 from datetime import datetime
+import os
 from zoneinfo import ZoneInfo
 
 from PIL import Image, ImageDraw
+import pytest
 
-from plugins.sports_dashboard.common import COLORS
+from plugins.sports_dashboard.common import COLORS, LOCAL_TV_LOGO_DIR
 from plugins.sports_dashboard.sports_dashboard import SportsDashboard
-from plugins.sports_dashboard.tv_networks import tv_watch_rank
+from plugins.sports_dashboard.tv_networks import tv_network_parts, tv_watch_rank
 
 LA = ZoneInfo("America/Los_Angeles")
 EVENT = {"start": datetime(2026, 10, 26, 13, 0, tzinfo=LA), "team_a": "塞维利亚", "team_b": "奥萨苏纳",
@@ -19,6 +21,18 @@ EVENT = {"start": datetime(2026, 10, 26, 13, 0, tzinfo=LA), "team_a": "塞维利
 def test_streaming_comes_first_and_spanish_language_feeds_last():
     assert tv_watch_rank("espn_plus") < tv_watch_rank("espn") < tv_watch_rank("espn_deportes")
     assert tv_watch_rank(None) == tv_watch_rank("fox")
+
+
+# National networks ESPN's scoreboards named in November 2026 that had no logo: the relaunched NBCSN,
+# the NHL's, Hulu, ION (the WNBA's Friday nights), YouTube and the conferences' streams.
+@pytest.mark.parametrize("label, keys", [
+    ("NBCSN", ["nbcsn"]), ("NHL Net", ["nhl_network"]), ("Disney+ / Hulu", ["disney_plus", "hulu"]),
+    ("ION", ["ion"]), ("YouTube", ["youtube"]), ("SECN+", ["sec_network_plus"]),
+    ("SEC Network +", ["sec_network_plus"]), ("B1G+", ["b1g_plus"]), ("ACCNX", ["accnx"]), ("MW+", ["mw_plus"]),
+])
+def test_every_national_network_espn_names_reads_as_its_logo(label, keys):
+    assert [key for _name, key in tv_network_parts(label)] == keys
+    assert all(os.path.isfile(os.path.join(LOCAL_TV_LOGO_DIR, f"{key}.png")) for key in keys)
 
 
 def test_the_first_choice_shrinks_to_fit_and_the_rest_stay_named():
