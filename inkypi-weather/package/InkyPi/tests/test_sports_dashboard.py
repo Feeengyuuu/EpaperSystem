@@ -4372,7 +4372,9 @@ def test_right_region_renders_official_ti_live_over_waiting_lpl(monkeypatch, tmp
     assert yan_logo_red_pixels >= 8
     assert yan_logo_white_pixels >= 45
     assert yan_fallback_blue_pixels == 0
-    assert conflicted.getpixel((676, 166)) == COLORS["border"]
+    # The face-off sits on the plain card under a rule: no stadium art behind the teams.
+    assert conflicted.getpixel((676, 164)) == COLORS["line"]
+    assert conflicted.getpixel((582, 240)) == COLORS["panel"]
 
 
 def test_right_esports_ignores_retired_ewc_setting_and_loads_valve(monkeypatch):

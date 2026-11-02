@@ -9,6 +9,9 @@ from .card_backdrops import card_backdrop_box, paint_card_backdrop, paint_list_b
 from .esports_fonts import esports_role, esports_sidebar
 from .scorebug_kit import KIT_RESULT_EXTRA
 
+# The CS2 / Valve focus card's face-off: each team's logo stands this tall over its name.
+VALVE_FACEOFF_LOGO = 40
+
 # Where each Worlds stage is played, by its days (first, last, venue): the sidebar bills a match's
 # ground by the venue's logo (assets/logos/venues). 2026: the Play-In at Riot Games Arena in Los
 # Angeles (no bundled logo, so unbilled), the Swiss stage and knockouts at Allen's Credit Union of
@@ -1149,7 +1152,6 @@ class EsportsRenderMixin:
         draw.rounded_rectangle((card_x1 + 4, y + 4, card_x2 + 4, card_y2 + 4), radius=6, fill=COLORS["valve_shadow"])
         draw.rounded_rectangle((card_x1, y, card_x2, card_y2), radius=6, fill=COLORS["panel"], outline=COLORS["border"], width=2)
         draw.rectangle((card_x1 + 1, y + 1, card_x1 + 8, card_y2 - 1), fill=accent)
-        paint_card_backdrop(image, card_backdrop_box(card_x1, y, card_x2, card_y2), "tactical", COLORS["panel"], radius=4)
 
         if not event:
             draw.text((card_x1 + 20, y + 58), "No Valve event", font=self._font(19, True), fill=COLORS["text"])
@@ -1276,37 +1278,39 @@ class EsportsRenderMixin:
                 event.get("source") or primary.get("source") or "Valve", subtitle, subtitle_font, accent,
             )
 
+        # A plain face-off under the header, no art behind it: each team's logo over its name in its
+        # own half of the card, the score (VS before the start) between the logos, then the stage.
         center_x = (card_x1 + card_x2) / 2
-        board_y1 = y + 88
-        board_y2 = y + 153
-        draw.rounded_rectangle((card_x1 + 16, board_y1, card_x2 - 16, board_y2), radius=5, fill=COLORS["panel_blue"], outline=COLORS["border"], width=1)
-        logo_size = 30
-        left_area = (card_x1 + 24, center_x - 35)
-        right_area = (center_x + 35, card_x2 - 24)
+        draw.line((card_x1 + 18, y + 86, card_x2 - 16, y + 86), fill=COLORS["line"], width=1)
+        logo_size = VALVE_FACEOFF_LOGO
+        left_area = (card_x1 + 14, center_x - 4)
+        right_area = (center_x + 4, card_x2 - 12)
         left_logo_x = int((left_area[0] + left_area[1] - logo_size) / 2)
         right_logo_x = int((right_area[0] + right_area[1] - logo_size) / 2)
-        logo_y = int(board_y1 + 7)
+        logo_y = y + 92
         self._draw_valve_team_icon(image, draw, event, "a", left_logo_x, logo_y, logo_size)
         self._draw_valve_team_icon(image, draw, event, "b", right_logo_x, logo_y, logo_size)
 
         score = self._valve_score_label(event)
-        score, score_font = self._fit_text(draw, score, 68, 25, bold=True, min_size=16)
-        self._draw_esports_match_text(draw, (center_x - 34, logo_y, center_x + 34, logo_y + logo_size), score, score_font, COLORS["text"])
+        decided = event.get("feed_fresh", True) and self._hub_event_state(event) == "final"
+        score, score_font = self._fit_text(draw, score, 56 - (KIT_RESULT_EXTRA if decided else 0), 25, bold=True, min_size=16)
+        self._draw_kit_result_score(draw, (center_x - 28, logo_y, center_x + 28, logo_y + logo_size), score, score_font,
+                                    winner=None if decided else "", draw_text=self._draw_esports_match_text)
         score_kind = str(event.get("score_kind") or "").strip().upper()
-        if score_kind:
-            kind_text, kind_font = self._fit_text_ellipsis(draw, score_kind, 62, 8, bold=True, min_size=6)
-            self._draw_esports_match_text(draw, (center_x - 31, board_y1 + 36, center_x + 31, board_y1 + 49), kind_text, kind_font, COLORS["muted"])
+        if score_kind and score.upper() != "VS":
+            kind_text, kind_font = self._fit_text_ellipsis(draw, score_kind, 40, 8, bold=True, min_size=6)
+            self._draw_esports_match_text(draw, (center_x - 20, logo_y + logo_size - 6, center_x + 20, logo_y + logo_size + 5),
+                                          kind_text, kind_font, COLORS["muted"])
 
-        team_a_label = self._valve_team_display_name(event, "a")
-        team_b_label = self._valve_team_display_name(event, "b")
-        team_a, font_a = self._fit_text_ellipsis(draw, team_a_label, left_area[1] - left_area[0], 13, bold=True, min_size=8)
-        team_b, font_b = self._fit_text_ellipsis(draw, team_b_label, right_area[1] - right_area[0], 13, bold=True, min_size=8)
-        self._draw_esports_match_text(draw, (left_area[0], board_y2 - 17, left_area[1], board_y2 - 3), team_a, font_a, COLORS["text"])
-        self._draw_esports_match_text(draw, (right_area[0], board_y2 - 17, right_area[1], board_y2 - 3), team_b, font_b, COLORS["text"])
+        names_y = logo_y + logo_size + 4
+        for side, (name_x1, name_x2) in (("a", left_area), ("b", right_area)):
+            label, font = self._fit_text_ellipsis(draw, self._valve_team_display_name(event, side), name_x2 - name_x1, 14,
+                                                  bold=True, min_size=9)
+            self._draw_esports_match_text(draw, (name_x1, names_y, name_x2, names_y + 17), label, font, COLORS["text"])
 
         detail = self._valve_match_detail_label(event)
         detail, detail_font = self._fit_text_ellipsis(draw, detail, card_x2 - card_x1 - 44, 10, bold=True, min_size=7)
-        self._draw_centered_in_box(draw, (card_x1 + 20, y + 160, card_x2 - 20, y + 176), detail, detail_font, COLORS["muted"])
+        self._draw_centered_in_box(draw, (card_x1 + 20, y + 166, card_x2 - 20, y + 182), detail, detail_font, COLORS["text"])
 
     def _draw_valve_focus_event_logo(self, image, box, primary):
         primary = primary or {}

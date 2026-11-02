@@ -210,3 +210,26 @@ def test_lol_upcoming_incomplete_odds_do_not_invent_a_price(monkeypatch, odds):
     with type_scope("riot"):
         plugin._draw_lpl_next_row(image, ImageDraw.Draw(image), 556, 244, 275, event, now, league_key="WORLDS")
     assert {row[0] for row in labels}.isdisjoint({"4.88", "1.26"})
+
+
+def test_cs2_focus_card_sets_each_name_under_its_logo_on_a_plain_card(monkeypatch):
+    from plugins.sports_dashboard import esports_render
+
+    plugin, labels, logos = capture_matchups(monkeypatch, False)
+    painted = []
+    monkeypatch.setattr(esports_render, "paint_card_backdrop", lambda *args, **kwargs: painted.append(args))
+    monkeypatch.setattr(plugin, "_draw_valve_focus_event_logo", lambda *args: False)
+    now = datetime(2026, 11, 1, 23, tzinfo=timezone.utc)
+    event = {"start": now, "series": "CS", "state": "unstarted", "team_a": "Natus Vincere", "team_b": "Team Falcons",
+             "wins_a": None, "wins_b": None, "stage": "Group A", "best_of": 3, "score_kind": "MAPS"}
+    image = Image.new("RGB", (800, 480))
+    with type_scope("cs2"):
+        plugin._draw_valve_esports_focus_card(image, ImageDraw.Draw(image), 556, 244, 78,
+                                            {"series": "CS", "event_name": "Test Event"}, event, now, (200, 20, 20))
+    # No stadium art behind the face-off; each full name is centred under its own logo, and the
+    # score kind waits for a score.
+    assert not painted
+    for name, (x, _y, size) in zip(("Natus Vincere", "Team Falcons"), logos[:2]):
+        ink = next(row for row in labels if row[0] == name)[2]
+        assert abs((ink[0] + ink[2]) / 2 - (x + size / 2)) <= 2
+    assert "MAPS" not in [row[0] for row in labels]
