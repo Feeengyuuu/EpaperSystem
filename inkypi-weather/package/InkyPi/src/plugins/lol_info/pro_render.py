@@ -81,6 +81,8 @@ PHOTO_ZOOM = 1.18
 # The win under its photo: the tag row, the opponent line, one row per map (its art chip
 # WIN_MAP_CHIP), and the rows over which the photo fades into the page above the text.
 WIN_TAG_H, WIN_HEADER_H, WIN_ROW_H, WIN_MAP_CHIP, WIN_FADE = 26, 20, 16, (24, 13), 26
+# Over the map rows a caption row names their columns: 地图, the player's 击杀-死亡 and the 比分.
+WIN_CAPTION_H = 11
 # A won map's emblem (assets/map_icons, the game's own) after its name stands this tall.
 WIN_MAP_ICON = 14
 # The LoL card: the ranked form chart's axes and the tag each one's strength earns; the pro
@@ -1501,10 +1503,10 @@ class ProRenderMixin:
         width, height = x1 - x0, y1 - y0
         maps = win.get("maps") or []
         line_h = 14 if win.get("kills") is not None else 0
-        rows = maps[:max(0, (height - WIN_TAG_H - WIN_HEADER_H - line_h - 6) // WIN_ROW_H)]
+        rows = maps[:max(0, (height - WIN_TAG_H - WIN_HEADER_H - WIN_CAPTION_H - line_h - 6) // WIN_ROW_H)]
         if not rows:
             return False
-        text_top = height - 6 - line_h - WIN_ROW_H * len(rows) - WIN_HEADER_H
+        text_top = height - 6 - line_h - WIN_ROW_H * len(rows) - WIN_HEADER_H - WIN_CAPTION_H
         # The picture is cut for the room above the text, so the player stays in view there.
         photo, _place = self._cs2_photo(player)
         art = photo if photo is not None else self._map_art(maps[0].get("map"))
@@ -1537,11 +1539,13 @@ class ProRenderMixin:
                                                                   x1 - 12 - score_w - name_x),
                          "name", 15, colors["ink"], width=x1 - 12 - score_w - name_x, min_size=10)
         y += WIN_HEADER_H
+        self._draw_win_captions(draw, rows, (x0 + 6, y, x1 - 6), colors)
+        y += WIN_CAPTION_H
         for row in rows:
             self._draw_win_map(image, draw, row, (x0 + 6, y, x1 - 6), colors, fonts)
             y += WIN_ROW_H
         if line_h:
-            line = (f"{player.get('nick') or ''} 本场 {win['kills']}-{win['deaths']}"
+            line = (f"{player.get('nick') or ''} 本场 {win['kills']} 杀 {win['deaths']} 死"
                     + (f" · ADR {win['adr']:.0f}" if isinstance(win.get("adr"), (int, float)) else ""))
             self._match_text(draw, (x0 + 6, y + 7), line.strip(), "label", 12, colors["gold"], width=width - 12, min_size=9)
         return True
@@ -1559,6 +1563,16 @@ class ProRenderMixin:
         for y in range(max(0, shown - WIN_FADE), height):
             ramp.putpixel((0, y), round(255 * min(1.0, (y - shown + WIN_FADE) / WIN_FADE)))
         return Image.composite(Image.new("RGB", size, colors["background"]), canvas, ramp.resize(size))
+
+    def _draw_win_captions(self, draw, rows, line, colors):
+        """The map rows' column captions, small and muted: 地图 over the maps, 击杀-死亡 over the
+        player's K-D (when a row has one) and 比分 over the rounds, each lined up with its column."""
+        x0, y, x1 = line
+        middle = y + WIN_CAPTION_H // 2
+        self._match_text(draw, (x0, middle), "地图", "label", 9, colors["muted"])
+        if any(row.get("kills") is not None for row in rows):
+            self._match_text(draw, (x1 - 33, middle), "击杀-死亡", "label", 9, colors["muted"], anchor="rm")
+        self._match_text(draw, (x1, middle), "比分", "label", 9, colors["muted"], anchor="rm")
 
     def _draw_win_map(self, image, draw, row, line, colors, fonts):
         """One map of the win: a chip of its art edged green (won) or red (lost), its name, the

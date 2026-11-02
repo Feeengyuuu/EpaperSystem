@@ -947,3 +947,22 @@ def test_a_won_maps_rounds_read_green_for_the_winner_and_red_for_the_loser(plugi
         green, red = columns(colors["green"]), columns(colors["red"])
         assert green and red
         assert (max(green) < min(red)) if winner_first else (max(red) < min(green))
+
+
+def test_the_map_rows_carry_column_captions_naming_the_kd_and_the_score(plugin, monkeypatch):
+    colors = plugin._render_colors({"mode": "night"})
+    drawn = []
+    original = plugin._match_text
+
+    def record(draw, xy, text, *args, **kwargs):
+        drawn.append(text)
+        return original(draw, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(plugin, "_match_text", record)
+    draw = ImageDraw.Draw(Image.new("RGB", (220, 12), colors["background"]))
+    plugin._draw_win_captions(draw, [{"map": "de_nuke", "kills": 5, "deaths": 13}], (0, 0, 220), colors)
+    assert drawn == ["地图", "击杀-死亡", "比分"]
+    drawn.clear()
+    # Without the player's line on any map there is no K-D column to caption.
+    plugin._draw_win_captions(draw, [{"map": "de_nuke"}], (0, 0, 220), colors)
+    assert drawn == ["地图", "比分"]
