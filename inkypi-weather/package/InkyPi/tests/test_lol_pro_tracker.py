@@ -961,7 +961,7 @@ def test_the_map_rows_carry_column_captions_naming_the_kd_and_the_score(plugin, 
     monkeypatch.setattr(plugin, "_match_text", record)
     draw = ImageDraw.Draw(Image.new("RGB", (220, 12), colors["background"]))
     plugin._draw_win_captions(draw, [{"map": "de_nuke", "kills": 5, "deaths": 13}], (0, 0, 220), colors)
-    assert drawn == ["地图", "击杀-死亡", "比分"]
+    assert drawn == ["地图", "K/D", "比分"]
     drawn.clear()
     # Without the player's line on any map there is no K-D column to caption.
     plugin._draw_win_captions(draw, [{"map": "de_nuke"}], (0, 0, 220), colors)

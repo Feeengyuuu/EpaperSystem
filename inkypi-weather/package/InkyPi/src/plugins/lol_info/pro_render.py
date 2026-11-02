@@ -81,7 +81,7 @@ PHOTO_ZOOM = 1.18
 # The win under its photo: the tag row, the opponent line, one row per map (its art chip
 # WIN_MAP_CHIP), and the rows over which the photo fades into the page above the text.
 WIN_TAG_H, WIN_HEADER_H, WIN_ROW_H, WIN_MAP_CHIP, WIN_FADE = 26, 20, 16, (24, 13), 26
-# Over the map rows a caption row names their columns: 地图, the player's 击杀-死亡 and the 比分.
+# Over the map rows a caption row names their columns: 地图, the player's K/D and the 比分.
 WIN_CAPTION_H = 11
 # A won map's emblem (assets/map_icons, the game's own) after its name stands this tall.
 WIN_MAP_ICON = 14
@@ -1565,13 +1565,13 @@ class ProRenderMixin:
         return Image.composite(Image.new("RGB", size, colors["background"]), canvas, ramp.resize(size))
 
     def _draw_win_captions(self, draw, rows, line, colors):
-        """The map rows' column captions, small and muted: 地图 over the maps, 击杀-死亡 over the
+        """The map rows' column captions, small and muted: 地图 over the maps, K/D over the
         player's K-D (when a row has one) and 比分 over the rounds, each lined up with its column."""
         x0, y, x1 = line
         middle = y + WIN_CAPTION_H // 2
         self._match_text(draw, (x0, middle), "地图", "label", 9, colors["muted"])
         if any(row.get("kills") is not None for row in rows):
-            self._match_text(draw, (x1 - 33, middle), "击杀-死亡", "label", 9, colors["muted"], anchor="rm")
+            self._match_text(draw, (x1 - 33, middle), "K/D", "label", 9, colors["muted"], anchor="rm")
         self._match_text(draw, (x1, middle), "比分", "label", 9, colors["muted"], anchor="rm")
 
     def _draw_win_map(self, image, draw, row, line, colors, fonts):
