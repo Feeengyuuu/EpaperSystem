@@ -41,9 +41,18 @@ def _load_score_font(size, bold=False, *, sport, private_key=None):
         existing = [path for path in candidates if path.is_file()]
         # Keep the original file format and avoid choosing between conflicting copies.
         paths = existing if len(existing) == 1 else []
-    family = "BarlowCondensed" if sport in {"NBA", "WNBA", "NHL"} else "BarlowSemiCondensed"
     if sport != "F1":
-        paths.append(FONT_DIR / f"{family}-{'Bold' if bold else 'SemiBold'}.ttf")
+        paths.append(FONT_DIR / f"{_family(sport)}-{'Bold' if bold else 'SemiBold'}.ttf")
+    return _digit_matched(paths, size, reference)
+
+
+def _family(sport):
+    return "BarlowCondensed" if sport in {"NBA", "WNBA", "NHL"} else "BarlowSemiCondensed"
+
+
+def _digit_matched(paths, size, reference):
+    """The first of ``paths`` with every digit, at the size whose digits stand as tall as
+    ``reference``'s; ``reference`` when none opens."""
     target = reference.getbbox("8")
     target_height = target[3] - target[1]
     for path in paths:
@@ -61,12 +70,36 @@ def _load_score_font(size, bold=False, *, sport, private_key=None):
     return reference
 
 
+# Stat figures are small, where the UI font's hinted digits jump a pixel between sizes: their
+# size follows the two faces' digit heights compared at this size, so a larger size never draws smaller.
+STAT_MATCH_SIZE = 40
+
+
+def _load_stat_font(size, bold=True, *, sport):
+    """The sport's family in Bold Italic, for the figures of a stat line; the UI font without it."""
+    path = FONT_DIR / f"{_family(sport)}-BoldItalic.ttf"
+    try:
+        matched = _digit_matched([path], STAT_MATCH_SIZE, render_font(get_base_ui_font, STAT_MATCH_SIZE, True))
+        if Path(getattr(matched, "path", "")).name != path.name:
+            return render_font(get_base_ui_font, size, True)
+        return load_font(path, max(1, round(size * matched.size / STAT_MATCH_SIZE)))
+    except (OSError, ValueError):
+        return render_font(get_base_ui_font, size, True)
+
+
 # Only loader functions live here; native font objects retain the existing weak scope.
 _LOADERS = {sport: partial(_load_score_font, sport=sport) for sport in SCORE_SPORTS}
+_STAT_LOADERS = {sport: partial(_load_stat_font, sport=sport) for sport in SCORE_SPORTS}
 _CLUB_LOADERS = {
     code: partial(_load_score_font, sport="SOCCER", private_key=key)
     for code, key in CLUB_PRIVATE_FONT_KEYS.items()
 }
+
+
+def stat_font(sport, size):
+    """Bold Italic figures that stand out from a stat line's labels ('1290' in '1290 YDS'), their
+    digits as tall as the UI font's at ``size``."""
+    return render_font(_STAT_LOADERS.get(str(sport).upper(), get_base_ui_font), size, True)
 
 
 def score_font(sport, size, bold=False, *, league=None):

@@ -25,7 +25,7 @@ from plugins.base_plugin.render_provenance import (
 from plugins.sports_dashboard.cache_io import read_json_file, write_json_file
 from plugins.sports_dashboard.ncaa_localization import NCAA_ADDITIONAL_SCHOOLS
 from plugins.sports_dashboard.render_fonts import render_font, render_font_scope
-from plugins.sports_dashboard.score_fonts import fit_score, score_font
+from plugins.sports_dashboard.score_fonts import fit_score, score_font, stat_font
 from plugins.sports_dashboard.source_credits import draw_source_credit
 from plugins.sports_dashboard.esports_fonts import active as esports_type_active, active_font, esports_role
 from runtime.sports_asset_metrics import record_asset_metric
@@ -4628,6 +4628,7 @@ class SportsDashboardCommonMixin:
         return active_font(size, bold) or render_font(get_base_ui_font, size, bold)
 
     _score_font = staticmethod(score_font)
+    _stat_font = staticmethod(stat_font)
     _fit_score = staticmethod(fit_score)
 
     @staticmethod

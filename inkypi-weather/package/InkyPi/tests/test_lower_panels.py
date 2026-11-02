@@ -1129,10 +1129,17 @@ def test_leader_categories_read_as_their_own_sports_icons():
         assert (Path(path("NBA", "PTS")).parent / f"{name}.png").is_file()
 
 
-def test_large_basketball_leader_rows_put_the_value_with_its_unit(boxes):
+def test_large_basketball_leader_rows_put_the_value_with_its_unit(boxes, monkeypatch):
     leaders = [{"label": "PTS", "name": "R. Howard", "value": "19", "side": "b"},
                {"label": "REB", "name": "A. Reese", "value": "11", "side": "b"}]
-    seen = {}
+    seen = {"lines": []}
+    original = SportsDashboard._draw_kit_stat_line
+
+    def stat_line(self, draw, right, middle, parts, sport, sizes, max_width):
+        seen["lines"].append((parts, sizes))
+        return original(self, draw, right, middle, parts, sport, sizes, max_width)
+
+    monkeypatch.setattr(SportsDashboard, "_draw_kit_stat_line", stat_line)
 
     def draw(plugin, image, draw):
         seen["end"] = plugin._draw_kit_leader_rows(image, draw, 20, 100, 240, 170, {}, leaders,
@@ -1141,7 +1148,10 @@ def test_large_basketball_leader_rows_put_the_value_with_its_unit(boxes):
     image, _draw = _render(draw)
 
     assert seen["end"] == 100 + 2 * 28
-    assert [text for _box, text, _font in boxes] == ["分", "19", "R. Howard", "篮板", "11", "A. Reese"]
+    # The unit and the name are boxed text; the value is a large stat figure before its unit.
+    assert [text for _box, text, _font in boxes] == ["分", "R. Howard", "篮板", "A. Reese"]
+    assert [parts for parts, _sizes in seen["lines"]] == [[("19", "")], [("11", "")]]
+    assert all(sizes[0][0] >= 15 for _parts, sizes in seen["lines"])
     # The categories are icons, not tags: the rows' left edge holds the basket and the hands.
     assert len(set(image.crop((20, 100, 50, 156)).get_flattened_data())) > 8
 

@@ -2097,10 +2097,31 @@ class WorldCupRenderMixin:
         self._draw_centered_in_box(draw, (left + 1, top, right - 1, bottom), fitted, font, COLORS["text"])
 
     def _draw_worldcup_odds_text(self, draw, box, text, max_size=11):
+        """Decimal odds centred in ``box``: the price in the stat figures' Bold Italic (a size up, its
+        digits as tall as the UI font's hinted ones at these small sizes), a draw's 'X' small and
+        light before it (its slash dropped: the type tells the two apart, and it falls below the
+        line), at the largest size up to ``max_size`` that fits."""
         text = str(text or "").strip()
         if not text:
             return
         left, top, right, bottom = [int(value) for value in box]
+        label, _space, price = text.rpartition(" ")
+        label = label.rstrip(" /")
+        if re.fullmatch(r"\d+(?:\.\d+)?", price):
+            for size in range(max_size, 4, -1):
+                price_font = self._stat_font("SOCCER", size + 1)
+                label_font = self._font(max(5, size - 1), False)
+                label_w = draw.textlength(label, font=label_font) + 3 if label else 0
+                width = label_w + draw.textlength(price, font=price_font)
+                if width > right - left and size > 5:
+                    continue
+                # The price's digits centred on the box; the label on their baseline.
+                baseline = int((top + bottom) / 2 - price_font.getbbox("8", anchor="ls")[1] / 2)
+                x = left + (right - left - width) / 2
+                if label:
+                    draw.text((x, baseline), label, font=label_font, fill=COLORS["text"], anchor="ls")
+                draw.text((x + label_w, baseline), price, font=price_font, fill=COLORS["text"], anchor="ls")
+                return
         fitted, font = self._fit_text(draw, text, max(1, right - left), max_size, bold=True, min_size=5)
         self._draw_centered_in_box(draw, (left, top, right, bottom), fitted, font, COLORS["text"])
 

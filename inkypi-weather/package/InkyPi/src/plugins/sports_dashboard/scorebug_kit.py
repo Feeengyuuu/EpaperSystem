@@ -70,6 +70,26 @@ STAT_ICON_SETS = {"NBA": BASKETBALL_STAT_ICONS, "WNBA": BASKETBALL_STAT_ICONS,
 KIT_LEADER_ICON_SIZE, KIT_LEADER_ICON_BOX_LARGE = 16, (30, 22)
 # A large leader row's value says what it counts (basketball's "19 分", "11 篮板").
 STAT_UNITS = {sport: {"PTS": "分", "REB": "篮板", "AST": "助攻"} for sport in ("NBA", "WNBA")}
+# A leader's stat line ('1290 YDS, 8 TD, 8 INT', '16/18, 172 YDS, 1 TD', '28') parts into figures and
+# their labels: the figures in the sport's Bold Italic, the labels small and light after them, the
+# yards (the line's headline) a size up. A line that does not part this way is set as it is.
+KIT_STAT_PART_RE = re.compile(r"^([+-]?\d[\d.,/:%]*)(?:\s+([A-Za-z][A-Za-z/%]*))?$")
+KIT_STAT_HEADLINE_UNITS = frozenset({"YDS"})
+# (figure, headline figure, label) sizes, largest first; parts KIT_STAT_GAP apart, a figure
+# KIT_STAT_LABEL_GAP before its label.
+KIT_STAT_SIZES = ((11, 13, 8), (10, 12, 8), (9, 10, 7))
+KIT_STAT_GAP, KIT_STAT_LABEL_GAP = 6, 3
+
+
+def stat_parts(value):
+    """[(figure, label)] of a stat line, or [] when any part is not a figure with a label."""
+    parts = []
+    for part in re.split(r",\s+", str(value or "").strip()):
+        match = KIT_STAT_PART_RE.match(part.strip())
+        if not match:
+            return []
+        parts.append((match.group(1), (match.group(2) or "").upper()))
+    return parts
 
 
 def stat_icon_path(sport, label):
@@ -606,16 +626,52 @@ class ScorebugKitMixin:
                 self._draw_text_in_box(draw, (x2 - unit_w, middle - 3, x2, middle + 8), unit, unit_font, COLORS["text"],
                                        align="right")
                 value_right = x2 - unit_w - 2
-            value, value_font = self._fit_text_ellipsis(draw, str(leader.get("value") or ""), (x2 - x1) // 2,
-                                                        15 if large else 9, bold=large, min_size=8)
-            value_w = self._text_width(draw, value, value_font)
-            self._draw_text_in_box(draw, (value_right - value_w, y, value_right, y + row_h), value, value_font,
-                                   COLORS["text"], align="right")
+            text = str(leader.get("value") or "")
+            parts = stat_parts(text)
+            value_w = 0
+            if parts:
+                sizes = ((16, 16, 9),) if large else KIT_STAT_SIZES
+                value_w = self._draw_kit_stat_line(draw, value_right, middle, parts, spec.sport, sizes, (x2 - x1) // 2)
+            if not value_w:
+                value, value_font = self._fit_text_ellipsis(draw, text, (x2 - x1) // 2, 15 if large else 9, bold=large,
+                                                            min_size=8)
+                value_w = self._text_width(draw, value, value_font)
+                self._draw_text_in_box(draw, (value_right - value_w, y, value_right, y + row_h), value, value_font,
+                                       COLORS["text"], align="right")
             name, name_font = self._fit_text_ellipsis(draw, leader.get("name") or "", value_right - value_w - 8 - name_x,
                                                       name_size, bold=True, min_size=8)
             self._draw_text_in_box(draw, (name_x, y, value_right - value_w - 8, y + row_h), name, name_font, COLORS["text"])
             y += pitch
         return y
+
+    def _draw_kit_stat_line(self, draw, right, middle, parts, sport, sizes, max_width):
+        """``parts`` (stat_parts) ending at ``right``, the figures' digits centred on ``middle``, at
+        the first of ``sizes`` that fits ``max_width``; returns the width drawn, 0 when none fits."""
+        for figure_size, headline_size, label_size in sizes:
+            label_font = self._font(label_size, False)
+            runs = []
+            for index, (figure, label) in enumerate(parts):
+                size = headline_size if label in KIT_STAT_HEADLINE_UNITS else figure_size
+                if index:
+                    runs.append((None, KIT_STAT_GAP))
+                runs.append((self._stat_font(sport, size), figure))
+                if label:
+                    runs += [(None, KIT_STAT_LABEL_GAP), (label_font, label)]
+            width = sum(run if font is None else draw.textlength(run, font=font) for font, run in runs)
+            if width > max_width:
+                continue
+            # One baseline under every run: the figures' digits centred on the row.
+            top = min(font.getbbox("8", anchor="ls")[1] for font, _run in runs if font is not None and font is not label_font)
+            baseline = int(middle - top / 2)
+            x = right - width
+            for font, run in runs:
+                if font is None:
+                    x += run
+                    continue
+                draw.text((x, baseline), run, font=font, fill=COLORS["text"], anchor="ls")
+                x += draw.textlength(run, font=font)
+            return round(width)
+        return 0
 
     def _draw_kit_labeled_line(self, draw, box, label, text, bold=True):
         """A "LABEL  value" line in pure black, value truncated with an ellipsis."""

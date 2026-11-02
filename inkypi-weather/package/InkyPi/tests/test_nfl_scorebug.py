@@ -7,7 +7,8 @@ from PIL import Image, ImageDraw
 import pytest
 
 from plugins.sports_dashboard.common import _ACTIVE_COLORS, COLORS, DAY_COLORS, DEEP_NIGHT_COLORS
-from plugins.sports_dashboard.scorebug_kit import KIT_RESULT_INKS, KIT_SCOREBOARD_ROW_HEIGHT
+from plugins.sports_dashboard.score_fonts import stat_font
+from plugins.sports_dashboard.scorebug_kit import KIT_RESULT_INKS, KIT_SCOREBOARD_ROW_HEIGHT, stat_parts
 from plugins.sports_dashboard.sports_dashboard import SportsDashboard
 from tests.test_sports_dashboard import _plugin
 
@@ -436,19 +437,81 @@ def test_ball_spot_names_whose_half_it_is_in():
     assert SportsDashboard._nfl_ball_yard({**event, "yard_line": "KC 30"}) == 70
 
 
-def test_final_panel_marks_the_winner_and_lists_leaders(parsed, render):
+def test_final_panel_marks_the_winner_and_lists_leaders(parsed, render, monkeypatch):
+    lines = []
+    original = SportsDashboard._draw_kit_stat_line
+
+    def capture(self, draw, right, middle, parts, sport, sizes, max_width):
+        width = original(self, draw, right, middle, parts, sport, sizes, max_width)
+        lines.append((parts, width))
+        return width
+
+    monkeypatch.setattr(SportsDashboard, "_draw_kit_stat_line", capture)
     card = _card(parsed, "final-ot", events=[_by_id(parsed, "final-ot")])
     image, draw, texts = render(card)
 
     assert "FINAL/OT" in texts
     assert "OT" in texts  # fifth linescore column
-    # The leader categories are icons (the pass, the run), not PASS / RUSH tags.
-    assert {"C. Williams", "16/18, 172 YDS, 1 TD"} <= set(texts) and not {"PASS", "RUSH"} & set(texts)
+    # The leader categories are icons (the pass, the run), not PASS / RUSH tags; the stat line
+    # is set as its figures and their labels.
+    assert "C. Williams" in texts and not {"PASS", "RUSH"} & set(texts)
+    assert lines[0][0] == [("16/18", ""), ("172", "YDS"), ("1", "TD")] and lines[0][1] > 0
     _assert_texts_fit(draw, render.boxes)
     # The winner's score and its triangle at the right edge of the home (DEN) row read emerald.
     card_right = 12 + 318 - 10
     home_row_middle = 57 + 31 + 10 + 33 + 15
     assert image.getpixel((card_right - 2, home_row_middle)) == KIT_RESULT_INKS["win"][0]
+
+
+@pytest.mark.parametrize("value, parts", [
+    ("1290 YDS, 8 TD, 8 INT", [("1290", "YDS"), ("8", "TD"), ("8", "INT")]),
+    ("16/18, 172 YDS, 1 TD", [("16/18", ""), ("172", "YDS"), ("1", "TD")]),
+    ("8 REC, 1,104 YDS", [("8", "REC"), ("1,104", "YDS")]),
+    ("28", [("28", "")]),
+    ("Questionable", []),
+    ("12 YDS, Out", []),
+])
+def test_a_stat_line_parts_into_figures_and_their_labels(value, parts):
+    assert stat_parts(value) == parts
+
+
+def test_stat_figures_are_the_sports_bold_italic_and_grow_with_the_size():
+    assert stat_font("NFL", 11).path.endswith("BarlowSemiCondensed-BoldItalic.ttf")
+    assert stat_font("NBA", 11).path.endswith("BarlowCondensed-BoldItalic.ttf")
+    sizes = [stat_font("NFL", size).size for size in range(5, 18)]
+    assert sizes == sorted(sizes) and len(set(sizes)) == len(sizes)
+
+
+@pytest.mark.parametrize("colors", [DAY_COLORS, DEEP_NIGHT_COLORS])
+def test_a_leaders_figures_stand_out_from_their_labels_within_the_row(colors):
+    plugin = _plugin()
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+    token = _ACTIVE_COLORS.set(colors)
+    try:
+        image = Image.new("RGB", (340, 60), COLORS["paper"])
+        draw = ImageDraw.Draw(image)
+        calls = []
+        original = draw.text
+
+        def record(position, text, **kwargs):
+            calls.append((text, kwargs["font"], draw.textbbox(position, text, font=kwargs["font"],
+                                                              anchor=kwargs.get("anchor"))))
+            original(position, text, **kwargs)
+
+        draw.text = record
+        leaders = [{"label": "PASS", "name": "S. Darnold", "value": "1290 YDS, 8 TD, 8 INT", "side": "b"}]
+        plugin._draw_kit_leader_rows(image, draw, 20, 10, 320, 50, {}, leaders, plugin._football_spec("NFL"))
+    finally:
+        _ACTIVE_COLORS.reset(token)
+    fonts = {text: font for text, font, _box in calls}
+    assert all(fonts[figure].path.endswith("BoldItalic.ttf") for figure in ("1290", "8"))
+    assert not any(fonts[label].path.endswith("Italic.ttf") for label in ("YDS", "TD", "INT"))
+    # The yards lead the line a size up; the labels are smaller than any figure.
+    assert fonts["1290"].size > fonts["8"].size > fonts["YDS"].size
+    boxes = {text: box for text, _font, box in calls}
+    assert boxes["INT"][2] <= 320 and all(10 <= box[1] and box[3] <= 24 for box in boxes.values())
+    # Figures and labels share one baseline, in reading order.
+    assert boxes["1290"][2] <= boxes["YDS"][0] < boxes["8"][0]
 
 
 def test_pregame_panel_shows_kickoff_tiles_spread_and_season_leaders(parsed, render):
