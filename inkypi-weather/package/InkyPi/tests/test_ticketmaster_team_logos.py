@@ -47,6 +47,11 @@ def test_a_college_game_says_its_sport_once_and_knows_a_school_by_its_short_name
     volleyball = read_title("Stanford Cardinal Womens Volleyball vs. Cal", "Sports", "Volleyball", "")
     assert keys(volleyball) == ["ncaa/stanford-cardinal", "ncaa/california-golden-bears"]
     assert volleyball.sport == "女排" and volleyball.sides[1].text == "Cal"
+    # A Division II opponent has no logo, but its sport still comes off its name.
+    division_two = read_title("California Golden Bears Mens Basketball vs. Adams State Grizzlies Mens Basketball",
+                              "Sports", "Basketball", "College")
+    assert keys(division_two) == ["ncaa/california-golden-bears", None] and division_two.sport == "男篮"
+    assert division_two.sides[1].text == "Adams State Grizzlies" and not division_two.trailing
     by_place = read_title("Stanford Cardinal Mens Basketball vs. Oregon State", "Sports", "Basketball", "College")
     assert by_place.sides[1].team.key == "ncaa/oregon-state-beavers"
     assert by_place.sides[0].team.place == "Stanford"

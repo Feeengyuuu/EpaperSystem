@@ -31,9 +31,13 @@ LEAGUE_HINTS = {"nba": "nba", "wnba": "wnba", "nhl": "nhl", "nfl": "nfl", "mlb":
 LEAGUE_ORDER = ("nba", "wnba", "nhl", "nfl", "mlb", "mls", "nwsl", "usl", "ahl", "pioneer", "ncaa", "show")
 GAME = re.compile(r"\s+(?:vs\.?|versus|v\.)\s+|\s+(?:at|@)\s+", re.IGNORECASE)
 TOKEN = re.compile(r"[^\W_]+(?:'[^\W_]+)?")
-# A team's sport, written after it: 'Mens Basketball', "Women's Volleyball", 'Baseball'.
-SPORT = re.compile(r"^(?:(men|women)(?:'?s)?\s+)?(beach volleyball|basketball|volleyball|soccer|baseball|softball|"
-                   r"football|water polo|wrestling|gymnastics|lacrosse|field hockey|hockey|tennis)\b\s*", re.IGNORECASE)
+# A team's sport, written after it: 'Mens Basketball', "Women's Volleyball", 'Baseball'. A side whose
+# team has no logo (a Division II school) still has it cut off its end ('Adams State Grizzlies Mens
+# Basketball').
+SPORT_NAMES = (r"(?:(men|women)(?:'?s)?\s+)?(beach volleyball|basketball|volleyball|soccer|baseball|softball|"
+               r"football|water polo|wrestling|gymnastics|lacrosse|field hockey|hockey|tennis)")
+SPORT = re.compile(rf"^{SPORT_NAMES}\b\s*", re.IGNORECASE)
+TRAILING_SPORT = re.compile(rf"\s+(?={SPORT_NAMES}$)", re.IGNORECASE)
 SPORT_ZH = {"basketball": ("篮球", "篮"), "volleyball": ("排球", "排"), "soccer": ("足球", "足"),
             "beach volleyball": ("沙滩排球", ""), "baseball": ("棒球", ""), "softball": ("垒球", ""),
             "football": ("橄榄球", ""), "water polo": ("水球", ""), "wrestling": ("摔跤", ""),
@@ -151,6 +155,13 @@ def _match(text, leagues, places=False, starts=1):
     return None
 
 
+def _unknown_side(text):
+    """(name, sport) of a side naming no known team: 'Adams State Grizzlies', 'Mens Basketball'."""
+    text = text.strip()
+    match = TRAILING_SPORT.search(text)
+    return (text[:match.start()].strip(), text[match.end():]) if match else (text, "")
+
+
 def _sport(rest):
     """(Chinese sport, what follows it) from a side's rest ('Mens Basketball' -> 男篮)."""
     match = SPORT.match(rest)
@@ -179,8 +190,8 @@ def read_title(title, segment="", genre="", subgenre=""):
             first = _match(home, ["ncaa"], places=True, starts=4)
         if first is None and second is None:
             continue
-        first = first or (None, "", home.strip(), "")
-        second = second or (None, "", away.strip(), "")
+        first = first or (None, "", *_unknown_side(home))
+        second = second or (None, "", *_unknown_side(away))
         sport_a, rest_a = _sport(first[3])
         sport_b, rest_b = _sport(second[3])
         sides = (Side(first[0], first[2], rest_a), Side(second[0], second[2]))
