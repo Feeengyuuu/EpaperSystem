@@ -71,14 +71,23 @@ KIT_LEADER_ICON_SIZE, KIT_LEADER_ICON_BOX_LARGE = 16, (30, 22)
 # A large leader row's value says what it counts (basketball's "19 分", "11 篮板").
 STAT_UNITS = {sport: {"PTS": "分", "REB": "篮板", "AST": "助攻"} for sport in ("NBA", "WNBA")}
 # A leader's stat line ('1290 YDS, 8 TD, 8 INT', '16/18, 172 YDS, 1 TD', '28') parts into figures and
-# their labels: the figures in the sport's Bold Italic, the labels small and light after them, the
-# yards (the line's headline) a size up. A line that does not part this way is set as it is.
+# their labels: the figures in the sport's Bold Italic, the yards (the line's headline) a size up,
+# each label after its figure as its icon where the sport has one (UNIT_ICON_SETS), else small and
+# light. A line that does not part this way is set as it is.
 KIT_STAT_PART_RE = re.compile(r"^([+-]?\d[\d.,/:%]*)(?:\s+([A-Za-z][A-Za-z/%]*))?$")
 KIT_STAT_HEADLINE_UNITS = frozenset({"YDS"})
 # (figure, headline figure, label) sizes, largest first; parts KIT_STAT_GAP apart, a figure
-# KIT_STAT_LABEL_GAP before its label.
+# KIT_STAT_LABEL_GAP before its label. A label's icon is KIT_STAT_ICON_RISE taller than the label's
+# type and at most KIT_STAT_ICON_WIDE times as wide as tall (the yardstick is long).
 KIT_STAT_SIZES = ((11, 13, 8), (10, 12, 8), (9, 10, 7))
 KIT_STAT_GAP, KIT_STAT_LABEL_GAP = 6, 3
+KIT_STAT_ICON_RISE, KIT_STAT_ICON_WIDE = 4, 1.8
+# Football's stat labels by icon (assets/decor/football_unit_icons): the yards' yardstick, the
+# touchdown's goalpost, the interception's crossed-out ball, the carry's tuck, the catch, and a
+# passer's completions ('24/35', which ESPN gives without a label) as a ball with a check.
+FOOTBALL_UNIT_ICONS = ("football_unit_icons", {"YDS": "yards", "TD": "touchdowns", "INT": "interceptions",
+                                               "CAR": "carries", "REC": "receptions", "CMP": "completions"})
+UNIT_ICON_SETS = {"NFL": FOOTBALL_UNIT_ICONS, "NCAA": FOOTBALL_UNIT_ICONS}
 
 
 def stat_parts(value):
@@ -90,6 +99,12 @@ def stat_parts(value):
             return []
         parts.append((match.group(1), (match.group(2) or "").upper()))
     return parts
+
+
+def unit_icon_path(sport, label):
+    """The icon standing for ``sport``'s stat label ``label``, or None (it is then type)."""
+    folder, icons = UNIT_ICON_SETS.get(sport, ("", {}))
+    return os.path.join(LOCAL_DECOR_DIR, folder, f"{icons[label]}.png") if label in icons else None
 
 
 def stat_icon_path(sport, label):
@@ -628,10 +643,14 @@ class ScorebugKitMixin:
                 value_right = x2 - unit_w - 2
             text = str(leader.get("value") or "")
             parts = stat_parts(text)
+            if label == "PASS" and parts and "/" in parts[0][0] and not parts[0][1]:
+                # A passer's line opens on completions of attempts ('24/35').
+                parts[0] = (parts[0][0], "CMP")
             value_w = 0
             if parts:
                 sizes = ((16, 16, 9),) if large else KIT_STAT_SIZES
-                value_w = self._draw_kit_stat_line(draw, value_right, middle, parts, spec.sport, sizes, (x2 - x1) // 2)
+                value_w = self._draw_kit_stat_line(image, draw, value_right, middle, parts, spec.sport, sizes,
+                                                   (x2 - x1) // 2)
             if not value_w:
                 value, value_font = self._fit_text_ellipsis(draw, text, (x2 - x1) // 2, 15 if large else 9, bold=large,
                                                             min_size=8)
@@ -644,32 +663,42 @@ class ScorebugKitMixin:
             y += pitch
         return y
 
-    def _draw_kit_stat_line(self, draw, right, middle, parts, sport, sizes, max_width):
+    def _draw_kit_stat_line(self, image, draw, right, middle, parts, sport, sizes, max_width):
         """``parts`` (stat_parts) ending at ``right``, the figures' digits centred on ``middle``, at
-        the first of ``sizes`` that fits ``max_width``; returns the width drawn, 0 when none fits."""
+        the first of ``sizes`` that fits ``max_width``: each label as its icon (unit_icon_path),
+        centred on the row, else as type on the figures' baseline. Returns the width drawn, 0 when
+        none fits."""
         for figure_size, headline_size, label_size in sizes:
             label_font = self._font(label_size, False)
-            runs = []
+            icon_h = label_size + KIT_STAT_ICON_RISE
+            figures, runs = [], []
             for index, (figure, label) in enumerate(parts):
                 size = headline_size if label in KIT_STAT_HEADLINE_UNITS else figure_size
                 if index:
-                    runs.append((None, KIT_STAT_GAP))
-                runs.append((self._stat_font(sport, size), figure))
-                if label:
-                    runs += [(None, KIT_STAT_LABEL_GAP), (label_font, label)]
-            width = sum(run if font is None else draw.textlength(run, font=font) for font, run in runs)
+                    runs.append(("gap", KIT_STAT_GAP))
+                figures.append(self._stat_font(sport, size))
+                runs.append(("text", figure, figures[-1]))
+                if not label:
+                    continue
+                path = unit_icon_path(sport, label)
+                icon = self._load_local_logo(path, (round(icon_h * KIT_STAT_ICON_WIDE), icon_h), alpha_threshold=8) \
+                    if path else None
+                runs.append(("gap", KIT_STAT_LABEL_GAP))
+                runs.append(("icon", icon) if icon is not None else ("text", label, label_font))
+            widths = [run[1] if run[0] == "gap" else run[1].width if run[0] == "icon"
+                      else draw.textlength(run[1], font=run[2]) for run in runs]
+            width = sum(widths)
             if width > max_width:
                 continue
             # One baseline under every run: the figures' digits centred on the row.
-            top = min(font.getbbox("8", anchor="ls")[1] for font, _run in runs if font is not None and font is not label_font)
-            baseline = int(middle - top / 2)
+            baseline = int(middle - min(font.getbbox("8", anchor="ls")[1] for font in figures) / 2)
             x = right - width
-            for font, run in runs:
-                if font is None:
-                    x += run
-                    continue
-                draw.text((x, baseline), run, font=font, fill=COLORS["text"], anchor="ls")
-                x += draw.textlength(run, font=font)
+            for run, run_w in zip(runs, widths):
+                if run[0] == "text":
+                    draw.text((x, baseline), run[1], font=run[2], fill=COLORS["text"], anchor="ls")
+                elif run[0] == "icon":
+                    image.paste(run[1], (round(x), round(middle - run[1].height / 2)), run[1])
+                x += run_w
             return round(width)
         return 0
 

@@ -441,8 +441,8 @@ def test_final_panel_marks_the_winner_and_lists_leaders(parsed, render, monkeypa
     lines = []
     original = SportsDashboard._draw_kit_stat_line
 
-    def capture(self, draw, right, middle, parts, sport, sizes, max_width):
-        width = original(self, draw, right, middle, parts, sport, sizes, max_width)
+    def capture(self, image, draw, right, middle, parts, sport, sizes, max_width):
+        width = original(self, image, draw, right, middle, parts, sport, sizes, max_width)
         lines.append((parts, width))
         return width
 
@@ -455,7 +455,7 @@ def test_final_panel_marks_the_winner_and_lists_leaders(parsed, render, monkeypa
     # The leader categories are icons (the pass, the run), not PASS / RUSH tags; the stat line
     # is set as its figures and their labels.
     assert "C. Williams" in texts and not {"PASS", "RUSH"} & set(texts)
-    assert lines[0][0] == [("16/18", ""), ("172", "YDS"), ("1", "TD")] and lines[0][1] > 0
+    assert lines[0][0] == [("16/18", "CMP"), ("172", "YDS"), ("1", "TD")] and lines[0][1] > 0
     _assert_texts_fit(draw, render.boxes)
     # The winner's score and its triangle at the right edge of the home (DEN) row read emerald.
     card_right = 12 + 318 - 10
@@ -482,36 +482,55 @@ def test_stat_figures_are_the_sports_bold_italic_and_grow_with_the_size():
     assert sizes == sorted(sizes) and len(set(sizes)) == len(sizes)
 
 
+def _record_text(draw):
+    calls = []
+    original = draw.text
+
+    def record(position, text, **kwargs):
+        calls.append((text, kwargs["font"], draw.textbbox(position, text, font=kwargs["font"], anchor=kwargs.get("anchor"))))
+        original(position, text, **kwargs)
+
+    draw.text = record
+    return calls
+
+
 @pytest.mark.parametrize("colors", [DAY_COLORS, DEEP_NIGHT_COLORS])
-def test_a_leaders_figures_stand_out_from_their_labels_within_the_row(colors):
+def test_a_leaders_figures_stand_out_and_football_labels_read_as_icons(colors):
     plugin = _plugin()
     plugin._draw_team_logo = lambda *_args, **_kwargs: None
     token = _ACTIVE_COLORS.set(colors)
     try:
         image = Image.new("RGB", (340, 60), COLORS["paper"])
         draw = ImageDraw.Draw(image)
-        calls = []
-        original = draw.text
-
-        def record(position, text, **kwargs):
-            calls.append((text, kwargs["font"], draw.textbbox(position, text, font=kwargs["font"],
-                                                              anchor=kwargs.get("anchor"))))
-            original(position, text, **kwargs)
-
-        draw.text = record
+        calls = _record_text(draw)
         leaders = [{"label": "PASS", "name": "S. Darnold", "value": "1290 YDS, 8 TD, 8 INT", "side": "b"}]
         plugin._draw_kit_leader_rows(image, draw, 20, 10, 320, 50, {}, leaders, plugin._football_spec("NFL"))
     finally:
         _ACTIVE_COLORS.reset(token)
+    texts = [text for text, _font, _box in calls]
+    # The labels are icons, not type: only the name and the three figures are written.
+    assert sorted(texts) == sorted(["S. Darnold", "1290", "8", "8"])
     fonts = {text: font for text, font, _box in calls}
     assert all(fonts[figure].path.endswith("BoldItalic.ttf") for figure in ("1290", "8"))
-    assert not any(fonts[label].path.endswith("Italic.ttf") for label in ("YDS", "TD", "INT"))
-    # The yards lead the line a size up; the labels are smaller than any figure.
-    assert fonts["1290"].size > fonts["8"].size > fonts["YDS"].size
+    # The yards lead the line a size up.
+    assert fonts["1290"].size > fonts["8"].size
+    figures = [box for text, _font, box in calls if text in {"1290", "8"}]
+    assert figures[-1][2] <= 320 and all(10 <= box[1] and box[3] <= 24 for box in figures)
+    # The yardstick stands between the yards and the touchdowns, in its own yellow.
+    gap = image.crop((figures[0][2], 10, figures[1][0], 24)).get_flattened_data()
+    assert any(red > 200 and green > 160 and blue < 90 for red, green, blue in gap)
+
+
+def test_a_label_without_an_icon_is_set_light_on_the_figures_baseline():
+    plugin = _plugin()
+    image = Image.new("RGB", (340, 40), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    calls = _record_text(draw)
+    width = plugin._draw_kit_stat_line(image, draw, 300, 20, [("12", "XYZ")], "NFL", ((11, 13, 8),), 200)
+    fonts = {text: font for text, font, _box in calls}
     boxes = {text: box for text, _font, box in calls}
-    assert boxes["INT"][2] <= 320 and all(10 <= box[1] and box[3] <= 24 for box in boxes.values())
-    # Figures and labels share one baseline, in reading order.
-    assert boxes["1290"][2] <= boxes["YDS"][0] < boxes["8"][0]
+    assert width > 0 and not fonts["XYZ"].path.endswith("Italic.ttf") and fonts["XYZ"].size < fonts["12"].size
+    assert abs(boxes["XYZ"][3] - boxes["12"][3]) <= 1 and boxes["12"][2] <= boxes["XYZ"][0] and boxes["XYZ"][2] <= 300
 
 
 def test_pregame_panel_shows_kickoff_tiles_spread_and_season_leaders(parsed, render):

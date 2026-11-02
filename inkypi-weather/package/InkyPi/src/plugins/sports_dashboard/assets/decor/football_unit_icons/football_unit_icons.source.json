@@ -1,0 +1,38 @@
+{
+  "yards.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job d085898b-4ae0-4ecb-b5fc-30d73fb256f6",
+    "source_sha256": "a2ff10140a145abef40ab165dd39d560deaa03e3d3ca1b58e316a28104e590f1",
+    "processing": "cut at clear columns, cropped to its ink, 64 px on its longer side",
+    "sha256": "5bb4ca746d431aa559f131d6cdc8381c54133ce80c75aafeb248ecc648cbe7e9"
+  },
+  "touchdowns.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job d085898b-4ae0-4ecb-b5fc-30d73fb256f6",
+    "source_sha256": "a2ff10140a145abef40ab165dd39d560deaa03e3d3ca1b58e316a28104e590f1",
+    "processing": "cut at clear columns, cropped to its ink, 64 px on its longer side",
+    "sha256": "812759618bbac167c772697f103094d6eb22bcabe9bae109477ed1efae52e16c"
+  },
+  "interceptions.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job d085898b-4ae0-4ecb-b5fc-30d73fb256f6",
+    "source_sha256": "a2ff10140a145abef40ab165dd39d560deaa03e3d3ca1b58e316a28104e590f1",
+    "processing": "cut at clear columns, cropped to its ink, 64 px on its longer side",
+    "sha256": "78ae498f1cb3686d51f51c351f1538fc2b44e66936677c736f99109c34400618"
+  },
+  "carries.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job d085898b-4ae0-4ecb-b5fc-30d73fb256f6",
+    "source_sha256": "a2ff10140a145abef40ab165dd39d560deaa03e3d3ca1b58e316a28104e590f1",
+    "processing": "cut at clear columns, cropped to its ink, 64 px on its longer side",
+    "sha256": "f0c3438a0b200cbc493fd2e3083f879a3acbeba60dc75b68e08cec4b1bb3fcfa"
+  },
+  "receptions.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job d085898b-4ae0-4ecb-b5fc-30d73fb256f6",
+    "source_sha256": "a2ff10140a145abef40ab165dd39d560deaa03e3d3ca1b58e316a28104e590f1",
+    "processing": "cut at clear columns, cropped to its ink, 64 px on its longer side",
+    "sha256": "e0c3734c1592eda9c247778814403b5e827e2716cdfc6119f3045733449802d6"
+  },
+  "completions.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job d085898b-4ae0-4ecb-b5fc-30d73fb256f6",
+    "source_sha256": "a2ff10140a145abef40ab165dd39d560deaa03e3d3ca1b58e316a28104e590f1",
+    "processing": "cut at clear columns, cropped to its ink, 64 px on its longer side",
+    "sha256": "e4c46d4001cf57640a9de1e13841cc1c6c7f6bac38948ea8a45bdbc8ab372883"
+  }
+}

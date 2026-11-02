@@ -1135,9 +1135,9 @@ def test_large_basketball_leader_rows_put_the_value_with_its_unit(boxes, monkeyp
     seen = {"lines": []}
     original = SportsDashboard._draw_kit_stat_line
 
-    def stat_line(self, draw, right, middle, parts, sport, sizes, max_width):
+    def stat_line(self, image, draw, right, middle, parts, sport, sizes, max_width):
         seen["lines"].append((parts, sizes))
-        return original(self, draw, right, middle, parts, sport, sizes, max_width)
+        return original(self, image, draw, right, middle, parts, sport, sizes, max_width)
 
     monkeypatch.setattr(SportsDashboard, "_draw_kit_stat_line", stat_line)
 
