@@ -162,19 +162,23 @@ def rebaseline_configuration(ctx: TaskContext, device: Device, reason: str, migr
 
 
 def source_proof(device: Device, manifest: dict) -> dict:
-    """Hash the deployed changed files on the device; removed files must be gone."""
+    """Hash the deployed changed files on the device; removed files must be gone. The names go to
+    the device on stdin, NUL-separated: a release changing hundreds of files (735 team logos)
+    outgrew the Windows command line ssh is started with."""
     names = [name for name in manifest["changed_files"] if name in manifest["hashes"]]
     removed = [name for name in manifest["changed_files"] if name not in manifest["hashes"]]
-    command = ("cd /opt/inkypi/current && sha256sum " + " ".join(shlex.quote(name) for name in names)
-               + "; for name in " + " ".join(shlex.quote(name) for name in removed)
-               + '; do [ -e "$name" ] && echo "STILL_PRESENT $name"; done; true')
     actual, still_present = {}, []
-    for line in device.remote(command).decode().splitlines():
-        value, name = line.split(maxsplit=1)
-        if value == "STILL_PRESENT":
-            still_present.append(name)
-        else:
+    if names:
+        hashes = device.remote("cd /opt/inkypi/current && xargs -0 sha256sum --; true",
+                               input="\0".join(names).encode())
+        for line in hashes.decode().splitlines():
+            value, name = line.split(maxsplit=1)
             actual[name.lstrip("*")] = value
+    if removed:
+        present = device.remote("cd /opt/inkypi/current && xargs -0 sh -c "
+                                + shlex.quote('for name; do [ -e "$name" ] && printf "%s\\n" "$name"; done; true')
+                                + " sh; true", input="\0".join(removed).encode())
+        still_present = present.decode().splitlines()
     mismatched = [name for name in names if actual.get(name) != manifest["hashes"][name]]
     return {"checked_files": len(names), "mismatched": mismatched,
             "removed_files": len(removed), "removed_still_present": still_present}

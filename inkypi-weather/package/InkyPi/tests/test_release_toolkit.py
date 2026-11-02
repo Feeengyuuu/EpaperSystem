@@ -283,6 +283,34 @@ def test_device_commands_are_pinned_and_never_echo_stderr(tmp_path):
         release_device.Device(tmp_path, "ColoredEpaperFrame.local")
 
 
+def test_source_proof_sends_a_large_releases_names_on_stdin(tmp_path):
+    files = {f"src/plugins/x/assets/teams/team-{index:04d}.png": str(index).encode() for index in range(3000)}
+    files["src/plugins/x/gone.py"] = None
+    manifest = {"changed_files": sorted(files),
+                "hashes": {name: sha(data) for name, data in files.items() if data is not None}}
+    on_device = {name: data for name, data in files.items() if data is not None}
+    on_device["src/plugins/x/assets/teams/team-0007.png"] = b"stale"
+    on_device["src/plugins/x/gone.py"] = b"still here"
+    seen = []
+
+    def runner(argv, *, input=None, **_kwargs):
+        command = argv[-1]
+        seen.append(command)
+        names = input.decode().split("\0")
+        if "sha256sum" in command:
+            output = "".join(f"{sha(on_device[name])}  {name}\n" for name in names if name in on_device)
+        else:
+            output = "".join(f"{name}\n" for name in names if name in on_device)
+        return subprocess.CompletedProcess(argv, 0, output.encode(), b"")
+
+    proof = release_checks.source_proof(release_device.Device(tmp_path, ADDRESS, runner=runner), manifest)
+
+    assert proof == {"checked_files": 3000, "mismatched": ["src/plugins/x/assets/teams/team-0007.png"],
+                     "removed_files": 1, "removed_still_present": ["src/plugins/x/gone.py"]}
+    # Windows starts ssh with one command line (32,767 characters at most): the names stay off it.
+    assert len(seen) == 2 and all(len(command) < 200 for command in seen)
+
+
 def test_safe_drops_secret_keys_and_provider_urls():
     value = {"api_key": "k", "Session_Cookie": "c", "nested": [{"token": "t", "note": "see https://x.test/a?b=1 now"}],
              "status": "ok"}
