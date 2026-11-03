@@ -12,6 +12,7 @@ odds), GDP, jobs, gas, the S&P 500 and bitcoin, each with the little chart of th
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -68,6 +69,10 @@ CATEGORY_DOODLES = {"政治": "politics", "地缘": "geopolitics", "经济": "ec
 CHIP_ICON = 11
 # The US states whose flags are bundled (assets/state_flags, by postal code) mark an outcome naming them.
 US_STATES = frozenset(path.stem.upper() for path in (ASSETS / "state_flags").glob("*.png"))
+# A central bank's decision as Polymarket names its outcomes (its own pictures for them are only the
+# event's): holding the rate, or moving it some basis points ("25 bps decrease", "50+ bps increase").
+RATE_HOLDS = frozenset(("no change", "hold", "pause", "unchanged", "no cut"))
+RATE_MOVE = re.compile(r"(\d+)(\+)?\s*bps\s+(decrease|increase|cut|hike)", re.I)
 DOODLE_STRENGTH = 0.24
 
 
@@ -413,13 +418,20 @@ MONTHS = ("January", "February", "March", "April", "May", "June", "July", "Augus
 
 def _outcome_kind(name):
     """How an outcome with no picture of its own is marked: "yes" / "no", "none" for a None outcome,
-    ("states", codes) for one naming US states ("IA, KS"), ("date", day) for a "October 28" deadline,
-    "level" for a price level ("↑ 82,500"), else None."""
+    ("rate", move, steps) for a central bank's decision ("No change" holds, "25 bps decrease" is one
+    step down, "50+ bps increase" two up), ("states", codes) for one naming US states ("IA, KS"),
+    ("date", day) for a "October 28" deadline, "level" for a price level ("↑ 82,500"), else None."""
     text = str(name or "").strip()
     if text.lower() in ("yes", "no"):
         return text.lower()
     if text.lower() in ("none", "neither", "no one", "nobody"):
         return "none"
+    if text.lower() in RATE_HOLDS:
+        return ("rate", "hold", 0)
+    rate = RATE_MOVE.fullmatch(text)
+    if rate:
+        steps = 2 if rate.group(2) or int(rate.group(1)) > 25 else 1
+        return ("rate", "cut" if rate.group(3).lower() in ("decrease", "cut") else "hike", steps)
     states = [part.strip().upper() for part in text.replace("&", ",").replace("/", ",").split(",")]
     if states and all(part in US_STATES for part in states):
         return ("states", tuple(states))
@@ -473,6 +485,8 @@ def _outcome_mark(canvas, event, outcome, images, x, middle, side, color):
             canvas.image.paste(icon, (x + (side - icon.width) // 2, top + (side - icon.height) // 2), icon)
     elif isinstance(kind, tuple) and kind[0] == "states":
         _state_flags(canvas, kind[1], x, middle, side)
+    elif isinstance(kind, tuple) and kind[0] == "rate":
+        _rate_mark(canvas, kind[1], kind[2], x, top, side)
     elif isinstance(kind, tuple):
         band = max(4, round(side * 0.3))
         canvas.draw.rounded_rectangle((x, top, x + side, top + side), radius=3, fill=(255, 255, 255),
@@ -482,6 +496,28 @@ def _outcome_mark(canvas, event, outcome, images, x, middle, side, color):
         canvas.text((x + side / 2 + 0.5, top + band + (side - band) / 2), str(kind[1]), max(7, side - band - 3),
                     (0x12, 0x1A, 0x20), anchor="mm")
     return room
+
+
+def _rate_mark(canvas, move, steps, x, top, side):
+    """A rate decision's mark, in the Fed bar's colours on the Kalshi board: a disc, cool for a cut,
+    grey for a hold, warm for a hike, with a white chevron per step (two for 50 bps or more) pointing
+    the way the rate goes, or an equals sign for a hold."""
+    key = {"hold": "维持", "cut": "降息25" if steps < 2 else "降息>25", "hike": "加息25" if steps < 2 else "加息>25"}[move]
+    canvas.draw.ellipse((x, top, x + side, top + side), fill=FED_COLORS[key])
+    ink, width = (255, 255, 255), max(2, side // 8)
+    centre_x, centre_y = x + side / 2, top + side / 2
+    if move == "hold":
+        for offset in (-side * 0.12, side * 0.12):
+            canvas.draw.line((x + side * 0.28, centre_y + offset, x + side * 0.72, centre_y + offset), fill=ink,
+                             width=width)
+        return
+    # The chevron's tip points down for a cut, up for a hike; one sits in the middle, two a gap apart.
+    tip = 1 if move == "cut" else -1
+    half, rise, gap = side * 0.24, side * 0.12, side * 0.22
+    for index in range(steps):
+        y = centre_y + (index - (steps - 1) / 2) * gap
+        canvas.draw.line(((centre_x - half, y - rise * tip), (centre_x, y + rise * tip), (centre_x + half, y - rise * tip)),
+                         fill=ink, width=width, joint="curve")
 
 
 @lru_cache(maxsize=32)

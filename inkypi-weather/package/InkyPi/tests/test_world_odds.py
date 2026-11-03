@@ -107,6 +107,27 @@ def test_tile_outcomes_without_a_picture_get_a_drawn_mark():
         "yes", "no", ("date", 28), "level", None, None]
 
 
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_rate_decision_outcomes_get_a_direction_disc_in_the_fed_colours(mode):
+    from plugins.world_odds.render import FED_COLORS, _mark_room, _outcome_kind, _outcome_mark, _palette
+    from utils.page_canvas import PageCanvas
+
+    names = ("No change", "No Change", "25 bps decrease", "50+ bps decrease", "25 bps increase", "50+ bps increase",
+             "75 bps cut", "No")
+    assert [_outcome_kind(name) for name in names] == [
+        ("rate", "hold", 0), ("rate", "hold", 0), ("rate", "cut", 1), ("rate", "cut", 2), ("rate", "hike", 1),
+        ("rate", "hike", 2), ("rate", "cut", 2), "no"]
+    assert _mark_room(("rate", "cut", 1), None, 17) == _mark_room("yes", None, 17)
+    for name, key in (("No change", "维持"), ("25 bps decrease", "降息25"), ("50+ bps increase", "加息>25")):
+        canvas = PageCanvas(_palette({"_inkypi_theme": {"mode": mode}}), family="Microsoft YaHei", size=(40, 40))
+        room = _outcome_mark(canvas, {}, {"name": name}, {}, 10, 20, 17, (0, 0, 0))
+        disc = canvas.image.convert("RGB").crop((10, 11, 28, 29)).getcolors(4096)
+        assert room == 22
+        # The disc in its Fed colour with a white glyph on it.
+        assert any(colour == FED_COLORS[key] and count > 80 for count, colour in disc)
+        assert any(colour == (255, 255, 255) and count > 6 for count, colour in disc)
+
+
 def test_none_and_us_state_outcomes_get_their_own_marks():
     from plugins.world_odds.render import CATEGORY_DOODLES, US_STATES, _icon, _mark_room, _outcome_kind
 
