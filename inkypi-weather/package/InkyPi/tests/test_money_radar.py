@@ -89,14 +89,22 @@ def test_yield_dollar_and_gold_cards_show_where_they_sit_in_their_52_week_range(
 
     texts = [text for *_xy, text in drawn]
     assert texts.count("52周") == 3
-    assert {"3.96", "5.36", "95.5", "103.0", "$3,879", "$5,586"} <= set(texts)
-    # The yield's range stands beside its figure, inside the tile; the others along their tiles' feet.
+    # Gold's range drops the dollar sign its figure carries, so the block fits beside it.
+    assert {"3.96", "5.36", "95.5", "103.0", "3,879", "5,586"} <= set(texts)
+    # Every range stands as a block beside its card's figure: the low and high on the figure's line,
+    # right of the figure and inside the card, the track under them.
     (x, y), = [(x, y) for x, y, text in drawn if text == "5.36"]
     assert money_render.TILES[3][0] + 90 < x <= money_render.TILES[3][1] - 10 and 100 < y < 125
-    assert all(y == 204 + 64 + 51 for x, y, text in drawn if text in {"$3,879", "95.5"})
+    figures = {text: x for x, _y, text in drawn if text in {"101.8", "$3,960"}}
+    for low, high, figure, left in (("95.5", "103.0", "101.8", 400), ("3,879", "5,586", "$3,960", 597)):
+        (low_x, low_y), = [(x, y) for x, y, text in drawn if text == low]
+        (high_x, high_y), = [(x, y) for x, y, text in drawn if text == high]
+        assert figures[figure] < low_x < high_x == left + 181 and low_y == high_y == 204 + 64 + 32
+    # The change reads under the figure in its direction's colour (both fell), at 12 px.
+    assert {"-0.40点", "-$197"} <= set(texts)
     # The dot of each range wears its card's colour.
-    gold_strip = canvas.image.crop((597, 268 + 46, 788, 268 + 57)).convert("RGB")
-    assert money_render.KIND_COLOURS["商品"] in set(gold_strip.get_flattened_data())
+    gold_block = canvas.image.crop((597 + 96, 268 + 38, 788, 268 + 50)).convert("RGB")
+    assert money_render.KIND_COLOURS["商品"] in set(gold_block.get_flattened_data())
 
 
 def test_bls_year_over_year_and_unemployment():

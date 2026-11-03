@@ -393,30 +393,17 @@ def _range_track(canvas, x0, x1, y, share, accent):
 
 
 def _range_block(canvas, span, top, quote, fmt, accent):
-    """The 52-week range stacked in a block: low · 52周 · high over the track."""
+    """The 52-week range stacked in a block: the low and high in ink with a small 52周 between them,
+    over the track. The 10-year, dollar index and gold cards all show it this way."""
     position = _range_position(quote)
     x0, x1 = span
     if position is None or x1 - x0 < 60:
         return
     low, high, share = position
-    canvas.text((x0, top), fmt.format(low), 9, "muted", anchor="lm", bold=False)
-    canvas.text((x1, top), fmt.format(high), 9, "muted", anchor="rm", bold=False)
+    canvas.text((x0, top), fmt.format(low), 10, anchor="lm", bold=False)
+    canvas.text((x1, top), fmt.format(high), 10, anchor="rm", bold=False)
     canvas.text(((x0 + x1) / 2, top), "52周", 9, "muted", anchor="mm", bold=False)
     _range_track(canvas, x0 + 2, x1 - 2, top + 12, share, accent)
-
-
-def _range_strip(canvas, span, y, quote, fmt, accent):
-    """The 52-week range in one row: 52周, the low, the track, the high. False when unknown."""
-    position = _range_position(quote)
-    if position is None:
-        return False
-    low, high, share = position
-    x0, x1 = span
-    x0 += canvas.text((x0, y), "52周", 9, "muted", anchor="lm", bold=False) + 5
-    x0 += canvas.text((x0, y), fmt.format(low), 9, "muted", anchor="lm", bold=False) + 6
-    x1 -= canvas.text((x1, y), fmt.format(high), 9, "muted", anchor="rm", bold=False) + 6
-    _range_track(canvas, x0, x1, y, share, accent)
-    return True
 
 
 def _curve(canvas, payload):
@@ -542,11 +529,13 @@ def _macro_tiles(canvas, payload):
                 tiles.append((key, label, f"{item['value']:.2f}%", item.get("previous"), item["value"], ("", "FRED"),
                               None))
     else:
-        for key, symbol, label, fmt in (("dxy", "DX-Y.NYB", "美元指数", "{:.1f}"), ("gold", "GC=F", "黄金", "${:,.0f}")):
+        # Each with its 52-week range in the same units (gold's without the dollar sign, to fit).
+        for key, symbol, label, fmt, range_fmt in (("dxy", "DX-Y.NYB", "美元指数", "{:.1f}", "{:.1f}"),
+                                                    ("gold", "GC=F", "黄金", "${:,.0f}", "{:,.0f}")):
             quote = quotes.get(symbol)
             if quote and finite(quote.get("last")) is not None:
                 tiles.append((key, label, fmt.format(quote["last"]), quote.get("month_ago"), quote["last"], ("比1月前", ""),
-                              (quote, fmt) if _range_position(quote) else None))
+                              (quote, range_fmt) if _range_position(quote) else None))
     for index, (key, label, value, previous, current, note, ranged) in enumerate(tiles[:4]):
         column, row = index % 2, index // 2
         left = 400 + column * 197
@@ -554,8 +543,7 @@ def _macro_tiles(canvas, payload):
         canvas.draw.rounded_rectangle((left, top, left + 191, top + 58), radius=6, outline=canvas.color("rule"))
         _accent_bar(canvas, (left, top, left + 191, top + 58), CARD_ACCENTS.get(key), 5)
         _card_doodles(canvas, (left, top, left + 191, top + 58), key, CARD_ACCENTS.get(key, "ink"), 5)
-        # A quote with its 52-week range moves up a little to take the range strip along its foot.
-        title_y, value_y = (top + 16, top + 34) if ranged else (top + 18, top + 41)
+        title_y = top + 14 if ranged else top + 18
         # Each indicator carries its own picture (cart, briefcase, dollar coin, gold bars, bank, house).
         icon = _asset(f"macro-{key}", MACRO_ICON_SIZE)
         label_x = left + 10 + (_paste(canvas, icon, (left + 9, title_y - icon.height // 2)) + 5 if icon else 0)
@@ -563,10 +551,6 @@ def _macro_tiles(canvas, payload):
         _tile_note(canvas, left + 181, title_y, *note)
         change = delta(current, previous)
         icon, tone = _direction(change)
-        _number(canvas, (left + 10, value_y), value, 22, 102, tone)
-        draw_icon(canvas.draw, icon, (left + 115, value_y - 6), 10, canvas.color(tone), canvas.color("paper"))
-        if ranged:
-            _range_strip(canvas, (left + 10, left + 181), top + 51, ranged[0], ranged[1], CARD_ACCENTS.get(key, "ink"))
         if change is None:
             figure = "—"
         elif key in {"cpi", "unemployment", "fed_funds", "mortgage30"}:
@@ -575,7 +559,18 @@ def _macro_tiles(canvas, payload):
             figure = f"{'+' if change >= 0 else '-'}${abs(change):,.0f}"
         else:
             figure = f"{change:+.2f}点"
-        _number(canvas, (left + 129, value_y - 1), figure, 13, 54, tone)
+        if ranged:
+            # The figure over its change on the left; the 52-week block on the right, its numbers on
+            # the figure's line and its track on the change's, as on the 10-year card.
+            figure_right = left + 10 + _number(canvas, (left + 10, top + 31), value, 22, 84, tone)
+            draw_icon(canvas.draw, icon, (left + 10, top + 44), 9, canvas.color(tone), canvas.color("paper"))
+            _number(canvas, (left + 22, top + 48), figure, 12, 72, tone)
+            _range_block(canvas, (max(figure_right + 8, left + 96), left + 181), top + 32, ranged[0], ranged[1],
+                         CARD_ACCENTS.get(key, "ink"))
+            continue
+        _number(canvas, (left + 10, top + 41), value, 22, 102, tone)
+        draw_icon(canvas.draw, icon, (left + 115, top + 35), 10, canvas.color(tone), canvas.color("paper"))
+        _number(canvas, (left + 129, top + 40), figure, 13, 54, tone)
         if key in {"cpi", "unemployment", "fed_funds", "mortgage30"}:
             canvas.text((left + 154, top + 52), "较前期" if key in {"cpi", "unemployment"} else "较历史基准",
                         7, "muted", anchor="mm", bold=False)
