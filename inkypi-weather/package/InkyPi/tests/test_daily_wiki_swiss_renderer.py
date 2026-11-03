@@ -678,3 +678,51 @@ def test_a_wikimedia_picture_is_credited_by_wikimedias_logo():
     assert plugin._source_label(payload, named=False) == "ZH-CN / LIVE"
     assert renderer._source_logo(payload, 17).height == 17
     assert renderer._source_logo({**payload, "source": "Bing"}, 17) is None
+
+
+ALMANAC = {
+    "births": [{"year": "1932", "name": "梅尔文·施瓦茨", "role": "美国物理学家，1988年诺贝尔物理学奖得主"},
+               {"year": "1082", "name": "宋徽宗赵佶", "role": "北宋皇帝"},
+               {"year": "1815", "name": "约瑟夫·拉德茨基·冯·拉德茨·冯·拉德茨", "role": "波希米亚贵族"}],
+    "deaths": [{"year": "1966", "name": "彼得·德拜", "role": "荷兰物理学家、物理化学家"},
+               {"year": "1950", "name": "萧伯纳", "role": "英国现实主义戏剧家"}],
+    "holidays": [{"name": "诸灵节"}, {"name": "亡灵节"}, {"name": "终止针对记者犯罪不受惩罚现象国际日"}],
+}
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_almanac_rows_sit_under_the_history_with_whole_entries(plugin, payload, monkeypatch, mode):
+    drawn_text = []
+    original_text = ImageDraw.ImageDraw.text
+
+    def record_text(self, xy, text, *args, **kwargs):
+        drawn_text.append(str(text))
+        return original_text(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", record_text)
+    image = plugin._render_page((800, 480), {**payload, "almanac": ALMANAC}, settings(mode), NOW)
+    audit = image.info["daily_wiki_layout"]
+
+    rows = audit["almanac"]["rows"]
+    assert [row["key"] for row in rows] == ["births", "deaths", "holidays"]
+    assert {"诞辰", "逝世", "节日"} <= set(drawn_text)
+    # Whole entries only: a name with its year and role, a second one by name and year when its
+    # role does not fit, and one that does not fit at all is left out, never cut.
+    assert rows[0]["text"].startswith("梅尔文·施瓦茨 1932 美国物理学家")
+    assert "约瑟夫" not in rows[0]["text"]
+    assert rows[1]["text"] == "彼得·德拜 1966 荷兰物理学家 · 萧伯纳 1950"
+    assert rows[2]["text"].startswith("诸灵节 · 亡灵节")
+    for row in rows:
+        assert_inside(row["bounds"], audit["regions"]["history"]["bounds"])
+    # The history above keeps its events whole and ends above the block.
+    block_top = audit["almanac"]["bounds"][1]
+    assert all(event["complete"] and event["bounds"][3] <= block_top for event in audit["events"])
+    assert len(audit["events"]) + len(audit["omitted_events"]) == 5
+    assert all(item["reason"] == "almanac" for item in audit["omitted_events"])
+
+
+def test_no_almanac_leaves_the_history_column_as_before(plugin, payload):
+    image = plugin._render_page((800, 480), {**payload, "almanac": {}}, settings(), NOW)
+    audit = image.info["daily_wiki_layout"]
+
+    assert "almanac" not in audit and audit["omitted_events"] == [] and len(audit["events"]) == 5

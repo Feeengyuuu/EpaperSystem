@@ -757,7 +757,7 @@ def test_daily_payload_ignores_v6_cache_and_fetches_current_source(tmp_path, mon
     assert payload["language"] == "zh-cn"
     assert payload["title"] == "Fresh Chinese source"
     assert payload["source_state"] == "live"
-    assert plugin._read_cache()["schema"] == "daily-wiki-page-v8"
+    assert plugin._read_cache()["schema"] == "daily-wiki-page-v9"
 
 
 def test_daily_payload_rejects_v6_cache_when_live_fetch_fails(tmp_path, monkeypatch):
@@ -1840,3 +1840,58 @@ def test_a_recent_chinese_page_is_kept_instead_of_switching_to_english(tmp_path,
 
     assert requested == [("zh-cn", "")]
     assert (payload["title"], payload["source_state"]) == ("中文页面", "cache")
+
+DATE_PAGE_HTML = """
+<div class="mw-heading"><h2 id="大事記">大事记</h2></div>
+<ul><li><a href="/wiki/1917年">1917年</a>：英国外交大臣发表《贝尔福宣言》。</li></ul>
+<div class="mw-heading"><h2 id="出生">出生</h2></div>
+<ul><li>1082年：宋徽宗赵佶，北宋皇帝（1135年逝世）</li>
+<li>1815年：乔治·布尔，英国数学家、哲学家（1864年逝世）</li>
+<li>1932年：梅尔文·施瓦茨，美国物理学家，1988年诺贝尔物理学奖得主（2006年逝世）</li>
+<li>1993年：力丸，中国男子偶像团体INTO1成员</li>
+<li>1998年：高本彩花，日本女子偶像团体日向坂46成员</li>
+<li>生年不详：宫世真理子，日本女性声优</li></ul>
+<div class="mw-heading"><h2 id="逝世">逝世</h2></div>
+<ul><li>1950年：萧伯纳，英国现实主义戏剧家（1856年出生）</li>
+<li>1963年：吴廷瑈，越南共和国首任总统吴廷琰的胞弟和主要政治顾问（1910年出生）</li>
+<li>1966年：彼得·德拜，荷兰物理学家，1936年诺贝尔化学奖得主（1884年出生）</li></ul>
+<div class="mw-heading"><h2 id="節假日和習俗">节假日和习俗</h2></div>
+<ul><li><a href="/wiki/x">终止针对记者犯罪不受惩罚现象国际日</a><sup class="reference">[2]</sup></li>
+<li>西方基督教：诸灵节</li>
+<li><span class="flagicon"><img alt=""/>&#160;</span>墨西哥、 巴西：亡灵节</li></ul>
+<div class="mw-heading"><h2 id="參考資料">参考资料</h2></div>
+<ul><li>不该读到的参考资料</li></ul>
+"""
+
+
+def test_zh_date_page_gives_the_days_best_known_births_deaths_and_holidays(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    monkeypatch.setattr(plugin, "_get_json", lambda *_args, **_kwargs: {"parse": {"text": DATE_PAGE_HTML}})
+
+    page = plugin._fetch_zh_date_page(datetime(2026, 11, 2, 10, 0))
+
+    assert page["events"] == [{"year": "1917", "text": "英国外交大臣发表《贝尔福宣言》。"}]
+    almanac = page["almanac"]
+    # Best known first: a Nobel laureate, an emperor, a mathematician; idol-group members last.
+    assert [person["name"] for person in almanac["births"]] == ["梅尔文·施瓦茨", "宋徽宗赵佶", "乔治·布尔", "力丸"]
+    assert almanac["births"][1] == {"year": "1082", "name": "宋徽宗赵佶", "role": "北宋皇帝", "other_year": "1135"}
+    # A president's brother is not a president.
+    assert [person["name"] for person in almanac["deaths"]] == ["彼得·德拜", "萧伯纳", "吴廷瑈"]
+    # Holidays (the traditional section id on a zh-cn page), short names first, citation marks gone.
+    assert almanac["holidays"] == [{"name": "诸灵节", "where": "西方基督教"},
+                                   {"name": "亡灵节", "where": "墨西哥、巴西"},
+                                   {"name": "终止针对记者犯罪不受惩罚现象国际日", "where": ""}]
+    # The 大事记 reader still answers with the events alone.
+    monkeypatch.setattr(plugin, "_fetch_zh_date_page", lambda _now: {"events": ["e"], "almanac": {}})
+    assert plugin._fetch_zh_date_page_events(datetime(2026, 11, 2, 10, 0)) == ["e"]
+
+
+def test_payload_carries_the_almanac_only_with_on_this_day(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    almanac = {"births": [{"year": "1815", "name": "乔治·布尔", "role": "英国数学家"}], "deaths": [], "holidays": []}
+    monkeypatch.setattr(plugin, "_fetch_zh_date_page", lambda _now: {"events": [], "almanac": almanac})
+    monkeypatch.setattr(plugin, "_apply_simplified_chinese_variant", lambda payload, _article: payload)
+    now = datetime(2026, 11, 2, 10, 0)
+
+    assert plugin._payload_from_feed(sample_feed(), "zh-cn", {}, now=now)["almanac"] == almanac
+    assert plugin._payload_from_feed(sample_feed(), "zh-cn", {"showOnThisDay": "false"}, now=now)["almanac"] == {}

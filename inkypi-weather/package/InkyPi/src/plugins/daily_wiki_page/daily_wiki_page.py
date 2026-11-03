@@ -24,7 +24,7 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from plugins.context_cache import write_context
-from plugins.daily_wiki_page import day_colours, zh_daily_picture
+from plugins.daily_wiki_page import almanac, day_colours, zh_daily_picture
 from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import DEFAULT_FONT_FAMILY, coerce_bool, get_available_font_names, get_base_ui_font, get_font
 from utils.cache_manager import CacheBudget, CachePathError
@@ -60,7 +60,7 @@ class _HTMLTextExtractor(HTMLParser):
         return "".join(self._parts)
 
 PLUGIN_ID = "daily_wiki_page"
-CACHE_SCHEMA_VERSION = "daily-wiki-page-v8"
+CACHE_SCHEMA_VERSION = "daily-wiki-page-v9"
 DEFAULT_FONT = DEFAULT_FONT_FAMILY
 DEFAULT_TIMEZONE = "America/Los_Angeles"
 FEED_URL = "https://{language}.wikipedia.org/api/rest_v1/feed/featured/{year}/{month}/{day}"
@@ -384,10 +384,11 @@ class DailyWikiPage(BasePlugin):
         extract = self._clean_text(self._text(article, "extract")) or description
         if description and extract and description.lower() not in extract.lower():
             extract = f"{description}. {extract}"
-        date_page_events = []
+        date_page_events, day_almanac = [], {}
         if now is not None and self._wants_simplified_chinese(language):
             try:
-                date_page_events = self._fetch_zh_date_page_events(now)
+                date_page = self._fetch_zh_date_page(now)
+                date_page_events, day_almanac = date_page["events"], date_page["almanac"]
             except Exception as exc:
                 logger.warning("DailyWikiPage zh-cn date-page history enrichment failed: %s", exc)
         on_this_day_items = self._on_this_day_items(feed, settings, date_page_events=date_page_events)
@@ -427,6 +428,8 @@ class DailyWikiPage(BasePlugin):
             "history_image_year": history_image.get("year") or "",
             "history_image_event_index": history_image.get("event_index"),
             "on_this_day": on_this_day_items,
+            # 今日人物与节日 from the same date page (zh-cn only; empty lists hide the block).
+            "almanac": day_almanac if self._enabled(settings.get("showOnThisDay"), default=True) else {},
             "most_read": [],
         }
         if self._wants_simplified_chinese(language):
@@ -627,6 +630,10 @@ class DailyWikiPage(BasePlugin):
         return None
 
     def _fetch_zh_date_page_events(self, now):
+        return self._fetch_zh_date_page(now)["events"]
+
+    def _fetch_zh_date_page(self, now):
+        """The zh-cn date page's 大事记 events, and its births, deaths and holidays (almanac.py)."""
         page_title = f"{now.month}\u6708{now.day}\u65e5"
         data = self._get_json(
             ZH_DATE_PAGE_API_URL,
@@ -650,7 +657,13 @@ class DailyWikiPage(BasePlugin):
             match = re.match(r"^\s*(\d{1,4})\u5e74\s*[\uff1a:]\s*(.+)$", item_text)
             if match:
                 events.append({"year": match.group(1), "text": self._clean_text(match.group(2))})
-        return events
+        try:
+            day_almanac = almanac.almanac_from_html(html_text, now.year, self._html_text)
+        except (AttributeError, IndexError, KeyError, TypeError, ValueError) as exc:
+            # A page that changed shape only hides the block.
+            logger.warning("DailyWikiPage date-page almanac skipped: %s", type(exc).__name__)
+            day_almanac = {}
+        return {"events": events, "almanac": day_almanac}
 
     def _date_page_history_section(self, html_text):
         start_match = re.search(r'id=["\']\u5927\u4e8b[\u8bb0\u8a18]["\']', html_text)

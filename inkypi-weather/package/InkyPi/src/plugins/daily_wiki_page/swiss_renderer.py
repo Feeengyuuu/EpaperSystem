@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
+from plugins.daily_wiki_page.almanac import short_role
 from utils.doodle_backdrop import paint_doodles
 from utils.fonts import load_font
 
@@ -39,6 +40,12 @@ WIKIMEDIA_LOGO_PATH = Path(__file__).resolve().parent / "assets" / "wikimedia_lo
 WIKIMEDIA_LOGO_SCALE = 1.3
 # Quiet doodles in the day's accent under the photograph's column and the history column.
 DOODLE_DIR = Path(__file__).resolve().parent / "assets" / "doodles"
+# 今日人物与节日 at the foot of the history column: each row's chip, the list it shows and the
+# palette role that fills the chip (the day's lead accent, ink, the day's second accent).
+ALMANAC_ROWS = (("births", "诞辰", "accent"), ("deaths", "逝世", "ink"), ("holidays", "节日", "accent2"))
+# The gap under the block's rule, between its rows, and after a row's chip.
+ALMANAC_TOP_GAP, ALMANAC_ROW_GAP, ALMANAC_CHIP_GAP = 7, 3, 7
+ALMANAC_SEPARATOR = (" · ", False)
 
 
 class LayoutOverflowError(ValueError):
@@ -85,6 +92,39 @@ def _history_image_index(events, payload):
     if year and len(titled) == 1:
         return titled[0]
     raise LayoutOverflowError("History image has no unambiguous matching event; refusing to attach it to a different event.")
+
+
+def _almanac_entry(key, item, full=True):
+    """One almanac entry as (text, bold) runs: a person's name, year and (when ``full``) what
+    they were ("乔治·布尔 1815 英国数学家"), or a holiday's name; None when it has no name."""
+    name = _text(item.get("name"))
+    if not name:
+        return None
+    if key == "holidays":
+        return [(name, True)]
+    role = short_role(item.get("role")) if full else ""
+    year = _text(item.get("year"))
+    return [(name, True), *([(f" {year}", False)] if year else []), *([(f" {role}", False)] if role else [])]
+
+
+def _joined_runs(entries):
+    runs = []
+    for index, entry in enumerate(entries):
+        runs += ([ALMANAC_SEPARATOR] if index else []) + list(entry)
+    return runs
+
+
+def _without_one_event(events, image_index):
+    """``events`` whole, then without their last event that carries no picture: each as
+    (events, the picture's index among them, the omitted events' audit records)."""
+    yield events, image_index, []
+    drop = next((index for index in range(len(events) - 1, -1, -1) if index != image_index), None)
+    if drop is None or len(events) < 2:
+        return
+    kept = events[:drop] + events[drop + 1:]
+    index = image_index - 1 if image_index is not None and image_index > drop else image_index
+    yield kept, index, [{"year": _text(events[drop].get("year")), "text": _text(events[drop].get("text")),
+                         "reason": "almanac"}]
 
 
 class _Page:
@@ -519,25 +559,25 @@ class _Page:
                          self.palette["muted"])
             return
         image_index = _history_image_index(raw_events, self.payload) if source is not None else None
+        # 今日人物与节日 takes the column's foot only while the events above it still fit
+        # whole: all of them, else all but one (never the one with the picture); else it stays off.
+        almanac = self.almanac_rows() if enabled else []
         selected = None
-        needed = 0
-        # Days that fit with normal spacing render exactly as before; only a day
-        # that would otherwise fail tightens row padding at the minimum size.
-        attempts = [(size, False) for size in range(max(self.minimum_font, self.px(17)),
-                                                    self.minimum_font - 1, -1)]
-        attempts.append((self.minimum_font, True))
-        for size, compact in attempts:
-            for thumbnail_width in (92, 76, 64):
-                rows = self.history_rows(raw_events, source, image_index, size,
-                                         self.px(thumbnail_width), compact=compact)
-                needed = sum(row["height"] for row in rows)
-                if needed <= available:
-                    selected = rows
-                    self.audit["history_fit"] = {"font_size": size, "compact": compact,
-                                                 "thumbnail_width": self.px(thumbnail_width)}
+        if almanac:
+            room = available - self.almanac_height(almanac)
+            for events, index, omitted in _without_one_event(raw_events, image_index):
+                selected, size = self.fit_history_rows(events, source, index, room)
+                if selected is not None:
+                    raw_events, image_index, available = events, index, room
+                    self.audit["omitted_events"].extend(omitted)
                     break
-            if selected is not None:
-                break
+            if selected is None:
+                almanac = []
+        if selected is None:
+            selected, size = self.fit_history_rows(raw_events, source, image_index, available)
+        needed = 0 if selected is not None else sum(
+            row["height"] for row in self.history_rows(raw_events, source, image_index, self.minimum_font,
+                                                       self.px(64), compact=True))
         if selected is None:
             selected = self.shortened_history_rows(raw_events, source, image_index, available)
         if selected is None:
@@ -576,6 +616,93 @@ class _Page:
             if index < len(selected) - 1:
                 self.draw.line((self.history_left, y - self.px(1), self.right, y - self.px(1)),
                                fill=self.palette["ink"], width=self.px(1))
+        if almanac:
+            self.draw_almanac(almanac, body_top + available)
+
+    def fit_history_rows(self, events, source, image_index, available):
+        """The events' rows at the largest size that fits ``available`` whole, and that size;
+        (None, the minimum size) when none does."""
+        # Days that fit with normal spacing render exactly as before; only a day
+        # that would otherwise fail tightens row padding at the minimum size.
+        attempts = [(size, False) for size in range(max(self.minimum_font, self.px(17)),
+                                                    self.minimum_font - 1, -1)]
+        attempts.append((self.minimum_font, True))
+        for size, compact in attempts:
+            for thumbnail_width in (92, 76, 64):
+                rows = self.history_rows(events, source, image_index, size,
+                                         self.px(thumbnail_width), compact=compact)
+                if sum(row["height"] for row in rows) <= available:
+                    self.audit["history_fit"] = {"font_size": size, "compact": compact,
+                                                 "thumbnail_width": self.px(thumbnail_width)}
+                    return rows, size
+        return None, self.minimum_font
+
+    def almanac_rows(self):
+        """今日人物与节日 as rows {key, chip, colour, entries}, each entry a list of (text, bold)
+        runs; a row keeps the entries that fit its line whole, and a row with none is left out."""
+        almanac = self.payload.get("almanac") if self.cjk else None
+        if not isinstance(almanac, dict):
+            return []
+        width = self.right - self.history_left - self.almanac_chip_width() - self.px(ALMANAC_CHIP_GAP)
+        rows = []
+        for key, chip, colour in ALMANAC_ROWS:
+            entries = []
+            for item in almanac.get(key) or []:
+                # A person whose role does not fit is still named, by name and year.
+                for full in (True, False):
+                    entry = _almanac_entry(key, item, full) if isinstance(item, dict) else None
+                    if entry and self.runs_width(_joined_runs([*entries, entry])) <= width:
+                        entries.append(entry)
+                        break
+            if entries:
+                rows.append({"key": key, "chip": chip, "colour": colour, "entries": entries})
+        return rows
+
+    def almanac_fonts(self):
+        return {bold: self.font("国", self.minimum_font, weight=800 if bold else 500) for bold in (False, True)}
+
+    def almanac_chip_font(self):
+        return self.font("诞辰", max(10, self.px(11)), weight=800)
+
+    def almanac_chip_width(self):
+        return math.ceil(self.width_of("诞辰", self.almanac_chip_font())) + self.px(8)
+
+    def runs_width(self, runs):
+        fonts = self.almanac_fonts()
+        return sum(self.draw.textlength(text, font=fonts[bold]) for text, bold in runs)
+
+    def almanac_line_height(self):
+        return self.line_height("国", self.almanac_fonts()[False])
+
+    def almanac_height(self, rows):
+        return self.px(ALMANAC_TOP_GAP) + len(rows) * (self.almanac_line_height() + self.px(ALMANAC_ROW_GAP))
+
+    def draw_almanac(self, rows, top):
+        """The rows from ``top`` (a rule over them) to the column's foot: each one's chip in its
+        category's colour, then its entries in ink on one baseline."""
+        self.draw.line((self.history_left, top, self.right, top), fill=self.palette["ink"], width=self.px(2))
+        fonts, chip_font = self.almanac_fonts(), self.almanac_chip_font()
+        chip_w, line_h = self.almanac_chip_width(), self.almanac_line_height()
+        ascent = fonts[False].getmetrics()[0] if hasattr(fonts[False], "getmetrics") else line_h
+        y = top + self.px(ALMANAC_TOP_GAP)
+        records = []
+        for row in rows:
+            chip_box = (self.history_left, y + self.px(1), self.history_left + chip_w, y + line_h - self.px(1))
+            self.draw.rounded_rectangle(chip_box, radius=self.px(3), fill=self.palette[row["colour"]])
+            self.draw.text(((chip_box[0] + chip_box[2]) / 2, (chip_box[1] + chip_box[3]) / 2), row["chip"],
+                           font=chip_font, fill=self.palette["background"], anchor="mm")
+            x = chip_box[2] + self.px(ALMANAC_CHIP_GAP)
+            baseline = y + (line_h - self.px(2) - ascent) // 2 + ascent
+            runs = _joined_runs(row["entries"])
+            for text, bold in runs:
+                self.draw.text((x, baseline), text, font=fonts[bold], fill=self.palette["ink"], anchor="ls")
+                x += self.draw.textlength(text, font=fonts[bold])
+            if x > self.right + 1:
+                raise LayoutOverflowError("An almanac line would exceed the history column.")
+            records.append({"key": row["key"], "text": "".join(text for text, _bold in runs),
+                            "bounds": [self.history_left, y, round(x), y + line_h]})
+            y += line_h + self.px(ALMANAC_ROW_GAP)
+        self.audit["almanac"] = {"rows": records, "bounds": [self.history_left, top, self.right, self.bottom]}
 
     def shortened_history_rows(self, events, source, image_index, available):
         """Cap the longest events' line count, at the tightest layout, until all fit.
