@@ -1,0 +1,12 @@
+{
+  "github-mark.png": {
+    "source": "https://commons.wikimedia.org/wiki/File:Octicons-mark-github.svg",
+    "license": "MIT",
+    "processing": "the same 64 px render as tech_pulse/assets/logo-github.png (cropped to alpha bbox, fitted to 64 px with LANCZOS); the page tints it to its ink",
+    "asset_sha256": "6be653df7b535b091595beb8f9bc45e6a8eadf105d7cf7cf82973ee466b7aa2d",
+    "size": [
+      64,
+      62
+    ]
+  }
+}
