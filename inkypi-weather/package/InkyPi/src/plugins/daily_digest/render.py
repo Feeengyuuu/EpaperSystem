@@ -94,6 +94,11 @@ RANK_SIZE = 17
 RATING_SIZE = 13
 RATING_HALO = 2
 RATING_HALO_INK = (18, 26, 32)
+# A song's move on its cover, the same way: its arrow green for places gained, red for places lost.
+MOVE_SIZE = 12
+MOVE_INKS = {"up": (22, 163, 74), "down": (220, 38, 38)}
+# A single's release day reads as a day within this many days, else as its year.
+RECENT_DAYS = 60
 NETEASE_ORDER = (19723756, 3779629, 2884035, 3778678)
 NEWS_SIZE = 13
 NEWS_LINE = 18
@@ -632,7 +637,68 @@ def _slots(box):
     return [(left + index * width, left + (index + 1) * width) for index in range(MEDIA_ROWS)]
 
 
-def _music_panel(canvas, night, box, chart, images, zone):
+def song_move(track, rank):
+    """A song's move since the chart's last edition: ("up", "446%") for how far its plays rose on the
+    soaring chart, ("up", "3") / ("down", "2") for places gained or lost, ("new", "NEW") for a song
+    new to the chart; None when it held its place or the chart keeps no record of the last edition."""
+    if "last_rank" not in track:
+        return None
+    if track.get("soaring"):
+        return "up", f"{track['soaring']}%"
+    last = track.get("last_rank")
+    if last is None:
+        return "new", "NEW"
+    if last == rank:
+        return None
+    return ("up" if last > rank else "down"), str(abs(last - rank))
+
+
+def song_note(track, now):
+    """The line under a song's artist: its album when that is not the song itself (a single), else
+    when it came out (the day within RECENT_DAYS, else the year), then its length: '《未完成》· 5:20'.
+    The parts are joined by " · "; the length is the part a narrow slot drops (_music_panel)."""
+    parts = []
+    album, title = str(track.get("album") or "").strip(), str(track.get("title") or "").strip()
+    published = str(track.get("published") or "")
+    if album and album.casefold() != title.casefold():
+        parts.append(f"《{album}》")
+    elif len(published) >= 10:
+        try:
+            day = datetime.fromisoformat(published[:10]).date()
+        except ValueError:
+            day = None
+        if day is not None:
+            recent = 0 <= (now.date() - day).days <= RECENT_DAYS if now else False
+            parts.append(f"{day:%m.%d} 发行" if recent else f"{day.year} 发行")
+    seconds = track.get("seconds")
+    if isinstance(seconds, int) and seconds > 0:
+        parts.append(f"{seconds // 60}:{seconds % 60:02d}")
+    return " · ".join(parts)
+
+
+def _move_mark(canvas, right, bottom, move):
+    """A song's move on its cover's foot, as a poster's rating sits on its poster: the arrow in the
+    move's colour and the figure in white, each edged in the thin dark halo; a newcomer gets a small
+    solid 影音 tag."""
+    kind, text = move
+    middle = bottom - MOVE_SIZE / 2 - 2
+    font = canvas.font(MOVE_SIZE, True)
+    width = canvas.draw.textlength(text, font=font)
+    if kind == "new":
+        tag = (right - width - 10, middle - 7, right, middle + 7)
+        canvas.draw.rounded_rectangle(tag, radius=4, fill=canvas.color("影音"), outline=(255, 255, 255), width=1)
+        canvas.draw.text(((tag[0] + tag[2]) / 2, middle + 0.5), text, font=canvas.font(MOVE_SIZE - 2, True),
+                         fill=(255, 255, 255), anchor="mm")
+        return
+    canvas.draw.text((right - 2, middle), text, font=font, fill=(255, 255, 255), anchor="rm",
+                     stroke_width=RATING_HALO, stroke_fill=RATING_HALO_INK)
+    arrow = right - 2 - width - 13
+    halo = RATING_HALO
+    draw_icon(canvas.draw, kind, (arrow - halo, middle - 6 - halo), 11 + 2 * halo, RATING_HALO_INK, RATING_HALO_INK)
+    draw_icon(canvas.draw, kind, (arrow, middle - 6), 11, MOVE_INKS[kind], MOVE_INKS[kind])
+
+
+def _music_panel(canvas, night, box, chart, images, zone, now=None):
     left, top, right, bottom = box
     updated = ""
     if chart.get("updated"):
@@ -648,9 +714,23 @@ def _music_panel(canvas, night, box, chart, images, zone):
         cover = (centre - side / 2, art_top, centre + side / 2, art_top + side)
         _artwork(canvas, images.get(track.get("cover") or ""), cover)
         _rank(canvas, cover[0] - 3, cover[1] - 3, index + 1)
-        width = slot_right - slot_left - 4
-        canvas.text((centre, art_top + side + 10), track["title"], 12, anchor="mm", width=width)
-        canvas.text((centre, art_top + side + 25), track["artist"], 10, "muted", anchor="mm", width=width, bold=False)
+        move = song_move(track, index + 1)
+        if move:
+            _move_mark(canvas, cover[2] - 2, cover[3] - 2, move)
+        width = slot_right - slot_left - 2
+        # Title and artist a size up from the posters' captions, a long title stepping down before it
+        # is cut short; the note's line meets the captions' line.
+        size = 13
+        while size > 11 and canvas.width(track["title"], size) > width:
+            size -= 1
+        canvas.text((centre, art_top + side + 11), track["title"], size, anchor="mm", width=width)
+        canvas.text((centre, art_top + side + 26), track["artist"], 11, "muted", anchor="mm", width=width,
+                    bold=False)
+        note = song_note(track, now)
+        if " · " in note and canvas.width(note, 10, bold=False) > width:
+            note = note.rsplit(" · ", 1)[0]
+        if note:
+            canvas.text((centre, bottom - 7), note, 10, "muted", anchor="mm", width=width, bold=False)
 
 
 def _douban_panel(canvas, night, box, items, title, images):
@@ -676,7 +756,8 @@ def _media(canvas, night, box, payload, images):
     panels = []
     chart = music_chart(payload.get("music"), payload["_now"])
     if chart:
-        panels.append(lambda inner: _music_panel(canvas, night, inner, chart, images, payload.get("_zone")))
+        panels.append(lambda inner: _music_panel(canvas, night, inner, chart, images, payload.get("_zone"),
+                                                 payload.get("_now")))
     for key, title in (("showing", "正在热映"), ("us_tv", "热门美剧")):
         items = ((payload.get(key) or {}).get("data") or {}).get("items")
         if items:

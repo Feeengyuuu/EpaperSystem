@@ -103,14 +103,52 @@ def test_a_netease_chart_keeps_its_top_three_with_their_album_covers():
     assert (chart["id"], chart["name"]) == (19723756, "飙升榜")
     assert chart["updated"].startswith("2026-11-03T")
     # Covers come over https at their 200 px size; one off NetEase's image CDN is dropped, the song kept.
+    # Without trackIds the chart keeps no record of its last edition, so no song carries a move.
+    blank = {"album": "", "published": "", "seconds": None}
     assert chart["tracks"] == [
         {"title": "明年依然好时节", "artist": "许飞",
-         "cover": "https://p2.music.126.net/ucdEaYKU_dL0U2ae-wSRCQ==/109951174184824841.jpg?param=200y200"},
-        {"title": "无 意", "artist": "加木/Demxntia", "cover": None},
-        {"title": "宝船", "artist": "DOUDOU", "cover": None}]
+         "cover": "https://p2.music.126.net/ucdEaYKU_dL0U2ae-wSRCQ==/109951174184824841.jpg?param=200y200", **blank},
+        {"title": "无 意", "artist": "加木/Demxntia", "cover": None, **blank},
+        {"title": "宝船", "artist": "DOUDOU", "cover": None, **blank}]
     assert sources.safe_music_image("https://p1.music.126.net.evil.example/x.jpg") is None
     with pytest.raises(ValueError):
         sources.normalize_chart({"code": 200, "playlist": {"tracks": []}}, 19723756)
+
+
+def test_a_chart_song_carries_its_album_release_length_and_move():
+    hot = {"code": 200, "playlist": {"id": 3778678, "name": "热歌榜", "tracks": [
+        {"id": 11, "name": "Hong Kong (feat. 王菲季候风)", "ar": [{"name": "The Weeknd"}],
+         "al": {"name": "Hong Kong (feat. 王菲季候风)"}, "dt": 216993, "publishTime": 1793376000000},
+        {"id": 12, "name": "我不难过", "ar": [{"name": "孙燕姿"}], "al": {"name": "未完成"}, "dt": 320000,
+         "publishTime": 1042128000000},
+        {"id": 13, "name": "海屿你", "ar": [{"name": "马也_Crabbit"}], "al": {"name": "海屿你"}, "dt": 295000,
+         "publishTime": 1660924800000},
+        {"id": 14, "name": "无 意", "ar": [], "al": {"name": "无 意"}, "dt": 176000, "publishTime": 0},
+    ], "trackIds": [{"id": 11, "lr": 2}, {"id": 12, "lr": 1}, {"id": 13}, {"id": 14, "lr": 3}]}}
+    soaring = {"code": 200, "playlist": {"tracks": SOARING["playlist"]["tracks"][:2],
+                                         "trackIds": [{"id": 306675, "lr": 18, "ratio": 446}, {"id": 3448738711}]}}
+
+    tracks = sources.normalize_chart(hot, 3778678)["tracks"]
+    # NetEase's last ranks count from 0; a song without one is new to the chart. Release days are
+    # Beijing's; a publishTime of 0 means NetEase does not know.
+    assert [(track["last_rank"], track["soaring"]) for track in tracks] == [(3, None), (2, None), (None, None)]
+    assert [(track["album"], track["published"], track["seconds"]) for track in tracks] == [
+        ("Hong Kong (feat. 王菲季候风)", "2026-10-31", 216), ("未完成", "2003-01-10", 320),
+        ("海屿你", "2022-08-20", 295)]
+    assert [render.song_move(track, rank) for rank, track in enumerate(tracks, 1)] == [
+        ("up", "2"), None, ("new", "NEW")]
+    assert render.song_move({**tracks[1], "last_rank": 1}, 2) == ("down", "1")
+    # The soaring chart reads its rise in plays instead of its places.
+    moved = sources.normalize_chart(soaring, 19723756)["tracks"]
+    assert [render.song_move(track, rank) for rank, track in enumerate(moved, 1)] == [("up", "446%"), ("new", "NEW")]
+    # A chart cached before the moves were read shows none.
+    assert render.song_move({"title": "x"}, 1) is None
+
+    # The album when the song is not its own single, else its release (the day while it is new).
+    assert [render.song_note(track, NOW) for track in tracks] == [
+        "10.31 发行 · 3:36", "《未完成》 · 5:20", "2022 发行 · 4:55"]
+    assert render.song_note({"title": "x", "seconds": 61}, NOW) == "1:01"
+    assert render.song_note({"title": "x"}, NOW) == ""
 
 
 def test_the_charts_take_turns_by_the_hour_and_a_failed_one_gives_way():

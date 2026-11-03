@@ -119,7 +119,8 @@ class DailyDigest(BasePlugin):
             "news": {name: load(f"news-{name}", "news", {"feed": name},
                                 lambda ctx, name=name: sources.fetch_news(name, ctx), sources.valid_items)
                      for name in sources.NEWS_FEEDS},
-            "music": {chart_id: load(f"music-{chart_id}", "music", {"chart": chart_id},
+            # "fields" 2: each song also carries its album, release day, length and move.
+            "music": {chart_id: load(f"music-{chart_id}", "music", {"chart": chart_id, "fields": 2},
                                      lambda ctx, chart_id=chart_id: sources.fetch_chart(chart_id, ctx),
                                      sources.valid_chart)
                       for chart_id in sources.NETEASE_CHARTS},

@@ -175,19 +175,55 @@ def music_cover(value):
     return safe_music_image(f"{url}?param={MUSIC_COVER_SIZE}" if url else "")
 
 
+def _chart_moves(playlist):
+    """{song id: (last rank or None, soaring ratio or None)} from the chart's trackIds, where NetEase
+    keeps each song's place in the last edition ("lr", from 0; absent for a newcomer) and, on the
+    soaring chart, how far its plays rose ("ratio", in %). Empty when the chart keeps no last ranks."""
+    entries = [entry for entry in playlist.get("trackIds") or [] if isinstance(entry, dict)]
+    if not any("lr" in entry or "ratio" in entry for entry in entries):
+        return {}
+    moves = {}
+    for entry in entries:
+        last = _number(entry.get("lr"))
+        ratio = _number(entry.get("ratio"))
+        moves[entry.get("id")] = (int(last) + 1 if last is not None and last >= 0 else None,
+                                  int(ratio) if ratio is not None and ratio > 0 else None)
+    return moves
+
+
+def _published(value):
+    """A song's release day ("2026-10-30") from NetEase's publishTime in ms; "" when it gives none
+    (0, or a date before 1950 that stands for unknown)."""
+    stamp = _number(value)
+    if not stamp or stamp <= 0:
+        return ""
+    day = datetime.fromtimestamp(stamp / 1000, timezone.utc).astimezone(timezone(timedelta(hours=8))).date()
+    return day.isoformat() if day.year >= 1950 else ""
+
+
 def normalize_chart(payload, chart_id):
-    """One NetEase chart: its name, when it was last updated, its top songs with artists and covers."""
+    """One NetEase chart: its name, when it was last updated, its top songs with artists, covers,
+    album, release day, length and how each moved since the last edition."""
     playlist = (payload or {}).get("playlist") if isinstance(payload, dict) else None
     if not isinstance(playlist, dict):
         raise ValueError("NetEase returned no playlist")
+    moves = _chart_moves(playlist)
     tracks = []
     for raw in playlist.get("tracks") or []:
         if not isinstance(raw, dict) or not raw.get("name"):
             continue
         artists = "/".join(_clean(artist.get("name"), 30) for artist in raw.get("ar") or []
                            if isinstance(artist, dict) and artist.get("name"))
-        tracks.append({"title": _clean(raw.get("name"), 60), "artist": artists[:60],
-                       "cover": music_cover((raw.get("al") or {}).get("picUrl"))})
+        album = raw.get("al") or {}
+        seconds = _number(raw.get("dt"))
+        track = {"title": _clean(raw.get("name"), 60), "artist": artists[:60],
+                 "cover": music_cover(album.get("picUrl")), "album": _clean(album.get("name"), 40),
+                 "published": _published(raw.get("publishTime")),
+                 "seconds": int(seconds // 1000) if seconds and 0 < seconds < 3600 * 1000 else None}
+        if moves:
+            last, ratio = moves.get(raw.get("id"), (None, None))
+            track.update({"last_rank": last, "soaring": ratio})
+        tracks.append(track)
     if not tracks:
         raise ValueError("NetEase chart lists no songs")
     stamp = _number(playlist.get("updateTime"))
