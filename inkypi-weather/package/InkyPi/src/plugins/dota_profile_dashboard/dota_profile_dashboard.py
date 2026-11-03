@@ -14,6 +14,7 @@ from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.refresh_on_display_presentation import RefreshOnDisplayPresentationMixin
 from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
 from plugins.context_cache import write_context
+from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import coerce_bool, get_base_ui_font
 from utils.image_utils import text_width
 from utils.http_client import get_http_session
@@ -25,6 +26,15 @@ logger = logging.getLogger(__name__)
 PLUGIN_ID = "dota_profile_dashboard"
 OPENDOTA_BASE_URL = "https://api.opendota.com/api"
 DOTA_HERO_LIST_URL = "https://www.dota2.com/datafeed/herolist?language=schinese"
+DOTA_PATCH_LIST_URL = "https://www.dota2.com/datafeed/patchnoteslist?language=schinese"
+PATCH_HOURS = 24
+PEER_DAYS = 90
+PEERS_SHOWN = 4
+# The pro scene's most contested heroes (OpenDota heroStats' recent pro picks and bans).
+META_HEROES = 5
+# A lobby's average rank as a chip in its medal's colour (by the rank's first digit).
+RANK_COLOURS = {1: (128, 112, 92), 2: (96, 132, 104), 3: (52, 140, 128), 4: (66, 112, 196), 5: (120, 88, 200),
+                6: (40, 142, 182), 7: (196, 120, 40), 8: (200, 52, 64)}
 STEAM_ASSET_BASE_URL = "https://cdn.cloudflare.steamstatic.com"
 OPENDOTA_ASSET_BASE_URL = "https://api.opendota.com"
 STEAMID64_BASE = 76561197960265728
@@ -162,6 +172,15 @@ class DotaProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
                 except Exception as exc:
                     logger.warning("OpenDota record field %s unavailable: %s", field, exc)
 
+        # Who the player queued with over the last PEER_DAYS days (about 14 KB); the page stands without it.
+        peers = []
+        try:
+            peers = self._peers(get(f"/players/{account_id}/peers", {"date": PEER_DAYS}))
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("OpenDota peers unavailable: %s", exc)
+
         hero_stats = self._hero_stats(params)
 
         return {
@@ -176,9 +195,52 @@ class DotaProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
             "wordcloud": wordcloud if isinstance(wordcloud, dict) else {},
             "records": records,
             "hero_stats": hero_stats,
+            "peers": peers,
+            "patch": self._current_patch(),
             "api_calls": calls,
             "source": "OpenDota",
         }
+
+    @staticmethod
+    def _peers(rows):
+        """The teammates the player queued with most, as [{name, games, wins}], at most PEERS_SHOWN
+        with two games or more together."""
+        peers = []
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, dict):
+                continue
+            try:
+                games, wins = int(row.get("with_games") or 0), int(row.get("with_win") or 0)
+            except (TypeError, ValueError):
+                continue
+            name = " ".join(str(row.get("personaname") or "").split())[:24]
+            if games >= 2 and name:
+                peers.append({"name": name, "games": games, "wins": min(wins, games)})
+        peers.sort(key=lambda peer: peer["games"], reverse=True)
+        return peers[:PEERS_SHOWN]
+
+    def _current_patch(self):
+        """The game's newest patch from Valve's patch list (9 KB, re-read daily): {"name", "ts"}, or
+        {} when it cannot be read and nothing is kept."""
+        cache_path = self._cache_dir() / "dota_patch.json"
+        cache = self._read_json(cache_path, {})
+        if cache.get("updated_ts") and time.time() - float(cache["updated_ts"]) < PATCH_HOURS * 3600 and cache.get("patch"):
+            return cache["patch"]
+        try:
+            response = get_http_session().get(DOTA_PATCH_LIST_URL, timeout=25)
+            response.raise_for_status()
+            patches = [row for row in (response.json() or {}).get("patches") or []
+                       if isinstance(row, dict) and str(row.get("patch_number") or "").strip()]
+            newest = max(patches, key=lambda row: float(row.get("patch_timestamp") or 0)) if patches else None
+            if newest:
+                patch = {"name": str(newest["patch_number"]).strip()[:12], "ts": float(newest.get("patch_timestamp") or 0)}
+                self._write_json(cache_path, {"updated_ts": time.time(), "patch": patch})
+                return patch
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("Dota patch list unavailable: %s", exc)
+        return cache.get("patch") or {}
 
     def _get_json(self, path, params=None):
         session = get_http_session()
@@ -296,7 +358,7 @@ class DotaProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
         self._draw_profile_panel(image, draw, data, left_box, fonts, ink, muted, gold, green, red, cyan)
         self._draw_recent_panel(image, draw, data, center_box, fonts, ink, muted, green, red, cyan)
         self._draw_heroes_panel(image, draw, data, right_box, fonts, ink, muted, gold, green)
-        self._draw_bottom_panel(draw, data, bottom_box, fonts, ink, muted, gold, green, cyan, panel_alt)
+        self._draw_bottom_panel(draw, data, bottom_box, fonts, ink, muted, gold, green, cyan, panel_alt, image=image)
         return image
 
     def _draw_profile_panel(self, image, draw, data, box, fonts, ink, muted, gold, green, red, cyan):
@@ -327,10 +389,16 @@ class DotaProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
         self._text(draw, (x0 + 16, y1 - 20), f"更新 {updated}", fonts["tiny"], muted)
 
     def _draw_recent_panel(self, image, draw, data, box, fonts, ink, muted, green, red, cyan):
+        """The latest games: the hero, won or lost and solo or in a party, how long ago and how long,
+        the KDA, last hits and GPM, and the lobby's average rank as a chip in its medal's colour."""
         x0, y0, x1, y1 = box
         self._text(draw, (x0 + 14, y0 + 12), "最近比赛", fonts["section"], ink)
         recent = data.get("recent_matches") or []
         hero_map = data.get("hero_stats") or {}
+        if any(self._rank_chip_text(match.get("average_rank")) for match in recent[:5]):
+            legend = "徽章 = 对局平均段位"
+            self._text(draw, (x1 - 14 - self._text_width(draw, legend, fonts["micro"]), y0 + 20), legend,
+                       fonts["micro"], muted)
         y = y0 + 42
         row_h = 37
         for match in recent[:5]:
@@ -344,16 +412,80 @@ class DotaProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
             marker = green if won else red
             self._rect(draw, (x0 + 48, y + 4, x0 + 75, y + 18), marker, marker)
             self._text(draw, (x0 + 53, y + 5), "胜" if won else "负", fonts["micro"], (5, 12, 20))
+            party = self._party_text(match.get("party_size"))
+            if party:
+                self._text(draw, (x0 + 48 + (27 - self._text_width(draw, party, fonts["micro"])) / 2, y + 21), party,
+                           fonts["micro"], cyan if party != "单排" else muted)
             hero_name = hero.get("localized_name") or hero.get("name") or f"英雄 {hero_id}"
-            self._single(draw, (x0 + 82, y), hero_name, fonts["small"], ink, 122, 9)
+            self._single(draw, (x0 + 82, y), hero_name, fonts["small"], ink, 110, 9)
+            when = " · ".join(part for part in (self._ago_text(match), self._duration_text(match.get("duration")))
+                              if part)
+            if when:
+                self._single(draw, (x0 + 82, y + 18), when, fonts["tiny"], muted, 110, 8)
             kda = f"{match.get('kills', 0)}/{match.get('deaths', 0)}/{match.get('assists', 0)}"
-            gpm = self._fmt(match.get("gold_per_min"))
-            xpm = self._fmt(match.get("xp_per_min"))
-            self._text(draw, (x0 + 214, y), f"KDA {kda}", fonts["tiny"], ink)
-            self._text(draw, (x0 + 214, y + 16), f"GPM {gpm}  XPM {xpm}", fonts["tiny"], muted)
+            self._text(draw, (x0 + 196, y + 1), f"KDA {kda}", fonts["tiny"], ink)
+            farm = [f"补刀 {self._fmt(match.get('last_hits'))}" if match.get("last_hits") is not None else "",
+                    f"GPM {self._fmt(match.get('gold_per_min'))}"]
+            self._single(draw, (x0 + 196, y + 18), " · ".join(part for part in farm if part), fonts["tiny"], muted,
+                         x1 - 56 - (x0 + 196), 8)
+            self._rank_chip(draw, match.get("average_rank"), (x1 - 14, y + 5), fonts)
             y += row_h
         if not recent:
             self._text(draw, (x0 + 16, y0 + 58), "没有公开的近期比赛数据", fonts["body"], muted)
+
+    @staticmethod
+    def _party_text(size):
+        """"单排" alone, "3人组" in a party of three; "" when OpenDota does not know."""
+        try:
+            size = int(size)
+        except (TypeError, ValueError):
+            return ""
+        return "单排" if size == 1 else f"{size}人组" if 1 < size <= 5 else ""
+
+    @staticmethod
+    def _duration_text(seconds):
+        """1954 -> "32分"; "" without a length."""
+        try:
+            minutes = int(seconds) // 60
+        except (TypeError, ValueError):
+            return ""
+        return f"{minutes}分" if minutes > 0 else ""
+
+    @staticmethod
+    def _ago_text(match, now=None):
+        """How long ago the game ended: "25分钟前", "3小时前", "2天前"; "" without a start time."""
+        try:
+            ended = float(match.get("start_time")) + float(match.get("duration") or 0)
+        except (TypeError, ValueError):
+            return ""
+        seconds = max(0.0, (now or time.time()) - ended)
+        if seconds < 3600:
+            return f"{max(1, int(seconds // 60))}分钟前"
+        if seconds < 86400:
+            return f"{int(seconds // 3600)}小时前"
+        return f"{int(seconds // 86400)}天前"
+
+    @staticmethod
+    def _rank_chip_text(rank):
+        """A lobby's average rank as its chip reads: 75 -> "传奇5", 80 -> "冠绝"; "" for none."""
+        try:
+            rank = int(rank)
+        except (TypeError, ValueError):
+            return ""
+        major, stars = rank // 10, rank % 10
+        if major not in RANK_NAMES:
+            return ""
+        return RANK_NAMES[major] + (str(stars) if stars and major < 8 else "")
+
+    def _rank_chip(self, draw, rank, anchor, fonts):
+        """The rank's chip ending at ``anchor`` (right, top): its name on its medal's colour."""
+        text = self._rank_chip_text(rank)
+        if not text:
+            return
+        right, top = anchor
+        width = self._text_width(draw, text, fonts["micro"]) + 8
+        draw.rounded_rectangle((right - width, top, right, top + 15), radius=4, fill=RANK_COLOURS[int(rank) // 10])
+        self._text(draw, (right - width + 4, top + 1), text, fonts["micro"], (255, 255, 255))
 
     def _draw_heroes_panel(self, image, draw, data, box, fonts, ink, muted, gold, green):
         x0, y0, x1, y1 = box
@@ -379,7 +511,7 @@ class DotaProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
             self._text(draw, (x0 + 12, y), "英雄排名", fonts["tiny"], muted)
             self._single(draw, (x0 + 12, y + 14), top_rank, fonts["small"], gold, x1 - x0 - 24, 9)
 
-    def _draw_bottom_panel(self, draw, data, box, fonts, ink, muted, gold, green, cyan, panel_alt):
+    def _draw_bottom_panel(self, draw, data, box, fonts, ink, muted, gold, green, cyan, panel_alt, image=None):
         x0, y0, x1, y1 = box
         self._text(draw, (x0 + 14, y0 + 10), "总览", fonts["section"], ink)
         col_w = (x1 - x0 - 44) // 3
@@ -410,17 +542,99 @@ class DotaProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
             self._metric(draw, col1, y, label, value, fonts, muted, ink)
             y += 28
 
-        self._text(draw, (col2, y0 + 10), "个人纪录", fonts["section"], ink)
-        y = y0 + 42
-        for label, value in self._record_lines(data)[:4]:
-            self._metric(draw, col2, y, label, value, fonts, muted, gold)
-            y += 28
+        records = self._record_lines(data)[:4]
+        peers = data.get("peers") or []
+        if records or not peers:
+            self._text(draw, (col2, y0 + 10), "个人纪录", fonts["section"], ink)
+            y = y0 + 42
+            for label, value in records:
+                self._metric(draw, col2, y, label, value, fonts, muted, gold)
+                y += 28
+            if not records:
+                self._text(draw, (col2, y), "暂无公开纪录", fonts["small"], muted)
+        else:
+            # OpenDota no longer answers the record endpoints; the teammates queued with most stand in.
+            self._draw_peers(draw, peers, (col2, y0, col2 + col_w, y1), fonts, ink, muted, green)
 
+        meta = self._pro_meta(data.get("hero_stats") or {}) if image is not None else []
+        if meta:
+            self._draw_pro_meta(image, draw, meta, data.get("patch") or {}, (col3, y0, x1 - 14, y1), fonts, ink, muted,
+                                gold, cyan)
+            return
         self._text(draw, (col3, y0 + 10), "细项 / 词云", fonts["section"], ink)
         keywords = self._wordcloud_terms(data.get("wordcloud") or {})[:7]
         counts_line = self._counts_line(data.get("counts") or {})
         self._wrapped(draw, (col3, y0 + 42), counts_line, fonts["small"], cyan, col_w)
         self._wrapped(draw, (col3, y0 + 72), " · ".join(keywords) if keywords else "没有公开聊天词云", fonts["small"], ink, col_w)
+
+    def _draw_peers(self, draw, peers, box, fonts, ink, muted, green):
+        """The teammates queued with most over PEER_DAYS days: each name with the games together and
+        the share of them won."""
+        x0, y0, x1, _y1 = box
+        self._text(draw, (x0, y0 + 10), "常组队友", fonts["section"], ink)
+        note = f"近 {PEER_DAYS} 天同队"
+        self._text(draw, (x1 - self._text_width(draw, note, fonts["tiny"]), y0 + 18), note, fonts["tiny"], muted)
+        y = y0 + 42
+        for peer in peers[:PEERS_SHOWN]:
+            rate = peer["wins"] / peer["games"] * 100 if peer.get("games") else 0
+            figures = f"{peer['games']} 场 · {rate:.0f}%"
+            figures_w = self._text_width(draw, figures, fonts["tiny"])
+            self._single(draw, (x0, y - 3), peer["name"], fonts["small"], ink, x1 - x0 - figures_w - 10, 9)
+            self._text(draw, (x1 - figures_w, y), figures, fonts["tiny"], green if rate >= 50 else muted)
+            y += 28
+
+    @staticmethod
+    def _pro_meta(hero_map):
+        """The pro scene's most contested heroes by recent picks and bans (heroStats' pro_pick and
+        pro_ban; its per-bracket picks are all zero now), as [(hero, picks, bans)]; [] without them."""
+        rows = []
+        for hero in hero_map.values():
+            try:
+                picks, bans = int(hero.get("pro_pick") or 0), int(hero.get("pro_ban") or 0)
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if picks + bans > 0:
+                rows.append((hero, picks, bans))
+        rows.sort(key=lambda row: row[1] + row[2], reverse=True)
+        return rows[:META_HEROES]
+
+    def _draw_pro_meta(self, image, draw, meta, patch, box, fonts, ink, muted, gold, cyan):
+        """The pro meta strip: the current patch on a gold chip by the title, then each contested
+        hero with a bar of its picks (cyan) and bans (red) and the two counts."""
+        x0, y0, x1, _y1 = box
+        ban = (214, 62, 72)
+        title_w = self._text_width(draw, "职业赛场", fonts["section"])
+        self._text(draw, (x0, y0 + 10), "职业赛场", fonts["section"], ink)
+        name = str(patch.get("name") or "")
+        if name:
+            chip_x = x0 + title_w + 8
+            chip_w = self._text_width(draw, name, fonts["tiny"]) + 10
+            draw.rounded_rectangle((chip_x, y0 + 15, chip_x + chip_w, y0 + 31), radius=4, fill=gold)
+            self._text(draw, (chip_x + 5, y0 + 17), name, fonts["tiny"], (5, 12, 20))
+        legend_x = x1
+        for label, colour in (("禁", ban), ("选", cyan)):
+            legend_x -= self._text_width(draw, label, fonts["micro"])
+            self._text(draw, (legend_x, y0 + 19), label, fonts["micro"], muted)
+            legend_x -= 11
+            draw.rectangle((legend_x, y0 + 22, legend_x + 7, y0 + 29), fill=colour)
+            legend_x -= 6
+        most = max((picks + bans for _hero, picks, bans in meta), default=1) or 1
+        y = y0 + 40
+        for hero, picks, bans in meta:
+            icon = self._hero_icon(int(hero.get("id") or 0), hero, 20)
+            image.paste(icon, (x0, y), icon if icon.mode == "RGBA" else None)
+            figures = f"选{picks} 禁{bans}"
+            figures_w = self._text_width(draw, figures, fonts["tiny"])
+            self._single(draw, (x0 + 25, y + 3), hero.get("localized_name") or hero.get("name") or "-", fonts["tiny"],
+                         ink, 62, 8)
+            left, right = x0 + 92, x1 - figures_w - 8
+            if right - left > 16:
+                length = (right - left) * (picks + bans) / most
+                split = left + length * picks / max(1, picks + bans)
+                draw.rectangle((left, y + 8, split, y + 13), fill=cyan)
+                draw.rectangle((split, y + 8, left + length, y + 13), fill=ban)
+            self._text(draw, (x1 - figures_w, y + 3), figures, fonts["tiny"], ink)
+            y += 24
 
     def _write_context(self, data, generated_at, refresh_minutes):
         if not isinstance(data, dict):
@@ -473,10 +687,17 @@ class DotaProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
         for item in data.get("rankings") or []:
             hero_id = int(item.get("hero_id") or 0)
             hero = hero_map.get(hero_id) or {}
-            rank = item.get("rank") or item.get("percent_rank")
-            if hero_id and rank:
-                name = hero.get("localized_name") or f"英雄 {hero_id}"
-                return f"{name} #{rank}"
+            name = hero.get("localized_name") or f"英雄 {hero_id}"
+            if hero_id and item.get("rank"):
+                return f"{name} #{item['rank']}"
+            # OpenDota now gives a share of players instead of a place: 0.9997 -> 前 0.03%.
+            try:
+                share = float(item.get("percent_rank"))
+            except (TypeError, ValueError):
+                continue
+            if hero_id and 0 < share <= 1:
+                top = (1 - share) * 100
+                return f"{name} 前 {max(top, 0.01):.2f}%" if top < 1 else f"{name} 前 {top:.0f}%"
         return ""
 
     def _record_lines(self, data):
@@ -503,9 +724,17 @@ class DotaProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
         for key in ("game_mode", "lobby_type", "region"):
             section = counts.get(key)
             if isinstance(section, dict) and section:
-                top_key, top_value = max(section.items(), key=lambda pair: int(pair[1] or 0))
-                return f"{key}: {top_key} · {self._fmt(top_value)} 场"
+                # OpenDota counts each mode as {"games", "win"}; older answers gave the games alone.
+                top_key, top_value = max(section.items(), key=lambda pair: self._count_games(pair[1]))
+                return f"{key}: {top_key} · {self._fmt(self._count_games(top_value))} 场"
         return "模式/大厅/地区数据不足"
+
+    @staticmethod
+    def _count_games(value):
+        try:
+            return int((value.get("games") if isinstance(value, dict) else value) or 0)
+        except (TypeError, ValueError):
+            return 0
 
     def _wordcloud_terms(self, wordcloud):
         counts = wordcloud.get("my_word_counts") or wordcloud.get("all_word_counts") or {}
@@ -797,6 +1026,8 @@ class DotaProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
         for hero in hero_stats.values():
             hero.pop("icon", None)
             hero.pop("img", None)
+        for hero_id, picks, bans in ((14, 3, 52), (8, 8, 42), (44, 14, 35), (22, 24, 24), (2, 40, 6)):
+            hero_stats[hero_id].update(pro_pick=picks, pro_ban=bans)
         return {
             "account_id": str(account_id),
             "profile": {
@@ -810,11 +1041,16 @@ class DotaProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
             },
             "wl": {"win": 1284, "lose": 1112},
             "recent_matches": [
-                {"hero_id": 8, "radiant_win": True, "player_slot": 1, "kills": 13, "deaths": 4, "assists": 11, "gold_per_min": 612, "xp_per_min": 728},
-                {"hero_id": 14, "radiant_win": False, "player_slot": 129, "kills": 5, "deaths": 9, "assists": 18, "gold_per_min": 382, "xp_per_min": 496},
-                {"hero_id": 22, "radiant_win": True, "player_slot": 132, "kills": 9, "deaths": 3, "assists": 22, "gold_per_min": 548, "xp_per_min": 681},
-                {"hero_id": 44, "radiant_win": False, "player_slot": 4, "kills": 10, "deaths": 8, "assists": 7, "gold_per_min": 601, "xp_per_min": 612},
-                {"hero_id": 2, "radiant_win": True, "player_slot": 130, "kills": 4, "deaths": 6, "assists": 25, "gold_per_min": 431, "xp_per_min": 552},
+                {"hero_id": 8, "radiant_win": True, "player_slot": 1, "kills": 13, "deaths": 4, "assists": 11, "gold_per_min": 612, "xp_per_min": 728,
+                 "start_time": int(time.time()) - 5400, "duration": 2310, "last_hits": 302, "average_rank": 65, "party_size": 1},
+                {"hero_id": 14, "radiant_win": False, "player_slot": 129, "kills": 5, "deaths": 9, "assists": 18, "gold_per_min": 382, "xp_per_min": 496,
+                 "start_time": int(time.time()) - 12600, "duration": 2580, "last_hits": 61, "average_rank": 62, "party_size": 2},
+                {"hero_id": 22, "radiant_win": True, "player_slot": 132, "kills": 9, "deaths": 3, "assists": 22, "gold_per_min": 548, "xp_per_min": 681,
+                 "start_time": int(time.time()) - 86400, "duration": 1980, "last_hits": 140, "average_rank": 64, "party_size": 1},
+                {"hero_id": 44, "radiant_win": False, "player_slot": 4, "kills": 10, "deaths": 8, "assists": 7, "gold_per_min": 601, "xp_per_min": 612,
+                 "start_time": int(time.time()) - 2 * 86400, "duration": 2890, "last_hits": 288, "average_rank": 55, "party_size": 3},
+                {"hero_id": 2, "radiant_win": True, "player_slot": 130, "kills": 4, "deaths": 6, "assists": 25, "gold_per_min": 431, "xp_per_min": 552,
+                 "start_time": int(time.time()) - 3 * 86400, "duration": 2140, "last_hits": 97, "average_rank": 66, "party_size": 1},
             ],
             "heroes": [
                 {"hero_id": 14, "games": 312, "win": 176},
@@ -840,6 +1076,8 @@ class DotaProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
                 "hero_damage": [{"hero_id": 22, "hero_damage": 78120}],
             },
             "hero_stats": hero_stats,
+            "peers": [{"name": "Gunnar", "games": 40, "wins": 25}, {"name": "Oh Wonder", "games": 31, "wins": 19}],
+            "patch": {"name": "7.41f", "ts": 1789455600},
             "api_calls": 0,
             "source": "OpenDota mock",
             "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
