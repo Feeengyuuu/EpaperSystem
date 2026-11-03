@@ -1551,7 +1551,7 @@ def test_the_headline_rides_along_without_touching_the_page_state(tmp_path, monk
     assert plugin._valid_aggregate_payload(payload)
 
 
-def test_the_markets_lie_on_their_own_doodles_each_market_on_a_card(monkeypatch):
+def test_the_markets_lie_on_their_own_doodles_split_by_hairlines(monkeypatch):
     import hashlib
 
     from plugins.orbital_signal import orbital_signal as module
@@ -1567,9 +1567,15 @@ def test_the_markets_lie_on_their_own_doodles_each_market_on_a_card(monkeypatch)
 
     panel = (left, top + module.ART_TOP, right, bottom)
     assert page.crop(panel).tobytes() != plain.crop(panel).tobytes()
-    # Each market's card is edged with the panel's rule down its left side, under its art.
-    edge = round(left + 12) + module.MARKET_CARD_INSET
-    assert plain.getpixel((edge, top + module.QUESTION_TOP + 60)) == module.market_palette(DAY_PALETTE)["rule"]
+    # No card under a market: a hairline in the panel's rule runs between neighbours from the art's
+    # top to the facts' foot, and the paper beside it is the panel's own.
+    palette = module.market_palette(DAY_PALETTE)
+    art_w = (right - left - 2) / 3
+    for index in (1, 2):
+        x = round(left + 1 + index * art_w)
+        for y in (top + module.ART_TOP + 2, top + module.QUESTION_TOP + 60, top + module.MARKET_COLUMNS_HEIGHT):
+            assert plain.getpixel((x, y)) == palette["rule"]
+    assert plain.getpixel((round(left + 12) + 3, top + module.QUESTION_TOP + 60)) == palette["paper"]
 
 
 def _ll2_events():
