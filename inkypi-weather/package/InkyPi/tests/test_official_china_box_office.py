@@ -125,6 +125,7 @@ def test_budget_expiry_preserves_old_cache_bytes_and_times(tmp_path, monkeypatch
     monkeypatch.setattr(plugin, "_render_chart", lambda *_a: Image.new("RGB", (32, 16)))
     monkeypatch.setattr(plugin, "_enrich_with_tmdb", lambda *_a, **_k: None)
     monkeypatch.setattr(plugin, "_download_posters", lambda *_a, **_k: None)
+    monkeypatch.setattr(plugin, "_enrich_official_with_maoyan", lambda *_a: None)  # stays offline
     monkeypatch.setattr(plugin, "_fetch_text", lambda *_a: official_page())
     settings = {"sourceMode": "official_china", "northAmericaColumn": "false", "forceRefresh": True}
     plugin.generate_image(settings, DummyDeviceConfig())
@@ -230,3 +231,126 @@ def test_migrated_first_fetch_preserves_only_matching_mainland_fallback(tmp_path
             assert not rendered
     assert path.read_bytes() == before
     assert path.stat().st_mtime_ns == mtime
+
+
+# --- national total, seat occupancy, online share and Maoyan scores ---------------------------
+
+def test_the_official_chart_gives_the_national_total_and_each_films_seats_and_online_share():
+    rows = [{"code": "film-1", "name": "神探之痕迹", "salesInWanDesc": "20.06", "salesRateDesc": "16.23%",
+             "sumSalesDesc": "6.64亿", "seatRateDesc": "1.48%", "onlineSalesRateDesc": "83.74%"}]
+    page = official_page(rows=rows).replace('"list"', '"nationalSales": {"salesDesc": {"unit": "万", "value": '
+                                                      '"123.66"}, "splitSalesDesc": {"unit": "万", "value": "111.38"}}, "list"')
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+
+    metadata = official_metadata(page, NOW)
+    movie = plugin._parse_zgdypw_realtime(page, ZGDYPW_REALTIME_URL)[0]
+
+    assert metadata["national_sales"] == "123.66万"
+    assert (movie.extra["seat_rate"], movie.extra["online_rate"]) == ("1.48%", "83.74%")
+    assert "national_sales" not in official_metadata(official_page(), NOW)
+    broken = official_page().replace('"list"', '"nationalSales": {"salesDesc": {"unit": "%", "value": "x"}}, "list"')
+    assert "national_sales" not in official_metadata(broken, NOW)
+
+
+class _MaoyanBudget:
+    """Answers Maoyan's now-showing list and detail pages like ChinaFetchBudget.get."""
+
+    def __init__(self, listing, detail=None, fail=None):
+        self.listing, self.detail, self.fail, self.calls = listing, detail, fail, []
+
+    def remaining_seconds(self):
+        return 10
+
+    def get(self, url, *, params=None, headers=None, timeout=None):
+        self.calls.append((url, params))
+        if self.fail:
+            raise self.fail
+        response = requests.Response()
+        response.status_code = 200
+        body = {"movieList": self.listing} if url.endswith("movieOnInfoList") else {"detailMovie": self.detail}
+        response._content = json.dumps(body).encode("utf-8")
+        return response
+
+
+def _official_movies(plugin, titles):
+    rows = [{"code": f"film-{index}", "name": title, "salesInWanDesc": "10.00", "salesRateDesc": "10.00%",
+             "sumSalesDesc": "1.00亿"} for index, title in enumerate(titles)]
+    return plugin._parse_zgdypw_realtime(official_page(rows=rows), ZGDYPW_REALTIME_URL)
+
+
+def test_maoyan_scores_and_the_headliners_facts_join_the_official_chart():
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    movies = _official_movies(plugin, ["神探之痕迹", "生化危机：爆发夜", "无人认领"])
+    budget = _MaoyanBudget(
+        [{"id": 1552906, "nm": "神探之痕迹", "sc": 9.6, "wish": 211664},
+         {"id": 1586199, "nm": "生化危机：爆发夜", "sc": 0, "wish": 265115}],
+        {"id": 1552906, "nm": "神探之痕迹", "sc": 9.6, "snum": 99404, "wish": 211664, "dur": 140,
+         "cat": "犯罪,悬疑", "dir": "陈思诚,某人"})
+
+    plugin._enrich_official_with_maoyan(movies, budget)
+
+    hero, second, third = (movie.extra for movie in movies)
+    assert (hero["maoyan_score"], hero["maoyan_votes"], hero["maoyan_wish"]) == (9.6, 99404, 211664)
+    assert (hero["genres"], hero["runtime"], hero["director"]) == ("犯罪/悬疑", 140, "陈思诚")
+    # Maoyan's "暂无评分" (score 0) is no score; the film keeps its want-to-see count.
+    assert "maoyan_score" not in second and second["maoyan_wish"] == 265115 and "genres" not in second
+    assert not any(key.startswith("maoyan") for key in third)
+    assert [url.rsplit("/", 1)[-1] for url, _params in budget.calls] == ["movieOnInfoList", "detailmovie"]
+    assert budget.calls[1][1] == {"movieId": "1552906"}
+
+
+def test_a_maoyan_detail_for_another_film_or_a_failed_read_adds_nothing():
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    movies = _official_movies(plugin, ["神探之痕迹"])
+    plugin._enrich_official_with_maoyan(movies, _MaoyanBudget(
+        [{"id": 1552906, "nm": "神探之痕迹", "sc": 9.6}], {"id": 1552906, "nm": "别的电影", "dur": 99, "cat": "喜剧"}))
+    assert movies[0].extra["maoyan_score"] == 9.6 and "runtime" not in movies[0].extra
+
+    movies = _official_movies(plugin, ["神探之痕迹"])
+    plugin._enrich_official_with_maoyan(movies, _MaoyanBudget([], fail=requests.ConnectionError("down")))
+    assert not any(key.startswith("maoyan") for key in movies[0].extra)
+    with pytest.raises(TaskCancelled):
+        plugin._enrich_official_with_maoyan(movies, _MaoyanBudget([], fail=TaskCancelled("stop")))
+
+
+def test_the_headliners_maoyan_facts_stay_with_the_film_across_refreshes():
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    old = _official_movies(plugin, ["神探之痕迹"])
+    old[0].extra.update(maoyan_movie_id="1552906", genres="犯罪", runtime=140, director="陈思诚", maoyan_score=9.6)
+    new = _official_movies(plugin, ["神探之痕迹"])
+
+    plugin._reuse_official_media(new, [movie.to_dict() for movie in old])
+
+    assert (new[0].extra["genres"], new[0].extra["runtime"], new[0].extra["director"]) == ("犯罪", 140, "陈思诚")
+    assert "maoyan_score" not in new[0].extra  # scores are read fresh, never carried over
+
+
+def _forbidden(status):
+    response = requests.Response()
+    response.status_code = status
+    return requests.HTTPError(f"{status} Client Error", response=response)
+
+
+def test_maoyans_403_dashboard_hands_over_to_the_official_chart_quietly(monkeypatch, caplog):
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    monkeypatch.setattr(plugin, "_source_now", lambda: NOW, raising=False)
+    monkeypatch.setattr(plugin, "_fetch_json", lambda *_a: (_ for _ in ()).throw(_forbidden(403)))
+    monkeypatch.setattr(plugin, "_fetch_text", lambda *_a: official_page())
+
+    with caplog.at_level("INFO"):
+        movies, label = plugin._load_movies({"sourceMode": "maoyan_china"}, 5)
+
+    assert label == "中国电影票房" and movies[0].title == "测试电影"
+    assert any("403" in record.message and record.levelname == "INFO" for record in caplog.records)
+    assert not any(record.levelname == "WARNING" for record in caplog.records)
+
+
+def test_auto_mode_reads_maoyans_403_as_no_chart_and_other_errors_as_errors(monkeypatch):
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    monkeypatch.setattr(plugin, "_fetch_text", lambda *_a: "<html>no table</html>")
+    monkeypatch.setattr(plugin, "_fetch_json", lambda *_a: (_ for _ in ()).throw(_forbidden(403)))
+    with pytest.raises(RuntimeError, match="No box office chart source produced movies"):
+        plugin._load_movies({"sourceMode": "auto"}, 5)
+    monkeypatch.setattr(plugin, "_fetch_json", lambda *_a: (_ for _ in ()).throw(_forbidden(500)))
+    with pytest.raises(requests.HTTPError):
+        plugin._load_movies({"sourceMode": "auto"}, 5)

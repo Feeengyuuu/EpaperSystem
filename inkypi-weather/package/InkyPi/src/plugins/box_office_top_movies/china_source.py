@@ -109,8 +109,21 @@ def official_metadata(html_text, now):
             validate_comprehensive_metrics(row.get("salesInWanDesc"), row.get("salesRateDesc"))
     except (ValueError, TypeError, OverflowError, OSError) as error:
         raise RuntimeError("Official China chart has no valid current comprehensive data") from error
-    return {
+    metadata = {
         "statistic_date": updated.astimezone(SHANGHAI).date().isoformat(),
         "source_updated_at": updated.isoformat(), "fetched_at": now.isoformat(),
         "metric_scope": METRIC_SCOPE, "source": "zgdypw_realtime", "timezone": "Asia/Shanghai",
     }
+    national = national_sales(data)
+    if national:
+        metadata["national_sales"] = national
+    return metadata
+
+
+def national_sales(box_data):
+    """Today's comprehensive national total (``nationalSales.salesDesc``) as "123.66万", or ""."""
+    sales = ((box_data or {}).get("nationalSales") or {}).get("salesDesc") if isinstance(box_data, dict) else None
+    if not isinstance(sales, dict):
+        return ""
+    value, unit = str(sales.get("value") or "").strip(), str(sales.get("unit") or "").strip()
+    return f"{value}{unit}" if re.fullmatch(r"\d+(?:\.\d+)?", value) and unit in {"万", "亿"} else ""

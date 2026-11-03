@@ -316,3 +316,66 @@ def test_single_cinema_average_uses_the_theaters_column_not_rank_or_release_days
     movie = plugin._parse_the_numbers_chart(html)[0]
     assert movie.theaters == (count if count == "7" else "")
     assert two_markets.theater_average(movie) == expected
+
+
+def _drawn_texts(monkeypatch):
+    drawn = []
+    original = two_markets.ImageDraw.ImageDraw.text
+
+    def capture(draw, xy, text, *args, **kwargs):
+        drawn.append((xy, text))
+        return original(draw, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(two_markets.ImageDraw.ImageDraw, "text", capture)
+    return drawn
+
+
+def test_the_china_headliner_lists_seat_occupancy_and_online_share_in_a_third_row():
+    movie, runner_up = china_movies()[:2]
+    movie.extra.update(seat_rate="1.48%", online_rate="83.74%")
+
+    facts = two_markets.hero_details("china", movie, runner_up)
+
+    assert [label for _icon, label, _value in facts] == ["累计", "排片", "上映", "上座", "网售", "领先#2"]
+    assert facts[3][2] == "1.48%" and facts[4][2] == "83.74%"
+    movie.extra.update(seat_rate="n/a", online_rate="120%")
+    assert [label for _icon, label, _value in two_markets.hero_details("china", movie)] == ["累计", "排片", "上映"]
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_the_china_column_shows_the_national_total_maoyan_scores_and_seat_occupancy(mode, monkeypatch):
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    china = china_movies()
+    china[0].extra.update(seat_rate="1.48%", online_rate="83.74%", maoyan_score=9.6, maoyan_votes=99404,
+                          genres="犯罪", runtime=140, director="陈思诚")
+    china[0].extra["source_metadata"]["national_sales"] = "123.66万"
+    china[1].extra.update(seat_rate="1.09%", maoyan_score=8.1)
+    china[2].extra.update(maoyan_wish=158764)
+    drawn = _drawn_texts(monkeypatch)
+
+    image = two_markets.render_two_markets(plugin, (800, 480), snapshot(china, "中国电影票房"),
+                                           snapshot(america_movies(), "The Numbers"), {"_inkypi_theme": {"mode": mode}})
+
+    texts = [text for _xy, text in drawn]
+    assert {"123.66万", "今日大盘", "上座", "1.48%", "网售", "83.74%", "上座 1.09%", "8.1"} <= set(texts)
+    assert "CHINA BOX OFFICE" not in "".join(texts).replace(" ", "")
+    assert any(text.startswith("猫眼 9.6") for text in texts)
+    assert any("140分钟" in text for text in texts)
+    # The headliner's six facts and the rows stay in their places: the third fact row ends above #2.
+    assert all(xy[1] < 234 for xy, text in drawn if text in {"网售", "83.74%"})
+    assert sum(text == "#2" and xy[1] == 252 for xy, text in drawn) == 2
+    # Maoyan's score pill is red on the headliner's poster.
+    pill = image.crop((20, 205, 120, 232)).convert("RGB")
+    assert two_markets.MAOYAN_RED in set(pill.get_flattened_data())
+
+
+def test_without_the_new_fields_the_china_column_keeps_its_old_layout(monkeypatch):
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    drawn = _drawn_texts(monkeypatch)
+
+    two_markets.render_two_markets(plugin, (800, 480), snapshot(china_movies(), "中国电影票房"), None,
+                                   {"_inkypi_theme": {"mode": "day"}})
+
+    texts = [text for _xy, text in drawn]
+    assert "今日大盘" not in texts and not any(str(text).startswith("上座") for text in texts)
+    assert {xy[1] for xy, text in drawn if text.startswith("累计 ")} == {257, 311, 365, 419}

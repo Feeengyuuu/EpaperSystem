@@ -71,6 +71,8 @@ PALETTES = {
     },
 }
 BANNER_TEXT = (255, 255, 255)
+# Maoyan's audience score sits on each mainland poster as a solid pill in Maoyan's red.
+MAOYAN_RED = (200, 30, 50)
 
 
 def north_america_settings(settings):
@@ -162,6 +164,11 @@ def theater_average(movie):
 
 def hero_details(market, movie, runner_up=None):
     facts = list(china_chips(movie) if market == "china" else america_chips(movie))
+    if market == "china":
+        # The official chart's seat occupancy and online share of today's tickets.
+        extra = movie.extra or {}
+        facts += [("seats", "上座", rate_text(extra.get("seat_rate"))),
+                  ("ticket", "网售", rate_text(extra.get("online_rate")))]
     if market == "china" and runner_up is not None:
         first, second = share_value(movie.weekend_gross), share_value(runner_up.weekend_gross)
         if first is not None and second is not None and 0 <= second < first <= 100:
@@ -171,6 +178,40 @@ def hero_details(market, movie, runner_up=None):
         if average:
             facts.append(("bars", "单馆", average))
     return [fact for fact in facts if fact[2] not in ("", "—")]
+
+
+def rate_text(value):
+    """A source percentage such as "1.48%", or "" when it is not one."""
+    text = str(value or "").strip()
+    return text if re.fullmatch(r"\d+(?:\.\d+)?%", text) and float(text[:-1]) <= 100 else ""
+
+
+def china_national_sales(snapshot):
+    """Today's national total from the official chart ("123.66万"), or ""."""
+    movies = snapshot.movies if snapshot is not None else []
+    metadata = (movies[0].extra or {}).get("source_metadata") if movies else None
+    return str((metadata or {}).get("national_sales") or "") if isinstance(metadata, dict) else ""
+
+
+def maoyan_badge(movie, *, short=False):
+    """The poster pill's text: Maoyan's score, else its want-to-see count; "" without either."""
+    extra = movie.extra or {}
+    score = extra.get("maoyan_score")
+    if isinstance(score, (int, float)) and 0 < score <= 10:
+        return f"{score:.1f}" if short else f"猫眼 {score:.1f}"
+    wish = extra.get("maoyan_wish")
+    if not short and isinstance(wish, int) and wish > 0:
+        return f"想看 {wish / 10000:.1f}万" if wish >= 10000 else f"想看 {wish}"
+    return ""
+
+
+def maoyan_caption(movie):
+    """The headliner's genre, runtime and director from Maoyan, most telling first."""
+    extra = movie.extra or {}
+    runtime = extra.get("runtime")
+    parts = [str(extra.get("genres") or ""), f"{runtime}分钟" if isinstance(runtime, int) else "",
+             f"导演 {extra['director']}" if extra.get("director") else ""]
+    return [part for part in parts if part]
 
 
 def china_total(movies):
@@ -306,7 +347,7 @@ def _draw_column(page, left, right, market, snapshot):
     roles = colors[market]
     page.draw.rounded_rectangle((page.x(left), page.y(48), page.x(right), page.y(456)), radius=page.x(8),
                                 fill=colors["panel"], outline=roles["accent"], width=1)
-    _draw_banner(page, left, right, market)
+    _draw_banner(page, left, right, market, snapshot)
     box = (page.x(left) + 2, page.y(81), page.x(right) - 2, page.y(456) - 2)
     paint_doodles(page.canvas, box, DOODLES[market], roles["accent"], radius=page.x(6), offset=box[:2])
     if snapshot is None or not snapshot.movies:
@@ -319,7 +360,7 @@ def _draw_column(page, left, right, market, snapshot):
         _draw_row(page, left, right, market, movie, 240 + index * 54, leader, first=index == 0)
 
 
-def _draw_banner(page, left, right, market):
+def _draw_banner(page, left, right, market, snapshot=None):
     roles = page.colors[market]
     page.draw.rounded_rectangle((page.x(left), page.y(48), page.x(right), page.y(80)), radius=page.x(8),
                                 fill=roles["banner"])
@@ -331,6 +372,12 @@ def _draw_banner(page, left, right, market):
         paste_icon(page.canvas, "pagoda", tile_centre, page.y(52), page.y(25), BANNER_TEXT, max_width=page.x(34),
                    anchor="center")
         title_end = left + 54 + page.text((left + 54, 51), "中国内地 · 实时", 18, BANNER_TEXT)
+        national = china_national_sales(snapshot)
+        if national:
+            # Today's national total in the English caption's place.
+            value_width = page.text_right(right - 12, 52, national, 17, BANNER_TEXT)
+            page.text_right(right - 12 - value_width - 5, 58, "今日大盘", 10, BANNER_TEXT)
+            return
         _banner_caption(page, title_end + 14, right - 12, "CHINA BOX OFFICE")
         return
     paste_icon(page.canvas, "liberty", tile_centre, page.y(51), page.y(27), BANNER_TEXT, max_width=page.x(24),
@@ -359,12 +406,22 @@ def _draw_hero(page, left, right, market, movie, runner_up=None):
     page.draw.rounded_rectangle((page.x(left + 6), page.y(86), page.x(left + 40), page.y(110)), radius=page.x(4),
                                 fill=colors["gold"])
     page.text((left + 11, 85), "#1", 18, colors["gold_text"])
+    if market == "china":
+        # The score with how many rated it when that fits across the poster, else the score alone.
+        badge, votes = maoyan_badge(movie), (movie.extra or {}).get("maoyan_votes")
+        full = f"{badge} · {votes / 10000:.1f}万评" if badge.startswith("猫眼") and isinstance(votes, int) \
+            and votes >= 10000 else badge
+        fits = page.draw.textlength(full, font=page.font(11)) / page.sx + 8 <= 94
+        _poster_pill(page, left + 12, 229, full if fits else badge, 11)
     x = left + 120
     width = right - 10 - x
     primary, secondary = page.plugin._display_titles(movie)
     page.text((x, 82), primary, 26, colors["text"], max_width=width, sizes=(24, 22, 20))
+    caption = maoyan_caption(movie) if market == "china" else []
+    used = 0
     if secondary:
-        page.text((x, 114), secondary, 12, _subtitle_color(colors, accent), max_width=width)
+        used = page.text((x, 114), secondary, 12, _subtitle_color(colors, accent), max_width=width)
+    _draw_caption(page, x + used, 114, width - used, caption, lead=" · " if used else "")
     label = "今日占比" if market == "china" else "本期票房"
     today = china_today_gross(movie) if market == "china" else None
     metric_width = 140 if today else width
@@ -379,14 +436,17 @@ def _draw_hero(page, left, right, market, movie, runner_up=None):
 
 
 def _draw_hero_details(page, x, width, facts, accent):
-    """Two aligned rows use the card's full width without tiny nested boxes."""
+    """Two aligned columns use the card's full width without tiny nested boxes: two roomy rows,
+    or three tighter ones when the source gives five or six facts."""
     colors = page.colors
     page.draw.line((page.x(x), page.y(183), page.x(x + width), page.y(183)), fill=colors["rule"], width=1)
     cell_width = (width - 12) / 2
-    for index, (icon, label, value) in enumerate(facts[:4]):
+    compact = len(facts) > 4
+    first, pitch, icon_size = (187, 16, 12) if compact else (188, 25, 13)
+    for index, (icon, label, value) in enumerate(facts[:6 if compact else 4]):
         left = x + (index % 2) * (cell_width + 12)
-        top = 188 + (index // 2) * 25
-        paste_icon(page.canvas, icon, page.x(left), page.y(top + 1), page.y(13), accent, max_width=page.x(14))
+        top = first + (index // 2) * pitch
+        paste_icon(page.canvas, icon, page.x(left), page.y(top + 1), page.y(icon_size), accent, max_width=page.x(14))
         label_width = page.text((left + 18, top), label, 10, colors["text"], bold=False)
         value_width = cell_width - 18 - label_width - 5
         font = page.font(13)
@@ -397,6 +457,30 @@ def _draw_hero_details(page, x, width, facts, accent):
         value = page.plugin._fit_text(page.draw, value, font, page.x(value_width))
         page.draw.text((page.x(left + cell_width) - page.draw.textlength(value, font=font), page.y(top - 1)),
                        value, font=font, fill=colors["text"])
+
+
+def _poster_pill(page, left, bottom, text, size):
+    """A solid Maoyan-red pill with ``text`` in white whose bottom-left corner is (left, bottom)."""
+    if not text:
+        return
+    font = page.font(size)
+    width = page.draw.textlength(text, font=font) / page.sx + 8
+    height = size + 5
+    page.draw.rounded_rectangle((page.x(left), page.y(bottom - height), page.x(left + width), page.y(bottom)),
+                                radius=page.y(height / 2), fill=MAOYAN_RED)
+    page.draw.text((page.x(left + width / 2), page.y(bottom - height / 2)), text, font=font, fill=BANNER_TEXT,
+                   anchor="mm")
+
+
+def _draw_caption(page, x, y, width, parts, *, lead=""):
+    """As many of ``parts`` as fit in ``width``, joined by " · " in the page's ink."""
+    font = page.font(12, bold=False)
+    while parts:
+        text = lead + " · ".join(parts)
+        if page.draw.textlength(text, font=font) / page.sx <= width:
+            page.text((x, y), text, 12, page.colors["text"], bold=False)
+            return
+        parts = parts[:-1]
 
 
 def _subtitle_color(colors, accent):
@@ -415,6 +499,10 @@ def _draw_row(page, left, right, market, movie, top, leader, *, first):
                        fill=colors["rule"], width=1)
     page.text((left + 10, top + 12), f"#{movie.rank}", 19, colors["gold"])
     page.poster(movie, left + 44, top + 1, 34, 48)
+    badge = maoyan_badge(movie, short=True) if market == "china" else ""
+    if badge:
+        pill_width = page.draw.textlength(badge, font=page.font(9)) / page.sx + 8
+        _poster_pill(page, left + 44 + (34 - pill_width) / 2, top + 47, badge, 9)
     primary, secondary = page.plugin._display_titles(movie)
     # The Chinese title reads at 18 (1.2x the old 15) and takes a little of the figures' room.
     page.text((left + 86, top + 2), primary, 18, colors["text"], max_width=142, sizes=(17, 16, 15))
@@ -430,8 +518,12 @@ def _draw_row(page, left, right, market, movie, top, leader, *, first):
         filled = bar[0] + max(page.y(6), round((bar[2] - bar[0]) * share))
         page.draw.rounded_rectangle((bar[0], bar[1], filled, bar[3]), radius=page.y(3), fill=accent)
     total = movie.total_gross if market == "china" else compact_money(movie.total_gross)
+    seat = rate_text((movie.extra or {}).get("seat_rate")) if market == "china" else ""
+    below = f"上座 {seat}" if seat else ""
     if total:
-        page.text_right(right - 10, top + 17, f"累计 {total}", 10, colors["text"], bold=False)
+        page.text_right(right - 10, top + (8 if below else 17), f"累计 {total}", 10, colors["text"], bold=False)
+    if below:
+        page.text_right(right - 10, top + 25, below, 10, colors["text"], bold=False)
 
 
 def _draw_footer(page, china, america):

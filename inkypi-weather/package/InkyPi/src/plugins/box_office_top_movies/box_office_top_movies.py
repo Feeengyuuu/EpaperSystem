@@ -4,6 +4,7 @@ import hashlib
 import html
 import json
 import logging
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -38,6 +39,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_CHART_URL = "https://www.the-numbers.com/weekend-box-office-chart"
 MAOYAN_DASHBOARD_URL = "https://piaofang.maoyan.com/dashboard-ajax"
 MAOYAN_MOVIE_DETAIL_URL = "https://m.maoyan.com/ajax/detailmovie"
+# Maoyan's now-showing list (about 10 KB): each film's id, audience score and want-to-see count,
+# matched to the official chart by title; the headliner's detail page (about 6 KB) adds its rating
+# count, genre, runtime and director, the last three kept with the film should a later read fail.
+MAOYAN_ON_SHOW_URL = "https://m.maoyan.com/ajax/movieOnInfoList"
+MAOYAN_FILM_FACTS = ("maoyan_movie_id", "genres", "runtime", "director")
 MAOYAN_SOURCE_LABEL = "\u732b\u773c\u4e13\u4e1a\u7248"
 ZGDYPW_REALTIME_URL = "https://zgdypf.zgdypw.cn/box"
 ZGDYPW_SOURCE_LABEL = "\u4e2d\u56fd\u7535\u5f71\u7968\u623f"
@@ -521,6 +527,7 @@ class BoxOfficeTopMovies(BasePlugin):
                         and cache.get("cache_key") == self._cache_key(settings, None, items_count, device_config)):
                     self._reuse_official_media(movies, cache.get("movies") or [])
                 self._complete_official_posters(movies, settings, device_config, budget)
+                self._enrich_official_with_maoyan(movies, budget)
                 return movies, label
         movies, label = self._load_movies(settings, items_count)
         self._poster_movies = movies
@@ -552,9 +559,66 @@ class BoxOfficeTopMovies(BasePlugin):
             for name in ("tmdb_id", "poster_url", "release_year", "overview"):
                 if not getattr(movie, name):
                     setattr(movie, name, getattr(old, name))
-            for name in ("poster_source", "poster_language", "poster_market", "english_title", "poster_attempt"):
+            for name in ("poster_source", "poster_language", "poster_market", "english_title", "poster_attempt",
+                         *MAOYAN_FILM_FACTS):
                 if name in old.extra:
                     movie.extra[name] = old.extra[name]
+
+    def _enrich_official_with_maoyan(self, movies, budget):
+        """Maoyan's audience score and want-to-see count for each official-chart film it lists, and
+        the headliner's genre, runtime and director. Optional: any failure leaves them off."""
+        try:
+            if budget.remaining_seconds() <= 1:
+                return
+            response = budget.get(MAOYAN_ON_SHOW_URL, headers=MAOYAN_MOVIE_HEADERS, timeout=8)
+            response.raise_for_status()
+            listing = {}
+            for row in (response.json() or {}).get("movieList") or []:
+                if isinstance(row, dict) and _clean_text(row.get("nm")):
+                    listing.setdefault(_normalize_title(row.get("nm")), row)
+            for movie in movies:
+                row = listing.get(_normalize_title(movie.extra.get("official_chinese_title") or movie.title))
+                if row is not None:
+                    self._apply_maoyan_scores(movie, row)
+            hero = movies[0] if movies else None
+            if hero is not None and hero.extra.get("maoyan_movie_id") and budget.remaining_seconds() > 1:
+                response = budget.get(MAOYAN_MOVIE_DETAIL_URL, params={"movieId": hero.extra["maoyan_movie_id"]},
+                                      headers=MAOYAN_MOVIE_HEADERS, timeout=8)
+                response.raise_for_status()
+                detail = (response.json() or {}).get("detailMovie") or {}
+                if (str(detail.get("id") or "") == str(hero.extra["maoyan_movie_id"])
+                        and _normalize_title(detail.get("nm")) == _normalize_title(
+                            hero.extra.get("official_chinese_title") or hero.title)):
+                    self._apply_maoyan_scores(hero, detail)
+                    self._apply_maoyan_facts(hero, detail)
+        except TaskDeadlineExceeded:
+            return  # the chart's budget is spent; the scores wait for the next refresh
+        except TaskCancelled:
+            raise
+        except Exception as exc:  # optional enrichment: the chart stands without it
+            logger.info("Maoyan scores unavailable for the official chart: %s", type(exc).__name__)
+
+    @staticmethod
+    def _apply_maoyan_scores(movie, row):
+        movie_id = str(row.get("id") or "").strip()
+        if movie_id.isdigit():
+            movie.extra["maoyan_movie_id"] = movie_id
+        for key, field_name in (("maoyan_score", "sc"), ("maoyan_wish", "wish"), ("maoyan_votes", "snum")):
+            value = row.get(field_name)
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0:
+                movie.extra[key] = round(float(value), 1) if key == "maoyan_score" else int(value)
+
+    @staticmethod
+    def _apply_maoyan_facts(movie, detail):
+        genres = "/".join(part for part in re.split(r"[,，/\s]+", _clean_text(detail.get("cat"))) if part)[:16]
+        runtime = detail.get("dur")
+        director = re.split(r"[,，]", _clean_text(detail.get("dir")))[0].strip()[:12]
+        if genres:
+            movie.extra["genres"] = genres
+        if isinstance(runtime, int) and not isinstance(runtime, bool) and 30 <= runtime <= 400:
+            movie.extra["runtime"] = runtime
+        if director:
+            movie.extra["director"] = director
 
     def _restore_local_poster(self, movie):
         """Attach only a decodable file belonging to the current poster URL."""
@@ -709,12 +773,19 @@ class BoxOfficeTopMovies(BasePlugin):
                 if movies:
                     return movies[:items_count], MAOYAN_SOURCE_LABEL
                 errors.append("Maoyan mainland China chart did not produce movies.")
+            except TaskCancelled:
+                raise
             except Exception as exc:
                 errors.append(f"Maoyan realtime chart: {exc}")
-                logger.warning(
-                    "Maoyan realtime chart failed; trying official China box office: %s",
-                    exc,
-                )
+                if _http_status(exc) == 403:
+                    # Since 2026-11 Maoyan's dashboard answers scripts with 403: an expected
+                    # refusal, so the official chart below takes over without a warning.
+                    logger.info("Maoyan dashboard refused the request (403); using the official China chart")
+                else:
+                    logger.warning(
+                        "Maoyan realtime chart failed; trying official China box office: %s",
+                        exc,
+                    )
 
             try:
                 mainland_realtime_url = (
@@ -741,8 +812,15 @@ class BoxOfficeTopMovies(BasePlugin):
                 return movies[:items_count], "The Numbers"
 
         if source_mode == "auto":
-            data = self._fetch_json(settings.get("maoyanUrl") or MAOYAN_DASHBOARD_URL, MAOYAN_HEADERS)
-            movies = self._parse_maoyan_dashboard(data)
+            try:
+                data = self._fetch_json(settings.get("maoyanUrl") or MAOYAN_DASHBOARD_URL, MAOYAN_HEADERS)
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                if _http_status(exc) != 403:
+                    raise
+                data = None  # Maoyan refuses scripts (403): the chart is simply unavailable
+            movies = self._parse_maoyan_dashboard(data) if data else []
             if movies:
                 return movies[:items_count], MAOYAN_SOURCE_LABEL
 
@@ -854,6 +932,8 @@ class BoxOfficeTopMovies(BasePlugin):
                     "today_box_wan": _clean_text(row.get("salesInWanDesc")),
                     "box_rate": _clean_text(row.get("salesRateDesc")),
                     "show_count_rate": _clean_text(row.get("sessionRateDesc")),
+                    "seat_rate": _clean_text(row.get("seatRateDesc")),
+                    "online_rate": _clean_text(row.get("onlineSalesRateDesc")),
                 },
             ))
         return movies
@@ -2020,6 +2100,14 @@ def _clean_text(value):
 
 def _normalize_title(value):
     return "".join(char.casefold() for char in str(value or "") if char.isalnum())
+
+
+def _http_status(error):
+    """The HTTP status of a requests or http_client error, or None."""
+    status = getattr(error, "status", None)
+    if status is None:
+        status = getattr(getattr(error, "response", None), "status_code", None)
+    return status if isinstance(status, int) else None
 
 
 def _contains_cjk(value):
