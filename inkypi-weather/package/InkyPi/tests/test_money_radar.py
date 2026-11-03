@@ -52,6 +52,51 @@ def test_fx_crypto_and_chart_payloads_normalize():
     assert crypto["coins"][0]["symbol"] == "BTC" and len(crypto["coins"][0]["sparkline"]) == sources.SPARK_POINTS
     # 40 daily closes: the first one within 30 days of the last is index 9.
     assert chart["last"] == 5.146 and chart["month_ago"] == pytest.approx(4.99)
+    assert "low_52w" not in chart  # no range in this meta
+
+
+def test_chart_meta_carries_the_52_week_range():
+    def chart(meta):
+        return sources.normalize_chart({"chart": {"result": [{
+            "meta": {"regularMarketPrice": 4.894, **meta}, "timestamp": [1758000000, 1758086400],
+            "indicators": {"quote": [{"close": [4.9, 4.894]}]}}]}})
+
+    ranged = chart({"fiftyTwoWeekHigh": 5.364, "fiftyTwoWeekLow": 3.956})
+    assert (ranged["low_52w"], ranged["high_52w"]) == (3.956, 5.364)
+    assert "low_52w" not in chart({"fiftyTwoWeekHigh": 3.0, "fiftyTwoWeekLow": 5.0})  # upside down
+    assert "high_52w" not in chart({"fiftyTwoWeekHigh": "n/a", "fiftyTwoWeekLow": 3.9})
+    assert money_render._range_position(ranged) == pytest.approx((3.956, 5.364, (4.894 - 3.956) / (5.364 - 3.956)))
+    assert money_render._range_position({"last": 9.0, "low_52w": 3.0, "high_52w": 5.0})[2] == 1.0
+    assert money_render._range_position({"last": 4.0}) is None
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_yield_dollar_and_gold_cards_show_where_they_sit_in_their_52_week_range(monkeypatch, mode):
+    canvas = PageCanvas(money_render._palette({"_inkypi_theme": {"mode": mode}}), family="Microsoft YaHei")
+    drawn = []
+    original = canvas.text
+    monkeypatch.setattr(canvas, "text", lambda xy, text, *args, **kwargs:
+                        drawn.append((round(xy[0]), round(xy[1]), text)) or original(xy, text, *args, **kwargs))
+    quotes = {"^TNX": {"last": 4.89, "month_ago": 5.31, "series": [5.3, 4.89], "low_52w": 3.956, "high_52w": 5.364},
+              "DX-Y.NYB": {"last": 101.8, "month_ago": 102.2, "series": [1, 2], "low_52w": 95.5, "high_52w": 103.0},
+              "GC=F": {"last": 3960.0, "month_ago": 4157.0, "series": [1, 2], "low_52w": 3879.0, "high_52w": 5586.0}}
+    payload = {"markets": {"data": {"quotes": quotes}},
+               "macro": {"data": {"source": "BLS", "cpi": {"value": 3.7, "previous": 3.4, "period": "2026-09"},
+                                  "unemployment": {"value": 4.2, "previous": 4.1, "period": "2026-09"}}}}
+
+    money_render._yield_tile(canvas, payload, money_render.TILES[3])
+    money_render._macro_tiles(canvas, payload)
+
+    texts = [text for *_xy, text in drawn]
+    assert texts.count("52周") == 3
+    assert {"3.96", "5.36", "95.5", "103.0", "$3,879", "$5,586"} <= set(texts)
+    # The yield's range stands beside its figure, inside the tile; the others along their tiles' feet.
+    (x, y), = [(x, y) for x, y, text in drawn if text == "5.36"]
+    assert money_render.TILES[3][0] + 90 < x <= money_render.TILES[3][1] - 10 and 100 < y < 125
+    assert all(y == 204 + 64 + 51 for x, y, text in drawn if text in {"$3,879", "95.5"})
+    # The dot of each range wears its card's colour.
+    gold_strip = canvas.image.crop((597, 268 + 46, 788, 268 + 57)).convert("RGB")
+    assert money_render.KIND_COLOURS["商品"] in set(gold_strip.get_flattened_data())
 
 
 def test_bls_year_over_year_and_unemployment():
@@ -223,9 +268,73 @@ def test_keyless_refresh_disables_key_gated_feeds(monkeypatch, tmp_path):
     _fake_sources(monkeypatch)
     for name in ("fetch_earnings", "fetch_ciks", "fetch_filings"):
         monkeypatch.setattr(sources, name, lambda *_args: pytest.fail("key-gated feed fetched without its key"))
+    days = []
+    monkeypatch.setattr(sources, "fetch_nasdaq_earnings", lambda day, symbols, _ctx: days.append(day) or {
+        "items": [{"symbol": "AAPL", "date": day, "hour": "amc", "eps_estimate": 1.98}] if not days[1:] else [],
+        "date": day})
 
     image = MoneyRadar({"id": "money_radar"}).generate_image({"_inkypi_theme": {"mode": "day"}}, Device())
 
+    assert image.size == (800, 480)
+    # Without Finnhub's key the coming week's reports come from Nasdaq's calendar, a day at a time.
+    assert len(days) == sources.NASDAQ_EARNINGS_DAYS == len(set(days))
+
+
+def test_nasdaq_calendar_keeps_only_the_holdings_rows():
+    payload = {"data": {"asOf": "Wed, Nov 4, 2026", "rows": [
+        {"symbol": "TM", "time": "time-not-supplied", "epsForecast": "", "name": "Toyota"},
+        {"symbol": "FIG", "time": "time-after-hours", "epsForecast": "($0.22)", "name": "Figma"},
+        {"symbol": "AAPL", "time": "time-pre-market", "epsForecast": "$1,201.98"},
+        {"symbol": "AAPL", "time": "time-after-hours", "epsForecast": "$1.98"},
+        {"symbol": "NVDA", "time": "time-not-supplied", "epsForecast": "N/A"}, "junk"]}}
+
+    data = sources.normalize_nasdaq_earnings(payload, "2026-11-04", ("AAPL", "FIG", "NVDA", "TSLA"))
+
+    assert data["items"] == [
+        {"symbol": "FIG", "date": "2026-11-04", "hour": "amc", "eps_estimate": -0.22},
+        {"symbol": "AAPL", "date": "2026-11-04", "hour": "bmo", "eps_estimate": 1201.98},
+        {"symbol": "NVDA", "date": "2026-11-04", "hour": "", "eps_estimate": None}]
+    assert sources.valid_earnings(data)
+    # Weekends and market holidays come back with null rows: nobody reports.
+    assert sources.normalize_nasdaq_earnings({"data": {"rows": None}}, "2026-11-07", ("AAPL",))["items"] == []
+    with pytest.raises(ValueError):
+        sources.normalize_nasdaq_earnings({"data": None, "status": {"rCode": 400}}, "2026-11-07", ("AAPL",))
+
+
+def test_the_coming_week_is_five_weekdays_from_today():
+    monday = datetime(2026, 11, 2, 9, 0, tzinfo=sources.PACIFIC)
+    friday = datetime(2026, 11, 6, 20, 0, tzinfo=sources.PACIFIC)
+    saturday = datetime(2026, 11, 7, 9, 0, tzinfo=sources.PACIFIC)
+
+    assert sources.earnings_days(monday) == ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06"]
+    assert sources.earnings_days(friday)[:2] == ["2026-11-06", "2026-11-09"]
+    assert sources.earnings_days(saturday)[0] == "2026-11-09"
+
+
+def test_nasdaq_days_merge_into_one_earnings_result(monkeypatch, tmp_path):
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr(money_module, "read_contexts", lambda *_args, **_kwargs: [])
+    _fake_sources(monkeypatch)
+    now = datetime(2026, 11, 2, 9, 0, tzinfo=sources.PACIFIC)
+
+    def fetch(day, symbols, _ctx):
+        if day == "2026-11-05":
+            raise HttpStatusError("GET", "nasdaq", 503)
+        rows = {"2026-11-02": [("AAPL", "amc")], "2026-11-04": [("FIG", "amc")]}.get(day, [])
+        return {"items": [{"symbol": symbol, "date": day, "hour": hour, "eps_estimate": None} for symbol, hour in rows],
+                "date": day}
+
+    monkeypatch.setattr(sources, "fetch_nasdaq_earnings", fetch)
+    plugin = MoneyRadar({"id": "money_radar"})
+    context = money_module.TaskContext.never_cancelled(deadline_monotonic=1e12)
+    payload = plugin._payload({"symbols": "AAPL, FIG"}, Device(), now, allow_network=True, context=context)
+
+    earnings = payload["earnings"]
+    assert [item["symbol"] for item in earnings["data"]["items"]] == ["AAPL", "FIG"]
+    assert (earnings["data"]["source"], earnings["data"]["days"]) == ("nasdaq", 5)
+    # One day that could not be read marks the result, not the page, as degraded.
+    assert earnings["state"] == "stale_cache" and earnings["error"] == "HttpStatusError"
+    image = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, now)
     assert image.size == (800, 480)
 
 
@@ -332,7 +441,8 @@ def test_holdings_keep_two_earnings_rows_and_give_the_rest_to_the_news(monkeypat
     monkeypatch.setattr(money_render, "_news", lambda _canvas, items, _now, left, right, _top, rows:
                         news_calls.append((len(items), left, right, rows)))
     news = [{"symbol": "TSLA", "title": f"Story {index}", "time": "2026-10-21T20:05:00+00:00"} for index in range(6)]
-    payload = {"earnings": {"state": "live", "data": {}}, "filings": {"state": "disabled", "data": {}},
+    reports = [{"symbol": symbol, "date": "2026-10-28"} for symbol in ("TSLA", "AAPL", "NVDA")]
+    payload = {"earnings": {"state": "live", "data": {"items": reports}}, "filings": {"state": "disabled", "data": {}},
                "news": {"data": {"items": news}}, "symbols": ["TSLA"], "symbols_from_portfolio": True}
 
     money_render._holdings(canvas, payload, NOW)
@@ -340,6 +450,24 @@ def test_holdings_keep_two_earnings_rows_and_give_the_rest_to_the_news(monkeypat
     assert earnings_rows == [money_render.EARNINGS_ROWS]
     # The halves stay split: three stories under the earnings, the next five down the right half.
     assert news_calls == [(6, 22, 390, 3), (3, 410, 778, 5)]
+    # Two reports share one row across the columns; none due takes one line for saying so.
+    for count, rows in ((2, 1), (0, 1)):
+        earnings_rows.clear(), news_calls.clear()
+        payload["earnings"]["data"]["items"] = reports[:count]
+        money_render._holdings(canvas, payload, NOW)
+        assert earnings_rows == [rows] and news_calls[0] == (6, 22, 390, 4)
+
+
+def test_no_nasdaq_report_due_says_so_for_the_coming_trading_days(monkeypatch):
+    canvas = PageCanvas(money_render._palette({}), family="Microsoft YaHei")
+    drawn = []
+    monkeypatch.setattr(canvas, "text", lambda xy, text, *args, **kwargs: drawn.append(text) or 10)
+
+    money_render._earnings(canvas, {"earnings": {"data": {"items": [], "source": "nasdaq", "days": 5}}}, NOW,
+                           22, 390, 378, 1)
+    money_render._earnings(canvas, {"earnings": {"data": {"items": []}}}, NOW, 22, 390, 378, 1)
+
+    assert drawn == ["近 5 个交易日持仓无财报", "45 天内持仓无财报"]
 
 
 def test_the_dollar_card_shows_each_currency_by_its_flag_and_sign():
@@ -459,6 +587,7 @@ def test_cnn_fear_and_greed_reads_its_score_band_and_history():
     reading = sources.normalize_fear_greed(payload)
 
     assert (reading["score"], reading["week"], reading["month"], reading["history"]) == (34.6, 16.69, 30.31, [20.0, 34.6])
+    assert reading["components"] == []
     assert [sources.fear_greed_band(score)[1] for score in (10, 30, 50, 60, 90)] == [
         "极度恐惧", "恐惧", "中性", "贪婪", "极度贪婪"]
     with pytest.raises(ValueError):
@@ -482,3 +611,50 @@ def test_the_fear_and_greed_gauge_sits_beside_the_yield_curve(monkeypatch, mode)
     drawn.clear()
     money_render._fear_greed(canvas, {"fear_greed": {"data": {}}})
     assert "暂不可用" in drawn
+
+
+def test_cnn_graphdata_gives_its_seven_indicators_in_order():
+    payload = {"fear_and_greed": {"score": 22.7, "rating": "extreme fear"},
+               "market_momentum_sp500": {"score": 13.2, "rating": "extreme fear"},
+               "market_momentum_sp125": {"score": 13.2, "rating": "extreme fear"},
+               "stock_price_strength": {"score": 34, "rating": "fear"},
+               "stock_price_breadth": {"score": 40.8, "rating": "fear"},
+               "put_call_options": {"score": 20.4, "rating": "extreme fear"},
+               "market_volatility_vix": {"score": 12.5, "rating": "extreme fear"},
+               "junk_bond_demand": {"score": "bad", "rating": "fear"},
+               "safe_haven_demand": {"score": 1.8, "rating": "extreme fear"}}
+
+    reading = sources.normalize_fear_greed(payload)
+
+    assert [(part["key"], part["score"]) for part in reading["components"]] == [
+        ("market_momentum_sp500", 13.2), ("stock_price_strength", 34.0), ("stock_price_breadth", 40.8),
+        ("put_call_options", 20.4), ("market_volatility_vix", 12.5), ("safe_haven_demand", 1.8)]
+    assert reading["components"][0]["rating"] == "extreme fear"
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_the_gauge_card_lists_the_indicators_as_mini_bars_beside_the_dial(monkeypatch, mode):
+    canvas = PageCanvas(money_render._palette({"_inkypi_theme": {"mode": mode}}), family="Microsoft YaHei")
+    drawn = []
+    original = canvas.text
+    monkeypatch.setattr(canvas, "text", lambda xy, text, *args, **kwargs:
+                        drawn.append((round(xy[0]), round(xy[1]), text)) or original(xy, text, *args, **kwargs))
+    components = [{"key": key, "score": score} for (key, _label), score in
+                  zip(sources.FEAR_GREED_COMPONENTS, (13.2, 34, 40.8, 20.4, 12.5, 36.4, 80))]
+
+    money_render._fear_greed(canvas, {"fear_greed": {"data": {"score": 22.7, "week": 29.8, "month": 38.2,
+                                                              "components": components}}})
+
+    left, top, right, bottom = money_render.FEAR_GREED_CARD
+    labels = [(x, y, text) for x, y, text in drawn if text in {label for _key, label in sources.FEAR_GREED_COMPONENTS}]
+    assert [text for *_xy, text in labels] == ["动能", "强度", "广度", "期权", "波动", "垃圾债", "避险"]
+    assert all(left + money_render.FEAR_GREED_DIAL_WIDTH < x < right and top + 28 < y < bottom for x, y, _ in labels)
+    scores = [text for x, _y, text in drawn if x == right - 8]
+    assert scores == ["13", "34", "41", "20", "12", "36", "80"]
+    # Each bar is filled in its own band's colour: safe-haven demand at 80 is extreme greed.
+    row = canvas.image.crop((left + money_render.FEAR_GREED_DIAL_WIDTH, labels[-1][1] - 3, right - 20,
+                             labels[-1][1] + 3)).convert("RGB")
+    assert money_render.FEAR_GREED_COLOURS[4] in set(row.get_flattened_data())
+    # The dial, score and history stay in the card's left part.
+    assert {"23", "极度恐惧", "周前 30 · 月前 38"} <= {text for *_xy, text in drawn}
+    assert all(x < left + money_render.FEAR_GREED_DIAL_WIDTH for x, _y, text in drawn if text == "周前 30 · 月前 38")

@@ -1,7 +1,8 @@
 """Bounded money feeds: FX, crypto, yields and macro, plus holdings news, earnings and SEC filings.
 
-Keyless by default (Frankfurter, CoinGecko, Yahoo chart/RSS, BLS). FRED and Finnhub keys and an
-SEC contact address each switch on one more feed; without them that feed is simply disabled.
+Keyless by default (Frankfurter, CoinGecko, Yahoo chart/RSS, BLS, CNN, Nasdaq's earnings calendar).
+FRED and Finnhub keys and an SEC contact address each switch on one more feed; without them that
+feed is simply disabled (earnings then come from Nasdaq's calendar for the coming week).
 """
 
 from __future__ import annotations
@@ -35,6 +36,18 @@ BROWSER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (K
 # CNN's five bands of its 0-100 score, in Chinese.
 FEAR_GREED_BANDS = ((25, "极度恐惧"), (45, "恐惧"), (55, "中性"), (75, "贪婪"), (101, "极度贪婪"))
 FEAR_GREED_HISTORY = 60
+# The seven indicators CNN averages into its index, in the order its page lists them, with short
+# Chinese labels for the gauge card's mini bars.
+FEAR_GREED_COMPONENTS = (
+    ("market_momentum_sp500", "动能"), ("stock_price_strength", "强度"), ("stock_price_breadth", "广度"),
+    ("put_call_options", "期权"), ("market_volatility_vix", "波动"), ("junk_bond_demand", "垃圾债"),
+    ("safe_haven_demand", "避险"),
+)
+# Nasdaq's public earnings calendar, one day per request (about 107 KB, 20 KB gzipped): the
+# keyless source of this week's reports when no Finnhub key is set.
+NASDAQ_EARNINGS_URL = "https://api.nasdaq.com/api/calendar/earnings"
+NASDAQ_EARNINGS_DAYS = 5
+NASDAQ_HOURS = {"time-pre-market": "bmo", "time-after-hours": "amc"}
 FX_CURRENCIES = ("CNY", "EUR", "JPY", "HKD")
 DEFAULT_COINS = ("bitcoin", "ethereum")
 DEFAULT_SYMBOLS = ("AAPL", "NVDA", "TSLA", "GOOGL", "MSFT")
@@ -209,11 +222,17 @@ def normalize_chart(payload):
     points = [(int(stamp), _finite(close)) for stamp, close in zip(stamps, closes) if _finite(close) is not None]
     if len(points) < 2:
         raise ValueError("Yahoo chart returned too few closes")
-    last = _finite((result.get("meta") or {}).get("regularMarketPrice")) or points[-1][1]
+    meta = result.get("meta") or {}
+    last = _finite(meta.get("regularMarketPrice")) or points[-1][1]
     cutoff = points[-1][0] - 30 * 86400
     month_ago = next((value for stamp, value in points if stamp >= cutoff), points[0][1])
-    return {"last": round(last, 4), "month_ago": round(month_ago, 4),
-            "series": [round(value, 4) for value in downsample([value for _stamp, value in points])]}
+    quote = {"last": round(last, 4), "month_ago": round(month_ago, 4),
+             "series": [round(value, 4) for value in downsample([value for _stamp, value in points])]}
+    # The meta block carries the 52-week range whatever chart range was asked for.
+    low, high = _finite(meta.get("fiftyTwoWeekLow")), _finite(meta.get("fiftyTwoWeekHigh"))
+    if low is not None and high is not None and 0 < low < high:
+        quote["low_52w"], quote["high_52w"] = round(low, 4), round(high, 4)
+    return quote
 
 
 def fetch_markets(context):
@@ -252,10 +271,17 @@ def normalize_fear_greed(payload):
         raise ValueError("CNN returned no Fear & Greed score")
     history = [_finite(point.get("y")) for point in ((payload.get("fear_and_greed_historical") or {}).get("data") or [])
                if isinstance(point, dict)]
+    components = []
+    for key, _label in FEAR_GREED_COMPONENTS:
+        part = payload.get(key)
+        value = _finite(part.get("score")) if isinstance(part, dict) else None
+        if value is not None and 0 <= value <= 100:
+            components.append({"key": key, "score": round(value, 1), "rating": str(part.get("rating") or "")[:20]})
     return {"score": round(score, 1), "timestamp": str(reading.get("timestamp") or ""),
             "previous_close": _finite(reading.get("previous_close")), "week": _finite(reading.get("previous_1_week")),
             "month": _finite(reading.get("previous_1_month")), "year": _finite(reading.get("previous_1_year")),
-            "history": [round(value, 1) for value in history if value is not None][-FEAR_GREED_HISTORY:]}
+            "history": [round(value, 1) for value in history if value is not None][-FEAR_GREED_HISTORY:],
+            "components": components}
 
 
 def fetch_fear_greed(context):
@@ -437,6 +463,47 @@ def fetch_earnings(symbols, api_key, now, context):
 def valid_earnings(data):
     items = (data or {}).get("items")
     return isinstance(items, list) and all(isinstance(item, dict) and item.get("symbol") for item in items)
+
+
+# --- Earnings this week (Nasdaq's calendar, keyless) ------------------------------------------------
+
+def earnings_days(now, count=NASDAQ_EARNINGS_DAYS):
+    """The next ``count`` weekdays from today on, as ISO dates (a holiday just lists nobody)."""
+    days, day = [], now.date()
+    while len(days) < count:
+        if day.weekday() < 5:
+            days.append(day.isoformat())
+        day += timedelta(days=1)
+    return days
+
+
+def _eps(text):
+    """Nasdaq's money strings: "$1.98", "($0.22)" for a loss, "" or "N/A" for none."""
+    value = str(text or "").strip()
+    negative = value.startswith("(") and value.endswith(")")
+    number = _finite(value.strip("()").replace("$", "").replace(",", ""))
+    return None if number is None else round(-number if negative else number, 4)
+
+
+def normalize_nasdaq_earnings(payload, day, symbols):
+    """One day of Nasdaq's calendar cut down to the holdings that report on it."""
+    data = (payload or {}).get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, dict):
+        raise ValueError("Nasdaq returned no calendar")
+    wanted = set(symbols)
+    items = []
+    for row in data.get("rows") or []:  # null on weekends and market holidays
+        symbol = str((row or {}).get("symbol") or "").strip().upper() if isinstance(row, dict) else ""
+        if symbol in wanted and all(item["symbol"] != symbol for item in items):
+            items.append({"symbol": symbol, "date": day, "hour": NASDAQ_HOURS.get(str(row.get("time") or ""), ""),
+                          "eps_estimate": _eps(row.get("epsForecast"))})
+    return {"items": items, "date": day}
+
+
+def fetch_nasdaq_earnings(day, symbols, context):
+    payload = _get("GET", NASDAQ_EARNINGS_URL, context, max_bytes=768 * 1024, params={"date": day},
+                   headers={"Accept": "application/json"})
+    return normalize_nasdaq_earnings(payload, day, symbols)
 
 
 # --- SEC filings (needs a contact address in the User-Agent) ---------------------------------------

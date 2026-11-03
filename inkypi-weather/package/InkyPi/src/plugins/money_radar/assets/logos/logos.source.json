@@ -88,6 +88,17 @@
         64
       ],
       "sha256": "45bcf06fd41e7cbe21f612b832c14aa3e87bcdd22bea8afcc1cf310114cf45d4"
+    },
+    "nasdaq": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/87/NASDAQ_Logo.svg/500px-NASDAQ_Logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:NASDAQ_Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "0788ebd18e5b40099a01147c2236c3191bf0db662a42f3f960cdaaf0fb976967",
+      "size": [
+        224,
+        64
+      ],
+      "sha256": "1aa30f8d0dc7a9ce494efa36b5a373908b2a63d0216b2c86ce8864a6b6d5d252"
     }
   }
 }

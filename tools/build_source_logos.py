@@ -37,7 +37,8 @@
 - 世界赔率榜 (world_odds): Kalshi's and Polymarket's logos from Commons (public domain).
 - NASA Pics × Space Weather: JPL's logo from Commons (public domain), for the near-Earth objects.
 - AI 论文日报 (ai_papers): Hugging Face's logo, with and without its name, and arXiv's, from Commons.
-- 资金雷达's Fear & Greed gauge: CNN's logo from Commons (public domain).
+- 资金雷达's Fear & Greed gauge: CNN's logo from Commons (public domain); its keyless earnings
+  calendar: Nasdaq's logo from Commons (public domain).
 - 湾区交通观测's BART departures: BART's logo and its five lines' lettered bullets from Commons (public domain).
 - 环球此刻's fireballs: JPL's logo (as for NASA Pics) beside NASA's.
 - Orbital Signal's space-news line: each news site's own mark (NASA's, ESA's and Ars Technica's from
@@ -279,6 +280,8 @@ LOGOS = {
                COMMONS_FILE.format(name="ArXiv_logo_2022.svg"), PUBLIC_DOMAIN), [PAPERS], 1.0),
     "cnn": ((COMMONS.format(path="b/b1/CNN.svg", name="CNN.svg"), COMMONS_FILE.format(name="CNN.svg"), PUBLIC_DOMAIN),
             [MONEY], 1.0),
+    "nasdaq": ((COMMONS.format(path="8/87/NASDAQ_Logo.svg", name="NASDAQ_Logo.svg"),
+                COMMONS_FILE.format(name="NASDAQ_Logo.svg"), PUBLIC_DOMAIN), [MONEY], 1.0),
     "bart": ((COMMONS.format(path="2/26/Bart-logo.svg", name="Bart-logo.svg"), COMMONS_FILE.format(name="Bart-logo.svg"),
               PUBLIC_DOMAIN), [PLUGINS / "bay_commute" / "assets" / "logos"], 1.0),
     "bart-orange": ((COMMONS.format(path="7/71/Orange_Line_%28BART%29.svg", name="Orange_Line_%28BART%29.svg"),

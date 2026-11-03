@@ -64,7 +64,7 @@ def test_yield_curve_uses_each_tenor_month_comparison_not_upward_slope(monkeypat
     render._curve(canvas, payload)
     assert comparisons[0] == pytest.approx([-0.2] * 4)
     assert all(tone == "down" for value, tone, _size, _xy in canvas.texts if value in {"1.00", "2.00", "3.00", "4.00"})
-    assert {"今天", "一个月前"} <= {value for value, *_ in canvas.texts}
+    assert {"今天", "1月前"} <= {value for value, *_ in canvas.texts}
     assert any("非利好判断" in value for value, *_ in canvas.texts)
     assert payload == before
 

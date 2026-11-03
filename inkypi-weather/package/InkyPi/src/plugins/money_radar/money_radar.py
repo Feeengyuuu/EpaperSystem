@@ -8,7 +8,9 @@ import re
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.render_provenance import attach_source_provenance
-from plugins.base_plugin.source_book import Source, SourceBook, combined_provenance
+from plugins.base_plugin.source_book import (
+    FRESH_CACHE, LIVE, STALE_CACHE, UNAVAILABLE, Source, SourceBook, combined_provenance,
+)
 from plugins.context_cache import read_contexts
 from runtime.long_task_executor import (
     current_instance_identity, current_instance_identity_validator, task_context_or_default,
@@ -23,7 +25,8 @@ from . import sources
 logger = logging.getLogger(__name__)
 PLUGIN_ID = "money_radar"
 CACHE_SCHEMA = 1
-CACHE_BUDGET = CacheBudget(30 * 86400, 16, 4 * 1024 * 1024)
+# Room for the feeds plus a week of Nasdaq calendar days (each kept to the holdings' rows).
+CACHE_BUDGET = CacheBudget(30 * 86400, 24, 4 * 1024 * 1024)
 DEFAULT_FONT = "Microsoft YaHei"
 TASK_SECONDS = 45
 PORTFOLIO_CONTEXT_MAX_AGE = 30 * 86400
@@ -132,12 +135,38 @@ class MoneyRadar(BasePlugin):
             fresh_seconds=4 * 3600, usable_seconds=3 * 86400, validate=sources.valid_filings, timeout_seconds=15))
         if contact and not cik_map:
             results["filings"] = {**results["filings"], "state": ciks["state"], "error": ciks["error"]}
-        results["earnings"] = load(Source(
-            "earnings", {"symbols": list(symbols)},
-            (lambda ctx: sources.fetch_earnings(symbols, finnhub_key, now, ctx)) if finnhub_key else None,
-            fresh_seconds=12 * 3600, usable_seconds=3 * 86400, validate=sources.valid_earnings, timeout_seconds=12))
+        if finnhub_key:
+            results["earnings"] = load(Source(
+                "earnings", {"symbols": list(symbols)},
+                lambda ctx: sources.fetch_earnings(symbols, finnhub_key, now, ctx),
+                fresh_seconds=12 * 3600, usable_seconds=3 * 86400, validate=sources.valid_earnings,
+                timeout_seconds=12))
+        else:
+            results["earnings"] = self._week_earnings(load, symbols, now)
         return {**results, "symbols": list(symbols), "symbols_from_portfolio": from_portfolio,
                 "provenance": combined_provenance(results.values())}
+
+    @staticmethod
+    def _week_earnings(load, symbols, now):
+        """The coming week's reports for the holdings from Nasdaq's keyless calendar, one cached
+        day at a time (only the matching rows are kept), merged into one earnings result."""
+        days = [load(Source("earnings_day", {"date": day, "symbols": list(symbols)},
+                            lambda ctx, day=day: sources.fetch_nasdaq_earnings(day, symbols, ctx),
+                            fresh_seconds=12 * 3600, usable_seconds=3 * 86400, validate=sources.valid_earnings,
+                            timeout_seconds=8))
+                for day in sources.earnings_days(now)]
+        states = [result["state"] for result in days]
+        if all(state == UNAVAILABLE for state in states):
+            state = UNAVAILABLE
+        elif any(state in (UNAVAILABLE, STALE_CACHE) for state in states):
+            state = STALE_CACHE
+        else:
+            state = LIVE if LIVE in states else FRESH_CACHE
+        items = sorted((item for result in days for item in result["data"].get("items") or []),
+                       key=lambda item: item["date"])
+        error = next((result["error"] for result in days if result.get("error")), "")
+        return {"data": {"items": items, "source": "nasdaq", "days": len(days)}, "state": state, "error": error,
+                "fetched_at": None}
 
     def render_cached_display(self, settings, device_config, *, resolved_theme_context):
         return self.render_themed_image(settings, device_config, theme_render_only=True,

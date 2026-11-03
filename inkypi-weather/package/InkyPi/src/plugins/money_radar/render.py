@@ -16,8 +16,8 @@ from utils.safe_image import ImageLimits, safe_open_image
 from utils.theme_utils import relative_luminance
 
 from .sources import (
-    CURVE_POINTS, EARNINGS_HOURS, FORM_NAMES, ITEM_NAMES, days_until, fear_greed_band, local_now, parse_time,
-    upcoming_earnings,
+    CURVE_POINTS, EARNINGS_HOURS, FEAR_GREED_COMPONENTS, FORM_NAMES, ITEM_NAMES, days_until, fear_greed_band,
+    local_now, parse_time, upcoming_earnings,
 )
 from .trend_lines import delta, direction as _direction, draw_segments, finite
 
@@ -43,12 +43,14 @@ FX_OTHERS = (("EUR", "flag-eu", "€"), ("JPY", "flag-jp", "¥"), ("HKD", "flag-
 FX_FLAG_HEIGHT = 10
 # The header names the page's sources by their logos (assets/logos), between the colour key and
 # the date: official statistics over market data, the tallest that fits two rows of them.
+# The second row names the earnings calendar in use: Finnhub's with its key, else Nasdaq's.
 SOURCE_LOGO_ROWS = (("ecb", "fred", "bls", "sec"), ("yahoo_finance", "coingecko", "finnhub"))
+EARNINGS_SOURCE_LOGOS = {"nasdaq": "nasdaq"}
 SOURCE_LOGO_HEIGHTS = range(19, 11, -1)
 SOURCE_LOGO_GAP = 6
 # Logos whose black lettering takes the night ink (True: every dark part, as Yahoo prints its
 # wordmark white on dark grounds); the seals and emblems keep their printed colours.
-SOURCE_LOGO_INKED = {"fred": False, "coingecko": False, "yahoo_finance": True}
+SOURCE_LOGO_INKED = {"fred": False, "coingecko": False, "nasdaq": False, "yahoo_finance": True}
 # A macro tile names its source (BLS, FRED) by the official logo this tall at its top right.
 TILE_SOURCE_LOGOS, TILE_SOURCE_LOGO_HEIGHT = {"BLS": "bls", "FRED": "fred"}, 16
 MACRO_ICON_SIZE = 18
@@ -131,9 +133,12 @@ DOODLE_STRENGTH = 0.18
 # The market tiles' title row, clear of the colour bar along their top (60-66).
 TITLE_Y = 83
 TILES = ((12, 200), (206, 394), (400, 588), (594, 788))
-# The yield curve's card, and CNN's Fear & Greed gauge beside it.
-CURVE_CARD = (12, 204, 262, 330)
-FEAR_GREED_CARD = (268, 204, 392, 330)
+# The yield curve's card, and CNN's Fear & Greed gauge beside it, on the market tiles' columns: the
+# gauge card is wide enough for the index's seven indicators as mini bars beside the dial.
+CURVE_CARD = (12, 204, 200, 330)
+FEAR_GREED_CARD = (206, 204, 394, 330)
+FEAR_GREED_DIAL_WIDTH = 92
+FEAR_GREED_ROW = 13
 # CNN's five bands from extreme fear to extreme greed, as the gauge's arc colours them.
 FEAR_GREED_COLOURS = ((0xD4, 0x20, 0x20), (0xF0, 0x8C, 0x00), (0x8C, 0x96, 0xA0), (0x6C, 0xC0, 0x4A),
                       (0x00, 0xA8, 0x3A))
@@ -353,7 +358,10 @@ def _yield_tile(canvas, payload, box):
         canvas.text((left + 10, 120), "利率暂不可用", 15, "muted", anchor="lm")
         return
     change = delta(ten.get("last"), ten.get("month_ago"))
-    _number(canvas, (left + 10, 114), f"{ten['last']:.2f}%", 28, right - left - 20, _direction(change)[1])
+    figure_right = left + 10 + _number(canvas, (left + 10, 114), f"{ten['last']:.2f}%", 28, right - left - 20,
+                                       _direction(change)[1])
+    # Beside the figure: where it sits in its 52-week range.
+    _range_block(canvas, (max(figure_right + 12, right - 92), right - 10), 106, ten, "{:.2f}", CARD_ACCENTS["yield"])
     change_bp = change * 100 if change is not None else None
     _change_line(canvas, (left + 10, 138), change_bp,
                  f"{change_bp:+.0f} 基点" if change_bp is not None else "—", "比1月前")
@@ -362,6 +370,51 @@ def _yield_tile(canvas, payload, box):
     rest = [f"{label} {quotes[symbol]['last']:.2f}" for symbol, label in CURVE_POINTS
             if symbol != "^TNX" and symbol in quotes and finite(quotes[symbol].get("last")) is not None]
     canvas.text((left + 10, 187), " · ".join(rest), 11, "muted", anchor="lm", bold=False, width=right - left - 20)
+
+
+def _range_position(quote):
+    """(low, high, share of the way from low to high) of a quote's 52-week range, or None."""
+    low, high, last = (finite((quote or {}).get(key)) for key in ("low_52w", "high_52w", "last"))
+    if low is None or high is None or last is None or not low < high:
+        return None
+    return low, high, min(1.0, max(0.0, (last - low) / (high - low)))
+
+
+def _range_track(canvas, x0, x1, y, share, accent):
+    """A slim grey 52-week track with the current value as a dot in the card's colour."""
+    colour = canvas.color(accent) if isinstance(accent, str) else accent
+    canvas.draw.rounded_rectangle((x0, y - 1.5, x1, y + 1.5), radius=1, fill=canvas.color("rule"))
+    for x in (x0, x1):
+        canvas.draw.line((x, y - 3, x, y + 3), fill=canvas.color("rule"), width=1)
+    x = x0 + (x1 - x0) * share
+    canvas.draw.ellipse((x - 4, y - 4, x + 4, y + 4), fill=colour, outline=canvas.color("paper"), width=1)
+
+
+def _range_block(canvas, span, top, quote, fmt, accent):
+    """The 52-week range stacked in a block: low · 52周 · high over the track."""
+    position = _range_position(quote)
+    x0, x1 = span
+    if position is None or x1 - x0 < 60:
+        return
+    low, high, share = position
+    canvas.text((x0, top), fmt.format(low), 9, "muted", anchor="lm", bold=False)
+    canvas.text((x1, top), fmt.format(high), 9, "muted", anchor="rm", bold=False)
+    canvas.text(((x0 + x1) / 2, top), "52周", 9, "muted", anchor="mm", bold=False)
+    _range_track(canvas, x0 + 2, x1 - 2, top + 12, share, accent)
+
+
+def _range_strip(canvas, span, y, quote, fmt, accent):
+    """The 52-week range in one row: 52周, the low, the track, the high. False when unknown."""
+    position = _range_position(quote)
+    if position is None:
+        return False
+    low, high, share = position
+    x0, x1 = span
+    x0 += canvas.text((x0, y), "52周", 9, "muted", anchor="lm", bold=False) + 5
+    x0 += canvas.text((x0, y), fmt.format(low), 9, "muted", anchor="lm", bold=False) + 6
+    x1 -= canvas.text((x1, y), fmt.format(high), 9, "muted", anchor="rm", bold=False) + 6
+    _range_track(canvas, x0, x1, y, share, accent)
+    return True
 
 
 def _curve(canvas, payload):
@@ -376,14 +429,16 @@ def _curve(canvas, payload):
     points = [(label, quotes.get(symbol) or {}) for symbol, label in CURVE_POINTS]
     # The legend under the title: today's line and last month's, then how the colours read.
     legend_x, legend_y = left + 10, top + 36
-    for label, color, dashed in (("今天", "muted", False), ("一个月前", "past", True)):
+    for label, color, dashed in (("今天", "muted", False), ("1月前", "past", True)):
         if dashed:
-            for x in range(int(legend_x), int(legend_x) + 16, 5):
+            for x in range(int(legend_x), int(legend_x) + 14, 5):
                 canvas.draw.line((x, legend_y, x + 2, legend_y), fill=canvas.color(color), width=2)
         else:
-            canvas.draw.line((legend_x, legend_y, legend_x + 16, legend_y), fill=canvas.color(color), width=2)
-        legend_x += 20 + canvas.text((legend_x + 20, legend_y), label, 10, "muted", anchor="lm", bold=False) + 10
-    canvas.text((right - 10, legend_y), "绿升红降 · 非利好判断", 9, "muted", anchor="rm", bold=False)
+            canvas.draw.line((legend_x, legend_y, legend_x + 14, legend_y), fill=canvas.color(color), width=2)
+        legend_x += 17 + canvas.text((legend_x + 17, legend_y), label, 10, "muted", anchor="lm", bold=False) + 8
+    # How the colours read, stacked in two short lines on the narrower card.
+    canvas.text((right - 8, legend_y - 5), "绿升红降", 9, "muted", anchor="rm", bold=False)
+    canvas.text((right - 8, legend_y + 5), "非利好判断", 9, "muted", anchor="rm", bold=False)
     if sum(finite(quote.get("last")) is not None for _label, quote in points) < 2:
         canvas.text(((left + right) / 2, (top + bottom) / 2 + 8), "收益率暂不可用", 14, "muted", anchor="mm")
         return
@@ -432,7 +487,8 @@ def _gauge_point(centre, radius, score):
 
 def _fear_greed(canvas, payload):
     """CNN's Fear & Greed Index as a half-dial over its five bands, the needle at today's score,
-    with the band named beneath and where it stood a week and a month ago."""
+    with the band named beneath and where it stood a week and a month ago; beside the dial, the
+    seven indicators CNN averages, each a mini bar in its own band's colour."""
     left, top, right, bottom = FEAR_GREED_CARD
     reading = (payload.get("fear_greed") or {}).get("data") or {}
     score = reading.get("score")
@@ -447,28 +503,62 @@ def _fear_greed(canvas, payload):
     if score is None:
         canvas.text(((left + right) / 2, (top + bottom) / 2 + 8), "暂不可用", 13, "muted", anchor="mm")
         return
-    centre, radius = ((left + right) / 2, top + 76), 42
+    components = _fear_greed_components(reading)
+    # With the indicators the dial keeps the card's left part; without them it stays centred.
+    dial_right = left + FEAR_GREED_DIAL_WIDTH if components else right
+    centre, radius = ((left + dial_right) / 2, top + 72), 36
     box = (centre[0] - radius, centre[1] - radius, centre[0] + radius, centre[1] + radius)
     for colour, start, end in zip(FEAR_GREED_COLOURS, FEAR_GREED_EDGES, FEAR_GREED_EDGES[1:]):
         # PIL's angles run clockwise from 3 o'clock: the dial's left end is 180 degrees.
-        canvas.draw.arc(box, 180 + 180 * start / 100 + 1, 180 + 180 * end / 100 - 1, fill=colour, width=9)
-    tip = _gauge_point(centre, radius - 12, score)
+        canvas.draw.arc(box, 180 + 180 * start / 100 + 1, 180 + 180 * end / 100 - 1, fill=colour, width=8)
+    tip = _gauge_point(centre, radius - 11, score)
     canvas.draw.line((centre, tip), fill=canvas.color("ink"), width=3)
     canvas.draw.ellipse((centre[0] - 5, centre[1] - 5, centre[0] + 5, centre[1] + 5), fill=canvas.color("ink"))
     # Under the hub: the score and its band, side by side.
     value = f"{score:.0f}"
-    pill_w = canvas.width(name, 11) + 14
-    row_w = canvas.width(value, 20) + 6 + pill_w
+    pill_w = canvas.width(name, 11) + 12
+    row_w = canvas.width(value, 20) + 5 + pill_w
     x = centre[0] - row_w / 2
     middle = centre[1] + 20
-    x += canvas.text((x, middle), value, 20, anchor="lm") + 6
+    x += canvas.text((x, middle), value, 20, anchor="lm") + 5
     canvas.draw.rounded_rectangle((x, middle - 8, x + pill_w, middle + 8), radius=8, fill=accent)
     canvas.text((x + pill_w / 2, middle), name, 11, "badge_ink", anchor="mm")
     past = [f"{label} {value:.0f}" for label, value in (("周前", reading.get("week")), ("月前", reading.get("month")))
             if value is not None]
     if past:
         canvas.text((centre[0], bottom - 9), " · ".join(past), 10, "muted", anchor="mm", bold=False,
-                    width=right - left - 10)
+                    width=dial_right - left - 6)
+    if components:
+        canvas.rule((dial_right, top + 28, dial_right, bottom - 6))
+        _fear_greed_bars(canvas, components, (dial_right + 6, top + 33, right - 8))
+
+
+def _fear_greed_components(reading):
+    """[(label, score)] of CNN's seven indicators present in the reading, in CNN's order."""
+    scores = {part.get("key"): finite(part.get("score")) for part in reading.get("components") or []
+              if isinstance(part, dict)}
+    return [(label, scores[key]) for key, label in FEAR_GREED_COMPONENTS
+            if scores.get(key) is not None and 0 <= scores[key] <= 100]
+
+
+def _fear_greed_bars(canvas, components, area):
+    """One row per indicator from ``area``'s top: its label, a slim 0-100 track filled to its
+    score in its band's colour, and the score."""
+    left, top, right = area
+    label_w = max(canvas.width(label, 10, bold=False) for label, _score in components)
+    score_w = canvas.width("100", 10)
+    track_left, track_right = left + label_w + 4, right - score_w - 3
+    for index, (label, value) in enumerate(components):
+        y = top + index * FEAR_GREED_ROW
+        canvas.text((left + label_w, y), label, 10, anchor="rm", bold=False)
+        canvas.draw.rounded_rectangle((track_left, y - 2, track_right, y + 2), radius=2, fill=canvas.color("rule"))
+        fill_right = track_left + (track_right - track_left) * value / 100
+        colour = FEAR_GREED_COLOURS[fear_greed_band(value)[0]]
+        if fill_right - track_left >= 2:
+            canvas.draw.rounded_rectangle((track_left, y - 3, fill_right, y + 3), radius=3, fill=colour)
+        else:
+            canvas.draw.ellipse((track_left - 1, y - 3, track_left + 5, y + 3), fill=colour)
+        canvas.text((right, y), f"{value:.0f}", 10, anchor="rm")
 
 
 def _macro_tiles(canvas, payload):
@@ -479,33 +569,39 @@ def _macro_tiles(canvas, payload):
         item = macro.get(key)
         if item and finite(item.get("value")) is not None:
             tiles.append((key, label, f"{item['value']:.1f}{unit}", item.get("previous"), item["value"],
-                          (f"{str(item.get('period'))[-2:].lstrip('0')} 月", macro.get("source", ""))))
+                          (f"{str(item.get('period'))[-2:].lstrip('0')} 月", macro.get("source", "")), None))
     if macro.get("fed_funds") or macro.get("mortgage30"):
         for key, label in (("fed_funds", "联邦基金利率"), ("mortgage30", "30 年房贷利率")):
             item = macro.get(key)
             if item and finite(item.get("value")) is not None:
-                tiles.append((key, label, f"{item['value']:.2f}%", item.get("previous"), item["value"], ("", "FRED")))
+                tiles.append((key, label, f"{item['value']:.2f}%", item.get("previous"), item["value"], ("", "FRED"),
+                              None))
     else:
         for key, symbol, label, fmt in (("dxy", "DX-Y.NYB", "美元指数", "{:.1f}"), ("gold", "GC=F", "黄金", "${:,.0f}")):
             quote = quotes.get(symbol)
             if quote and finite(quote.get("last")) is not None:
-                tiles.append((key, label, fmt.format(quote["last"]), quote.get("month_ago"), quote["last"], ("比1月前", "")))
-    for index, (key, label, value, previous, current, note) in enumerate(tiles[:4]):
+                tiles.append((key, label, fmt.format(quote["last"]), quote.get("month_ago"), quote["last"], ("比1月前", ""),
+                              (quote, fmt) if _range_position(quote) else None))
+    for index, (key, label, value, previous, current, note, ranged) in enumerate(tiles[:4]):
         column, row = index % 2, index // 2
         left = 400 + column * 197
         top = 204 + row * 64
         canvas.draw.rounded_rectangle((left, top, left + 191, top + 58), radius=6, outline=canvas.color("rule"))
         _accent_bar(canvas, (left, top, left + 191, top + 58), CARD_ACCENTS.get(key), 5)
         _card_doodles(canvas, (left, top, left + 191, top + 58), key, CARD_ACCENTS.get(key, "ink"), 5)
+        # A quote with its 52-week range moves up a little to take the range strip along its foot.
+        title_y, value_y = (top + 16, top + 34) if ranged else (top + 18, top + 41)
         # Each indicator carries its own picture (cart, briefcase, dollar coin, gold bars, bank, house).
         icon = _asset(f"macro-{key}", MACRO_ICON_SIZE)
-        label_x = left + 10 + (_paste(canvas, icon, (left + 9, top + 18 - icon.height // 2)) + 5 if icon else 0)
-        canvas.text((label_x, top + 18), label, 13, anchor="lm", width=left + 118 - label_x)
-        _tile_note(canvas, left + 181, top + 18, *note)
+        label_x = left + 10 + (_paste(canvas, icon, (left + 9, title_y - icon.height // 2)) + 5 if icon else 0)
+        canvas.text((label_x, title_y), label, 13, anchor="lm", width=left + 118 - label_x)
+        _tile_note(canvas, left + 181, title_y, *note)
         change = delta(current, previous)
         icon, tone = _direction(change)
-        _number(canvas, (left + 10, top + 41), value, 22, 102, tone)
-        draw_icon(canvas.draw, icon, (left + 115, top + 35), 10, canvas.color(tone), canvas.color("paper"))
+        _number(canvas, (left + 10, value_y), value, 22, 102, tone)
+        draw_icon(canvas.draw, icon, (left + 115, value_y - 6), 10, canvas.color(tone), canvas.color("paper"))
+        if ranged:
+            _range_strip(canvas, (left + 10, left + 181), top + 51, ranged[0], ranged[1], CARD_ACCENTS.get(key, "ink"))
         if change is None:
             figure = "—"
         elif key in {"cpi", "unemployment", "fed_funds", "mortgage30"}:
@@ -514,7 +610,7 @@ def _macro_tiles(canvas, payload):
             figure = f"{'+' if change >= 0 else '-'}${abs(change):,.0f}"
         else:
             figure = f"{change:+.2f}点"
-        _number(canvas, (left + 129, top + 40), figure, 13, 54, tone)
+        _number(canvas, (left + 129, value_y - 1), figure, 13, 54, tone)
         if key in {"cpi", "unemployment", "fed_funds", "mortgage30"}:
             canvas.text((left + 154, top + 52), "较前期" if key in {"cpi", "unemployment"} else "较历史基准",
                         7, "muted", anchor="mm", bold=False)
@@ -568,9 +664,10 @@ def _weekday_date(day):
 
 def _earnings(canvas, payload, now, left, right, top, rows):
     """Up to EARNINGS_COLUMNS * ``rows`` coming earnings in columns side by side; returns the rows used."""
-    items = upcoming_earnings(payload["earnings"]["data"].get("items"), now)[:rows * EARNINGS_COLUMNS]
+    data = payload["earnings"]["data"]
+    items = upcoming_earnings(data.get("items"), now)[:rows * EARNINGS_COLUMNS]
     if not items:
-        canvas.text((left, top), "45 天内持仓无财报", 13, "muted", anchor="lm")
+        canvas.text((left, top), f"{_earnings_window(data)}持仓无财报", 13, "muted", anchor="lm")
         return 1
     width = (right - left - EARNINGS_COLUMN_GAP * (EARNINGS_COLUMNS - 1)) / EARNINGS_COLUMNS
     calendar = _calendar_icon()
@@ -609,6 +706,19 @@ def _earnings(canvas, payload, now, left, right, top, rows):
         if hour and x + canvas.width(hour, 11, bold=False) <= end:
             canvas.text((x, y), hour, 11, "muted", anchor="lm", bold=False)
     return min(len(items), rows)
+
+
+def _earnings_window(data):
+    """How far ahead the earnings list looks: Nasdaq's coming trading days, or Finnhub's 45 days."""
+    days = data.get("days")
+    return f"近 {days} 个交易日" if data.get("source") == "nasdaq" and isinstance(days, int) else "45 天内"
+
+
+def _earnings_rows(payload, now):
+    """Rows the earnings take in the holdings card: as many as their columns need, at most
+    EARNINGS_ROWS, and one for the 'none due' line."""
+    count = len(upcoming_earnings((payload["earnings"]["data"] or {}).get("items"), now))
+    return max(1, min(EARNINGS_ROWS, math.ceil(count / EARNINGS_COLUMNS)))
 
 
 def _calendar_icon():
@@ -674,7 +784,8 @@ def _holdings(canvas, payload, now):
     if not filings_on:
         hint.append("公告需 SEC 联系邮箱")
     origin = "跟随股票页" if payload["symbols_from_portfolio"] else "自选"
-    detail = " · ".join([origin, *hint]) if hint else f"{origin} · Yahoo · Finnhub · SEC"
+    calendar = "Nasdaq" if (payload["earnings"]["data"] or {}).get("source") == "nasdaq" else "Finnhub"
+    detail = " · ".join([origin, *hint]) if hint else f"{origin} · Yahoo · {calendar} · SEC"
     detail_width = canvas.text((right - 8, top + 15), detail, 11, "muted", anchor="rm", bold=False)
     for symbol in payload["symbols"]:
         # Each holding by its company's logo alone; a ticker chip only where there is no logo.
@@ -697,12 +808,14 @@ def _holdings(canvas, payload, now):
         canvas.rule((middle, body - 8, middle, bottom - 8))
         return
     if not filings_on:
-        # Two earnings rows head the left half; the news reads on below them and down the right half.
-        _earnings(canvas, payload, now, left + 10, middle - 10, body, EARNINGS_ROWS)
-        split = body + EARNINGS_ROWS * 19 - 10
+        # Two earnings rows head the left half (one line when none is due); the news reads on below
+        # them and down the right half.
+        earnings_rows = _earnings_rows(payload, now)
+        _earnings(canvas, payload, now, left + 10, middle - 10, body, earnings_rows)
+        split = body + earnings_rows * 19 - 10
         canvas.rule((left + 8, split, middle - 8, split))
         canvas.rule((middle, body - 8, middle, bottom - 8))
-        below = rows - EARNINGS_ROWS
+        below = rows - earnings_rows
         _news(canvas, news, now, left + 10, middle - 10, split + 10, below)
         if len(news) > below:
             _news(canvas, news[below:], now, middle + 10, right - 10, body, rows)
@@ -728,15 +841,17 @@ def _kind_key(canvas, x, y):
     return x - 10
 
 
-def _source_logos(canvas, left, right, night):
+def _source_logos(canvas, left, right, night, earnings_source=None):
     """The sources' logos in two centred rows between ``left`` and ``right``, as tall as they fit;
     nothing when even the smallest do not."""
     ink = canvas.color("ink") if night else None
+    calendar = EARNINGS_SOURCE_LOGOS.get(earnings_source, "finnhub")
+    names_rows = [tuple(calendar if name == "finnhub" else name for name in names) for names in SOURCE_LOGO_ROWS]
     for height in SOURCE_LOGO_HEIGHTS:
         rows = [[load_source_logo(ASSETS / "logos" / f"{name}.png", height,
                                   ink if name in SOURCE_LOGO_INKED else None,
                                   dark_parts=SOURCE_LOGO_INKED.get(name, False)) for name in names]
-                for names in SOURCE_LOGO_ROWS]
+                for names in names_rows]
         rows = [[logo for logo in row if logo is not None] for row in rows]
         widths = [sum(logo.width for logo in row) + SOURCE_LOGO_GAP * (len(row) - 1) for row in rows if row]
         if widths and max(widths) <= right - left:
@@ -762,7 +877,8 @@ def render_page(dimensions, payload, settings, now):
         title_right = 16 + canvas.text((16, 27), "资金雷达", 30, anchor="lm")
     subtitle_right = _kind_key(canvas, title_right + 14, 30)
     date_left = 788 - canvas.text((788, 27), f"{now:%m.%d} 周{WEEKDAYS[now.weekday()]} {now:%H:%M}", 16, anchor="rm")
-    _source_logos(canvas, subtitle_right + 12, date_left - 12, night)
+    _source_logos(canvas, subtitle_right + 12, date_left - 12, night,
+                  ((payload.get("earnings") or {}).get("data") or {}).get("source"))
     canvas.rule((12, 52, 788, 52), "ink", 2)
     _fx_tile(canvas, payload, TILES[0])
     coins = payload["crypto"]["data"].get("coins", [])
