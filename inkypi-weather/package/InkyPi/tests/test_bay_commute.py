@@ -119,6 +119,70 @@ def quiet_bart(monkeypatch):
     monkeypatch.setattr(sources, "fetch_bart_network", bart)
 
 
+BSA_DELAY = {"root": {"bsa": [{"@id": "560", "station": "BART", "type": "DELAY", "description": {
+    "#cdata-section": "Expect 30-minute delays starting at 9pm each night on Sunday-Thursday for riders traveling "
+                      "between Millbrae, SFO, and Daly City stations due to planned train control modernization "
+                      "construction work. "},
+    "sms_text": {"#cdata-section": "Expect 30 min delays starting at 9pm each night between MLBR, SFO, and DALY."},
+    "posted": "Mon Nov 02 2026 06:00 AM PST", "expires": "No time provided."}], "message": ""}}
+BSA_QUIET = {"root": {"bsa": [{"station": "", "description": {"#cdata-section": "No delays reported."},
+                               "sms_text": {"#cdata-section": "No delays reported."}}]}}
+ELEVATORS_FINE = {"root": {"bsa": [{"station": "ALL", "description": {
+    "#cdata-section": "Attention passengers: All elevators are in service. Thank You."}}]}}
+ELEVATORS_OUT = {"root": {"bsa": [{"station": "BART", "description": {
+    "#cdata-section": "There are 2 elevators out of service at this time: Civic Center Elevator, "
+                      "and Lake Merritt Elevator. Thank you."}}]}}
+TRAIN_COUNT = {"root": {"traincount": "56", "message": ""}}
+
+
+def cms_entry(index, route, direction, lat, lon, lines, *, place="Union City", clock="22:24:39", in_service="true",
+              phase2=("", "", "")):
+    return {"cms": {"index": str(index), "recordTimestamp": {"recordDate": "2026-09-29", "recordTime": "23:31:00"},
+                    "location": {"route": route, "direction": direction, "nearbyPlace": place,
+                                 "latitude": str(lat), "longitude": str(lon)},
+                    "inService": in_service,
+                    "message": {"messageTimestamp": {"messageDate": "2026-09-29", "messageTime": clock},
+                                "display": "1 Page (Normal)",
+                                "phase1": {f"phase1Line{n}": line for n, line in enumerate(lines, 1)},
+                                "phase2": {f"phase2Line{n}": line for n, line in enumerate(phase2, 1)}}}}
+
+
+CMS_PAYLOAD = {"data": [
+    cms_entry(1, "I-880", "South", 37.594, -122.05, ("MILPITAS  17 MIN", "SJ ARPT   25 MIN", "MENLO PRK 13 MIN")),
+    cms_entry(2, "I-680", "North", 37.573, -121.886, ("DUBLIN    14 MIN", "WALNUT CR 32 MIN", "ANTIOCH   66 MIN"),
+              place="Sunol", clock="22:26:10"),
+    cms_entry(3, "I-880", "North", 37.65, -122.1, ("S101 FULL CLSURE", "AT SF JCT 80/101", "NOV 6- NOV 9")),
+    cms_entry(4, "US-101", "South", 37.44, -122.14, ("SJ ARPT   22 MIN", "MILPITAS  27 MIN", "LOS GATOS 26 MIN")),
+    cms_entry(5, "SR-84", "East", 37.49, -122.14, ("", "", ""), phase2=("FREMONT   13 MIN", "HAYWARD   28 MIN",
+                                                                         "MILPITAS  23 MIN")),
+    cms_entry(6, "I-680", "South", 37.45, -121.9, ("Not Reported",) * 3, in_service="false"),
+]}
+
+
+@pytest.fixture(autouse=True)
+def quiet_extras(monkeypatch):
+    """No test reaches BART's advisories, Caltrans' signs or NOAA's observed level: they read the
+    samples above (advisory, elevators fine, 56 trains; the signs; the water 1.1 ft above the
+    prediction) unless a test says otherwise."""
+    def status(now, task):
+        task.raise_if_cancelled()
+        return {"time": now.isoformat(), "advisories": sources.parse_bart_advisories(BSA_DELAY),
+                "elevators": sources.parse_bart_elevators(ELEVATORS_FINE), "trains": 56}
+
+    def signs(routes, task):
+        task.raise_if_cancelled()
+        return sources.parse_signs(CMS_PAYLOAD, routes)
+
+    def water(station, task):
+        task.raise_if_cancelled()
+        stamp = NOW - timedelta(minutes=6)
+        return {"time": stamp.astimezone(timezone.utc).isoformat(), "height": 4.6, "quality": "p"}
+
+    monkeypatch.setattr(sources, "fetch_bart_status", status)
+    monkeypatch.setattr(sources, "fetch_signs", signs)
+    monkeypatch.setattr(sources, "fetch_water_level", water)
+
+
 FREMONT = {"name": "Fremont", "abbr": "FRMT", "etd": [
     {"destination": "Richmond", "estimate": [
         {"minutes": "4", "platform": "2", "length": "6", "color": "ORANGE", "hexcolor": "#ff9933", "delay": "143",
@@ -465,7 +529,9 @@ def test_buoy_is_drawn_beside_the_tides_and_never_decides_provenance(plugin, mon
     with_buoy = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW)
     without = render_page((800, 480), {**payload, "buoy": {"state": "unavailable", "data": {}}},
                           {"_inkypi_theme": {"mode": "day"}}, NOW)
-    assert with_buoy.crop((510, 362, 790, 378)).tobytes() != without.crop((510, 362, 790, 378)).tobytes()
+    from plugins.bay_commute.command_render import BUOY_Y
+    row = (510, BUOY_Y - 4, 790, BUOY_Y + 12)
+    assert with_buoy.crop(row).tobytes() != without.crop(row).tobytes()
     assert with_buoy.crop((0, 100, 460, 480)).tobytes() == without.crop((0, 100, 460, 480)).tobytes()
 
     monkeypatch.setattr(sources, "fetch_buoy", lambda task: (_ for _ in ()).throw(OSError("offline")))
@@ -593,3 +659,127 @@ def test_the_tide_readout_holds_past_midnight_and_falls_back_to_the_day_range(mo
     command_render.tide_chart(Canvas({}), morning_only, late)
     assert (command_render.READOUT_Y, "今日潮位") in recorded
     assert command_render.READOUT_Y < command_render.CHART_HEADER_Y < command_render.CHART[1]
+
+
+def test_bart_status_reads_advisories_elevators_and_trains_in_service():
+    advisories = sources.parse_bart_advisories(BSA_DELAY)
+    assert [(item["type"], item["station"]) for item in advisories] == [("DELAY", "BART")]
+    assert advisories[0]["text"].startswith("Expect 30-minute delays") and advisories[0]["sms"]
+    assert sources.parse_bart_advisories(BSA_QUIET) == []
+    assert sources.parse_bart_elevators(ELEVATORS_FINE) == {"out": 0, "stations": []}
+    assert sources.parse_bart_elevators(ELEVATORS_OUT) == {"out": 2, "stations": ["Civic Center", "Lake Merritt"]}
+    one = {"root": {"bsa": [{"description": {"#cdata-section":
+                                             "There is one elevator out of service at this time: Balboa Park "
+                                             "Elevator. Thank you."}}]}}
+    assert sources.parse_bart_elevators(one) == {"out": 1, "stations": ["Balboa Park"]}
+    assert sources.parse_bart_count(TRAIN_COUNT) == 56
+    for broken in ({}, {"root": {}}, {"root": {"traincount": "many"}}):
+        with pytest.raises(ValueError):
+            sources.parse_bart_count(broken)
+    with pytest.raises(ValueError):
+        sources.parse_bart_advisories({"root": {"message": ""}})
+
+
+def test_bart_status_keeps_the_advisories_when_elevators_or_the_count_fail(monkeypatch):
+    replies = {"bsa": BSA_DELAY, "elev": {"root": {"bsa": []}}, "count": TRAIN_COUNT}
+    calls = []
+
+    class Client:
+        def request_json(self, method, url, **kwargs):
+            calls.append(kwargs["params"]["cmd"])
+            assert kwargs["params"]["key"] == sources.BART_PUBLIC_KEY and kwargs["max_bytes"] <= 64 * 1024
+            return SimpleNamespace(data=replies[kwargs["params"]["cmd"]])
+
+    monkeypatch.undo()
+    monkeypatch.setattr(sources, "get_http_client", lambda: Client())
+    status = sources.fetch_bart_status(NOW, context())
+    assert calls == ["bsa", "elev", "count"]
+    assert status["elevators"] is None and status["trains"] == 56 and len(status["advisories"]) == 1
+    assert sources.valid_bart_status(status)
+    assert not sources.valid_bart_status({**status, "trains": "56"})
+
+
+def test_signs_keep_travel_times_on_the_pages_routes_nearest_home_first():
+    data = sources.parse_signs(CMS_PAYLOAD, sources.DEFAULT_ROUTES)
+
+    assert sources.valid_signs(data)
+    # The closure message, the other route and the sign out of service are left out; SR-84's
+    # travel times are on its second page.
+    assert [(sign["route"], sign["direction"]) for sign in data["signs"]] == [
+        ("I-880", "South"), ("I-680", "North"), ("SR-84", "East")]
+    first = data["signs"][0]
+    assert first["lines"] == [{"to": "MILPITAS", "minutes": 17}, {"to": "SJ ARPT", "minutes": 25},
+                              {"to": "MENLO PRK", "minutes": 13}]
+    assert first["distance_km"] < data["signs"][1]["distance_km"] < data["signs"][2]["distance_km"]
+    # The reading's age is its newest message (the feed's own record time ran an hour ahead).
+    assert data["source_updated_at"] == NOW.replace(hour=22, minute=26, second=10).isoformat()
+    assert sources.pick_sign(data, NOW, choose=lambda signs: signs[-1])["route"] == "SR-84"
+    assert sources.pick_sign(data, NOW + timedelta(hours=1)) is None
+    assert sources.pick_sign({"signs": []}, NOW) is None
+    with pytest.raises(ValueError):
+        sources.parse_signs({"data": None}, sources.DEFAULT_ROUTES)
+
+
+def test_observed_water_is_set_against_the_prediction_for_its_moment():
+    observed = sources.parse_water_level({"metadata": {"id": "9414523"}, "data": [
+        {"t": "2026-09-30 05:24", "v": "4.612", "s": "0.016", "f": "0,0,0,0", "q": "p"}]})
+    assert observed == {"time": "2026-09-30T05:24:00+00:00", "height": 4.612, "quality": "p"}
+    compared = sources.water_versus_prediction(observed, tide_data(NOW), NOW)
+    assert compared["delta"] == pytest.approx(1.11) and compared["height"] == 4.612
+    # Too old a reading, or none to compare it with, says nothing.
+    assert sources.water_versus_prediction(observed, tide_data(NOW), NOW + timedelta(hours=2)) is None
+    assert sources.water_versus_prediction(observed, {"curve": []}, NOW) is None
+    for broken in ({"error": {"message": "No data was found"}}, {"data": [{"t": "x", "v": "1"}]},
+                   {"data": [{"t": "2026-09-30 05:24", "v": "nan"}]}):
+        with pytest.raises(ValueError):
+            sources.parse_water_level(broken)
+
+
+def test_the_extras_never_decide_provenance_and_a_failure_only_hides_them(plugin, monkeypatch):
+    mock_sources(monkeypatch, [])
+    payload = plugin._payload(SETTINGS, NOW, allow_network=True, context=context())
+    assert payload["provenance"] == SourceProvenance.LIVE
+    assert payload["bart_status"]["state"] == "live" and payload["bart_status"]["data"]["trains"] == 56
+    assert payload["sign"]["route"] in {"I-880", "I-680", "SR-84"}
+    assert payload["water"]["delta"] == pytest.approx(1.1)
+
+    def offline(*args, **kwargs):
+        raise OSError("offline")
+
+    for name in ("fetch_bart_status", "fetch_signs", "fetch_water_level"):
+        monkeypatch.setattr(sources, name, offline)
+    later = plugin._payload({**SETTINGS, "forceRefresh": True}, NOW + timedelta(hours=3), allow_network=True,
+                            context=context())
+    assert later["bart_status"]["state"] == "unavailable" and later["sign"] is None and later["water"] is None
+    assert later["provenance"] != SourceProvenance.LOCAL_FALLBACK
+
+
+def test_the_header_shows_a_travel_time_sign_and_the_readout_the_measured_water(plugin, monkeypatch):
+    from plugins.bay_commute.command_render import SIGN_BOX
+
+    mock_sources(monkeypatch, [])
+    payload = plugin._payload(SETTINGS, NOW, allow_network=True, context=context())
+    recorded = []
+    original = Canvas.text
+
+    def capture(self, xy, text, size=13, color="ink", *args, **kwargs):
+        recorded.append((str(text), color))
+        return original(self, xy, text, size, color, *args, **kwargs)
+
+    monkeypatch.setattr(Canvas, "text", capture)
+    signed = render_page((800, 480), {**payload, "sign": sources.parse_signs(CMS_PAYLOAD, ["I-880"])["signs"][0]},
+                         {"_inkypi_theme": {"mode": "day"}}, NOW)
+    texts = {text for text, _color in recorded}
+    assert {"MILPITAS", "17 MIN", "南向", "实测此刻", "4.6 ft", "+1.1 ft 高于预测"} <= texts
+    assert ("延误", "paper") in recorded and "在线 56 列 ·" in texts
+    assert any(text.startswith("Expect 30-min delays") for text in texts)
+    plain = render_page((800, 480), {**payload, "sign": None, "water": None, "bart_status": {"state": "unavailable"}},
+                        {"_inkypi_theme": {"mode": "night"}}, NOW)
+    assert signed.crop(SIGN_BOX).getcolors(4096) and len(signed.crop(SIGN_BOX).getcolors(4096)) > 2
+    assert len(plain.crop(SIGN_BOX).getcolors(4096)) == 1
+    recorded.clear()
+    quiet = {**payload, "bart_status": {"state": "live", "data": {
+        "time": NOW.isoformat(), "advisories": [], "elevators": {"out": 0, "stations": []}, "trains": None}}}
+    render_page((800, 480), quiet, {"_inkypi_theme": {"mode": "day"}}, NOW)
+    assert "全线无延误公告 · 电梯全部运行" in {text for text, _color in recorded}
+    assert "预测此刻" not in {text for text, _color in recorded}

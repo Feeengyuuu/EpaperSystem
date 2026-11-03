@@ -1,18 +1,22 @@
-"""Small, bounded public-data adapters for Bay Area closures and predicted tides."""
+"""Small, bounded public-data adapters for Bay Area closures and predicted tides, with BART's
+departures and service status, Caltrans' travel-time signs and the tide station's observed level."""
 
 from __future__ import annotations
 
 import csv
 import io
+import logging
 import math
 import random
 import re
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from runtime.refresh_contracts import TaskCancelled
 from utils.http_client import get_http_client
 
 
+logger = logging.getLogger(__name__)
 PACIFIC = ZoneInfo("America/Los_Angeles")
 CALTRANS_URL = "https://cwwp2.dot.ca.gov/data/d4/lcs/lcsStatusD04.csv"
 NOAA_URL = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter"
@@ -33,6 +37,23 @@ BART_DEPARTURES = 3
 # from it each time the page is made; a train this many seconds behind its schedule counts as late.
 BART_NETWORK_BYTES = 384 * 1024
 BART_LATE_SECONDS = 60
+# BART's service advisories, elevator status and trains in service (each well under 1 KB).
+BART_BSA_URL = "https://api.bart.gov/api/bsa.aspx"
+BART_STATUS_BYTES = 64 * 1024
+MAX_ADVISORIES = 4
+NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+                "nine": 9, "ten": 10}
+# Caltrans District 4's changeable message signs (about 220 KB): only the travel-time signs on the
+# page's routes are kept, nearest home first.
+CMS_URL = "https://cwwp2.dot.ca.gov/data/d4/cms/cmsStatusD04.json"
+MAX_CMS_BYTES = 1024 * 1024
+MAX_CACHED_SIGNS = 12
+# Home for the signs' order: Fremont, the same point Bay Alerts and Nature Nearby use.
+COMMUTE_HOME = (37.5485, -121.9886)
+# A travel-time line as the sign shows it: "MILPITAS  17 MIN".
+TRAVEL_LINE = re.compile(r"^(?P<to>[A-Z0-9][A-Z0-9 /.&'-]{0,18}?)\s+(?P<minutes>\d{1,3})\s*MIN$")
+# The NOAA station's latest observed water level, set against its prediction.
+WATER_LEVEL_BYTES = 16 * 1024
 COMPASS = {"N": "北", "NNE": "北东北", "NE": "东北", "ENE": "东东北", "E": "东", "ESE": "东东南", "SE": "东南",
            "SSE": "南东南", "S": "南", "SSW": "南西南", "SW": "西南", "WSW": "西西南", "W": "西", "WNW": "西西北",
            "NW": "西北", "NNW": "北西北"}
@@ -444,6 +465,247 @@ def valid_bart(data):
 def valid_bart_network(data):
     stations = (data or {}).get("stations") if isinstance(data, dict) else None
     return isinstance(stations, list) and 0 < len(stations) <= 80 and all(valid_bart(station) for station in stations)
+
+
+def _cdata(value):
+    if isinstance(value, dict):
+        value = value.get("#cdata-section")
+    return " ".join(str(value or "").split())
+
+
+def _bsa_rows(payload):
+    root = (payload or {}).get("root") if isinstance(payload, dict) else None
+    rows = (root or {}).get("bsa") if isinstance(root, dict) else None
+    rows = [rows] if isinstance(rows, dict) else rows
+    if not isinstance(rows, list):
+        raise ValueError("BART returned no advisory list")
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def parse_bart_advisories(payload):
+    """BART's current service advisories ({type, station, text, sms}); none when it reports no delays."""
+    items = []
+    for row in _bsa_rows(payload):
+        text = _cdata(row.get("description"))
+        if not text or re.search(r"\bno delays reported\b", text, re.IGNORECASE):
+            continue
+        items.append({"type": str(row.get("type") or "").strip().upper()[:20],
+                      "station": str(row.get("station") or "").strip().upper()[:8],
+                      "text": text[:400], "sms": _cdata(row.get("sms_text"))[:240]})
+    return items[:MAX_ADVISORIES]
+
+
+def parse_bart_elevators(payload):
+    """{out, stations} from BART's elevator notice: how many elevators are out of service and at
+    which stations (0 when all are in service, None when the notice cannot be read)."""
+    text = " ".join(_cdata(row.get("description")) for row in _bsa_rows(payload)).strip()
+    if not text:
+        raise ValueError("BART returned no elevator notice")
+    if re.search(r"\ball elevators are in service\b", text, re.IGNORECASE):
+        return {"out": 0, "stations": []}
+    count = re.search(r"\b(\d+|" + "|".join(NUMBER_WORDS) + r")\s+elevators?\b", text, re.IGNORECASE)
+    clause = re.search(r"out of service[^:]*:\s*(.+?)(?:\.\s*Thank|\.?\s*$)", text, re.IGNORECASE)
+    stations = []
+    if clause:
+        for part in re.split(r",|\band\b", clause.group(1)):
+            name = re.sub(r"\s*elevators?\b.*$", "", part.strip(" ."), flags=re.IGNORECASE).strip()
+            if name and name not in stations:
+                stations.append(name[:40])
+    out = count.group(1).lower() if count else None
+    out = NUMBER_WORDS.get(out) if out in NUMBER_WORDS else _int(out) if out else (len(stations) or None)
+    return {"out": out, "stations": stations[:8]}
+
+
+def parse_bart_count(payload):
+    root = (payload or {}).get("root") if isinstance(payload, dict) else None
+    count = _int((root or {}).get("traincount")) if isinstance(root, dict) else None
+    if count is None or not 0 <= count <= 300:
+        raise ValueError("BART returned no train count")
+    return count
+
+
+def fetch_bart_status(now, context):
+    """BART's advisories, with its elevator notice and trains in service when they answer (each
+    request well under 1 KB)."""
+    def read(command):
+        context.raise_if_cancelled()
+        response = get_http_client().request_json(
+            "GET", BART_BSA_URL, context=context, timeout=REQUEST_TIMEOUT, max_bytes=BART_STATUS_BYTES,
+            params={"cmd": command, "key": BART_PUBLIC_KEY, "json": "y"}, headers={"User-Agent": USER_AGENT})
+        context.raise_if_cancelled()
+        return response.data
+
+    status = {"time": local_now(now).isoformat(), "advisories": parse_bart_advisories(read("bsa")),
+              "elevators": None, "trains": None}
+    for key, command, parse in (("elevators", "elev", parse_bart_elevators), ("trains", "count", parse_bart_count)):
+        try:
+            status[key] = parse(read(command))
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            status[key] = None
+            logger.info("BART %s unavailable (%s)", command, type(exc).__name__)
+    return status
+
+
+def valid_bart_status(data):
+    if not isinstance(data, dict) or not parse_time(data.get("time")):
+        return False
+    advisories, elevators, trains = data.get("advisories"), data.get("elevators"), data.get("trains")
+    return (isinstance(advisories, list) and len(advisories) <= MAX_ADVISORIES
+            and all(isinstance(item, dict) and item.get("text") for item in advisories)
+            and (elevators is None or (isinstance(elevators, dict) and isinstance(elevators.get("stations"), list)))
+            and (trains is None or (type(trains) is int and 0 <= trains <= 300)))
+
+
+def _sign_lines(message, phase):
+    """A sign page's travel times as [{to, minutes}], or None when it says anything else."""
+    page = message.get(phase) if isinstance(message, dict) else None
+    if not isinstance(page, dict):
+        return None
+    lines = [" ".join(str(page.get(f"{phase}Line{index}") or "").split()).upper() for index in (1, 2, 3)]
+    lines = [line for line in lines if line]
+    matched = [TRAVEL_LINE.match(line) for line in lines]
+    if not lines or not all(matched):
+        return None
+    return [{"to": match.group("to").strip()[:16], "minutes": int(match.group("minutes"))} for match in matched]
+
+
+def _local_stamp(date, clock):
+    stamp = parse_time(f"{date or ''}T{clock or ''}")
+    return stamp.astimezone(PACIFIC) if stamp else None
+
+
+def parse_signs(payload, routes, home=COMMUTE_HOME):
+    """District 4's in-service travel-time signs on ``routes``, nearest ``home`` first:
+    {signs: [{id, route, direction, place, lat, lon, distance_km, lines, time}], source_updated_at}."""
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(rows, list) or len(rows) > 2000:
+        raise ValueError("Caltrans returned no sign list")
+    wanted, signs, stamps = set(routes), [], []
+    for entry in rows:
+        sign = (entry or {}).get("cms") if isinstance(entry, dict) else None
+        if not isinstance(sign, dict):
+            continue
+        location, message = sign.get("location") or {}, sign.get("message") or {}
+        shown = message.get("messageTimestamp") or {}
+        stamp = _local_stamp(shown.get("messageDate"), shown.get("messageTime"))
+        # The feed's own record time ran an hour ahead after the change from daylight time, so
+        # its age is read from the newest message any sign shows (travel times change minutes apart).
+        if stamp and str(sign.get("inService")).lower() == "true":
+            stamps.append(stamp)
+        if str(sign.get("inService")).lower() != "true" or location.get("route") not in wanted:
+            continue
+        lines = _sign_lines(message, "phase1") or _sign_lines(message, "phase2")
+        try:
+            lat, lon = float(location.get("latitude")), float(location.get("longitude"))
+        except (TypeError, ValueError):
+            continue
+        if not lines or not valid_coordinates(lat, lon):
+            continue
+        signs.append({"id": _text(sign.get("index"), 12), "route": _text(location.get("route"), 10),
+                      "direction": _text(location.get("direction"), 10), "place": _text(location.get("nearbyPlace"), 40),
+                      "lat": round(lat, 5), "lon": round(lon, 5),
+                      "distance_km": round(_distance_km(home, (lat, lon)), 1), "lines": lines,
+                      "time": stamp.isoformat() if stamp else None})
+    if rows and not stamps:
+        raise ValueError("Caltrans sign timestamps are unavailable")
+    signs.sort(key=lambda sign: (sign["distance_km"], sign["id"]))
+    return {"signs": signs[:MAX_CACHED_SIGNS], "routes": list(routes),
+            "source_updated_at": max(stamps).isoformat() if stamps else None}
+
+
+def _distance_km(first, second):
+    lat1, lon1, lat2, lon2 = map(math.radians, (*first, *second))
+    a = math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2
+    return 6371.0 * 2 * math.asin(min(1.0, math.sqrt(a)))
+
+
+def fetch_signs(routes, context):
+    context.raise_if_cancelled()
+    response = get_http_client().request_json(
+        "GET", CMS_URL, context=context, timeout=REQUEST_TIMEOUT, max_bytes=MAX_CMS_BYTES,
+        headers={"User-Agent": USER_AGENT})
+    context.raise_if_cancelled()
+    return parse_signs(response.data, routes)
+
+
+def valid_signs(data):
+    signs = data.get("signs") if isinstance(data, dict) else None
+    return (isinstance(signs, list) and len(signs) <= MAX_CACHED_SIGNS
+            and all(isinstance(sign, dict) and sign.get("route") and isinstance(sign.get("lines"), list)
+                    and 1 <= len(sign["lines"]) <= 3
+                    and all(isinstance(line, dict) and line.get("to") and type(line.get("minutes")) is int
+                            for line in sign["lines"]) for sign in signs))
+
+
+def pick_sign(data, now, choose=None, nearest=4, max_age_minutes=45):
+    """One of the ``nearest`` travel-time signs, drawn at random (by ``choose``) each time the page
+    is made; None without any, or when Caltrans' reading is older than ``max_age_minutes`` (its
+    travel times would no longer hold)."""
+    recorded = parse_time((data or {}).get("source_updated_at"))
+    if recorded is None or not -300 <= (local_now(now) - recorded).total_seconds() <= max_age_minutes * 60:
+        return None
+    signs = [sign for sign in (data or {}).get("signs") or [] if sign.get("lines")][:nearest]
+    return (choose or random.choice)(signs) if signs else None
+
+
+def parse_water_level(payload):
+    """CO-OPS's latest observed water level as {time, height, quality}."""
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    row = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else None
+    if row is None:
+        raise ValueError("NOAA returned no water level")
+    try:
+        stamp = datetime.strptime(str(row.get("t")), "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+        height = float(row.get("v"))
+    except (TypeError, ValueError):
+        raise ValueError("NOAA water level is invalid") from None
+    if not math.isfinite(height) or not -30 <= height <= 60:
+        raise ValueError("NOAA water level is out of range")
+    return {"time": stamp.isoformat(), "height": round(height, 3), "quality": str(row.get("q") or "")[:2]}
+
+
+def fetch_water_level(station, context):
+    context.raise_if_cancelled()
+    response = get_http_client().request_json(
+        "GET", NOAA_URL, context=context, timeout=REQUEST_TIMEOUT, max_bytes=WATER_LEVEL_BYTES,
+        params={"product": "water_level", "application": "InkyPi_BayCommute", "station": station,
+                "date": "latest", "datum": "MLLW", "time_zone": "gmt", "units": "english", "format": "json"},
+        headers={"User-Agent": USER_AGENT})
+    context.raise_if_cancelled()
+    return parse_water_level(response.data)
+
+
+def valid_water_level(data):
+    return (isinstance(data, dict) and parse_time(data.get("time")) is not None
+            and type(data.get("height")) in (int, float) and math.isfinite(data["height"]))
+
+
+def predicted_height(curve, stamp):
+    """The predicted tide at ``stamp`` by linear interpolation of the 15-minute curve; None outside it."""
+    points = [(parse_time(row.get("time")), row.get("height")) for row in curve or []]
+    points = [(time_, height) for time_, height in points if time_ and type(height) in (int, float)]
+    for (start, low), (end, high) in zip(points, points[1:]):
+        if start <= stamp <= end:
+            share = (stamp - start).total_seconds() / max(1.0, (end - start).total_seconds())
+            return low + (high - low) * share
+    return None
+
+
+def water_versus_prediction(water, tides, now, max_age_minutes=45):
+    """{height, delta, time} for an observation no older than ``max_age_minutes``: how far the water
+    stands above (+) or below (-) the prediction for that moment; None without either."""
+    stamp = parse_time((water or {}).get("time"))
+    if stamp is None or not valid_water_level(water):
+        return None
+    age = (local_now(now) - stamp).total_seconds()
+    if not -300 <= age <= max_age_minutes * 60:
+        return None
+    predicted = predicted_height((tides or {}).get("curve"), stamp)
+    if predicted is None:
+        return None
+    return {"height": water["height"], "delta": round(water["height"] - predicted, 2), "time": stamp.isoformat()}
 
 
 def coming_trains(data, now):

@@ -12,7 +12,7 @@ from PIL import Image, ImageColor, ImageDraw, ImageOps
 from utils.app_utils import get_base_ui_font
 from utils.fonts import load_font
 from .map_view import draw_marker, render_map, source_logo
-from .render import ASSETS, FACILITIES, KINDS, draw_water, paste_sticker, source_label, tide_now
+from .render import ASSETS, DIRECTIONS, FACILITIES, KINDS, draw_water, paste_sticker, source_label, tide_now
 from .direction_plaques import draw_direction
 from .sources import (
     BART_LATE_SECONDS, COMPASS, PACIFIC, coming_trains, local_now, next_tides, parse_time, rank_roads, road_state,
@@ -23,20 +23,34 @@ from .traffic_icons import draw_icon
 
 DAY = dict(paper="#ffffff", ink="#152839", muted="#43586a", rule="#b4bdc6", blue="#005b9c",
            pale="#eaf2f8", orange="#bd450b", soft="#faf0e8", planned="#596779", chart="#dcebf5",
-           water_mid="#b9daea", water_deep="#8fc2dc", foam="#ffffff")
+           water_mid="#b9daea", water_deep="#8fc2dc", foam="#ffffff",
+           crimson="#c81e32", emerald="#059669", plate="#111a22", plate_ink="#ffffff", plate_muted="#c9d3db")
 NIGHT = dict(paper="#080e14", ink="#eef4f9", muted="#b3c5d2", rule="#465562", blue="#7cc9fa",
              pale="#102538", orange="#ffb67c", soft="#301e14", planned="#bac8d6", chart="#102a3d",
-             water_mid="#1f4a66", water_deep="#275a7c", foam="#cfe8f7")
+             water_mid="#1f4a66", water_deep="#275a7c", foam="#cfe8f7",
+             crimson="#ff6b78", emerald="#34d399", plate="#1b2a36", plate_ink="#eef4f9", plate_muted="#b3c5d2")
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 # The tide card's readouts in a display face (the bundled Space Grotesk, SIL OFL) and the weight
 # set on it as a variable font (None for a static one); Inter stands in without it.
 DISPLAY_FACE = (PLUGIN_ROOT.parent / "static" / "fonts" / "SpaceGrotesk-VF.ttf", 700)
-# The tide chart, then the buoy's row and BART's departures beneath it, down the right column.
-READOUT_Y, CHART_HEADER_Y = 226, 246
-CHART = (536, 261, 782, 344)
-BUOY_Y = 369
-BART_Y = 391
-BART_ROWS, BART_ROW_STEP = 3, 14
+# The next high and low tides (each time with its height beside it), the tide now (measured
+# against the prediction when the station reports), the tide chart, then the buoy's row and
+# BART's departures and service notes beneath it, down the right column.
+NEXT_TITLE_Y, NEXT_VALUE_Y = 128, 143
+READOUT_Y, CHART_HEADER_Y = 183, 203
+CHART = (536, 218, 782, 301)
+BUOY_Y = 327
+BART_Y = 349
+BART_ROWS, BART_ROW_STEP = 3, 15
+# BART's service notes (advisories, elevators) under its departures: one line this tall each, an
+# advisory taking up to two.
+NOTE_STEP, ADVISORY_LINES = 12, 2
+# The observed water's delta from the prediction reads "as predicted" within this many feet.
+LEVEL_EVEN_FT = 0.1
+# The travel-time sign in the header, between the title and the Caltrans mark: a dark plate like the
+# sign itself, the route's shield and direction at its left, its three lines at its right.
+SIGN_BOX = (250, 7, 512, 58)
+SIGN_SHIELDS = {"I-680", "I-880", "SR-84"}
 # A destination's leader to its times is drawn only with at least this much room (px); the
 # station's stop ring before its name is this wide.
 BART_LEADER_MIN = 14
@@ -173,6 +187,42 @@ def header(page, now):
     d.line((round(x + zw + 8), 46, round(x + zw + 8), 55), fill=p["muted"])
     d.text((x + zw + 17, 56), zone, font=en, fill=p["muted"], anchor="ls")
     page.rule((16, 65, 784, 65), "ink", 2)
+
+
+def sign_plate(page, sign, box=SIGN_BOX):
+    """One of Caltrans' travel-time signs near home as the sign itself shows it: a dark plate with
+    the route's shield, its direction and the message's time at the left, then each destination
+    with its minutes aligned at the right. Nothing without a current sign."""
+    if not sign or not sign.get("lines"):
+        return
+    left, top, right, bottom = box
+    d, p = page.draw, page.palette
+    d.rounded_rectangle(box, radius=5, fill=p["plate"], outline=p["rule"] if page.mode == "night" else None)
+    strip = left + 44
+    route = str(sign.get("route") or "")
+    if route in SIGN_SHIELDS:
+        with Image.open(ASSETS / f"{route}.png") as source:
+            art = ImageOps.contain(source.convert("RGBA"), (26, 24), Image.Resampling.LANCZOS)
+        page.image.paste(art, (round(left + (strip - left - art.width) / 2), top + 4), art)
+        art.close()
+    else:
+        page.text(((left + strip) / 2, top + 9), route.replace("SR-", "").replace("US-", ""), 11, "plate_ink",
+                  role="number", align="center", width=40)
+    direction = DIRECTIONS.get(sign.get("direction"), "")
+    if direction:
+        page.text(((left + strip) / 2, top + 30), direction, 9, "plate_ink", align="center", width=40)
+    shown = parse_time(sign.get("time"))
+    if shown:
+        page.text(((left + strip) / 2, top + 41), shown.astimezone(PACIFIC).strftime("%H:%M"), 8, "plate_muted",
+                  role="number", bold=False, align="center", width=40)
+    d.line((strip, top + 6, strip, bottom - 6), fill=p["plate_muted"], width=1)
+    lines = sign["lines"][:3]
+    pitch = (bottom - top - 8) / 3
+    for index, line in enumerate(lines):
+        y = round(top + 5 + index * pitch + (pitch - 11) / 2)
+        minutes = f"{line['minutes']} MIN"
+        width = page.text((right - 9, y), minutes, 10, "plate_ink", role="road", align="right")
+        page.text((strip + 9, y), line["to"], 10, "plate_ink", role="road", width=right - 9 - width - 12 - strip - 9)
 
 
 def section_titles(page):
@@ -320,7 +370,28 @@ def _chart_label(page, x, y, text, high):
     page.text((xx, yy), text, 10, "blue", role="number")
 
 
-def tide_chart(page, data, now):
+def level_readout(page, water, rising):
+    """The tide now as the station measures it, with how far it stands from the prediction as a
+    chip ("+0.4 ft 高于预测"): orange above, blue below, outlined when it is as predicted."""
+    page.text((512, READOUT_Y), "实测此刻", 11, "muted")
+    width = page.text((575, READOUT_Y - 3), f"{water['height']:.1f} ft", 16, "blue", role="display")
+    delta = water["delta"]
+    even = abs(delta) < LEVEL_EVEN_FT
+    label = "与预测一致" if even else f"{delta:+.1f} ft {'高于' if delta > 0 else '低于'}预测"
+    chip_w = page.draw.textlength(label, font=font(10)) + 12
+    x = round(575 + width + 8)
+    tone = "blue" if even or delta < 0 else "orange"
+    box = (x, READOUT_Y - 1, x + chip_w, READOUT_Y + 14)
+    if even:
+        page.draw.rounded_rectangle(box, radius=7, outline=page.palette[tone], width=1)
+        page.text((x + chip_w / 2, READOUT_Y), label, 10, tone, align="center")
+    else:
+        page.draw.rounded_rectangle(box, radius=7, fill=page.palette[tone])
+        page.text((x + chip_w / 2, READOUT_Y), label, 10, "paper", align="center")
+    page.text((784, READOUT_Y), "涨潮 ↑" if rising else "退潮 ↓", 11, "blue", align="right")
+
+
+def tide_chart(page, data, now, water=None):
     begin = datetime.combine(now.date(), time.min, PACIFIC)
     end = datetime.combine(now.date() + timedelta(days=1), time.min, PACIFIC)
     rows = [row for row in data.get("curve", []) if begin <= parse_time(row["time"]) < end]
@@ -353,7 +424,9 @@ def tide_chart(page, data, now):
             _chart_label(page, x, y, parse_time(row["time"]).astimezone(PACIFIC).strftime("%H:%M"), row["type"] == "H")
     # The tide now reads off the whole prediction, so it holds past today's last sample at midnight.
     found = tide_now(data.get("curve", []), now)
-    if found:
+    if found and water:
+        level_readout(page, water, found[1])
+    elif found:
         height, rising = found
         page.text((512, READOUT_Y), "预测此刻", 11, "muted")
         page.text((575, READOUT_Y - 3), f"{height:.1f} ft", 16, "blue", role="display")
@@ -374,6 +447,14 @@ def tide_chart(page, data, now):
         ty = min(bottom - 12, y + 9)
         page.draw.rounded_rectangle((tx - 3, ty - 1, tx + width + 3, ty + 11), radius=3, fill=page.palette["paper"])
         page.text((tx, ty), tag, 9, "blue", role="number")
+    measured = parse_time((water or {}).get("time"))
+    if measured and begin <= measured < end:
+        # The station's reading as an orange ring where the water actually stood, off the curve
+        # by however far it runs from the prediction.
+        mx, my = xy({"time": measured.isoformat(), "height": water["height"]})
+        my = max(top, min(bottom, my))
+        page.draw.ellipse((mx - 4, my - 4, mx + 4, my + 4), fill=page.palette["paper"],
+                          outline=page.palette["orange"], width=2)
     page.rule((left, top, left, bottom, right, bottom), "ink")
     for hour in (0, 6, 12, 18, 24):
         stamp = end if hour == 24 else datetime.combine(now.date(), time(hour), PACIFIC)
@@ -389,21 +470,32 @@ def tides(page, payload, settings, now):
     data = payload["tides"].get("data", {})
     upcoming = next_tides(data, now)
     for key, x, title in (("H", 512, "下一次高潮"), ("L", 652, "下一次低潮")):
-        page.text((x, 131), title, 12, "muted")
+        page.text((x, NEXT_TITLE_Y), title, 12, "muted")
         row = upcoming[key]
+        right = x + (124 if key == "H" else 132)
         if row:
             stamp = parse_time(row["time"]).astimezone(PACIFIC)
-            page.text((x, 151), stamp.strftime("%H:%M"), 32, "blue", role="display", width=132, min_size=27)
-            page.text((x, 189), f"{row['height']:.1f}", 21, "blue", role="display")
-            page.text((x + 58, 197), "ft", 11, "muted", role="number", bold=False)
-            page.text((x + (124 if key == "H" else 132), 199), stamp.strftime("%m/%d"), 10,
-                      "muted", role="number", align="right", bold=False)
+            page.text((right, NEXT_TITLE_Y + 2), stamp.strftime("%m/%d"), 10, "muted", role="number", align="right",
+                      bold=False)
+            # The time, and its height beside it on the same baseline.
+            width = page.text((x, NEXT_VALUE_Y), stamp.strftime("%H:%M"), 27, "blue", role="display", width=86,
+                              min_size=23)
+            value_w = page.text((x + width + 7, NEXT_VALUE_Y + 9), f"{row['height']:.1f}", 17, "blue", role="display")
+            page.text((x + width + 9 + value_w, NEXT_VALUE_Y + 15), "ft", 10, "muted", role="number", bold=False)
         else:
-            page.text((x, 164), "暂无预测", 16, "muted")
-    page.rule((642, 131, 642, 213))
+            page.text((x, NEXT_VALUE_Y + 4), "暂无预测", 16, "muted")
+    page.rule((642, NEXT_TITLE_Y, 642, NEXT_VALUE_Y + 30))
     page.text((512, CHART_HEADER_Y), now.strftime("%m/%d") + " · 24H 预测曲线", 10, "muted", bold=False)
+    water = payload.get("water")
     page.text((784, CHART_HEADER_Y), "MLLW / ft", 10, "muted", role="number", align="right", bold=False)
-    tide_chart(page, data, now)
+    if water:
+        # The ring's key, left of the datum: the station's measured reading.
+        key_x = 784 - page.draw.textlength("MLLW / ft", font=font(10, "number", False)) - 12
+        page.text((key_x, CHART_HEADER_Y), "实测", 10, "muted", align="right", bold=False)
+        ring_x = key_x - page.draw.textlength("实测", font=font(10, bold=False)) - 8
+        page.draw.ellipse((ring_x - 4, CHART_HEADER_Y + 2, ring_x + 4, CHART_HEADER_Y + 10),
+                          fill=page.palette["paper"], outline=page.palette["orange"], width=2)
+    tide_chart(page, data, now, water)
     buoy = payload.get("buoy") or {}
     measured = buoy.get("data") or {}
     page.rule((512, BUOY_Y - 7, 784, BUOY_Y - 7))
@@ -420,30 +512,118 @@ def tides(page, payload, settings, now):
     page.text((784, BUOY_Y), " · ".join(parts), 10, "muted", align="right", width=99, bold=False)
 
 
+ADVISORY_KINDS = {"DELAY": "延误", "EMERGENCY": "紧急", "MAINTENANCE": "施工"}
+WEEKDAY_SHORT = {"Monday": "Mon", "Tuesday": "Tue", "Wednesday": "Wed", "Thursday": "Thu", "Friday": "Fri",
+                 "Saturday": "Sat", "Sunday": "Sun"}
+
+
+def compact_advisory(text):
+    """BART's advisory a little shorter for one or two lines: weekdays abbreviated, ranges with a dash."""
+    for day, short in WEEKDAY_SHORT.items():
+        text = text.replace(day, short)
+    return text.replace("-minute", "-min").replace(" through ", " thru ")
+
+
+def wrap_latin(page, text, size, width, lines):
+    """``text`` broken at spaces into at most ``lines`` lines of ``width`` in BART's face, the last
+    ending in an ellipsis when the text runs on."""
+    face = font(size, "bart", False)
+    words, result = str(text).split(), []
+    while words and len(result) < lines:
+        line = words.pop(0)
+        while words and page.draw.textlength(line + " " + words[0], font=face) <= width:
+            line += " " + words.pop(0)
+        result.append(line)
+    if words and result:
+        last = result[-1]
+        while last and page.draw.textlength(last + "...", font=face) > width:
+            last = last[:-1]
+        result[-1] = last.rstrip(" ,;") + "..."
+    return result
+
+
+def _note_x(page, label):
+    """Where a note's text starts: after its chip, or after the quiet line's dot."""
+    return round(512 + page.draw.textlength(label, font=font(9)) + 10 + 6) if label else 526
+
+
+def bart_notes(page, payload):
+    """BART's service notes for the foot of its block, each (chip label, chip colour, text lines):
+    the newest advisory over up to two lines, elevators out of service; one quiet line when there
+    is neither."""
+    status = (payload.get("bart_status") or {})
+    data = status.get("data") or {}
+    if status.get("state") in (None, "unavailable") or not data:
+        return []
+    notes = []
+    advisories = data.get("advisories") or []
+    if advisories:
+        first = advisories[0]
+        label = ADVISORY_KINDS.get(first.get("type"), "公告") + (f" {len(advisories)}" if len(advisories) > 1 else "")
+        notes.append((label, "crimson", wrap_latin(page, compact_advisory(first["text"]), 10,
+                                                   784 - _note_x(page, label), ADVISORY_LINES)))
+    elevators = data.get("elevators") or {}
+    if elevators.get("out"):
+        stations = ", ".join(elevators.get("stations") or [])
+        notes.append(("电梯", "orange", [f"{elevators['out']} 部停用" + (f" · {stations}" if stations else "")]))
+    if not notes:
+        quiet = "全线无延误公告" + (" · 电梯全部运行" if elevators.get("out") == 0 else "")
+        notes.append(("", "emerald", [quiet]))
+    return notes
+
+
+def draw_bart_notes(page, notes, top):
+    """The notes from ``top`` down: a chip in its colour (a dot for the quiet line), then the text."""
+    y = top
+    for label, colour, lines in notes:
+        x = _note_x(page, label)
+        if label:
+            page.draw.rounded_rectangle((512, y, x - 6, y + 12), radius=6, fill=page.palette[colour])
+            page.text(((512 + x - 6) / 2, y), label, 9, "paper", align="center")
+        else:
+            page.draw.ellipse((514, y + 3, 520, y + 9), fill=page.palette[colour])
+        for line in lines:
+            page.text((x, y), line, 10, role="bart", bold=False, width=784 - x)
+            y += NOTE_STEP
+    return y
+
+
 def bart(page, payload, now):
     """BART's next trains from the chosen station: its logo and name, then each destination with
-    its line's colour and its next departures as clock times."""
+    its line's colour and its next departures as clock times; trains in service at the right of
+    the station and BART's service notes (advisories, elevators) under the trains."""
     source = payload.get("bart") or {}
     data = source.get("data") or {}
     page.rule((512, BART_Y - 6, 784, BART_Y - 6))
     page.logo("bart", 512, BART_Y - 1, 14)
+    lines = coming_trains(data, now)[:BART_ROWS]
+    # How many of the shown trains run late, in red, in place of 实时发车 (缓存 for a kept reading);
+    # before it, how many trains BART has in service.
+    late = sum(delay >= BART_LATE_SECONDS for line in lines for delay in (line.get("delays") or [])[:3])
+    note = "缓存" if source.get("state") == "stale_cache" else f"{late} 班晚点" if late else "实时发车"
+    note_w = page.text((784, BART_Y + 1), note, 10, "red" if late and note != "缓存" else "muted", align="right",
+                       bold=False)
+    trains = ((payload.get("bart_status") or {}).get("data") or {}).get("trains")
+    fleet_w = 0
+    if trains:
+        fleet_w = page.text((784 - note_w - 8, BART_Y + 1), f"在线 {trains} 列 ·", 10, "muted", align="right",
+                            bold=False) + 8
     # "Warm Springs/South Fremont" reads as its first name, set like BART sets it, after its stop
     # ring in the colours of the lines that call there.
     name = str(data.get("station") or "BART").split("/")[0].strip()
     colours = list(dict.fromkeys(line["colour"] for line in data.get("lines") or [] if line.get("colour")))
     name_x = 538 + (station_ring(page, 538, BART_Y + 4, colours) + 4 if colours else 0)
-    page.text((name_x, BART_Y - 1), name, 13, role="bart", width=170)
-    lines = coming_trains(data, now)[:BART_ROWS]
-    # How many of the shown trains run late, in red, in place of 实时发车 (缓存 for a kept reading).
-    late = sum(delay >= BART_LATE_SECONDS for line in lines for delay in (line.get("delays") or [])[:3])
-    note = "缓存" if source.get("state") == "stale_cache" else f"{late} 班晚点" if late else "实时发车"
-    page.text((784, BART_Y + 1), note, 10, "red" if late and note != "缓存" else "muted", align="right", bold=False)
+    page.text((name_x, BART_Y - 1), name, 13, role="bart", width=min(170, 784 - note_w - fleet_w - 8 - name_x))
+    notes = bart_notes(page, payload)
+    notes_h = sum(len(note_lines) for _label, _colour, note_lines in notes) * NOTE_STEP
+    band_top, band_bottom = BART_Y + 14, BART_BOTTOM - notes_h - (3 if notes else 0)
+    lines = lines[:max(1, int((band_bottom - band_top) // BART_ROW_STEP))]
+    draw_bart_notes(page, notes, band_bottom + 3)
     if not lines:
         page.text((512, BART_Y + 22), "暂无发车信息" if data else "BART 发车暂不可用", 10, "muted", bold=False)
         return
     # One destination a row, in BART's typeface: the line's colour, where it goes, its next trains.
     # The rows share the column's height under the station evenly, however many trains are running.
-    band_top, band_bottom = BART_Y + 14, BART_BOTTOM
     step = (band_bottom - band_top) / len(lines)
     for index, line in enumerate(lines):
         y = round(band_top + index * step + (step - BART_ROW_STEP) / 2)
@@ -532,6 +712,7 @@ def render_page(dimensions, payload, settings, now):
     now = local_now(now)
     page = Page(settings)
     header(page, now)
+    sign_plate(page, payload.get("sign"))
     page.rule((497, 78, 497, 444))
     roads(page, payload, now)
     tides(page, payload, settings, now)

@@ -24,7 +24,11 @@ logger = logging.getLogger(__name__)
 PLUGIN_ID = "bay_commute"
 CACHE_SCHEMA = 2
 MAX_CACHE_BYTES = 512 * 1024
-CACHE_BUDGET = CacheBudget(7 * 86400, 12, 3 * 1024 * 1024)
+CACHE_BUDGET = CacheBudget(7 * 86400, 16, 3 * 1024 * 1024)
+# The extras that never decide whether the page counts as live: (fresh, usable) seconds. BART's
+# advisories change within the hour, the signs' travel times every few minutes (a 220 KB reading,
+# so ten minutes apart at most), NOAA's observed level every six minutes.
+EXTRA_FRESH = {"bart_status": (600, 2 * 3600), "signs": (600, 45 * 60), "water": (360, 3600)}
 DEFAULT_FONT = "Microsoft YaHei"
 
 
@@ -73,6 +77,12 @@ class BayCommute(BasePlugin):
             return sources.valid_buoy(data)
         if name == "bart":
             return sources.valid_bart_network(data)
+        if name == "bart_status":
+            return sources.valid_bart_status(data)
+        if name == "signs":
+            return sources.valid_signs(data)
+        if name == "water":
+            return sources.valid_water_level(data)
         if name == "roads":
             rows = data.get("items")
             return (isinstance(rows, list) and len(rows) <= sources.MAX_CACHED_ROADS
@@ -114,6 +124,8 @@ class BayCommute(BasePlugin):
             return -300 <= (now - fetched).total_seconds() < 1800
         if name == "bart":
             return -60 <= (now - fetched).total_seconds() < 120
+        if name in EXTRA_FRESH:
+            return -300 <= (now - fetched).total_seconds() < EXTRA_FRESH[name][0]
         if name == "roads":
             source = sources.parse_time(cache["data"].get("source_updated_at"))
             return (0 <= (now - fetched).total_seconds() < 3600
@@ -132,6 +144,8 @@ class BayCommute(BasePlugin):
             return (now - fetched).total_seconds() <= 6 * 3600
         if name == "bart":
             return (now - fetched).total_seconds() <= 2 * 3600
+        if name in EXTRA_FRESH:
+            return (now - fetched).total_seconds() <= EXTRA_FRESH[name][1]
         return True
 
     def _source(self, name, identity, now, *, allow_network, force, context, fetcher):
@@ -192,12 +206,26 @@ class BayCommute(BasePlugin):
         stop = sources.pick_bart_station(network.get("data"),
                                          sources.bart_station_setting(settings.get("bartStation")) if fixed else None)
         bart = {**network, "data": stop or {}}
+        # BART's advisories, elevators and trains in service; the travel-time signs on the page's
+        # routes (one drawn at random each time, like the station); the station's observed water
+        # level. All are extras like the buoy.
+        bart_status = self._source("bart_status", {"network": "ALL"}, now,
+                                   allow_network=allow_network, force=force, context=context,
+                                   fetcher=lambda: sources.fetch_bart_status(now, context))
+        signs = self._source("signs", {"routes": list(routes)}, now,
+                             allow_network=allow_network, force=force, context=context,
+                             fetcher=lambda: sources.fetch_signs(routes, context))
+        water = self._source("water", {"station": station}, now,
+                             allow_network=allow_network, force=force, context=context,
+                             fetcher=lambda: sources.fetch_water_level(station, context))
         states = {roads["state"], tides["state"]}
         provenance = (SourceProvenance.LOCAL_FALLBACK if "unavailable" in states
                       else SourceProvenance.STALE_CACHE if "stale_cache" in states
                       else SourceProvenance.LIVE if "live" in states else SourceProvenance.FRESH_CACHE)
-        return {"roads": roads, "tides": tides, "buoy": buoy, "bart": bart, "routes": list(routes), "station": station,
-                "window_days": window_days, "provenance": provenance}
+        return {"roads": roads, "tides": tides, "buoy": buoy, "bart": bart, "bart_status": bart_status,
+                "sign": sources.pick_sign(signs.get("data"), now), "signs_state": signs["state"],
+                "water": sources.water_versus_prediction(water.get("data"), tides.get("data"), now),
+                "routes": list(routes), "station": station, "window_days": window_days, "provenance": provenance}
 
     def render_cached_display(self, settings, device_config, *, resolved_theme_context):
         return self.render_themed_image(settings, device_config, theme_render_only=True,
