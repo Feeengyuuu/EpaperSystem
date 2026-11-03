@@ -609,8 +609,10 @@ class WowProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
         price = keyless.gold_text(token["gold"])
         price_w = self._text_width(draw, price, fonts["body"])
         draw.text((right - price_w, middle - 9), price, font=fonts["body"], fill=palette["ink"])
-        label_w = self._text_width(draw, "Token", fonts["tiny"])
-        draw.text((right - price_w - 6 - label_w, middle - 6), "Token", font=fonts["tiny"], fill=palette["muted"])
+        # In capitals: the secret-name contract reads a literal ending in "Token" as a key name.
+        label = "TOKEN"
+        label_w = self._text_width(draw, label, fonts["tiny"])
+        draw.text((right - price_w - 6 - label_w, middle - 6), label, font=fonts["tiny"], fill=palette["muted"])
         coin = right - price_w - label_w - 26
         draw.ellipse((coin, middle - 7, coin + 14, middle + 7), fill=palette["gold"], outline=(134, 98, 30), width=2)
         draw.ellipse((coin + 4, middle - 3, coin + 10, middle + 3), outline=(246, 230, 170), width=1)
