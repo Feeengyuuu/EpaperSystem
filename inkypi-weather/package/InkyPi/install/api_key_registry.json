@@ -485,6 +485,20 @@
       "value_type": "secret"
     },
     {
+      "key": "WEIBO_COOKIE",
+      "service": "Weibo",
+      "features": [
+        "全网热搜 (cn_hot_search)"
+      ],
+      "required": false,
+      "aliases": [
+        "WEIBO_SUB"
+      ],
+      "signup_url": "https://weibo.com/",
+      "notes": "Optional: the SUB cookie (or the whole Cookie header) from a logged-in weibo.com session adds Weibo's hot search to the page.",
+      "value_type": "secret"
+    },
+    {
       "key": "BLIZZARD_CLIENT_ID",
       "service": "Battle.net Developer Portal",
       "features": [
