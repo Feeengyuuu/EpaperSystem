@@ -36,13 +36,6 @@ BROWSER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (K
 # CNN's five bands of its 0-100 score, in Chinese.
 FEAR_GREED_BANDS = ((25, "极度恐惧"), (45, "恐惧"), (55, "中性"), (75, "贪婪"), (101, "极度贪婪"))
 FEAR_GREED_HISTORY = 60
-# The seven indicators CNN averages into its index, in the order its page lists them, with short
-# Chinese labels for the gauge card's mini bars.
-FEAR_GREED_COMPONENTS = (
-    ("market_momentum_sp500", "动能"), ("stock_price_strength", "强度"), ("stock_price_breadth", "广度"),
-    ("put_call_options", "期权"), ("market_volatility_vix", "波动"), ("junk_bond_demand", "垃圾债"),
-    ("safe_haven_demand", "避险"),
-)
 # Nasdaq's public earnings calendar, one day per request (about 107 KB, 20 KB gzipped): the
 # keyless source of this week's reports when no Finnhub key is set.
 NASDAQ_EARNINGS_URL = "https://api.nasdaq.com/api/calendar/earnings"
@@ -271,17 +264,10 @@ def normalize_fear_greed(payload):
         raise ValueError("CNN returned no Fear & Greed score")
     history = [_finite(point.get("y")) for point in ((payload.get("fear_and_greed_historical") or {}).get("data") or [])
                if isinstance(point, dict)]
-    components = []
-    for key, _label in FEAR_GREED_COMPONENTS:
-        part = payload.get(key)
-        value = _finite(part.get("score")) if isinstance(part, dict) else None
-        if value is not None and 0 <= value <= 100:
-            components.append({"key": key, "score": round(value, 1), "rating": str(part.get("rating") or "")[:20]})
     return {"score": round(score, 1), "timestamp": str(reading.get("timestamp") or ""),
             "previous_close": _finite(reading.get("previous_close")), "week": _finite(reading.get("previous_1_week")),
             "month": _finite(reading.get("previous_1_month")), "year": _finite(reading.get("previous_1_year")),
-            "history": [round(value, 1) for value in history if value is not None][-FEAR_GREED_HISTORY:],
-            "components": components}
+            "history": [round(value, 1) for value in history if value is not None][-FEAR_GREED_HISTORY:]}
 
 
 def fetch_fear_greed(context):

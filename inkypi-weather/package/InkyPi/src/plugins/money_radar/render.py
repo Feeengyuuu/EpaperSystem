@@ -17,8 +17,8 @@ from utils.safe_image import ImageLimits, safe_open_image
 from utils.theme_utils import relative_luminance
 
 from .sources import (
-    CURVE_POINTS, EARNINGS_HOURS, FEAR_GREED_COMPONENTS, FORM_NAMES, ITEM_NAMES, days_until, fear_greed_band,
-    local_now, parse_time, upcoming_earnings,
+    CURVE_POINTS, EARNINGS_HOURS, FORM_NAMES, ITEM_NAMES, days_until, fear_greed_band, local_now, parse_time,
+    upcoming_earnings,
 )
 from .trend_lines import delta, direction as _direction, draw_segments, finite
 
@@ -138,12 +138,9 @@ DOODLE_STRENGTH = 0.18
 # The market tiles' title row, clear of the colour bar along their top (60-66).
 TITLE_Y = 83
 TILES = ((12, 200), (206, 394), (400, 588), (594, 788))
-# The yield curve's card, and CNN's Fear & Greed gauge beside it, on the market tiles' columns: the
-# gauge card is wide enough for the index's seven indicators as mini bars beside the dial.
-CURVE_CARD = (12, 204, 200, 330)
-FEAR_GREED_CARD = (206, 204, 394, 330)
-FEAR_GREED_DIAL_WIDTH = 92
-FEAR_GREED_ROW = 13
+# The yield curve's card, and CNN's Fear & Greed gauge beside it.
+CURVE_CARD = (12, 204, 262, 330)
+FEAR_GREED_CARD = (268, 204, 392, 330)
 # CNN's five bands from extreme fear to extreme greed, as the gauge's arc colours them.
 FEAR_GREED_COLOURS = ((0xD4, 0x20, 0x20), (0xF0, 0x8C, 0x00), (0x8C, 0x96, 0xA0), (0x6C, 0xC0, 0x4A),
                       (0x00, 0xA8, 0x3A))
@@ -434,16 +431,14 @@ def _curve(canvas, payload):
     points = [(label, quotes.get(symbol) or {}) for symbol, label in CURVE_POINTS]
     # The legend under the title: today's line and last month's, then how the colours read.
     legend_x, legend_y = left + 10, top + 36
-    for label, color, dashed in (("今天", "muted", False), ("1月前", "past", True)):
+    for label, color, dashed in (("今天", "muted", False), ("一个月前", "past", True)):
         if dashed:
-            for x in range(int(legend_x), int(legend_x) + 14, 5):
+            for x in range(int(legend_x), int(legend_x) + 16, 5):
                 canvas.draw.line((x, legend_y, x + 2, legend_y), fill=canvas.color(color), width=2)
         else:
-            canvas.draw.line((legend_x, legend_y, legend_x + 14, legend_y), fill=canvas.color(color), width=2)
-        legend_x += 17 + canvas.text((legend_x + 17, legend_y), label, 10, "muted", anchor="lm", bold=False) + 8
-    # How the colours read, stacked in two short lines on the narrower card.
-    canvas.text((right - 8, legend_y - 5), "绿升红降", 9, "muted", anchor="rm", bold=False)
-    canvas.text((right - 8, legend_y + 5), "非利好判断", 9, "muted", anchor="rm", bold=False)
+            canvas.draw.line((legend_x, legend_y, legend_x + 16, legend_y), fill=canvas.color(color), width=2)
+        legend_x += 20 + canvas.text((legend_x + 20, legend_y), label, 10, "muted", anchor="lm", bold=False) + 10
+    canvas.text((right - 10, legend_y), "绿升红降 · 非利好判断", 9, "muted", anchor="rm", bold=False)
     if sum(finite(quote.get("last")) is not None for _label, quote in points) < 2:
         canvas.text(((left + right) / 2, (top + bottom) / 2 + 8), "收益率暂不可用", 14, "muted", anchor="mm")
         return
@@ -492,8 +487,7 @@ def _gauge_point(centre, radius, score):
 
 def _fear_greed(canvas, payload):
     """CNN's Fear & Greed Index as a half-dial over its five bands, the needle at today's score,
-    with the band named beneath and where it stood a week and a month ago; beside the dial, the
-    seven indicators CNN averages, each a mini bar in its own band's colour."""
+    with the band named beneath and where it stood a week and a month ago."""
     left, top, right, bottom = FEAR_GREED_CARD
     reading = (payload.get("fear_greed") or {}).get("data") or {}
     score = reading.get("score")
@@ -508,62 +502,28 @@ def _fear_greed(canvas, payload):
     if score is None:
         canvas.text(((left + right) / 2, (top + bottom) / 2 + 8), "暂不可用", 13, "muted", anchor="mm")
         return
-    components = _fear_greed_components(reading)
-    # With the indicators the dial keeps the card's left part; without them it stays centred.
-    dial_right = left + FEAR_GREED_DIAL_WIDTH if components else right
-    centre, radius = ((left + dial_right) / 2, top + 72), 36
+    centre, radius = ((left + right) / 2, top + 76), 42
     box = (centre[0] - radius, centre[1] - radius, centre[0] + radius, centre[1] + radius)
     for colour, start, end in zip(FEAR_GREED_COLOURS, FEAR_GREED_EDGES, FEAR_GREED_EDGES[1:]):
         # PIL's angles run clockwise from 3 o'clock: the dial's left end is 180 degrees.
-        canvas.draw.arc(box, 180 + 180 * start / 100 + 1, 180 + 180 * end / 100 - 1, fill=colour, width=8)
-    tip = _gauge_point(centre, radius - 11, score)
+        canvas.draw.arc(box, 180 + 180 * start / 100 + 1, 180 + 180 * end / 100 - 1, fill=colour, width=9)
+    tip = _gauge_point(centre, radius - 12, score)
     canvas.draw.line((centre, tip), fill=canvas.color("ink"), width=3)
     canvas.draw.ellipse((centre[0] - 5, centre[1] - 5, centre[0] + 5, centre[1] + 5), fill=canvas.color("ink"))
     # Under the hub: the score and its band, side by side.
     value = f"{score:.0f}"
-    pill_w = canvas.width(name, 11) + 12
-    row_w = canvas.width(value, 20) + 5 + pill_w
+    pill_w = canvas.width(name, 11) + 14
+    row_w = canvas.width(value, 20) + 6 + pill_w
     x = centre[0] - row_w / 2
     middle = centre[1] + 20
-    x += canvas.text((x, middle), value, 20, anchor="lm") + 5
+    x += canvas.text((x, middle), value, 20, anchor="lm") + 6
     canvas.draw.rounded_rectangle((x, middle - 8, x + pill_w, middle + 8), radius=8, fill=accent)
     canvas.text((x + pill_w / 2, middle), name, 11, "badge_ink", anchor="mm")
     past = [f"{label} {value:.0f}" for label, value in (("周前", reading.get("week")), ("月前", reading.get("month")))
             if value is not None]
     if past:
         canvas.text((centre[0], bottom - 9), " · ".join(past), 10, "muted", anchor="mm", bold=False,
-                    width=dial_right - left - 6)
-    if components:
-        canvas.rule((dial_right, top + 28, dial_right, bottom - 6))
-        _fear_greed_bars(canvas, components, (dial_right + 6, top + 33, right - 8))
-
-
-def _fear_greed_components(reading):
-    """[(label, score)] of CNN's seven indicators present in the reading, in CNN's order."""
-    scores = {part.get("key"): finite(part.get("score")) for part in reading.get("components") or []
-              if isinstance(part, dict)}
-    return [(label, scores[key]) for key, label in FEAR_GREED_COMPONENTS
-            if scores.get(key) is not None and 0 <= scores[key] <= 100]
-
-
-def _fear_greed_bars(canvas, components, area):
-    """One row per indicator from ``area``'s top: its label, a slim 0-100 track filled to its
-    score in its band's colour, and the score."""
-    left, top, right = area
-    label_w = max(canvas.width(label, 10, bold=False) for label, _score in components)
-    score_w = canvas.width("100", 10)
-    track_left, track_right = left + label_w + 4, right - score_w - 3
-    for index, (label, value) in enumerate(components):
-        y = top + index * FEAR_GREED_ROW
-        canvas.text((left + label_w, y), label, 10, anchor="rm", bold=False)
-        canvas.draw.rounded_rectangle((track_left, y - 2, track_right, y + 2), radius=2, fill=canvas.color("rule"))
-        fill_right = track_left + (track_right - track_left) * value / 100
-        colour = FEAR_GREED_COLOURS[fear_greed_band(value)[0]]
-        if fill_right - track_left >= 2:
-            canvas.draw.rounded_rectangle((track_left, y - 3, fill_right, y + 3), radius=3, fill=colour)
-        else:
-            canvas.draw.ellipse((track_left - 1, y - 3, track_left + 5, y + 3), fill=colour)
-        canvas.text((right, y), f"{value:.0f}", 10, anchor="rm")
+                    width=right - left - 10)
 
 
 def _macro_tiles(canvas, payload):

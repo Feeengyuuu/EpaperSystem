@@ -587,7 +587,6 @@ def test_cnn_fear_and_greed_reads_its_score_band_and_history():
     reading = sources.normalize_fear_greed(payload)
 
     assert (reading["score"], reading["week"], reading["month"], reading["history"]) == (34.6, 16.69, 30.31, [20.0, 34.6])
-    assert reading["components"] == []
     assert [sources.fear_greed_band(score)[1] for score in (10, 30, 50, 60, 90)] == [
         "极度恐惧", "恐惧", "中性", "贪婪", "极度贪婪"]
     with pytest.raises(ValueError):
@@ -611,53 +610,6 @@ def test_the_fear_and_greed_gauge_sits_beside_the_yield_curve(monkeypatch, mode)
     drawn.clear()
     money_render._fear_greed(canvas, {"fear_greed": {"data": {}}})
     assert "暂不可用" in drawn
-
-
-def test_cnn_graphdata_gives_its_seven_indicators_in_order():
-    payload = {"fear_and_greed": {"score": 22.7, "rating": "extreme fear"},
-               "market_momentum_sp500": {"score": 13.2, "rating": "extreme fear"},
-               "market_momentum_sp125": {"score": 13.2, "rating": "extreme fear"},
-               "stock_price_strength": {"score": 34, "rating": "fear"},
-               "stock_price_breadth": {"score": 40.8, "rating": "fear"},
-               "put_call_options": {"score": 20.4, "rating": "extreme fear"},
-               "market_volatility_vix": {"score": 12.5, "rating": "extreme fear"},
-               "junk_bond_demand": {"score": "bad", "rating": "fear"},
-               "safe_haven_demand": {"score": 1.8, "rating": "extreme fear"}}
-
-    reading = sources.normalize_fear_greed(payload)
-
-    assert [(part["key"], part["score"]) for part in reading["components"]] == [
-        ("market_momentum_sp500", 13.2), ("stock_price_strength", 34.0), ("stock_price_breadth", 40.8),
-        ("put_call_options", 20.4), ("market_volatility_vix", 12.5), ("safe_haven_demand", 1.8)]
-    assert reading["components"][0]["rating"] == "extreme fear"
-
-
-@pytest.mark.parametrize("mode", ["day", "night"])
-def test_the_gauge_card_lists_the_indicators_as_mini_bars_beside_the_dial(monkeypatch, mode):
-    canvas = PageCanvas(money_render._palette({"_inkypi_theme": {"mode": mode}}), family="Microsoft YaHei")
-    drawn = []
-    original = canvas.text
-    monkeypatch.setattr(canvas, "text", lambda xy, text, *args, **kwargs:
-                        drawn.append((round(xy[0]), round(xy[1]), text)) or original(xy, text, *args, **kwargs))
-    components = [{"key": key, "score": score} for (key, _label), score in
-                  zip(sources.FEAR_GREED_COMPONENTS, (13.2, 34, 40.8, 20.4, 12.5, 36.4, 80))]
-
-    money_render._fear_greed(canvas, {"fear_greed": {"data": {"score": 22.7, "week": 29.8, "month": 38.2,
-                                                              "components": components}}})
-
-    left, top, right, bottom = money_render.FEAR_GREED_CARD
-    labels = [(x, y, text) for x, y, text in drawn if text in {label for _key, label in sources.FEAR_GREED_COMPONENTS}]
-    assert [text for *_xy, text in labels] == ["动能", "强度", "广度", "期权", "波动", "垃圾债", "避险"]
-    assert all(left + money_render.FEAR_GREED_DIAL_WIDTH < x < right and top + 28 < y < bottom for x, y, _ in labels)
-    scores = [text for x, _y, text in drawn if x == right - 8]
-    assert scores == ["13", "34", "41", "20", "12", "36", "80"]
-    # Each bar is filled in its own band's colour: safe-haven demand at 80 is extreme greed.
-    row = canvas.image.crop((left + money_render.FEAR_GREED_DIAL_WIDTH, labels[-1][1] - 3, right - 20,
-                             labels[-1][1] + 3)).convert("RGB")
-    assert money_render.FEAR_GREED_COLOURS[4] in set(row.get_flattened_data())
-    # The dial, score and history stay in the card's left part.
-    assert {"23", "极度恐惧", "周前 30 · 月前 38"} <= {text for *_xy, text in drawn}
-    assert all(x < left + money_render.FEAR_GREED_DIAL_WIDTH for x, _y, text in drawn if text == "周前 30 · 月前 38")
 
 
 @pytest.mark.parametrize("symbol", ["BRK.B", "brk-b", "BRK/B", "BRK.A"])
