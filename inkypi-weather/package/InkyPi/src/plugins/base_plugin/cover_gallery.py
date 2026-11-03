@@ -65,7 +65,9 @@ _CENTURY = re.compile(r"(\d{1,2})(?:st|nd|rd|th)\s+century", re.IGNORECASE)
 
 @dataclass
 class Label:
-    """A work's wall label: its title, up to three fact lines, a chip and where it is from."""
+    """A work's wall label: its title, up to three fact lines, a chip and where it is from.
+
+    The first fact may be a tuple of wordings, longest first: the longest that fits shows."""
 
     title: str
     lines: tuple = ()
@@ -82,6 +84,11 @@ class Label:
     # before the first fact (publisher_logos.py); nothing when there is no logo for them.
     title_logo: str = ""
     publisher_logo: str = ""
+    # A last line under the facts (when the page gives labels two fact rows): solid chips,
+    # each (text, fill) -- its text a tuple of wordings, longest first, when it may be shortened
+    # to fit -- then a note in ink.
+    badges: tuple = ()
+    note: str = ""
 
 
 def year_of(text):
@@ -392,6 +399,11 @@ def _label(draw, label, box, index, accent, colors, numbered, reserve=0, page=No
     if mark is not None and right - reserve - x > mark.width + 30:
         page.paste(mark, (round(x), y + 9 - mark.height // 2), mark)
         x += mark.width + 4
+    if first and not isinstance(first, str):
+        # Wordings of the first fact, longest first: the longest that fits shows.
+        wordings = [str(wording) for wording in first if wording] or [""]
+        first = next((wording for wording in wordings
+                      if draw.textlength(wording, font=fact_font) <= right - reserve - x), wordings[-1])
     # Beside a publisher's logo its name shows whole or not at all: the logo already names it.
     if first and (mark is None or draw.textlength(first, font=fact_font) <= right - reserve - x):
         draw.text((x, y + 1), _clip(draw, first, fact_font, right - reserve - x), font=fact_font, fill=colors["ink"])
@@ -404,7 +416,11 @@ def _label(draw, label, box, index, accent, colors, numbered, reserve=0, page=No
         x += mark.width + 6
     named = label.source_logo if label.source_logo and mark is None else ""
     # Small text stays in solid ink: a grey this size dithers into noise on the panel.
-    if fact_rows > 1 and label.body and label.source:
+    if fact_rows > 1 and (label.badges or label.note):
+        # The facts on one line beside the logo, the badges and note on the line under it.
+        rows = (" · ".join(str(part) for part in (*label.lines[1:], label.body, label.source, named) if part),)
+        _badge_row(draw, label, (left, y + FACT_ROW, right), colors)
+    elif fact_rows > 1 and label.body and label.source:
         # Two fact lines: the body beside the logo, the source facts under it.
         rows = (" · ".join(str(part) for part in (*label.lines[1:], label.body, named) if part), label.source)
     elif fact_rows > 1:
@@ -423,6 +439,26 @@ def _label(draw, label, box, index, accent, colors, numbered, reserve=0, page=No
             row_x = x if row == 0 else left
             draw.text((row_x, y + row * FACT_ROW), _clip(draw, text, fact_font, right - row_x), font=fact_font,
                       fill=colors["ink"])
+
+
+def _badge_row(draw, label, row, colors):
+    """``label``'s badges as solid chips from the left of ``row`` (left, top, right), each in the
+    longest of its wordings that fits, then its note in ink in the room left."""
+    left, top, right = row
+    chip_font, note_font = _font(10, True), _font(11)
+    x = left
+    for text, fill in label.badges:
+        wordings = (text,) if isinstance(text, str) else tuple(text)
+        fitting = [str(wording) for wording in wordings if x + draw.textlength(str(wording), font=chip_font) + 10 <= right]
+        if not fitting:
+            break
+        chip_w = draw.textlength(fitting[0], font=chip_font) + 10
+        draw.rounded_rectangle((x, top + 1, x + chip_w, top + 14), radius=4, fill=fill)
+        draw.text((x + 5, top + 1), fitting[0], font=chip_font, fill=(255, 255, 255))
+        x += chip_w + 5
+    # A note cut to a few letters says nothing: it shows when it has some room.
+    if label.note and right - x >= 48:
+        draw.text((x, top), _clip(draw, label.note, note_font, right - x), font=note_font, fill=colors["ink"])
 
 
 def _timeline(draw, labels, box, accent, colors):

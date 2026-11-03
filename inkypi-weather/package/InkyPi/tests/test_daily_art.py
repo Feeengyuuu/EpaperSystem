@@ -2318,3 +2318,96 @@ def test_keyless_collections_map_their_records_and_media_hosts(tmp_path, monkeyp
         host = candidate.image_url.split("/")[2]
         assert provider_media_host_allowed(candidate.source, host)
         assert not provider_media_host_allowed(candidate.source, "example.com")
+
+
+def test_museum_records_add_life_years_size_gallery_highlight_and_note(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    requests = {}
+    payloads = {
+        daily_art_module.CLEVELAND_SEARCH_URL: {"data": [{
+            "id": 9, "title": "The Red Kerchief", "creation_date": "c. 1868", "technique": "oil on canvas",
+            "creators": [{"description": "Claude Monet (French, 1840–1926)"}], "culture": ["France"],
+            "url": "https://clevelandart.org/art/1958.39", "is_highlight": True,
+            "current_location": "222 Impressionism & Post-Impressionism",
+            "measurements": "Framed: 128 x 108 cm (50 3/8 x 42 1/2 in.); Unframed: 99 x 79.8 cm (39 x 31 7/16 in.)",
+            "did_you_know": "<p>Madame Monet’s red cape draws the viewer’s attention.</p>",
+            "images": {"web": {"url": "https://openaccess-cdn.clevelandart.org/1958.39/1958.39_web.jpg"}}}]},
+        daily_art_module.ARTIC_SEARCH_URL: {"config": {"iiif_url": "https://www.artic.edu/iiif/2"}, "data": [{
+            "id": 16568, "title": "Water Lilies", "artist_title": "Claude Monet",
+            "artist_display": "Claude Monet\nFrench, 1840–1926", "date_display": "1906", "image_id": "abc",
+            "dimensions": "89.9 × 94.1 cm (35 3/8 × 37 1/16 in.); Framed: 103.2 × 107 × 5.8 cm",
+            "is_on_view": True, "gallery_title": "Gallery 243", "short_description": None}]},
+    }
+
+    def fake_get_json(url, params, headers=None):
+        requests[url] = dict(params)
+        if "/v1/objects/" in url:
+            return {"objectID": 436535, "title": "Wheat Field with Cypresses", "primaryImageSmall":
+                    "https://images.metmuseum.org/CRDImages/ep/web-large/DT1567.jpg", "isPublicDomain": True,
+                    "artistDisplayName": "Vincent van Gogh", "artistDisplayBio": "Dutch, Zundert 1853–1890 Auvers-sur-Oise",
+                    "dimensions": "28 13/16 × 36 3/4 in. (73.2 × 93.4 cm)", "GalleryNumber": "822", "isHighlight": True,
+                    "tags": [{"term": "Landscapes"}, {"term": "Cypresses"}, {"term": "Summer"}, {"term": "Wheat"}]}
+        if url.endswith("/v1.1/search"):
+            return {"total": 1, "objectIDs": [436535]}
+        return payloads[url]
+
+    monkeypatch.setattr(plugin, "_get_json", fake_get_json)
+    rng = random.Random(2)
+
+    cleveland = plugin._fetch_cleveland_candidates("monet", 3, rng)[0]
+    artic = plugin._fetch_artic_candidates("monet", 3, {}, rng)[0]
+    met = plugin._fetch_met_candidates("van gogh", 1, rng)[0]
+
+    # Cleveland is asked for only the fields the page uses (36 full records are 413 KB).
+    assert "did_you_know" in requests[daily_art_module.CLEVELAND_SEARCH_URL]["fields"]
+    assert {"is_on_view", "gallery_title", "short_description"} <= set(
+        requests[daily_art_module.ARTIC_SEARCH_URL]["fields"].split(","))
+    assert (cleveland.lifespan, cleveland.dimensions, cleveland.gallery, cleveland.highlight) == (
+        "1840–1926", "99×79.8 cm", "222", "1")
+    assert cleveland.note == "Madame Monet’s red cape draws the viewer’s attention."
+    assert (artic.lifespan, artic.dimensions, artic.gallery, artic.highlight, artic.note) == (
+        "1840–1926", "89.9×94.1 cm", "243", "", "")
+    assert (met.lifespan, met.dimensions, met.gallery, met.highlight) == ("1853–1890", "73.2×93.4 cm", "822", "1")
+    assert met.note == "Landscapes · Cypresses · Summer"
+
+
+def test_museum_record_helpers_read_years_sizes_and_galleries():
+    assert daily_art_module._life_years("Flemish, c. 1475/78–1532") == "1475–1532"
+    assert daily_art_module._life_years("Japanese, d. 1525") == ""
+    assert daily_art_module._cm_dimensions("Sheet: 24.5 x 36.5 cm (9 5/8 x 14 3/8 in.)") == "24.5×36.5 cm"
+    assert daily_art_module._cm_dimensions("Framed: 68 x 56 x 4.5 cm (26 3/4 in.)") == "68×56×4.5 cm"
+    assert daily_art_module._cm_dimensions("H. 5 1/2 in. (14 cm)") == ""
+    assert daily_art_module._gallery_number("Gallery 203A") == "203A"
+    assert daily_art_module._gallery_number("Modern Wing") == daily_art_module.ON_VIEW
+    assert daily_art_module._gallery_number("") == ""
+
+
+def test_label_shows_on_view_gallery_and_highlight_badges_and_the_note(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    drawn = _drawn_text(monkeypatch)
+    artworks = [art_candidate(index) for index in range(2)]
+    artworks[0].gallery, artworks[0].highlight, artworks[0].note = "822", "1", "Landscapes · Cypresses"
+    artworks[0].lifespan, artworks[0].dimensions = "1853–1890", "73.2×93.4 cm"
+    artworks[1].gallery = daily_art_module.ON_VIEW
+
+    rendered = plugin._render_artwork_gallery(
+        [Image.new("RGB", (300, 400), (90, 90, 90))] * 2, artworks, (800, 480), {"galleryCount": 2})
+
+    assert rendered.size == (800, 480)
+    assert {"展出中 · 822 号展厅", "镇馆之宝", "展出中", "Artist 0 (1853–1890)"} <= set(drawn)
+    # The note runs in the room the badges leave (cut to fit), the size among the facts.
+    assert any(text.startswith("Landscape") for text in drawn)
+    assert any("73.2×93.4 cm" in text for text in drawn)
+    # The on-view badge is a solid emerald chip.
+    assert (5, 150, 105) in {colour for _count, colour in rendered.getcolors(800 * 480)}
+
+
+def test_labels_keep_one_fact_row_when_no_work_has_badges_or_a_note(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    rows = []
+    original = cover_gallery.compose
+    monkeypatch.setattr(cover_gallery, "compose", lambda *a, **k: rows.append(k["fact_rows"]) or original(*a, **k))
+
+    plugin._render_artwork(Image.new("RGB", (640, 300), (80, 120, 160)), art_candidate(0), (800, 480), {})
+
+    assert rows == [1]

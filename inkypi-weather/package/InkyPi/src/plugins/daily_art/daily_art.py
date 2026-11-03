@@ -56,7 +56,7 @@ DEFAULT_GALLERY_COUNT = 3
 DEFAULT_BACKGROUND_STYLE = "gallery_decor"
 GALLERY_LAYOUT_MODES = {"auto_gallery", "gallery"}
 DAILY_ART_DECOR_PATH = Path(__file__).with_name("assets") / "daily_art_decor_800x480.png"
-DAILY_ART_RENDER_STYLE_VERSION = "daily-art-gallery-v2"
+DAILY_ART_RENDER_STYLE_VERSION = "daily-art-gallery-v3"
 # The gallery's accent: the label numbers, date chips and timeline markers.
 DAILY_ART_ACCENT = (0, 70, 200)
 DAILY_ART_TITLE = "DAILY ART"
@@ -163,6 +163,25 @@ class ArtworkCandidate:
     image_url: str = ""
     page_url: str = ""
     culture: str = ""
+    # What the museum's own record adds (each "" when it says nothing): the artist's life years
+    # ("1853–1890"), the work's size in centimetres, the gallery it hangs in today ("822", or
+    # ON_VIEW when on view without a number), "1" for a museum highlight, and a line about it
+    # (Cleveland's "did you know", the AIC's short description, the Met's subject tags).
+    lifespan: str = ""
+    dimensions: str = ""
+    gallery: str = ""
+    highlight: str = ""
+    note: str = ""
+
+
+# A work on view in a gallery the museum does not number.
+ON_VIEW = "展出中"
+# The Cleveland Museum of Art answers 413 KB for 36 full records: only the fields the page uses.
+CLEVELAND_FIELDS = ("id,title,creators,creation_date,technique,type,culture,department,url,images,"
+                    "did_you_know,current_location,measurements,is_highlight")
+# The badges on a label's last line: on view (emerald) and a museum highlight (crimson), day and night.
+ON_VIEW_FILL = {False: (5, 150, 105), True: (16, 185, 129)}
+HIGHLIGHT_FILL = {False: (200, 30, 50), True: (232, 72, 92)}
 
 
 class DailyArt(BasePlugin):
@@ -888,6 +907,11 @@ class DailyArt(BasePlugin):
                     image_url=image_url,
                     page_url=_first_text(detail, ["objectURL"]),
                     culture=_first_text(detail, ["culture", "department"]),
+                    lifespan=_life_years(_first_text(detail, ["artistDisplayBio"])),
+                    dimensions=_cm_dimensions(_first_text(detail, ["dimensions"])),
+                    gallery=_gallery_number(_first_text(detail, ["GalleryNumber"])),
+                    highlight="1" if detail.get("isHighlight") is True else "",
+                    note=_tag_terms(detail.get("tags")),
                 ))
             except Exception as exc:
                 logger.debug("Met object %s skipped: %s", object_id, exc)
@@ -905,6 +929,10 @@ class DailyArt(BasePlugin):
             "classification_title",
             "place_of_origin",
             "is_public_domain",
+            "dimensions",
+            "is_on_view",
+            "gallery_title",
+            "short_description",
         ])
         params = {
             "q": term,
@@ -942,12 +970,18 @@ class DailyArt(BasePlugin):
                 image_url=image_url,
                 page_url=f"https://www.artic.edu/artworks/{record.get('id')}",
                 culture=_first_text(record, ["place_of_origin"]),
+                # "Claude Monet\nFrench, 1840–1926"
+                lifespan=_life_years(record.get("artist_display")),
+                dimensions=_cm_dimensions(record.get("dimensions")),
+                gallery=(_gallery_number(_first_text(record, ["gallery_title"])) or ON_VIEW)
+                if record.get("is_on_view") is True else "",
+                note=_plain_text(record.get("short_description")),
             ))
         return candidates
 
     def _fetch_cleveland_candidates(self, term, limit, rng):
         """The Cleveland Museum of Art's CC0 works with an image (no key)."""
-        params = {"q": term, "has_image": 1, "cc0": 1, "limit": min(100, int(limit) * 3)}
+        params = {"q": term, "has_image": 1, "cc0": 1, "limit": min(100, int(limit) * 3), "fields": CLEVELAND_FIELDS}
         payload = self._get_json(CLEVELAND_SEARCH_URL, params, headers=REQUEST_HEADERS)
         records = payload.get("data") if isinstance(payload, dict) else []
         if not isinstance(records, list):
@@ -960,9 +994,12 @@ class DailyArt(BasePlugin):
             if not image_url:
                 continue
             creators = record.get("creators") if isinstance(record.get("creators"), list) else []
-            # "Rembrandt van Rijn (Dutch, 1606–1669)": the name before its parenthesis.
-            artist = _first_text(creators[0], ["description"]).split(" (")[0] if creators else ""
+            # "Rembrandt van Rijn (Dutch, 1606–1669)": the name before its parenthesis, its years in it.
+            creator = _first_text(creators[0], ["description"]) if creators else ""
+            artist = creator.split(" (")[0]
             culture = record.get("culture") if isinstance(record.get("culture"), list) else []
+            # "222 Impressionism & Post-Impressionism": the gallery it hangs in (None in storage).
+            location = re.match(r"(\d{1,4}[A-Z]?)\b", _first_text(record, ["current_location"]))
             candidates.append(ArtworkCandidate(
                 source="cleveland",
                 source_label="Cleveland Museum of Art",
@@ -976,6 +1013,11 @@ class DailyArt(BasePlugin):
                 image_url=image_url,
                 page_url=_first_text(record, ["url"]),
                 culture=_clean_text(culture[0]) if culture else _first_text(record, ["department"]),
+                lifespan=_life_years(creator[len(artist):]),
+                dimensions=_cm_dimensions(record.get("measurements")),
+                gallery=location.group(1) if location else "",
+                highlight="1" if record.get("is_highlight") is True else "",
+                note=_plain_text(record.get("did_you_know")),
             ))
         return candidates
 
@@ -1331,7 +1373,8 @@ class DailyArt(BasePlugin):
         if not images:
             return self._fallback_image(dimensions, "Daily Art", "No usable artwork image")
         visible = min(len(images), self._gallery_count(settings))
-        labels = [self._gallery_label(artwork) for artwork in list(artworks)[:visible]]
+        dark = self._gallery_dark(settings)
+        labels = [self._gallery_label(artwork, dark) for artwork in list(artworks)[:visible]]
         sources = []
         for artwork in list(artworks)[:visible]:
             name = _clean_text(getattr(artwork, "source_label", "") or "")
@@ -1342,21 +1385,36 @@ class DailyArt(BasePlugin):
             images[:visible], labels, tuple(dimensions), title=DAILY_ART_TITLE,
             subtitle="今日馆藏", sources=sources,
             date_text=f"{now.month}月{now.day}日 周{'一二三四五六日'[now.weekday()]}",
-            accent=DAILY_ART_ACCENT, dark=self._gallery_dark(settings), timeline=True,
-            wordmark=cover_gallery.load_wordmark(GALLERY_WORDMARK_PATH), style="gallery")
+            accent=DAILY_ART_ACCENT, dark=dark, timeline=True,
+            wordmark=cover_gallery.load_wordmark(GALLERY_WORDMARK_PATH), style="gallery",
+            # A label grows a last line for its badges and note only when one of the works has them.
+            fact_rows=2 if any(label.badges or label.note for label in labels) else 1)
 
     @staticmethod
-    def _gallery_label(artwork):
+    def _gallery_label(artwork, dark=False):
         get = lambda key: _clean_text(getattr(artwork, key, "") or "")  # noqa: E731
         date = get("date")
-        lines = (get("artist") or "佚名", get("medium"), get("culture"))
-        # The collection's logo leads the last line; a holding museum other than it (Europeana's
+        artist, lifespan = get("artist") or "佚名", get("lifespan")
+        # The artist's years show beside the name when the label has room for both.
+        lines = ((f"{artist} ({lifespan})", artist) if lifespan else artist, get("medium"), get("dimensions"),
+                 get("culture"))
+        # The collection's logo leads the facts' line; a holding museum other than it (Europeana's
         # partners) is still named after it.
         source, museum = get("source_label"), get("museum")
         same = cover_gallery.SOURCE_LOGOS.get(museum.casefold()) == cover_gallery.SOURCE_LOGOS.get(source.casefold())
+        # The last line: where it hangs today (its whole name when the label has room) and whether
+        # it is one of the museum's highlights, then a line about it.
+        gallery, badges = get("gallery"), []
+        if gallery == ON_VIEW:
+            badges.append((ON_VIEW, ON_VIEW_FILL[dark]))
+        elif gallery:
+            badges.append(((f"{ON_VIEW} · {gallery} 号展厅", f"{gallery} 号展厅"), ON_VIEW_FILL[dark]))
+        if get("highlight"):
+            badges.append(("镇馆之宝", HIGHLIGHT_FILL[dark]))
         return cover_gallery.Label(
             title=get("title") or "Untitled", chip=date[:18], lines=tuple(line for line in lines if line),
-            source="" if same else museum, source_logo=source or museum, year=cover_gallery.year_of(date))
+            source="" if same else museum, source_logo=source or museum, year=cover_gallery.year_of(date),
+            badges=tuple(badges), note=get("note"))
 
     @staticmethod
     def _gallery_dark(settings):
@@ -1622,6 +1680,9 @@ class DailyArt(BasePlugin):
                         "image_url": item.get("image_url"),
                         "page_url": item.get("page_url"),
                         "rights": item.get("rights"),
+                        "gallery": item.get("gallery") or "",
+                        "highlight": bool(item.get("highlight")),
+                        "note": _clean_text(item.get("note") or "")[:200],
                     }
                     for item in artworks
                 ],
@@ -1892,6 +1953,59 @@ def _first_text(data, keys):
         if value:
             return value
     return ""
+
+
+# "Dutch, Zundert 1853–1890 Auvers-sur-Oise", "(Flemish, c. 1475/78–1532)": born–died years.
+_LIFE_YEARS = re.compile(r"(?<!\d)(\d{3,4})(?:/\d{1,4})?\s*[–—-]\s*(?:c\.\s*)?(\d{3,4})(?!\d)")
+# "28 13/16 × 36 3/4 in. (73.2 × 93.4 cm)", "Unframed: 65.4 x 54.3 cm": two or three sides in cm.
+_CM_SIZE = re.compile(r"(?<![\d.])(\d+(?:\.\d+)?(?:\s*[x×]\s*\d+(?:\.\d+)?){1,2})\s*cm\b", re.IGNORECASE)
+# A measurement of something around the work rather than the work itself.
+_AROUND_WORK = ("framed", "mounted", "secondary", "overall with", "mat", "frame", "mount")
+
+
+def _life_years(text):
+    """The artist's "born–died" years from a museum's artist line, or ""."""
+    match = _LIFE_YEARS.search(str(text or ""))
+    if not match or int(match.group(2)) <= int(match.group(1)):
+        return ""
+    return f"{match.group(1)}–{match.group(2)}"
+
+
+def _cm_dimensions(text):
+    """The work's own size in centimetres ("73.2×93.4 cm"), its frame or mount only when nothing else is given."""
+    around = ""
+    for segment in re.split(r"[;\n]", str(text or "")):
+        match = _CM_SIZE.search(segment)
+        if not match:
+            continue
+        size = re.sub(r"\s*[x×]\s*", "×", match.group(1)) + " cm"
+        label = segment[:match.start()].split(":")[0].strip().lower() if ":" in segment[:match.start()] else ""
+        if not label.startswith(_AROUND_WORK):
+            return size
+        around = around or size
+    return around
+
+
+def _gallery_number(text):
+    """The number of the gallery a work hangs in ("822", "Gallery 243" -> "243"), ON_VIEW when it has
+    none, "" when there is no gallery."""
+    text = _clean_text(text)
+    if not text:
+        return ""
+    match = re.search(r"\b(\d{1,4}[A-Z]?)\b", text)
+    return match.group(1) if match else ON_VIEW
+
+
+def _plain_text(value, limit=300):
+    """A museum's HTML or plain paragraph as one line of text."""
+    text = _clean_text(re.sub(r"<[^>]+>", " ", str(value or "")))
+    return text[:limit].rstrip()
+
+
+def _tag_terms(tags, count=3):
+    """The Met's subject tags ("Landscapes · Cypresses · Summer")."""
+    terms = [_clean_text(tag.get("term")) for tag in tags or [] if isinstance(tag, dict)]
+    return " · ".join([term for term in terms if term][:count])
 
 
 def _first_list_text(value):

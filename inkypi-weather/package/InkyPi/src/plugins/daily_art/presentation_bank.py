@@ -97,6 +97,11 @@ _TEXT_LIMITS = {
     "museum": 400,
     "rights": 500,
     "culture": 300,
+    "lifespan": 40,
+    "dimensions": 80,
+    "gallery": 40,
+    "highlight": 8,
+    "note": 400,
 }
 _PROVIDER_HOST_SUFFIXES = {
     "met": ("metmuseum.org",),
