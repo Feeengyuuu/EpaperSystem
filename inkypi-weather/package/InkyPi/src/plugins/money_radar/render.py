@@ -55,6 +55,8 @@ SOURCE_LOGO_INKED = {"fred": False, "coingecko": False, "nasdaq": False, "yahoo_
 # A macro tile names its source (BLS, FRED) by the official logo this tall at its top right.
 TILE_SOURCE_LOGOS, TILE_SOURCE_LOGO_HEIGHT = {"BLS": "bls", "FRED": "fred"}, 16
 MACRO_ICON_SIZE = 18
+# The dollar index and gold cards' figure size, beside their 52-week block.
+RANGED_FIGURE_SIZE = 18
 EARNINGS_ROWS = 2
 # The earnings dates stand in two columns of EARNINGS_ROWS, the nearest first down the left one,
 # each led by the generated calendar 科技与游戏 marks release dates with (assets/icon-calendar.png).
@@ -543,7 +545,7 @@ def _macro_tiles(canvas, payload):
         canvas.draw.rounded_rectangle((left, top, left + 191, top + 58), radius=6, outline=canvas.color("rule"))
         _accent_bar(canvas, (left, top, left + 191, top + 58), CARD_ACCENTS.get(key), 5)
         _card_doodles(canvas, (left, top, left + 191, top + 58), key, CARD_ACCENTS.get(key, "ink"), 5)
-        title_y = top + 14 if ranged else top + 18
+        title_y = top + 15 if ranged else top + 18
         # Each indicator carries its own picture (cart, briefcase, dollar coin, gold bars, bank, house).
         icon = _asset(f"macro-{key}", MACRO_ICON_SIZE)
         label_x = left + 10 + (_paste(canvas, icon, (left + 9, title_y - icon.height // 2)) + 5 if icon else 0)
@@ -560,11 +562,12 @@ def _macro_tiles(canvas, payload):
         else:
             figure = f"{change:+.2f}点"
         if ranged:
-            # The figure over its change on the left; the 52-week block on the right, its numbers on
-            # the figure's line and its track on the change's, as on the 10-year card.
-            figure_right = left + 10 + _number(canvas, (left + 10, top + 31), value, 22, 84, tone)
-            draw_icon(canvas.draw, icon, (left + 10, top + 44), 9, canvas.color(tone), canvas.color("paper"))
-            _number(canvas, (left + 22, top + 48), figure, 12, 72, tone)
+            # The figure (smaller than the taller cards' 22 px, so title, figure and change sit evenly
+            # in the short card) over its change on the left; the 52-week block on the right, its
+            # numbers on the figure's line and its track on the change's, as on the 10-year card.
+            figure_right = left + 10 + _number(canvas, (left + 10, top + 32), value, RANGED_FIGURE_SIZE, 84, tone)
+            draw_icon(canvas.draw, icon, (left + 10, top + 43), 9, canvas.color(tone), canvas.color("paper"))
+            _number(canvas, (left + 22, top + 47), figure, 12, 72, tone)
             _range_block(canvas, (max(figure_right + 8, left + 96), left + 181), top + 32, ranged[0], ranged[1],
                          CARD_ACCENTS.get(key, "ink"))
             continue
