@@ -184,3 +184,155 @@ def test_render_chart_smoke(monkeypatch):
 
     assert image.size == (800, 480)
     assert image.getbbox() is not None
+
+
+# --- Douban titles and ratings, streaming services and the next episode ------------------------
+
+import json as _json  # noqa: E402
+from datetime import date as _date  # noqa: E402
+
+import pytest  # noqa: E402
+import requests  # noqa: E402
+from PIL import ImageDraw  # noqa: E402
+
+import plugins.us_tv_hot_shows.us_tv_hot_shows as us_tv_module  # noqa: E402
+from runtime.refresh_contracts import TaskCancelled  # noqa: E402
+
+
+class _OfflineSession:
+    def get(self, *_args, **_kwargs):
+        raise requests.ConnectionError("offline in tests")
+
+
+@pytest.fixture(autouse=True)
+def _offline_douban_and_logos(monkeypatch):
+    """Douban's collection and the provider logos would be fetched live; the tests stay offline."""
+    monkeypatch.setattr(us_tv_module, "get_http_session", lambda: _OfflineSession())
+
+
+class _JsonSession:
+    def __init__(self, payload):
+        self.payload, self.calls = payload, []
+
+    def get(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        response = requests.Response()
+        response.status_code = 200
+        response._content = _json.dumps(self.payload).encode("utf-8")
+        return response
+
+
+DOUBAN_ITEMS = {"subject_collection_items": [
+    {"id": "36689816", "title": "流人 第六季", "rating": {"value": 7.2, "count": 19422}, "episodes_info": ""},
+    {"id": "36227197", "title": "终极名单 第二季", "rating": {"value": 8.0}, "episodes_info": "更新至6集"},
+    {"id": "36229588", "title": "夜曲", "rating": {"value": 0}, "episodes_info": ""},
+    {"id": "1", "title": "", "rating": None}, "junk"]}
+
+
+def test_tmdb_details_give_the_us_streaming_services_and_the_next_episode():
+    details = {"next_episode_to_air": {"air_date": "2026-11-05", "season_number": 6, "episode_number": 4},
+               "watch/providers": {"results": {"US": {"flatrate": [
+                   {"provider_id": 1899, "provider_name": "HBO Max", "logo_path": "/jbe4gVSfRlbPTdESXhEKpornsfu.jpg",
+                    "display_priority": 3},
+                   {"provider_id": 350, "provider_name": "Apple TV+", "logo_path": "/2E03IAZsX4ZaUqM7tXlctEPMGWS.jpg",
+                    "display_priority": 1},
+                   {"provider_id": 9, "provider_name": "Bad", "logo_path": "../../etc/passwd"},
+                   {"provider_id": 15, "provider_name": "Hulu", "logo_path": "/bxBlRPEPpMVDc4jMhSrTf2339DW.jpg"},
+                   {"provider_id": 531, "provider_name": "Paramount+", "logo_path": "/h5DcR0J2EESLitnhR8xLG1QymTE.jpg"},
+               ]}, "GB": {"flatrate": [{"provider_id": 8, "logo_path": "/x.jpg"}]}}}}
+
+    extra = UsTvHotShows._details_extra(details)
+
+    assert (extra["next_episode_date"], extra["next_episode_code"]) == ("2026-11-05", "S6E4")
+    assert [provider["id"] for provider in extra["providers"]] == [350, 1899, 15]
+    assert UsTvHotShows._details_extra({"next_episode_to_air": None}) == {}
+
+
+def test_each_show_takes_its_details_from_one_tmdb_call(monkeypatch):
+    plugin = UsTvHotShows({"id": "us_tv_hot_shows"})
+    asked = []
+
+    def fake_tmdb(url, params):
+        asked.append((url, params))
+        if url.endswith("/2"):
+            raise requests.HTTPError("404")
+        return {"next_episode_to_air": {"air_date": "2026-11-09", "season_number": 2, "episode_number": 3}}
+
+    monkeypatch.setattr(plugin, "_tmdb_source_json", fake_tmdb)
+    shows = [BoxOfficeMovie(rank=1, title="One", tmdb_id=1), BoxOfficeMovie(rank=2, title="Two", tmdb_id=2),
+             BoxOfficeMovie(rank=3, title="No id")]
+
+    plugin._enrich_show_details(shows, {})
+
+    assert [url.rsplit("/", 1)[-1] for url, _params in asked] == ["1", "2"]
+    assert asked[0][1] == {"language": "zh-CN", "append_to_response": "watch/providers"}
+    assert shows[0].extra["next_episode_code"] == "S2E3" and "next_episode_date" not in shows[1].extra
+    monkeypatch.setattr(plugin, "_tmdb_source_json", lambda *_a: (_ for _ in ()).throw(TaskCancelled("stop")))
+    with pytest.raises(TaskCancelled):
+        plugin._enrich_show_details(shows, {})
+
+
+def test_douban_names_rates_and_counts_the_shows_it_lists(monkeypatch):
+    plugin = UsTvHotShows({"id": "us_tv_hot_shows"})
+    session = _JsonSession(DOUBAN_ITEMS)
+    monkeypatch.setattr(us_tv_module, "get_http_session", lambda: session)
+    shows = [BoxOfficeMovie(rank=1, title="Slow Horses", localized_title="流人"),
+             BoxOfficeMovie(rank=2, title="终极名单"),
+             BoxOfficeMovie(rank=3, title="Nocturne", localized_title="夜曲"),
+             BoxOfficeMovie(rank=4, title="Lanterns")]
+
+    plugin._enrich_with_douban(shows)
+
+    assert (shows[0].extra["douban_title"], shows[0].extra["douban_rating"]) == ("流人 第六季", 7.2)
+    # A show TMDB names only in English takes Douban's Chinese name, its season dropped.
+    assert shows[1].localized_title == "终极名单" and shows[1].extra["douban_episodes"] == "更新至6集"
+    assert "douban_rating" not in shows[2].extra  # Douban's 0 is "not yet rated"
+    assert shows[3].extra == {} and shows[3].localized_title == ""
+    assert session.calls[0][1]["headers"]["Referer"].startswith("https://m.douban.com/")
+    assert session.calls[0][1]["params"] == {"start": 0, "count": us_tv_module.DOUBAN_COUNT}
+
+
+def test_douban_unavailable_leaves_tmdbs_names_alone():
+    plugin = UsTvHotShows({"id": "us_tv_hot_shows"})
+    shows = [BoxOfficeMovie(rank=1, title="Slow Horses", localized_title="流人")]
+
+    plugin._enrich_with_douban(shows)  # the autouse fixture's session is offline
+
+    assert shows[0].extra == {}
+
+
+def test_the_next_episode_shows_only_from_today_on():
+    show = BoxOfficeMovie(rank=1, title="One", extra={"next_episode_date": "2026-11-05", "next_episode_code": "S6E4"})
+
+    assert UsTvHotShows._next_episode_text(show, _date(2026, 11, 2)) == "下集 11/05 S6E4"
+    assert UsTvHotShows._next_episode_text(show, _date(2026, 11, 6)) == ""
+    assert UsTvHotShows._next_episode_text(BoxOfficeMovie(rank=1, title="Two"), _date(2026, 11, 2)) == ""
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_the_chart_shows_douban_ratings_streaming_logos_and_credits(monkeypatch, tmp_path, mode):
+    monkeypatch.setenv("INKYPI_US_TV_HOT_SHOWS_CACHE", str(tmp_path))
+    plugin = UsTvHotShows({"id": "us_tv_hot_shows"})
+    logo = plugin._provider_logo_path(350)
+    logo.parent.mkdir(parents=True)
+    Image.new("RGB", (92, 92), (12, 120, 220)).save(logo)
+    providers = [{"id": 350, "name": "Apple TV+", "logo_path": "/a.jpg"}]
+    shows = [BoxOfficeMovie(rank=index, title=f"Show {index}", localized_title=f"美剧{index}", weekend_gross="99.1",
+                            total_gross="2022-04-01",
+                            extra={"metric_label": "TMDb 热度", "total_label": "首播", "douban_title": f"美剧{index}",
+                                   "douban_rating": 7.0 + index / 10, "providers": providers,
+                                   "next_episode_date": "2099-11-05", "next_episode_code": "S6E4"})
+             for index in range(1, 6)]
+    drawn = []
+    original = ImageDraw.ImageDraw.text
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", lambda draw, xy, text, *args, **kwargs:
+                        drawn.append((xy, text)) or original(draw, xy, text, *args, **kwargs))
+
+    image = plugin._render_chart((800, 480), shows, {"_inkypi_theme": canonical_theme(mode)}, "TMDb US TV On Air",
+                                 plugin._now_for_device(DummyDeviceConfig()))
+
+    texts = [text for _xy, text in drawn]
+    assert {"豆瓣 7.1", "豆瓣 7.5", "下集 11/05 S6E4"} <= set(texts) and any("观看平台" in str(text) for text in texts)
+    assert any("下集 11/05 S6E4" in str(text) and "首播 2022-04-01" in str(text) for text in texts)  # the headliner
+    pixels = set(image.crop((540, 180, 800, 430)).get_flattened_data())
+    assert (12, 120, 220) in pixels and us_tv_module.DOUBAN_GREEN in pixels

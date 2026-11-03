@@ -1,0 +1,26 @@
+{
+  "logos": {
+    "douban": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/aa/Douban_logo.svg/500px-Douban_logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Douban_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "6da2ebb910719f3493485602524d4339ccce15c5e9701c742eb2d891877195b7",
+      "size": [
+        302,
+        64
+      ],
+      "sha256": "30438e4540c801e5d373dabf473b65987f670c66b3e78f99e20bdf77df2f7a31"
+    },
+    "justwatch": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/af/JustWatch_Logo.svg/500px-JustWatch_Logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:JustWatch_Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "a2f4b4a4bbc2b0ebfa76b99f2864c92e2cf556ff08127bf3d7534c70ccd6328a",
+      "size": [
+        418,
+        64
+      ],
+      "sha256": "de4a766fa1a040eff1d8cea944f9c91e6e9ff4119b623dfe752ec90bec55f454"
+    }
+  }
+}

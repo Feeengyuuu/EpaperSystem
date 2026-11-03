@@ -3,10 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
-from datetime import datetime, timedelta, timezone
+import re
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageOps
 
 from plugins.box_office_top_movies.box_office_top_movies import (
     BoxOfficeMovie,
@@ -14,14 +17,37 @@ from plugins.box_office_top_movies.box_office_top_movies import (
     TMDB_IMAGE_BASE,
     _clean_text,
     _contains_cjk,
+    _normalize_title,
 )
 from plugins.context_cache import write_context
+from runtime.refresh_contracts import TaskCancelled
 from utils.http_client import get_http_session
+from utils.local_wordmark import load_source_logo
+from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
 
 logger = logging.getLogger(__name__)
 
 TMDB_DISCOVER_TV_URL = "https://api.themoviedb.org/3/discover/tv"
 TMDB_TRENDING_TV_URL = "https://api.themoviedb.org/3/trending/tv/{time_window}"
+# One details call per show with its US streaming services (TMDB's data comes from JustWatch,
+# which its terms ask to credit) and its next episode.
+TMDB_TV_DETAILS_URL = "https://api.themoviedb.org/3/tv/{tv_id}"
+PROVIDER_LOGO_BASE = "https://image.tmdb.org/t/p/w92"
+MAX_PROVIDERS = 3
+# Douban's American TV collection (about 2 KB a show): each show's Chinese title, rating and
+# episode count, matched to TMDB's Chinese name with the season dropped.
+DOUBAN_AMERICAN_TV_URL = "https://m.douban.com/rexxar/api/v2/subject_collection/tv_american/items"
+DOUBAN_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; InkyPi UsTvHotShows/1.0; +https://github.com/fatihak/InkyPi/)",
+    "Referer": "https://m.douban.com/tv/american",
+    "Accept": "application/json",
+}
+DOUBAN_COUNT = 30
+DOUBAN_SEASON = re.compile(r"\s*第[一二三四五六七八九十百零〇两\d]+季\s*$")
+DOUBAN_GREEN = (0, 150, 60)
+LOGO_DIR = Path(__file__).resolve().parent / "assets" / "logos"
+TMDB_LOGO = Path(__file__).resolve().parents[1] / "box_office_top_movies" / "assets" / "logos" / "tmdb.png"
+_PROVIDER_LIMITS = ImageLimits(max_bytes=128 * 1024, max_width=512, max_height=512, max_pixels=512 * 512)
 STATE_VERSION = "us-tv-hot-shows-v1"
 MAX_ITEMS = 5
 
@@ -68,7 +94,10 @@ class UsTvHotShows(BoxOfficeTopMovies):
         else:
             try:
                 shows, source_label = self._load_shows(settings, items_count)
+                self._enrich_show_details(shows, settings)
+                self._enrich_with_douban(shows)
                 self._download_posters(shows)
+                self._download_provider_logos(shows)
                 generated_at = self._now_for_device(device_config)
                 self._write_cache({
                     "version": STATE_VERSION,
@@ -244,6 +273,143 @@ class UsTvHotShows(BoxOfficeTopMovies):
                 break
         return shows
 
+    def _enrich_show_details(self, shows, settings):
+        """Each show's US streaming services and next episode from one TMDB details call."""
+        for show in shows:
+            if not show.tmdb_id:
+                continue
+            try:
+                details = self._tmdb_source_json(TMDB_TV_DETAILS_URL.format(tv_id=int(show.tmdb_id)), {
+                    "language": settings.get("tmdbLanguage") or "zh-CN", "append_to_response": "watch/providers"})
+            except TaskCancelled:
+                raise
+            except Exception as exc:  # optional: the chart stands without it
+                logger.info("TMDb details unavailable for %s: %s", show.title, type(exc).__name__)
+                continue
+            show.extra.update(self._details_extra(details))
+
+    @staticmethod
+    def _details_extra(details):
+        extra = {}
+        upcoming = details.get("next_episode_to_air") if isinstance(details, dict) else None
+        if isinstance(upcoming, dict):
+            air_date = _clean_text(upcoming.get("air_date"))
+            season, episode = upcoming.get("season_number"), upcoming.get("episode_number")
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", air_date):
+                extra["next_episode_date"] = air_date
+                if isinstance(season, int) and isinstance(episode, int):
+                    extra["next_episode_code"] = f"S{season}E{episode}"
+        region = ((((details or {}).get("watch/providers") or {}).get("results") or {}).get("US") or {}) \
+            if isinstance(details, dict) else {}
+        providers = []
+        for row in sorted((row for row in region.get("flatrate") or [] if isinstance(row, dict)),
+                          key=lambda row: row.get("display_priority") if isinstance(row.get("display_priority"), int)
+                          else 999):
+            logo = _clean_text(row.get("logo_path"))
+            if isinstance(row.get("provider_id"), int) and re.fullmatch(r"/[A-Za-z0-9_-]+\.(?:jpg|png)", logo):
+                providers.append({"id": row["provider_id"], "name": _clean_text(row.get("provider_name"))[:30],
+                                  "logo_path": logo})
+            if len(providers) >= MAX_PROVIDERS:
+                break
+        if providers:
+            extra["providers"] = providers
+        return extra
+
+    def _enrich_with_douban(self, shows):
+        """Douban's Chinese title, rating and episode count for each show its collection lists."""
+        try:
+            response = get_http_session().get(DOUBAN_AMERICAN_TV_URL, params={"start": 0, "count": DOUBAN_COUNT},
+                                              headers=DOUBAN_HEADERS, timeout=12)
+            response.raise_for_status()
+            items = (response.json() or {}).get("subject_collection_items") or []
+        except TaskCancelled:
+            raise
+        except Exception as exc:  # optional: TMDB's names stand alone
+            logger.info("Douban American TV collection unavailable: %s", type(exc).__name__)
+            return
+        catalogue = {}
+        for item in items:
+            title = _clean_text((item or {}).get("title")) if isinstance(item, dict) else ""
+            if title:
+                catalogue.setdefault(_normalize_title(DOUBAN_SEASON.sub("", title)), item)
+        for show in shows:
+            item = next((catalogue[key] for key in (_normalize_title(show.localized_title), _normalize_title(show.title))
+                         if key and key in catalogue), None)
+            if item is not None:
+                show.extra.update(self._douban_extra(item))
+                if not show.localized_title and show.extra.get("douban_title"):
+                    show.localized_title = DOUBAN_SEASON.sub("", show.extra["douban_title"])
+
+    @staticmethod
+    def _douban_extra(item):
+        extra = {"douban_title": _clean_text(item.get("title"))[:40]}
+        rating = (item.get("rating") or {}).get("value") if isinstance(item.get("rating"), dict) else None
+        if isinstance(rating, (int, float)) and not isinstance(rating, bool) and math.isfinite(rating) and 0 < rating <= 10:
+            extra["douban_rating"] = round(float(rating), 1)
+        episodes = _clean_text(item.get("episodes_info"))
+        if episodes and len(episodes) <= 12:
+            extra["douban_episodes"] = episodes
+        return extra
+
+    def _provider_logo_path(self, provider_id):
+        return self._cache_dir() / "provider_logos" / f"{int(provider_id)}.png"
+
+    def _download_provider_logos(self, shows):
+        """Keep each streaming service's TMDB logo (w92) once, by its provider id."""
+        wanted = {provider["id"]: provider["logo_path"] for show in shows
+                  for provider in show.extra.get("providers") or []}
+        for provider_id, logo_path in wanted.items():
+            target = self._provider_logo_path(provider_id)
+            if target.is_file():
+                continue
+            try:
+                response = get_http_session().get(PROVIDER_LOGO_BASE + logo_path, timeout=12, stream=True)
+                with safe_open_image_response(response, limits=_PROVIDER_LIMITS) as decoded:
+                    logo = decoded.convert("RGB")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                logo.save(target)
+            except TaskCancelled:
+                raise
+            except Exception as exc:  # optional: the service's name stays off
+                logger.info("Provider logo unavailable for %s: %s", provider_id, type(exc).__name__)
+
+    def _provider_logos(self, show, size, limit=MAX_PROVIDERS):
+        """The show's streaming services as ``size`` px rounded app-icon squares, as many as are kept."""
+        logos = []
+        for provider in (show.extra.get("providers") or [])[:limit]:
+            path = self._provider_logo_path(provider["id"])
+            try:
+                with safe_open_image(path, limits=_PROVIDER_LIMITS) as source:
+                    logo = ImageOps.fit(source.convert("RGB"), (size, size), method=Image.Resampling.LANCZOS)
+            except (OSError, ValueError, TypeError, KeyError):
+                continue
+            mask = Image.new("L", (size, size), 0)
+            ImageDraw.Draw(mask).rounded_rectangle((0, 0, size - 1, size - 1), radius=max(2, size // 5), fill=255)
+            logo.putalpha(mask)
+            logos.append(logo)
+        return logos
+
+    @staticmethod
+    def _paste_provider(image, draw, logo, x, y, colors):
+        """A service's icon with a hairline round it in the page's rule colour, so a black (Apple TV+,
+        HBO Max) or white (Prime Video) square keeps its shape on a page of its own colour."""
+        x, y = round(x), round(y)
+        image.paste(logo, (x, y), logo)
+        draw.rounded_rectangle((x - 1, y - 1, x + logo.width, y + logo.height), radius=max(2, logo.width // 5) + 1,
+                               outline=colors["line"], width=1)
+
+    @staticmethod
+    def _next_episode_text(show, today=None):
+        """"下集 11/05 S6E3" for an episode from today on, else ""."""
+        try:
+            day = date.fromisoformat(str(show.extra.get("next_episode_date") or ""))
+        except ValueError:
+            return ""
+        if day < (today or datetime.now().date()):
+            return ""
+        code = show.extra.get("next_episode_code") or ""
+        return f"下集 {day:%m/%d}" + (f" {code}" if code else "")
+
     def _popularity_text(self, value):
         try:
             return f"{float(value):.1f}"
@@ -343,9 +509,17 @@ class UsTvHotShows(BoxOfficeTopMovies):
         draw.text((list_x, metric_y + 5), metric_label, fill=colors["muted"], font=small_font)
         label_w = draw.textlength(metric_label, font=small_font)
         draw.text((list_x + label_w + 16, metric_y), hero.weekend_gross or "--", fill=accent, font=metric_font)
-        if hero.total_gross:
-            total_label = hero.extra.get("total_label") or "首播"
-            draw.text((list_x, metric_y + 34), f"{total_label} {hero.total_gross}", fill=colors["muted"], font=small_font)
+        # Where to stream it, right-aligned on the metric's line (logos are JustWatch's data via TMDB).
+        logo_x = width - margin
+        for logo in reversed(self._provider_logos(hero, 26)):
+            logo_x -= logo.width
+            self._paste_provider(image, draw, logo, logo_x, metric_y, colors)
+            logo_x -= 5
+        facts = [part for part in (hero.extra.get("douban_episodes"), self._next_episode_text(hero),
+                                   f"{hero.extra.get('total_label') or '首播'} {hero.total_gross}" if hero.total_gross
+                                   else "") if part]
+        x = list_x + self._douban_pill(draw, list_x, metric_y + 42, hero, small_font)
+        self._draw_facts(draw, x, metric_y + 42, width - margin - x, facts, small_font, colors)
 
         row_top = top + max(112, height // 4)
         remaining = shows[1:]
@@ -363,7 +537,12 @@ class UsTvHotShows(BoxOfficeTopMovies):
             title_x = list_x + mini_w + 58
             primary_title, secondary_title = self._display_titles(show)
             primary_font = row_primary_cjk_font if _contains_cjk(primary_title) else latin_title_font
-            title = self._fit_text(draw, primary_title, primary_font, width - margin - title_x)
+            # Douban's rating stands at the title row's right end; the title keeps the rest.
+            pill_width = self._douban_pill_width(draw, show, small_font)
+            if pill_width:
+                self._douban_pill(draw, width - margin - pill_width, y + 13, show, small_font)
+            title_room = width - margin - title_x - (pill_width + 8 if pill_width else 0)
+            title = self._fit_text(draw, primary_title, primary_font, title_room)
             draw.text((title_x, y + 2), title, fill=colors["ink"], font=primary_font)
             detail_y = y + 31
             if secondary_title:
@@ -372,17 +551,75 @@ class UsTvHotShows(BoxOfficeTopMovies):
                 draw.text((title_x, y + 25), secondary_title, fill=colors["localized"], font=secondary_font)
                 detail_y = y + 43
             metric = f"{show.extra.get('metric_label') or '热度'} {show.weekend_gross or '--'}"
-            draw.text((title_x, detail_y), metric, fill=colors["muted"], font=small_font)
-            if show.total_gross:
-                total = f"{show.extra.get('total_label') or '首播'} {show.total_gross}"
-                total_w = draw.textlength(total, font=small_font)
-                draw.text((width - margin - total_w, detail_y), total, fill=colors["muted"], font=small_font)
+            line_y = detail_y + small_font.size / 2 + 1
+            # On the right: the next episode (else the premiere) after the first streaming service's logo.
+            right_text = self._next_episode_text(show) or (
+                f"{show.extra.get('total_label') or '首播'} {show.total_gross}" if show.total_gross else "")
+            right = width - margin
+            if right_text:
+                right -= draw.textlength(right_text, font=small_font)
+                draw.text((right, line_y), right_text, fill=colors["muted"], font=small_font, anchor="lm")
+                right -= 6
+            for logo in self._provider_logos(show, 14, limit=1):
+                right -= logo.width
+                self._paste_provider(image, draw, logo, right, line_y - logo.height / 2, colors)
+                right -= 6
+            self._draw_facts(draw, title_x, line_y, right - title_x, [metric, show.extra.get("douban_episodes")],
+                             small_font, colors)
 
-        footer = "Data: TMDb TV | Posters: TMDb"
+        footer_y = height - margin - footer_h + 8
         if source_label == "Demo Fallback":
-            footer = "Demo fallback: TMDb data unavailable"
-        draw.text((margin, height - margin - footer_h + 8), footer, fill=colors["muted"], font=small_font)
+            draw.text((margin, footer_y), "Demo fallback: TMDb data unavailable", fill=colors["muted"], font=small_font)
+        else:
+            self._draw_credits(image, draw, margin, footer_y + small_font.size / 2 + 1, shows, small_font, colors)
         return image
+
+    @staticmethod
+    def _douban_pill_width(draw, show, font):
+        rating = show.extra.get("douban_rating")
+        return draw.textlength(f"豆瓣 {rating:.1f}", font=font) + 12 if isinstance(rating, (int, float)) else 0
+
+    def _douban_pill(self, draw, x, middle, show, font):
+        """Douban's rating as a solid green pill at ``x``; the width it took (0 without one)."""
+        width = self._douban_pill_width(draw, show, font)
+        if not width:
+            return 0
+        text = f"豆瓣 {show.extra['douban_rating']:.1f}"
+        height = font.size + 6
+        draw.rounded_rectangle((x, middle - height / 2, x + width, middle + height / 2), radius=height / 2,
+                               fill=DOUBAN_GREEN)
+        draw.text((x + width / 2, middle), text, fill=(255, 255, 255), font=font, anchor="mm")
+        return width + 8
+
+    def _draw_facts(self, draw, x, middle, width, facts, font, colors):
+        """``facts`` joined by " · " in the page's muted ink, dropping the last ones that do not fit."""
+        facts = [str(fact) for fact in facts if fact]
+        while facts:
+            text = " · ".join(facts)
+            if draw.textlength(text, font=font) <= width:
+                draw.text((x, middle), text, fill=colors["muted"], font=font, anchor="lm")
+                return
+            facts = facts[:-1]
+
+    def _draw_credits(self, image, draw, x, middle, shows, font, colors):
+        """The footer names its sources by their logos: TMDB and Douban for the data, JustWatch for
+        the streaming services TMDB lists (as TMDB's terms ask)."""
+        night = colors["mode"] == "streaming"
+        ink = colors["ink"] if night else None
+        runs = ["数据 ", load_source_logo(TMDB_LOGO, 10)]
+        if any(show.extra.get("douban_title") for show in shows):
+            runs += ["  ", load_source_logo(LOGO_DIR / "douban.png", 13)]
+        if any(show.extra.get("providers") for show in shows):
+            runs += ["  ·  观看平台 ", load_source_logo(LOGO_DIR / "justwatch.png", 11, ink)]
+        for run in runs:
+            if run is None:
+                continue
+            if isinstance(run, str):
+                draw.text((x, middle), run, fill=colors["muted"], font=font, anchor="lm")
+                x += draw.textlength(run, font=font)
+            else:
+                image.paste(run, (round(x), round(middle - run.height / 2)), run)
+                x += run.width
 
     def _draw_streaming_background(self, image, colors):
         image.paste(colors["paper"], (0, 0, image.width, image.height))
