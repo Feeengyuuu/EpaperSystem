@@ -4,13 +4,14 @@ from plugins.steam_profile_dashboard.console_renderer import render_console
 from plugins.steam_profile_dashboard.avatar_frame import next_avatar_frame
 from plugins.steam_profile_dashboard.game_assets import SteamGameAssets
 from plugins.base_plugin.base_plugin import BasePlugin
+from runtime.refresh_contracts import TaskCancelled
 from plugins.base_plugin.render_provenance import (
     SourceProvenance,
     attach_source_provenance,
 )
 from plugins.context_cache import write_context
 from utils.app_utils import get_base_ui_font
-from utils.http_client import get_http_session
+from utils.http_client import get_http_client, get_http_session
 from utils.safe_image import safe_open_image
 from utils.secret_redaction import redact_sensitive_text
 from utils.theme_utils import get_theme_context, get_theme_palette
@@ -35,8 +36,9 @@ STEAM_COMMUNITY_BADGES_URL = "https://steamcommunity.com/profiles/{steam_id}/bad
 STEAM_COMMUNITY_PROFILE_URL = "https://steamcommunity.com/profiles/{steam_id}/"
 DEFAULT_STEAM_ID = "76561198176386838"
 STEAM_NAME_DISPLAY_VERSION = "zh-store-full-single-fetch-v1"
-STEAM_DASHBOARD_STYLE_VERSION = "midnight-console-full-cover-friends-v51"
+STEAM_DASHBOARD_STYLE_VERSION = "midnight-console-game-progress-v52"
 STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES = (
+    "midnight-console-full-cover-friends-v51",
     "midnight-console-adaptive-roster-v50",
     "midnight-console-horizontal-friends-v49",
     "midnight-console-adaptive-friend-mosaic-v48",
@@ -76,6 +78,13 @@ STEAM_LEFT_GAME_ITEM_TARGET = 4
 STEAM_CONSOLE_GAME_ASSET_LIMIT = 16
 STEAM_BADGE_ICON_LIMIT = 48
 OPTIONAL_MEDIA_NEGATIVE_TTL_SECONDS = 6 * 60 * 60
+# The hero game's progress: the owner's achievements (GetPlayerAchievements, with the key, names in
+# Simplified Chinese), how rare each is among all players (keyless) and its latest official
+# announcement (keyless). Each response is bounded; a game without achievements simply has none.
+STEAM_PROGRESS_LANGUAGE = "schinese"
+STEAM_PROGRESS_MAX_BYTES = 1024 * 1024
+STEAM_NEWS_COUNT = 3
+STEAM_NEWS_FEED = "steam_community_announcements"
 OPTIONAL_MEDIA_NEGATIVE_CACHE_LIMIT = 256
 
 PERSONA_STATES = {
@@ -431,6 +440,9 @@ class SteamProfileDashboard(BasePlugin):
                         redact_sensitive_text(e),
                     )
                     data.setdefault("warnings", []).append("商店详情不可用")
+            data["game_progress"], progress_calls = self._fetch_game_progress(
+                api_key, steam_id, (data.get("spotlight_game") or {}).get("appid"))
+            data["api_calls"] += progress_calls
 
         data["api_calls"] += self._enrich_localized_game_names(data)
         return data
@@ -563,6 +575,8 @@ class SteamProfileDashboard(BasePlugin):
             details = self._fetch_store_appdetails(spotlight_game.get("appid"), settings)
             if details:
                 app_details = details
+        game_progress, progress_calls = self._fetch_game_progress(api_key, steam_id, (spotlight_game or {}).get("appid"))
+        api_calls += progress_calls
 
         data = {
             "profile": profile,
@@ -577,6 +591,7 @@ class SteamProfileDashboard(BasePlugin):
             "online_friend_count": online_friend_count,
             "spotlight_game": spotlight_game,
             "app_details": app_details,
+            "game_progress": game_progress,
             "profile_background": self._profile_background_record(equipped),
             "api_calls": api_calls,
             "warnings": warnings,
@@ -584,6 +599,87 @@ class SteamProfileDashboard(BasePlugin):
         }
         data["api_calls"] += self._enrich_localized_game_names(data)
         return data
+
+    def _fetch_game_progress(self, api_key, steam_id, appid):
+        """({"appid", "achievements", "news"}, requests made) for the hero game. Achievements are
+        {"total", "unlocked", "rarest": {"name", "percent"}} (rarest among those unlocked, by the
+        share of all players who have it); news is the latest announcement {"date", "title", "patch"}.
+        Either is None when Steam has none or the lookup fails."""
+        appid = self._normalize_appid(appid)
+        if not appid:
+            return {}, 0
+        progress = {"appid": appid, "achievements": None, "news": None}
+        calls = 0
+        client = get_http_client()
+        try:
+            calls += 1
+            player = client.request_json(
+                "GET", f"{STEAM_API_BASE}/ISteamUserStats/GetPlayerAchievements/v1/",
+                params={"key": api_key, "steamid": steam_id, "appid": appid, "l": STEAM_PROGRESS_LANGUAGE},
+                timeout=20, max_bytes=STEAM_PROGRESS_MAX_BYTES,
+            ).data
+            stats = player.get("playerstats") if isinstance(player, dict) else None
+            rows = stats.get("achievements") if isinstance(stats, dict) and stats.get("success") else None
+            if isinstance(rows, list) and rows:
+                calls += 1
+                rarity = client.request_json(
+                    "GET", f"{STEAM_API_BASE}/ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/",
+                    params={"gameid": appid}, timeout=20, max_bytes=STEAM_PROGRESS_MAX_BYTES,
+                ).data
+                progress["achievements"] = self._achievement_summary(rows, rarity)
+        except TaskCancelled:
+            raise
+        except Exception as e:
+            # A game without stats answers 400 and a private profile 403: no progress, not a failure.
+            logger.info("Steam achievements unavailable for %s: %s", appid, type(e).__name__)
+        try:
+            calls += 1
+            news = client.request_json(
+                "GET", f"{STEAM_API_BASE}/ISteamNews/GetNewsForApp/v2/",
+                params={"appid": appid, "count": STEAM_NEWS_COUNT, "maxlength": 1, "feeds": STEAM_NEWS_FEED},
+                timeout=20, max_bytes=256 * 1024,
+            ).data
+            progress["news"] = self._latest_news(news)
+        except TaskCancelled:
+            raise
+        except Exception as e:
+            logger.info("Steam news unavailable for %s: %s", appid, type(e).__name__)
+        return progress, calls
+
+    @staticmethod
+    def _achievement_summary(rows, rarity):
+        """Achievement counts and the rarest one unlocked from GetPlayerAchievements rows and the
+        global percentages (string or number, by API name)."""
+        shares = {}
+        items = (((rarity or {}).get("achievementpercentages") or {}).get("achievements")
+                 if isinstance(rarity, dict) else None)
+        for item in items if isinstance(items, list) else []:
+            try:
+                shares[str(item.get("name"))] = float(item.get("percent"))
+            except (AttributeError, TypeError, ValueError):
+                continue
+        rows = [row for row in rows if isinstance(row, dict) and row.get("apiname")]
+        unlocked = [row for row in rows if row.get("achieved") == 1]
+        rarest = min((row for row in unlocked if str(row["apiname"]) in shares),
+                     key=lambda row: shares[str(row["apiname"])], default=None)
+        summary = {"total": len(rows), "unlocked": len(unlocked), "rarest": None}
+        if rarest is not None:
+            name = " ".join(str(rarest.get("name") or rarest["apiname"]).split())[:60]
+            summary["rarest"] = {"name": name, "percent": round(shares[str(rarest["apiname"])], 1)}
+        return summary if rows else None
+
+    @staticmethod
+    def _latest_news(payload):
+        """The newest announcement: {"date", "title", "patch" (tagged as patch notes)}, or None."""
+        items = ((payload or {}).get("appnews") or {}).get("newsitems") if isinstance(payload, dict) else None
+        dated = [item for item in items if isinstance(item, dict) and isinstance(item.get("date"), int)
+                 and item["date"] > 0] if isinstance(items, list) else []
+        if not dated:
+            return None
+        latest = max(dated, key=lambda item: item["date"])
+        tags = latest.get("tags") if isinstance(latest.get("tags"), list) else []
+        return {"date": latest["date"], "title": " ".join(str(latest.get("title") or "").split())[:120],
+                "patch": "patchnotes" in tags}
 
     def _steam_api(self, path, api_key, params):
         session = get_http_session()

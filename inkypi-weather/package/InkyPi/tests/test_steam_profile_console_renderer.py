@@ -821,11 +821,12 @@ def test_style_version_moves_on_while_previous_cache_stays_compatible():
         STEAM_DASHBOARD_STYLE_VERSION,
     )
 
-    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-full-cover-friends-v51"
-    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[:3] == (
+    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-game-progress-v52"
+    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[:4] == (
+        "midnight-console-full-cover-friends-v51",
         "midnight-console-adaptive-roster-v50", "midnight-console-horizontal-friends-v49",
         "midnight-console-adaptive-friend-mosaic-v48")
-    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[3:10] == (
+    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[4:11] == (
         "midnight-console-whole-avatar-frame-v47",
         "midnight-console-profile-backdrop-v46",
         "midnight-console-game-hue-v45",

@@ -69,6 +69,10 @@ FRIEND_TILE = (58, 55)
 FRIEND_GAP = 3
 # Black ink around the hero title keeps it legible over busy game artwork.
 TITLE_OUTLINE = 2
+# Under the hero's status line: the owner's achievements in that game (a bar of those unlocked)
+# and the rarest one unlocked, each line this tall with this gap; the rarest share in gold.
+PROGRESS_LINE, PROGRESS_GAP, PROGRESS_TOP = 17, 6, 10
+RARE_GOLD = (249, 202, 77)
 RAIL_SIZE = (181, 480)
 # The bordered plate behind the persona name and its STEAM PLAYER caption; it keeps the
 # left margin and the space above the name clear for the avatar frame.
@@ -181,6 +185,22 @@ def _game_minutes(data, appid, field):
     if _appid(spotlight.get("appid")) == wanted:
         return spotlight.get(field)
     return None
+
+
+def _news_label(news):
+    """The latest announcement's day: "10/28 更新" for patch notes, "10/28 公告" otherwise."""
+    if not isinstance(news, dict) or not isinstance(news.get("date"), int) or news["date"] <= 0:
+        return ""
+    day = datetime.fromtimestamp(news["date"]).strftime("%m/%d")
+    return f"{day} {'更新' if news.get('patch') else '公告'}"
+
+
+def _game_progress(data, appid):
+    """The saved progress record when it is for this game, else {}."""
+    progress = data.get("game_progress")
+    if not isinstance(progress, dict) or not appid or _appid(progress.get("appid")) != _appid(appid):
+        return {}
+    return progress
 
 
 def _recent_games(plugin, data):
@@ -589,16 +609,75 @@ class _Console:
             status = "游戏中"
         else:
             status, _ = self.plugin._persona_text(profile)
-        detail = f"{status} · AppID {appid}" if appid else status
-        title = self._text_bitmap(name, 290, 72, 25, WHITE, True, 2, 19, outline=TITLE_OUTLINE)
+        progress = _game_progress(self.data, appid)
+        # The game's latest announcement takes the AppID's place once it is known.
+        news = _news_label(progress.get("news"))
+        detail = f"{status} · {news}" if news else (f"{status} · AppID {appid}" if appid else status)
+        achievements = progress.get("achievements")
+        achievements = achievements if isinstance(achievements, dict) and _number(achievements.get("total")) else None
+        lines = (1 + bool(achievements.get("rarest"))) if achievements else 0
+        progress_height = PROGRESS_TOP + lines * PROGRESS_LINE + (lines - 1) * PROGRESS_GAP if lines else 0
+        title = self._text_bitmap(name, 290, 72 if not lines else 60, 25, WHITE, True, 2, 19, outline=TITLE_OUTLINE)
         status_line = self._text_bitmap(detail, 290, 24, 15, self.c["accent"], min_size=12)
-        group_height = title.height + 13 + status_line.height
+        group_height = title.height + 13 + status_line.height + progress_height
         group_y = 43 + (162 - group_height) // 2
         self.icon(appid, 209, 96, 56)
         self.text((281, group_y, 571, group_y + title.height), name, prepared=title)
         status_y = group_y + title.height + 13
         self.text((281, status_y, 571, status_y + status_line.height), detail,
                   prepared=status_line)
+        if achievements:
+            self.hero_progress(achievements, 281, status_y + status_line.height + PROGRESS_TOP, 571)
+
+    def hero_progress(self, achievements, x, y, right):
+        """The owner's achievements in the hero game: unlocked of all on a bar in the game's hue and
+        the share, then the rarest one unlocked with how few players have it."""
+        total, unlocked = _number(achievements.get("total")), _number(achievements.get("unlocked"))
+        unlocked = min(unlocked, total)
+        middle = y + PROGRESS_LINE / 2
+        icon = sidebar_asset("badges", 16)
+        if icon is not None:
+            self.image.paste(icon, (x, round(middle - icon.height / 2)), icon)
+        left = x + 22
+        label, label_font = "成就", self.font(12)
+        self.draw.text((left, middle), label, font=label_font, fill=self.c["muted"], anchor="lm")
+        left += self.draw.textlength(label, font=label_font) + 5
+        count, count_font = f"{unlocked}/{total}", self.font(14, True)
+        self.draw.text((left, middle), count, font=count_font, fill=WHITE, anchor="lm")
+        left += self.draw.textlength(count, font=count_font) + 10
+        share, share_font = f"{round(100 * unlocked / total)}%", self.font(13, True)
+        share_w = self.draw.textlength(share, font=share_font)
+        self.draw.text((right, middle), share, font=share_font, fill=self.c["accent"], anchor="rm")
+        bar = (left, round(middle - 3), right - share_w - 8, round(middle + 3))
+        if bar[2] - bar[0] >= 30:
+            self.draw.rounded_rectangle(bar, radius=3, fill=self.c["border"])
+            if unlocked:
+                filled = bar[0] + max(6, round((bar[2] - bar[0]) * unlocked / total))
+                self.draw.rounded_rectangle((bar[0], bar[1], filled, bar[3]), radius=3, fill=self.c["accent"])
+        rarest = achievements.get("rarest")
+        if not isinstance(rarest, dict) or not rarest.get("name"):
+            return
+        middle += PROGRESS_LINE + PROGRESS_GAP
+        # A small gold gem before the rarest one's name.
+        gem = (x + 8, middle)
+        self.draw.polygon(((gem[0], gem[1] - 7), (gem[0] + 6, gem[1] - 1), (gem[0], gem[1] + 7),
+                           (gem[0] - 6, gem[1] - 1)), fill=RARE_GOLD)
+        left = x + 22
+        label = "最稀有"
+        self.draw.text((left, middle), label, font=label_font, fill=self.c["muted"], anchor="lm")
+        left += self.draw.textlength(label, font=label_font) + 6
+        percent = f"{rarest.get('percent')}% 玩家"
+        percent_font = self.font(12, True)
+        percent_w = self.draw.textlength(percent, font=percent_font)
+        self.draw.text((right, middle), percent, font=percent_font, fill=RARE_GOLD, anchor="rm")
+        name_font = self.font(13, True)
+        name = str(rarest["name"])
+        room = right - percent_w - 8 - left
+        if self.draw.textlength(name, font=name_font) > room:
+            while name and self.draw.textlength(name + "…", font=name_font) > room:
+                name = name[:-1]
+            name = name.rstrip() + "…" if name else ""
+        self.draw.text((left, middle), name, font=name_font, fill=WHITE, anchor="lm")
 
     def friends(self):
         data = self.data
