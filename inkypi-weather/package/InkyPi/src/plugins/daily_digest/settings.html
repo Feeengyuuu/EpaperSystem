@@ -1,0 +1,26 @@
+<input type="hidden" name="refreshOnDisplay" id="refreshOnDisplay" value="false">
+<div class="form-group">
+  <small>一页看完十二个公开来源：页眉一言诗词；左栏 NASA SDO 实时太阳与 ESA 韦布 / 哈勃本月图；中栏 DW 中文、纽约时报中文网、少数派新闻；右栏美国国债总额与日变化、EIA 加州普通汽油周价与六周走势、加密货币恐惧贪婪指数与七日点、Wordle 昨日答案（不剧透当天）；底栏网易云榜单前三（飙升 / 新歌 / 原创 / 热歌榜每小时轮换）、豆瓣正在热映与热门美剧评分。每个来源单独缓存，某个来源暂时取不到时只隐藏它自己的卡片。全部为公开接口，无需密钥。</small>
+</div>
+<div class="form-group">
+  <label class="form-label" for="fontFamily">字体</label>
+  <select name="fontFamily" id="fontFamily">
+    {% for font_name in available_fonts %}<option value="{{ font_name }}">{{ font_name }}</option>{% endfor %}
+  </select>
+</div>
+<div class="form-group">
+  <label><input type="checkbox" name="forceRefresh" id="forceRefresh"> 下次刷新重新获取全部来源</label>
+  <small>新闻与诗词每小时、榜单与评分每 6 小时、油价每 12 小时、太阳图每 30 分钟更新一次；轮播重绘使用本地缓存，不请求网络。</small>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  for (const key of ['fontFamily', 'forceRefresh']) {
+    const el = document.getElementById(key);
+    const value = typeof pluginSettings !== 'undefined' ? pluginSettings[key] : undefined;
+    if (value !== undefined) {
+      if (el.type === 'checkbox') el.checked = [true, 'true', 'on', '1'].includes(value);
+      else el.value = value;
+    } else if (key === 'fontFamily') el.value = 'Microsoft YaHei';
+  }
+});
+</script>

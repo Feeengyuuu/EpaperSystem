@@ -90,6 +90,7 @@ INLINE_PLUGINS = frozenset(
         "chinese_literature_clock",
         "clock",
         "cn_hot_search",
+        "daily_digest",
         "daily_pop",
         "flow_progress",
         "game_deals",

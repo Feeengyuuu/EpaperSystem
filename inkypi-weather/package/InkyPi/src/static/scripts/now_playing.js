@@ -127,6 +127,7 @@
         countdown: "倒计时",
         daily_ai_news: "AI每日新闻",
         daily_art: "每日名画",
+        daily_digest: "万象速览",
         daily_knowledge: "每日知识",
         daily_pop: "今日热榜",
         daily_wiki_page: "维基每日",

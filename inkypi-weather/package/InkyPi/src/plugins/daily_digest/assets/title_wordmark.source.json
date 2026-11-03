@@ -1,0 +1,18 @@
+{
+  "asset": "title_wordmark.png",
+  "text": "万象速览",
+  "scene": "万象速览 in heavy slanted geometric lettering, deep ink letter bodies with a thin cobalt offset shadow, one solid accent block per category colour (cobalt, crimson, amber, emerald, violet)",
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "job_id": "27b79d9e-2a3a-4ac2-b7e2-9570a93b78df",
+  "candidate": 0,
+  "generated": "2026-11-02",
+  "background": "transparent PNG, 1536x512",
+  "processing": "alpha below 40 cleared, cropped to the alpha bounding box, scaled to 96 px high with LANCZOS",
+  "rendering": "at the page's top left; by night its near-black letter bodies take the night ink",
+  "source_sha256": "ef45d22cee20a013a54561ef6506fbee826441eebae07e60dc73ea98891fb563",
+  "sha256": "28e8e94231d017e432099ae225a9051276faa6cd8b14a44dd2b627750858c03c",
+  "size": [
+    426,
+    96
+  ]
+}
