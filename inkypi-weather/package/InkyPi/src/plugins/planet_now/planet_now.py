@@ -64,6 +64,9 @@ class PlanetNow(BasePlugin):
 
         payload = {
             "grid": load("grid", sources.fetch_grid, 10 * MINUTE, 6 * HOUR, sources.valid_grid),
+            # CAISO's summary only adds to the grid card: status, CO2 intensity, batteries.
+            "grid_stats": load("grid_stats", sources.fetch_grid_stats, 10 * MINUTE, 3 * HOUR,
+                               sources.valid_grid_stats, timeout=8),
             "goes": load("goes", sources.fetch_goes, 20 * MINUTE, 6 * HOUR, sources.valid_goes, timeout=15),
             "rain": load("rain", sources.fetch_rain, 10 * MINUTE, 3 * HOUR, sources.valid_rain),
             "epic": load("epic", sources.fetch_epic, 6 * HOUR, 4 * DAY, sources.valid_epic),

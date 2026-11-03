@@ -267,7 +267,8 @@ def _chip(canvas, xy, text, *, size=11, fill="chip", color="chip_ink", anchor="l
 
 def _card(canvas, key, title, detail="", source=None):
     """A card in its own colour: a band across the top, a frame and header rule, its generated
-    icon and title, and at the right its source's official logo (SOURCE_LOGOS) before a detail."""
+    icon and title, and at the right its source's official logo (SOURCE_LOGOS) before a detail.
+    Returns the header's free span (title end, logo or detail start) for a badge between them."""
     left, top, right, bottom = box = CARDS[key]
     colour = canvas.color(key)
     canvas.draw.rounded_rectangle(box, radius=7, outline=colour, width=2)
@@ -284,9 +285,11 @@ def _card(canvas, key, title, detail="", source=None):
         x -= canvas.text((x, top + 17), detail, 11, "muted", anchor="rm", bold=False, width=room) + 5
     if logo is not None:
         _paste(canvas, logo, (x - logo.width, top + 17 - logo.height / 2))
+        x -= logo.width
     canvas.rule((left + 8, top + HEADER + 2, right - 8, top + HEADER + 2), colour)
     doodles = (left + 2, top + HEADER + 4, right - 2, bottom - 2)
     paint_doodles(canvas.image, doodles, DOODLES[key], colour, radius=5, offset=doodles[:2])
+    return cursor, x
 
 
 def _local_time(iso):
@@ -362,18 +365,40 @@ def _minutes(text):
     return hour * 60 + minute
 
 
+GRID_SEVERITY = {"ok": "grid", "watch": "gold", "alert": "trends"}
+
+
+def _grid_status(canvas, stats, span, top):
+    """CAISO's grid status as a solid pill in its severity's colour, in the header's free span."""
+    name = stats.get("status_zh")
+    if not name:
+        return
+    start, end = span
+    width = canvas.width(name, 10) + 12
+    if start + width <= end - 6:
+        canvas.pill((start, top + 17 - 8), name, 10, fill=GRID_SEVERITY.get(stats.get("severity"), "trends"),
+                    color="paper", pad=6, height=16)
+
+
 def _grid(canvas, payload):
     """The renewable share over the supply mix as a bar and a table (colour, source, a bar for its
-    share, GW, per cent), beside today's stacked supply with its numbers on it."""
+    share, GW, per cent), beside today's stacked supply with its numbers on it. CAISO's summary,
+    when it arrives, gives the official share, the grid status and CO2 intensity, and batteries
+    that are charging (a row of their own, which the supply mix cannot show)."""
     grid = payload.get("grid", {}).get("data") or {}
+    stats = (payload.get("grid_stats") or {}).get("data") or {}
     now = grid.get("now") or {}
-    _card(canvas, "grid", "加州电网", f"{now.get('time', '--:--')} · 虚线为预测用电" if now else "", source="caiso")
+    span = _card(canvas, "grid", "加州电网", f"{now.get('time', '--:--')} · 虚线为预测用电" if now else "",
+                 source="caiso")
     left, top, right, bottom = CARDS["grid"]
+    _grid_status(canvas, stats, span, top)
     if not grid.get("series"):
         canvas.text(((left + right) / 2, (top + bottom) / 2 + 10), "电网数据暂不可用", 14, "muted", anchor="mm")
         return
     supply = sum(float(now.get(name) or 0) for name in FUEL_ORDER) or 1.0
     share = float(grid.get("renewable_share") or 0)
+    if stats.get("renewables_percent") is not None:
+        share = float(stats["renewables_percent"]) / 100
     x, x1 = left + 10, left + 186
     y = top + HEADER + 6
     width = canvas.text((x, y - 4), f"{share:.0%}", 38, "grid", anchor="la")
@@ -382,8 +407,15 @@ def _grid(canvas, payload):
     icon = _fuel_icon("renewables", canvas.color("grid"), RENEWABLES_ICON_HEIGHT)
     if icon is not None:
         _paste(canvas, icon, (x + width + 7 + label_w + 5, y + 13 - icon.height // 2))
-    canvas.text((x + width + 7, y + 24), f"{share * supply / 1000:.1f} / {supply / 1000:.1f} GW", 11, "muted",
-                anchor="la", bold=False)
+    if stats.get("co2_intensity") is not None:
+        # CO2 per MWh generated now, in place of the renewables' GW the table already gives.
+        cursor = x + width + 7
+        cursor += canvas.text((cursor, y + 31), "CO2", 10, anchor="lm", bold=False) + 3
+        cursor += canvas.text((cursor, y + 31), f"{stats['co2_intensity']:.2f}", 11, anchor="lm") + 2
+        canvas.text((cursor, y + 31), "t/MWh", 10, anchor="lm", bold=False, width=x1 - cursor)
+    else:
+        canvas.text((x + width + 7, y + 24), f"{share * supply / 1000:.1f} / {supply / 1000:.1f} GW", 11, "muted",
+                    anchor="la", bold=False)
     # The mix as one bar, then as a table that is also the chart's legend, its rows spread to
     # the card's foot.
     rows = sorted(((name, float(now.get(name) or 0)) for name in FUEL_ORDER), key=lambda row: -row[1])
@@ -396,6 +428,9 @@ def _grid(canvas, payload):
     canvas.draw.rectangle((x, bar_y, x1, bar_y + 10), outline=canvas.color("ink"), width=1)
     top_share = max((mw for _name, mw in rows), default=1) / supply or 1
     shown = [row for row in rows if row[1] > 0]
+    batteries = stats.get("batteries_mw")
+    if batteries is not None and batteries < -50 and not any(name == "batteries" for name, _mw in shown):
+        shown.append(("batteries", batteries))  # charging: drawn below with "充电" in place of a share
     row_y = bar_y + 16
     pitch = min(19.0, (bottom - 6 - row_y) / max(1, len(shown)))
     for name, mw in shown:
@@ -409,10 +444,16 @@ def _grid(canvas, payload):
         canvas.text((x + 15, middle), FUEL_LABELS[name], 12 if pitch >= 15 else 11, anchor="lm")
         bar_x0, bar_x1 = x + 56, x + 104
         canvas.draw.rectangle((bar_x0, middle - 3, bar_x1, middle + 3), fill=canvas.color("panel"))
-        canvas.draw.rectangle((bar_x0, middle - 3, bar_x0 + (bar_x1 - bar_x0) * portion / top_share, middle + 3),
-                              fill=canvas.palette["fuels"][name])
+        if mw > 0:
+            canvas.draw.rectangle((bar_x0, middle - 3, bar_x0 + (bar_x1 - bar_x0) * portion / top_share, middle + 3),
+                                  fill=canvas.palette["fuels"][name])
+        else:
+            # Charging batteries draw from the grid: an outline the length of their load.
+            charge = min(1.0, -mw / supply / top_share)
+            canvas.draw.rectangle((bar_x0, middle - 3, bar_x0 + (bar_x1 - bar_x0) * charge, middle + 3),
+                                  outline=canvas.palette["fuels"][name], width=1)
         canvas.text((x + 144, middle), f"{mw / 1000:.1f}", 12 if pitch >= 15 else 11, anchor="rm")
-        canvas.text((x1, middle), f"{portion:.0%}", 10, "muted", anchor="rm", bold=False)
+        canvas.text((x1, middle), f"{portion:.0%}" if mw > 0 else "充电", 10, "muted", anchor="rm", bold=False)
         row_y += pitch
     canvas.draw.line((x1 + 8, top + HEADER + 8, x1 + 8, bottom - 8), fill=canvas.color("rule"), width=1)
     _supply_chart(canvas, grid, (x1 + 18, top + HEADER + 10, right - 10, bottom - 22))

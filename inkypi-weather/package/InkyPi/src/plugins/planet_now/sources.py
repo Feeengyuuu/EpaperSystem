@@ -35,6 +35,15 @@ HOME = (37.5485, -121.9886)
 
 CAISO_FUEL_URL = "https://www.caiso.com/outlook/current/fuelsource.csv"
 CAISO_DEMAND_URL = "https://www.caiso.com/outlook/current/demand.csv"
+# Today's Outlook's own summary (2.5 KB JSON): grid status, renewables share, CO2 intensity, batteries.
+CAISO_STATS_URL = "https://www.caiso.com/outlook/current/stats.txt"
+# CAISO's grid conditions and how the page names them: (Chinese name, severity).
+GRID_STATUS = {
+    "normal": ("电网正常", "ok"), "restricted maintenance operations": ("限制检修", "watch"),
+    "rmo": ("限制检修", "watch"), "flex alert": ("节电警报", "watch"), "eea watch": ("能源紧急观察", "watch"),
+    "eea 1": ("一级能源紧急", "alert"), "eea 2": ("二级能源紧急", "alert"), "eea 3": ("三级能源紧急", "alert"),
+    "transmission emergency": ("输电紧急", "alert"),
+}
 # CAISO's fuel columns by the group the page draws (batteries count while discharging).
 FUEL_GROUPS = (
     ("solar", ("Solar",)), ("wind", ("Wind",)), ("hydro", ("Large Hydro", "Small hydro")),
@@ -223,6 +232,42 @@ def fetch_grid(context):
 
 def valid_grid(data):
     return isinstance(data, dict) and bool(data.get("series")) and isinstance(data.get("now"), dict)
+
+
+def _finite(value):
+    number = _number(value)
+    return number if number is not None and math.isfinite(number) else None
+
+
+def parse_grid_stats(raw):
+    """CAISO's summary: {"status", "status_zh", "severity", "renewables_percent", "co2_intensity" (t/MWh),
+    "co2_tph", "batteries_mw" (negative while charging), "time"}; {} without a status or intensity."""
+    if not isinstance(raw, dict):
+        return {}
+    statuses = raw.get("gridstatus")
+    statuses = statuses if isinstance(statuses, list) else [statuses]
+    status = next((str(item).strip() for item in statuses if isinstance(item, str) and item.strip()), "")
+    name, severity = GRID_STATUS.get(status.lower(), (status, "alert")) if status else ("", "")
+    intensity = _finite(raw.get("currentCo2intensity"))
+    share = _finite(raw.get("renewablesPercent"))
+    slot = re.search(r"(\d{1,2}:\d{2})\s*$", str(raw.get("slotDate") or ""))
+    data = {
+        "status": status, "status_zh": name, "severity": severity,
+        "renewables_percent": share if share is not None and 0 <= share <= 100 else None,
+        "co2_intensity": round(intensity, 3) if intensity is not None and 0 <= intensity < 5 else None,
+        "co2_tph": _finite(raw.get("currentCo2")),
+        "batteries_mw": _finite(raw.get("currentBatteries")),
+        "time": slot.group(1) if slot else "",
+    }
+    return data if data["status"] or data["co2_intensity"] is not None else {}
+
+
+def fetch_grid_stats(context):
+    return parse_grid_stats(_json(CAISO_STATS_URL, context, max_bytes=64 * 1024))
+
+
+def valid_grid_stats(data):
+    return isinstance(data, dict) and (bool(data.get("status")) or data.get("co2_intensity") is not None)
 
 
 # --- The sky over the Bay --------------------------------------------------------------------------

@@ -391,3 +391,59 @@ def test_the_newest_recent_fireball_marks_the_iss_map():
     assert render.latest_fireball(payload, datetime(2026, 12, 30, tzinfo=sources.PACIFIC)) is None
     page = render.render_page((800, 480), payload, {}, now, {}).convert("RGB")
     assert render.FIREBALL_COLOURS[0] in set(page.crop((300, 270, 790, 470)).get_flattened_data())
+
+
+CAISO_STATS = {
+    "gridstatus": ["Normal"], "renewablesPercent": 19, "currentCo2intensity": 0.2034909229999784,
+    "currentCo2": 5417, "currentBatteries": 7553, "slotDate": "11/02/2026 16:35",
+}
+
+
+def test_caisos_summary_gives_status_share_intensity_and_batteries():
+    stats = sources.parse_grid_stats(CAISO_STATS)
+
+    assert stats == {"status": "Normal", "status_zh": "电网正常", "severity": "ok", "renewables_percent": 19.0,
+                     "co2_intensity": 0.203, "co2_tph": 5417.0, "batteries_mw": 7553.0, "time": "16:35"}
+    assert sources.valid_grid_stats(stats)
+    alert = sources.parse_grid_stats({**CAISO_STATS, "gridstatus": ["EEA 1"], "currentBatteries": -4800})
+    assert (alert["status_zh"], alert["severity"], alert["batteries_mw"]) == ("一级能源紧急", "alert", -4800.0)
+    unknown = sources.parse_grid_stats({**CAISO_STATS, "gridstatus": ["Something New"]})
+    assert (unknown["status_zh"], unknown["severity"]) == ("Something New", "alert")
+    assert sources.parse_grid_stats({"gridstatus": [], "currentCo2intensity": "n/a"}) == {}
+    assert not sources.valid_grid_stats({})
+
+
+def _grid_labels(monkeypatch, payload):
+    canvas = render.PageCanvas(render._palette({}))
+    labels = []
+    original_text, original_pill = canvas.text, canvas.pill
+    monkeypatch.setattr(canvas, "text", lambda xy, text, *args, **kwargs: (
+        labels.append(str(text)), original_text(xy, text, *args, **kwargs))[1])
+    monkeypatch.setattr(canvas, "pill", lambda xy, text, *args, **kwargs: (
+        labels.append(f"pill:{text}"), original_pill(xy, text, *args, **kwargs))[1])
+    render._grid(canvas, payload)
+    return labels
+
+
+def test_the_grid_card_shows_caisos_status_intensity_and_charging_batteries(monkeypatch):
+    payload = _payload()
+    payload["grid_stats"] = {"data": sources.parse_grid_stats({**CAISO_STATS, "renewablesPercent": 41,
+                                                               "currentBatteries": -5200})}
+    labels = _grid_labels(monkeypatch, payload)
+
+    assert "pill:电网正常" in labels and "41%" in labels and "0.20" in labels and "t/MWh" in labels
+    # The fixture's noon batteries charge (-2500 in the mix CSV): their row reads CAISO's load.
+    assert "-5.2" in labels and "充电" in labels
+
+    # Without the summary the card keeps its own share and the GW line.
+    plain = _grid_labels(monkeypatch, _payload())
+    assert not any(label.startswith("pill:") for label in plain) and "充电" not in plain
+    assert any(label.endswith(" GW") and "/" in label for label in plain)
+
+
+def test_the_grid_summary_is_its_own_optional_feed():
+    from plugins.planet_now import planet_now
+
+    text = Path(planet_now.__file__).read_text(encoding="utf-8")
+    assert '"grid_stats": load("grid_stats", sources.fetch_grid_stats' in text
+    assert "grid_stats" not in planet_now.CORE_FEEDS
