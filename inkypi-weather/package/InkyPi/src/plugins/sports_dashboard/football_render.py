@@ -27,6 +27,9 @@ FOOTBALL_WIN_LOGO = 16
 # then one line with the matchup quality and the projected margin; each team's row adds its FPI rank
 # and its playoff and title chances after the record.
 FOOTBALL_PREDICTOR_ROW = 12
+# That line's matchup-quality meter and the room its right end keeps for ESPN's mark ("ESPN 模型").
+FOOTBALL_QUALITY_METER = 24
+FOOTBALL_PREDICTOR_CREDIT = 50
 FOOTBALL_SPEC_KEYS = {
     "NFL": ("nfl_accent", "nfl_live", "nfl_tag", "nfl_field_tint"),
     "NCAA": ("ncaa_accent", "ncaa_live", "ncaa_tag", "ncaa_field_tint"),
@@ -428,10 +431,65 @@ class FootballRenderMixin:
             self._kit_team_ink_key(event.get("team_b_color"), spec.accent),
             image=image, logos=tuple(self._football_inline_logo(event, side, sport, FOOTBALL_PREDICTOR_ROW) for side in ("a", "b")),
         )
+        line = (x1 + 28, y2 + 2, x2, y2 + 2 + FOOTBALL_PREDICTOR_ROW)
+        if self._draw_nfl_predictor_line(image, draw, line, event, predictor, sport):
+            return
         caption = SportsDashboard._nfl_predictor_caption(event, predictor, sport)
         if caption:
             caption, font = self._fit_text_ellipsis(draw, caption, x2 - x1 - 28, 9, bold=False, min_size=8)
-            self._draw_text_in_box(draw, (x1 + 28, y2 + 2, x2, y2 + 2 + FOOTBALL_PREDICTOR_ROW), caption, font, COLORS["text"])
+            self._draw_text_in_box(draw, line, caption, font, COLORS["text"])
+
+    def _draw_nfl_predictor_line(self, image, draw, box, event, predictor, sport):
+        """The line under the win share: '对阵质量 79' with a short meter of it, a hairline, '预计 [队标]
+        美洲虎 净胜 9.0 分', and at the right end ESPN's mark naming the model. False (nothing drawn) without a
+        page to paste the logos on or when the pieces do not fit; the plain caption stands in."""
+        if image is None:
+            return False
+        x1, y1, x2, y2 = [int(value) for value in box]
+        middle = (y1 + y2) // 2
+        font, strong = self._font(9, False), self._font(9, True)
+        runs = []
+        quality = predictor.get("quality")
+        if isinstance(quality, (int, float)):
+            runs += [("text", "对阵质量 ", font), ("text", str(round(quality)), strong),
+                     ("meter", max(0.0, min(100.0, float(quality))) / 100, FOOTBALL_QUALITY_METER + 8)]
+        margin = predictor.get("margin_a")
+        if isinstance(margin, (int, float)) and abs(margin) >= 0.05:
+            side = "a" if margin > 0 else "b"
+            if runs:
+                runs.append(("rule", None, 12))
+            runs.append(("text", "预计 ", font))
+            logo = self._football_inline_logo(event, side, sport, FOOTBALL_PREDICTOR_ROW)
+            if logo is not None:
+                runs.append(("logo", logo, logo.width + 3))
+            team = SportsDashboard._football_short_team(event, side, sport)
+            runs += [("text", f"{team} 净胜 ", font), ("text", f"{abs(margin):.1f}", strong), ("text", " 分", font)]
+        if not runs:
+            return False
+        widths = [run[2] if run[0] != "text" else math.ceil(self._text_width(draw, run[1], run[2])) for run in runs]
+        credit = x2 - x1 - sum(widths) >= FOOTBALL_PREDICTOR_CREDIT + 6
+        if sum(widths) > x2 - x1:
+            return False
+        x = x1
+        for (kind, content, extra), width in zip(runs, widths):
+            if kind == "text":
+                self._draw_text_in_box(draw, (x, y1, x + width, y2), content, extra, COLORS["text"])
+            elif kind == "logo":
+                image.paste(content, (x, middle - content.height // 2), content)
+            elif kind == "rule":
+                # A hairline between the matchup's quality and the projection.
+                draw.line((x + width // 2 - 1, middle - 4, x + width // 2 - 1, middle + 4), fill=COLORS["border"])
+            else:
+                left, right = x + 4, x + 4 + FOOTBALL_QUALITY_METER
+                draw.rectangle((left, middle - 2, right, middle + 2), fill=COLORS["panel"], outline=COLORS["border"])
+                filled = left + round((right - left) * content)
+                if filled > left:
+                    draw.rectangle((left, middle - 2, filled, middle + 2), fill=COLORS["text"])
+            x += width
+        if credit:
+            self._draw_source_credit(image, draw, (x2 - FOOTBALL_PREDICTOR_CREDIT, y1, x2, y2), "ESPN 模型",
+                                     COLORS["text"], size=9, align="right")
+        return True
 
     @staticmethod
     def _nfl_predictor_caption(event, predictor, sport="NFL"):

@@ -135,7 +135,38 @@ def test_card_rows_and_pregame_details_show_them(monkeypatch):
             _ACTIVE_COLORS.reset(token)
     caption = SportsDashboard._nfl_predictor_caption(event, event["predictor"])
     assert caption.startswith("对阵质量 89 · 预计 ") and caption.endswith("+1.8")
-    assert "WIN" in drawn and caption in drawn and "S. Darnold" in drawn and "D. Swift" not in drawn
+    # On the card the line is drawn in pieces, the favourite's logo before its name and the figures
+    # in bold: '对阵质量 89 [meter] · 预计 [logo] 海鹰 净胜 1.8 分'.
+    assert "WIN" in drawn and "S. Darnold" in drawn and "D. Swift" not in drawn
+    assert {"对阵质量 ", "89", "预计 ", "海鹰 净胜 ", "1.8", " 分"} <= set(drawn)
+    assert caption not in drawn
+
+
+def test_the_projected_winner_line_carries_its_logo_meter_and_espn_mark(monkeypatch):
+    event = {**card()["main"], "predictor": {"win_a": 0.81, "win_b": 0.188, "margin_a": 9.0, "quality": 78.7},
+             "team_a_zh": "美洲虎", "team_b_zh": "乌鸦"}
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    logo = Image.new("RGBA", (12, 12), (0, 120, 140, 255))
+    monkeypatch.setattr(plugin, "_football_inline_logo", lambda _event, side, *_args: logo if side == "a" else None)
+    credits = []
+    monkeypatch.setattr(plugin, "_draw_source_credit", lambda *args, **kwargs: credits.append(args[3]) or True)
+    for colors in (DAY_COLORS, DEEP_NIGHT_COLORS):
+        token = _ACTIVE_COLORS.set(colors)
+        try:
+            image = Image.new("RGB", (340, 20), COLORS["paper"])
+            assert plugin._draw_nfl_predictor_line(image, ImageDraw.Draw(image), (12, 2, 330, 14), event,
+                                                   event["predictor"], "NFL")
+            pixels = image.getcolors(1 << 16)
+        finally:
+            _ACTIVE_COLORS.reset(token)
+        # The favourite's logo is on the line.
+        assert any(colour == (0, 120, 140) and count >= 100 for count, colour in pixels)
+    assert credits == ["ESPN 模型", "ESPN 模型"]
+    # Without a page to paste on, or without room, the plain caption stands in.
+    narrow = Image.new("RGB", (80, 20), (255, 255, 255))
+    assert not plugin._draw_nfl_predictor_line(narrow, ImageDraw.Draw(narrow), (2, 2, 78, 14), event,
+                                               event["predictor"], "NFL")
+    assert not plugin._draw_nfl_predictor_line(None, None, (12, 2, 330, 14), event, event["predictor"], "NFL")
 
 
 def test_the_lower_panel_attaches_the_insights_to_an_nfl_card_only(monkeypatch):
