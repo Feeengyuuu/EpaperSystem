@@ -230,3 +230,154 @@ def test_mock_generate_image_renders_dashboard():
     assert image.size == (800, 480)
     generated = list(cache_dir.glob("*.png"))
     assert any(path.name.startswith("image_") for path in generated)
+
+
+from io import BytesIO  # noqa: E402
+
+from plugins.wow_profile_dashboard import keyless  # noqa: E402
+
+RAIDERIO_PROFILE = {
+    "name": "Elunelol", "race": "Dwarf", "class": "Paladin", "active_spec_name": "Holy", "faction": "alliance",
+    "achievement_points": 15245, "realm": "Elune", "last_crawled_at": "2026-11-02T18:54:09.000Z",
+    "thumbnail_url": "https://render.worldofwarcraft.com/us/character/elune/238/268221678-avatar.jpg?alt=/x.jpg",
+    "mythic_plus_scores_by_season": [{"season": "season-mn-2", "scores": {"all": 4274.4}}],
+    "mythic_plus_best_runs": [{"dungeon": "Murder Row", "mythic_level": 23, "score": 535.3},
+                              {"dungeon": "Den of Nalorakk", "mythic_level": 24, "score": 546.5}],
+    "gear": {"item_level_equipped": 335, "items": {
+        "head": {"name": "Warhelm of the Consecrated Flame", "item_level": 334, "item_quality": 4},
+        "finger1": {"name": "Band One", "item_level": 331, "item_quality": 3},
+        "finger2": {"name": "Band Two", "item_level": 334, "item_quality": 4},
+        "mainhand": {"name": "Malevolent Spiritcudgel", "item_level": 341, "item_quality": 4}}},
+    "raid_progression": {
+        "the-unbinding-of-kithix": {"summary": "1/1 H", "total_bosses": 1, "heroic_bosses_killed": 1},
+        "the-venomous-abyss": {"summary": "5/8 M", "total_bosses": 8, "heroic_bosses_killed": 8,
+                               "mythic_bosses_killed": 5},
+        "tier-mn-1": {"summary": "", "total_bosses": 9},
+    },
+}
+AFFIXES = {"affix_details": [
+    {"id": 160, "name": "Xal'atath's Bargain: Devour", "icon_url": "https://cdn.raiderio.net/images/a.jpg"},
+    {"id": 10, "name": "Fortified", "icon_url": "https://cdn.raiderio.net/images/b.jpg"},
+    {"id": 9, "name": "Tyrannical", "icon_url": "https://evil.example/c.jpg"}]}
+TOKEN = {"us": ["2026-11-02T23:33:30+00:00", 294637], "eu": ["2026-11-02T23:33:30+00:00", 416226]}
+
+
+def _icon_bytes():
+    buffer = BytesIO()
+    Image.new("RGB", (56, 56), (40, 90, 200)).save(buffer, format="JPEG")
+    return buffer.getvalue()
+
+
+class KeylessSession(FakeSession):
+    """Raider.IO, data.wowtoken.app and Raider.IO's icon CDN, plus Battle.net as FakeSession answers it."""
+
+    def get(self, url, params=None, headers=None, timeout=None, stream=False):
+        if url.endswith("/characters/profile"):
+            answer = RAIDERIO_PROFILE
+        elif url.endswith("/mythic-plus/affixes"):
+            answer = AFFIXES
+        elif url == keyless.WOWTOKEN_URL:
+            answer = TOKEN
+        elif url.startswith("https://cdn.raiderio.net/"):
+            self.gets.append({"url": url, "params": params or {}, "headers": headers or {}, "timeout": timeout})
+            return FakeResponse(content=_icon_bytes())
+        else:
+            return super().get(url, params=params, headers=headers, timeout=timeout)
+        self.gets.append({"url": url, "params": params or {}, "headers": headers or {}, "timeout": timeout})
+        return FakeResponse(answer)
+
+
+def _fake_icon(response):
+    return Image.open(BytesIO(response.content))
+
+
+def test_a_raiderio_profile_becomes_the_character_page():
+    data = keyless.character_payload(RAIDERIO_PROFILE, "US", "en_US")
+
+    assert (data["title"], data["spec"], data["class"], data["faction"], data["source"]) == (
+        "Elunelol", "Holy", "Paladin", "Alliance", "Raider.IO")
+    assert data["equipped_item_level"] == 335 and data["mythic_rating"] == 4274.4
+    assert [item["slot"] for item in data["equipment"]] == ["Head", "Finger", "Finger", "Main Hand"]
+    assert data["equipment"][1]["quality"] == "RARE"
+    assert [run["dungeon"] for run in data["mythic_best"]] == ["Den of Nalorakk", "Murder Row"]
+    # The furthest raid first; one with no kills is left out.
+    assert data["raids"] == [{"name": "The Venomous Abyss", "summary": "5/8 M"},
+                             {"name": "The Unbinding Of Kithix", "summary": "1/1 H"}]
+    assert data["media_url"] == "https://render.worldofwarcraft.com/us/character/elune/238/268221678-main-raw.png"
+    assert keyless.short_affix("Xal'atath's Bargain: Devour") == "Bargain: Devour"
+    assert keyless.gold_text(294637) == "294,637"
+
+
+def test_without_battle_net_keys_raiderio_stands_in_and_the_week_is_added(monkeypatch):
+    plugin = make_plugin("keyless")
+    for path in cache_dir_for("keyless").glob("*"):
+        path.unlink()
+    session = KeylessSession()
+    monkeypatch.setattr("plugins.wow_profile_dashboard.wow_profile_dashboard.get_http_session", lambda: session)
+    monkeypatch.setattr("plugins.wow_profile_dashboard.wow_profile_dashboard.safe_open_image_response", _fake_icon)
+
+    data = plugin._fetch_dashboard_data({"region": "us", "realmSlug": "elune", "characterName": "Elunelol"},
+                                        FakeDeviceConfig())
+
+    assert data["mode"] == "raiderio" and data["status"] == "ok"
+    profile_call = next(call for call in session.gets if call["url"].endswith("/characters/profile"))
+    assert profile_call["params"] == {"region": "us", "realm": "elune", "name": "elunelol",
+                                      "fields": keyless.PROFILE_FIELDS}
+    assert [affix["name"] for affix in data["affixes"]] == ["Xal'atath's Bargain: Devour", "Fortified", "Tyrannical"]
+    assert data["affixes"][2]["icon_url"] == ""  # not Raider.IO's CDN
+    assert data["token"]["gold"] == 294637
+    assert (cache_dir_for("keyless") / "affix-160.png").exists()
+    assert not any("api.blizzard.com" in call["url"] for call in session.gets)
+
+    # Within their lifetimes the affixes, the token and the icons come from the cache.
+    session.gets.clear()
+    plugin._add_weekly({}, "us")
+    assert session.gets == []
+
+
+def test_battle_net_pages_gain_raider_io_raid_progress(monkeypatch):
+    plugin = make_plugin("battlenet-raids")
+    session = KeylessSession()
+    monkeypatch.setattr("plugins.wow_profile_dashboard.wow_profile_dashboard.get_http_session", lambda: session)
+    monkeypatch.setattr("plugins.wow_profile_dashboard.wow_profile_dashboard.safe_open_image_response", _fake_icon)
+
+    data = plugin._fetch_dashboard_data(
+        {"region": "us", "realmSlug": "Area 52", "characterName": "TestMage"},
+        FakeDeviceConfig(env={"BLIZZARD_CLIENT_ID": "client-id", "BLIZZARD_CLIENT_SECRET": "client-secret"}))
+
+    assert data["mode"] == "public-character" and data["mythic_rating"] == 2450.5
+    assert data["raids"][0] == {"name": "The Venomous Abyss", "summary": "5/8 M"}
+    summary_call = next(call for call in session.gets if call["url"].endswith("/characters/profile"))
+    assert summary_call["params"]["fields"] == keyless.SUMMARY_FIELDS
+    assert [item["name"] for item in data["equipment"]] == ["Practice Staff", "Arcane Crown"]
+
+
+def test_the_week_and_the_token_are_drawn_on_the_character_page():
+    plugin = make_plugin("render-week")
+    data = {**plugin._sample_payload(), "updated_at": "2026-11-02 16:40"}
+    drawn = []
+    original = plugin._single
+
+    def capture(draw, position, text, font, fill, max_width, min_size=8):
+        drawn.append(str(text))
+        return original(draw, position, text, font, fill, max_width, min_size)
+
+    plugin._single = capture
+    image = plugin._render_dashboard(data, (800, 480))
+
+    assert image.size == (800, 480)
+    assert {"Bargain: Devour", "Fortified", "Guile", "Ara-Kara"} <= set(drawn)
+    assert any(text.startswith("Mock data · 11-02") for text in drawn)
+    # The token sits in the snapshot's header, by its gold coin.
+    coin = image.crop((600, 30, 780, 60)).convert("RGB").get_flattened_data()
+    assert sum(1 for pixel in coin if pixel == (199, 151, 54)) > 20
+
+
+def test_a_line_too_long_even_at_the_smallest_size_is_cut_short():
+    plugin = make_plugin("single")
+    image = Image.new("RGB", (400, 60))
+    draw = ImageDraw.Draw(image)
+
+    plugin._single(draw, (0, 0), "Masterwork Band of the Endless Reaches", plugin._font(9), (255, 255, 255), 60, 7)
+
+    assert image.getbbox() is not None and image.getbbox()[2] <= 62

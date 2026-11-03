@@ -16,10 +16,13 @@ from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.refresh_on_display_presentation import RefreshOnDisplayPresentationMixin
 from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
 from plugins.context_cache import write_context
+from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import get_base_ui_font
 from utils.http_client import get_http_session
 from utils.image_utils import text_width
 from utils.safe_image import safe_open_image, safe_open_image_response
+
+from . import keyless
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +30,10 @@ PLUGIN_ID = "wow_profile_dashboard"
 STYLE_VERSION = "wow-profile-dashboard-v1"
 DEFAULT_REGION = "us"
 DEFAULT_LOCALE = "en_US"
+# This week's affixes change at the weekly reset; the token's price every few minutes.
+AFFIX_SECONDS = 6 * 3600
+TOKEN_SECONDS = 30 * 60
+AFFIX_ICON = 19
 
 REGION_CONFIG = {
     "us": {
@@ -154,15 +161,92 @@ class WowProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
             )
 
         token = self._public_access_token(settings, device_config, region)
-        if not token:
-            return self._status_payload(
-                "API key required",
-                "Add BLIZZARD_CLIENT_ID and BLIZZARD_CLIENT_SECRET in API Keys. Common BNET/BATTLE_NET/WOW aliases are accepted.",
-                settings=settings,
-                source="setup",
-            )
+        data, failure = None, None
+        if token:
+            try:
+                data = self._fetch_character_dashboard(region, locale, realm_slug, character_name, token)
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                logger.warning("Battle.net character fetch failed, trying Raider.IO: %s", exc)
+                failure = exc
+        if data is None:
+            # Without Battle.net keys (or when it fails) Raider.IO's public profile stands in.
+            profile = self._raiderio_profile(region, realm_slug, character_name, keyless.PROFILE_FIELDS)
+            if profile is None:
+                if failure is not None:
+                    raise failure
+                return self._status_payload(
+                    "API key required",
+                    "Add BLIZZARD_CLIENT_ID and BLIZZARD_CLIENT_SECRET in API Keys. Common BNET/BATTLE_NET/WOW aliases are accepted.",
+                    settings=settings,
+                    source="setup",
+                )
+            data = keyless.character_payload(profile, REGION_CONFIG[region]["label"], locale)
+        else:
+            # Battle.net has no raid progress here: Raider.IO's small summary adds it (and the score, if missing).
+            summary = self._raiderio_profile(region, realm_slug, character_name, keyless.SUMMARY_FIELDS)
+            if summary is not None:
+                data["raids"] = keyless.raid_progress(summary)[:3]
+                if not self._numeric(data.get("mythic_rating")):
+                    data["mythic_rating"] = keyless.mythic_score(summary)
+        self._add_weekly(data, region)
+        return data
 
-        return self._fetch_character_dashboard(region, locale, realm_slug, character_name, token)
+    def _raiderio_profile(self, region, realm_slug, character_name, fields):
+        try:
+            return keyless.fetch_profile(get_http_session(), region, realm_slug, character_name, fields)
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.info("Raider.IO profile unavailable: %s", exc)
+            return None
+
+    def _add_weekly(self, data, region):
+        """This week's Mythic+ affixes (their icons kept on disk) and the WoW Token's price, each from
+        its cache while fresh; a source that cannot be read is left out."""
+        session = get_http_session()
+        affixes = self._cached_source(f"affixes-{region}.json", AFFIX_SECONDS,
+                                      lambda: {"affixes": keyless.fetch_affixes(session, region)})
+        if affixes:
+            data["affixes"] = affixes.get("affixes") or []
+            for affix in data["affixes"]:
+                self._cache_affix_icon(session, affix)
+        token = self._cached_source(f"token-{region}.json", TOKEN_SECONDS, lambda: keyless.fetch_token(session, region))
+        if token and token.get("gold"):
+            data["token"] = {"gold": token["gold"], "updated": token.get("updated")}
+
+    def _cached_source(self, name, seconds, fetch):
+        path = self._cache_dir() / name
+        cached = self._read_json(path, {})
+        if keyless.cache_fresh(cached, seconds):
+            return cached.get("data")
+        try:
+            data = fetch()
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.info("WoW %s unavailable: %s", name, exc)
+            return cached.get("data") if keyless.cache_fresh(cached, 7 * 86400) else None
+        self._write_json(path, {"fetched_at": datetime.now().astimezone().isoformat(), "data": data})
+        return data
+
+    def _affix_icon_path(self, affix):
+        return self._cache_dir() / f"affix-{int(affix.get('id') or 0)}.png"
+
+    def _cache_affix_icon(self, session, affix):
+        path = self._affix_icon_path(affix)
+        if path.exists() or not affix.get("icon_url"):
+            return
+        try:
+            response = session.get(affix["icon_url"], timeout=keyless.REQUEST_TIMEOUT, stream=True)
+            icon = safe_open_image_response(response).convert("RGB")
+            icon.thumbnail((AFFIX_ICON * 2, AFFIX_ICON * 2), Image.Resampling.LANCZOS)
+            icon.save(path)
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.info("WoW affix icon unavailable: %s", exc)
 
     def _fetch_character_dashboard(self, region, locale, realm_slug, character_name, token):
         profile = self._api_get(region, f"/profile/wow/character/{realm_slug}/{character_name}", token, locale)
@@ -313,7 +397,7 @@ class WowProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
             "last_login": last_login,
             "portrait_url": self._media_url(media, ("avatar", "inset", "main-raw", "main")),
             "media_url": self._media_url(media, ("main-raw", "main", "inset", "avatar")),
-            "equipment": items[:6],
+            "equipment": items,
             "mythic_rating": mythic_rating,
             "mythic_best": self._mythic_best_runs(mythic)[:3],
             "pvp_bracket": pvp_bracket,
@@ -445,7 +529,7 @@ class WowProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
 
         self._draw_gear_paperdoll(image, draw, data, left_box, fonts, palette)
         self._draw_metrics(draw, data, top_box, fonts, palette)
-        self._draw_activity(draw, data, bottom_box, fonts, palette)
+        self._draw_activity(image, draw, data, bottom_box, fonts, palette)
 
     def _draw_gear_paperdoll(self, image, draw, data, box, fonts, palette):
         x0, y0, x1, y1 = box
@@ -490,7 +574,8 @@ class WowProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
         footer = (x0 + 118, y1 - 76, x1 - 18, y1 - 16)
         draw.rounded_rectangle(footer, radius=5, fill=(31, 29, 25), outline=(86, 72, 50), width=1)
         self._single(draw, (footer[0] + 12, footer[1] + 9), data.get("title"), fonts["title"], title_color, footer[2] - footer[0] - 24, 11)
-        meta = f"Level {data.get('level')} / {data.get('spec')} {data.get('class')}"
+        meta = f"{data.get('spec')} {data.get('class')}"
+        meta = f"Level {data.get('level')} / {meta}" if str(data.get("level") or "-") != "-" else f"{meta} / {data.get('race')}"
         self._single(draw, (footer[0] + 12, footer[1] + 36), meta, fonts["small"], muted, footer[2] - footer[0] - 24, 8)
         self._pill(draw, x0 + 18, y1 - 64, 86, 28, data.get("faction") or "-", fonts["tiny"], palette["red"], palette["light"])
         self._pill(draw, x0 + 18, y1 - 31, 86, 24, data.get("region") or "-", fonts["tiny"], palette["blue"], palette["light"])
@@ -498,8 +583,12 @@ class WowProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
     def _draw_metrics(self, draw, data, box, fonts, palette):
         x0, y0, x1, y1 = box
         self._text(draw, (x0 + 16, y0 + 12), "Profile Snapshot", fonts["section"], palette["ink"])
+        self._draw_token(draw, data.get("token"), (x1 - 16, y0 + 23), fonts, palette)
+        raids = data.get("raids") or []
+        first = (("Level", data.get("level"), palette["red"]) if not raids else
+                 (re.sub(r"^The ", "", raids[0]["name"]), raids[0]["summary"], palette["red"]))
         metrics = [
-            ("Level", data.get("level"), palette["red"]),
+            first,
             ("Item Level", data.get("equipped_item_level") or data.get("average_item_level"), palette["gold"]),
             ("Achievements", self._compact_number(data.get("achievement_points")), palette["blue"]),
             ("Mythic+", self._rating(data.get("mythic_rating")), palette["green"]),
@@ -512,37 +601,89 @@ class WowProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
             self._center_single(draw, (cx + 6, y + 9, cx + cell_w - 6, y + 37), str(value or "-"), fonts["title"], color, 10)
             self._center_single(draw, (cx + 6, y + 48, cx + cell_w - 6, y + 67), label, fonts["tiny"], palette["muted"], 8)
 
-    def _draw_activity(self, draw, data, box, fonts, palette):
+    def _draw_token(self, draw, token, right_middle, fonts, palette):
+        """The WoW Token's gold price ending at ``right_middle``: a gold coin, its label and the price."""
+        if not isinstance(token, dict) or not token.get("gold"):
+            return
+        right, middle = right_middle
+        price = keyless.gold_text(token["gold"])
+        price_w = self._text_width(draw, price, fonts["body"])
+        draw.text((right - price_w, middle - 9), price, font=fonts["body"], fill=palette["ink"])
+        label_w = self._text_width(draw, "Token", fonts["tiny"])
+        draw.text((right - price_w - 6 - label_w, middle - 6), "Token", font=fonts["tiny"], fill=palette["muted"])
+        coin = right - price_w - label_w - 26
+        draw.ellipse((coin, middle - 7, coin + 14, middle + 7), fill=palette["gold"], outline=(134, 98, 30), width=2)
+        draw.ellipse((coin + 4, middle - 3, coin + 10, middle + 3), outline=(246, 230, 170), width=1)
+
+    def _draw_activity(self, image, draw, data, box, fonts, palette):
         x0, y0, x1, y1 = box
         self._text(draw, (x0 + 16, y0 + 10), "Activity", fonts["section"], palette["light"])
         muted = (188, 177, 151)
-        self._single(draw, (x1 - 160, y0 + 15), f"Updated {data.get('updated_at', '-')}", fonts["tiny"], muted, 142, 8)
+        source = {"raiderio": "Raider.IO", "mock": "Mock data"}.get(data.get("mode"), "Battle.net")
+        self._single(draw, (x1 - 160, y0 + 15), f"{source} · {str(data.get('updated_at', '-'))[5:] or '-'}",
+                     fonts["tiny"], muted, 142, 8)
         col_gap = 8
         col_w = (x1 - x0 - 32 - col_gap * 2) // 3
         col_y0 = y0 + 40
         col_y1 = y1 - 10
         runs = data.get("mythic_best") or []
         pvp = data.get("pvp_bracket") or {}
+        raids = data.get("raids") or []
+        affixes = data.get("affixes") or []
         columns = [
             ("Mythic+", self._activity_mythic_lines(runs)),
-            ("PVP", self._activity_pvp_lines(pvp)),
-            ("Account", self._activity_account_lines(data)),
+            ("PVP", self._activity_pvp_lines(pvp)) if pvp or not raids else ("Raid", self._activity_raid_lines(raids)),
+            ("This Week", [keyless.short_affix(affix.get("name")) for affix in affixes]) if affixes
+            else ("Account", self._activity_account_lines(data)),
         ]
         for index, (title, lines) in enumerate(columns):
             cx = x0 + 16 + index * (col_w + col_gap)
             draw.rounded_rectangle((cx, col_y0, cx + col_w, col_y1), radius=4, fill=(35, 32, 28), outline=(74, 62, 47), width=1)
             self._text(draw, (cx + 9, col_y0 + 7), title, fonts["tiny"], palette["gold"])
             y = col_y0 + 25
-            for line in lines[:3]:
+            if title == "This Week":
+                y = self._draw_affix_icons(image, draw, affixes, (cx + 9, y), col_w - 18) + 6
+            for line in lines[:6]:
                 if y + self._line_height(draw, fonts["tiny"]) > col_y1 - 5:
                     break
-                self._single(draw, (cx + 9, y), line, fonts["tiny"], palette["light"], col_w - 18, 7)
+                level, _, rest = line.partition(" ")
+                if title == "Mythic+" and level.startswith("+") and rest:
+                    # A run: its keystone level in gold, then its dungeon.
+                    level_w = self._text_width(draw, level, fonts["tiny"]) + 4
+                    self._text(draw, (cx + 9, y), level, fonts["tiny"], palette["gold"])
+                    self._single(draw, (cx + 9 + level_w, y), rest, fonts["tiny"], palette["light"],
+                                 col_w - 18 - level_w, 9)
+                else:
+                    self._single(draw, (cx + 9, y), line, fonts["tiny"], palette["light"], col_w - 18, 7)
                 y += 17
+
+    def _draw_affix_icons(self, image, draw, affixes, xy, width):
+        """The affixes' icons in a row from ``xy`` (those kept on disk); returns the row's bottom."""
+        x, y = xy
+        shown = 0
+        for affix in affixes:
+            path = self._affix_icon_path(affix)
+            if not path.exists() or x + AFFIX_ICON > xy[0] + width:
+                continue
+            try:
+                with safe_open_image(path) as source:
+                    icon = ImageOps.fit(source.convert("RGB"), (AFFIX_ICON, AFFIX_ICON), Image.Resampling.LANCZOS)
+            except (OSError, ValueError):
+                continue
+            image.paste(icon, (int(x), int(y)))
+            draw.rectangle((x - 1, y - 1, x + AFFIX_ICON, y + AFFIX_ICON), outline=(134, 111, 76), width=1)
+            x += AFFIX_ICON + 4
+            shown += 1
+        return y + AFFIX_ICON if shown else y - 6
 
     def _draw_character_model(self, image, draw, data, box, fonts, palette):
         x0, y0, x1, y1 = box
         model = self._remote_image(data.get("media_url"), (x1 - x0, y1 - y0))
         if model:
+            if model.mode == "RGBA":
+                # A transparent full-body render stands on the panel, centred at its feet.
+                image.paste(model, (x0 + (x1 - x0 - model.width) // 2, y1 - model.height), model)
+                return
             image.paste(model, (x0, y0))
             draw.rounded_rectangle((x0, y0, x1, y1), radius=6, outline=(119, 96, 56), width=1)
             return
@@ -728,6 +869,10 @@ class WowProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
                 {"dungeon": "Grim Batol", "level": 9, "score": 304.2},
             ],
             "pvp_bracket": {"type": "ARENA_3v3", "rating": 1602},
+            "raids": [{"name": "The Venomous Abyss", "summary": "6/8 H"}],
+            "affixes": [{"id": 160, "name": "Xal'atath's Bargain: Devour"}, {"id": 10, "name": "Fortified"},
+                        {"id": 9, "name": "Tyrannical"}, {"id": 147, "name": "Xal'atath's Guile"}],
+            "token": {"gold": 294637},
             "notice": "",
         }
 
@@ -756,8 +901,14 @@ class WowProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
             return None
         try:
             response = get_http_session().get(url, timeout=20, stream=True)
-            image = safe_open_image_response(response).convert("RGB")
-            return ImageOps.fit(image, size, method=Image.Resampling.LANCZOS)
+            image = safe_open_image_response(response)
+            if image.mode in ("RGBA", "LA", "P"):
+                image = image.convert("RGBA")
+                bounds = image.getchannel("A").getbbox()
+                if bounds:
+                    # The figure alone, as large as the box allows.
+                    return ImageOps.contain(image.crop(bounds), size, method=Image.Resampling.LANCZOS)
+            return ImageOps.fit(image.convert("RGB"), size, method=Image.Resampling.LANCZOS)
         except Exception as exc:
             logger.info("Could not load WoW media image: %s", exc)
             return None
@@ -768,6 +919,11 @@ class WowProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
     def _single(self, draw, position, text, font, fill, max_width, min_size=8):
         text = str(text or "")
         fitted = self._fit_font(draw, text, font, max_width, min_size)
+        if self._text_width(draw, text, fitted) > max_width:
+            # Still too long at the smallest size: cut short rather than run past its box.
+            while text and self._text_width(draw, text + "...", fitted) > max_width:
+                text = text[:-1]
+            text = text.rstrip() + "..."
         draw.text(position, text, font=fitted, fill=fill)
 
     def _center_single(self, draw, box, text, font, fill, min_size=8):
@@ -959,8 +1115,13 @@ class WowProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
         for run in runs:
             level = run.get("level") or "-"
             dungeon = run.get("dungeon") or "-"
-            score = self._rating(run.get("score"))
-            lines.append(f"+{level} {dungeon} / {score}")
+            lines.append(f"+{level} {dungeon}")
+        return lines
+
+    def _activity_raid_lines(self, raids):
+        lines = []
+        for raid in raids[:3]:
+            lines += [raid.get("name") or "-", raid.get("summary") or "-"]
         return lines
 
     def _activity_pvp_lines(self, pvp):
