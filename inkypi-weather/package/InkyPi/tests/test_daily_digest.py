@@ -449,11 +449,15 @@ def test_a_missing_picture_keeps_its_song_or_title(monkeypatch):
 @pytest.mark.parametrize("mode", ["day", "night"])
 def test_no_text_runs_past_its_card_or_the_page(monkeypatch, mode):
     records, current = [], {"box": None}
-    original_card, original_text = render._card, PageCanvas.text
+    original_card, original_panel, original_text = render._card, render._brand_panel, PageCanvas.text
 
     def card(canvas, box, kind):
         current["box"] = box
         return original_card(canvas, box, kind)
+
+    def panel(canvas, night, box, colour):
+        current["box"] = box
+        return original_panel(canvas, night, box, colour)
 
     def text(self, xy, value, size=14, color="ink", *, width=None, bold=True, anchor="la", stroke=None):
         shown = self.fit(value, size, width, bold)
@@ -462,6 +466,7 @@ def test_no_text_runs_past_its_card_or_the_page(monkeypatch, mode):
         return original_text(self, xy, value, size, color, width=width, bold=bold, anchor=anchor, stroke=stroke)
 
     monkeypatch.setattr(render, "_card", card)
+    monkeypatch.setattr(render, "_brand_panel", panel)
     monkeypatch.setattr(PageCanvas, "text", text)
 
     render.render_page((800, 480), _full_payload(), {"themeMode": mode}, NOW, _images())
@@ -478,6 +483,53 @@ def test_no_text_runs_past_its_card_or_the_page(monkeypatch, mode):
     date_left = min(bbox[0] for bbox, shown in header if "周一" in shown)
     poem = next(bbox for bbox, shown in header if shown.startswith("对岸"))
     assert poem[2] < date_left
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_each_outlet_reads_in_a_block_of_its_own_brand_colour(monkeypatch, mode):
+    panels, texts = [], []
+    original_panel, original_text = render._brand_panel, PageCanvas.text
+
+    def panel(canvas, night, box, colour):
+        panels.append((box, colour))
+        return original_panel(canvas, night, box, colour)
+
+    def text(self, xy, value, size=14, color="ink", **kwargs):
+        texts.append((value, size, color))
+        return original_text(self, xy, value, size, color, **kwargs)
+
+    monkeypatch.setattr(render, "_brand_panel", panel)
+    monkeypatch.setattr(PageCanvas, "text", text)
+    page = render.render_page((800, 480), _full_payload(), {"themeMode": mode}, NOW, _images())
+
+    # DW Blue, the Times' black and 少数派 red, top to bottom, a small gap apart, filling the column.
+    assert [colour for _box, colour in panels] == [(0x00, 0x2D, 0x5A), (0, 0, 0), (0xD7, 0x1A, 0x1B)]
+    boxes = [box for box, _colour in panels]
+    assert all(after[1] - before[3] == render.NEWS_GAP for before, after in zip(boxes, boxes[1:]))
+    assert boxes[-1][3] >= render.GRID_BOTTOM - 2
+    for (left, top, right, bottom), colour in panels:
+        assert page.getpixel((right - 4, (top + bottom) // 2)) == colour
+    # Headlines keep their size, in white on the brand colours; each block's mark is reversed out in white.
+    headlines = [(size, color) for value, size, color in texts if "新闻标题" in value]
+    assert headlines and set(headlines) == {(render.NEWS_SIZE, render.ON_BRAND)}
+    for (left, top, _right, _bottom), _colour in panels:
+        mark = page.crop((left + 10, top + 3, left + 40, top + render.NEWS_HEAD))
+        assert max(min(pixel) for pixel in mark.convert("RGB").get_flattened_data()) >= 240
+    # By night the Times' black block keeps an edge on the black page.
+    nyt_left, nyt_top = boxes[1][0], boxes[1][1]
+    edge = page.getpixel((nyt_left + 40, nyt_top))
+    assert (edge != (0, 0, 0)) == (mode == "night")
+
+
+def test_a_reversed_mark_is_white_with_its_white_parts_open():
+    art = Image.new("RGBA", (3, 1))
+    art.putdata([(0x00, 0x2D, 0x5A, 255), (255, 255, 255, 255), (0xD7, 0x1A, 0x1B, 128)])
+
+    reversed_mark = list(render.reversed_logo(art).get_flattened_data())
+
+    assert reversed_mark[0] == (255, 255, 255, 255)
+    assert reversed_mark[1][3] == 0
+    assert reversed_mark[2][:3] == (255, 255, 255) and 100 < reversed_mark[2][3] < 128
 
 
 def test_an_empty_payload_still_draws_a_page():
