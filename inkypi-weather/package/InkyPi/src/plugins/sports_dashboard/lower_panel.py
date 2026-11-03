@@ -22,6 +22,7 @@ from runtime.refresh_contracts import TaskCancelled
 from .common import *
 from .common import _safe_exception_text
 from . import event_ranking
+from .nfl_insights import attach_nfl_insights
 
 SportsDashboard = None
 
@@ -73,7 +74,10 @@ class LowerPanelMixin:
                 self._write_nba_live_state(nba_selected, now, nba_source_state)
                 return self._sports_source_state_provenance(f1_source_state)
             if kind == "hub":
-                self._draw_offseason_hub_compact_panel(image, draw, box, {**hub_selected, "primary": choice["card"]}, hub_source_state, now)
+                card = choice["card"]
+                if str((card or {}).get("sport") or "").upper() == "NFL":
+                    card = attach_nfl_insights(self, card, settings, now)
+                self._draw_offseason_hub_compact_panel(image, draw, box, {**hub_selected, "primary": card}, hub_source_state, now)
                 self._write_nba_live_state(nba_selected, now, nba_source_state)
                 return self._sports_source_state_provenance(hub_source_state)
         except TaskCancelled:

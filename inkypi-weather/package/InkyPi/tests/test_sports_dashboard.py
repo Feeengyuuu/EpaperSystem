@@ -165,11 +165,12 @@ def _plugin():
 
 @pytest.fixture(autouse=True)
 def _keyless_extras_offline(monkeypatch):
-    """bo3.gg's keyless CS2 card and the Worlds bracket and title odds have their own tests; here
-    they never reach the network."""
-    from plugins.sports_dashboard import cs2_bo3
+    """bo3.gg's keyless CS2 card, the Worlds bracket and title odds and ESPN's NFL models have their
+    own tests; here they never reach the network."""
+    from plugins.sports_dashboard import cs2_bo3, lower_panel
 
     monkeypatch.setattr(cs2_bo3, "load_bo3_cs2_card", lambda *_args, **_kwargs: (None, "BO3 NO DATA"))
+    monkeypatch.setattr(lower_panel, "attach_nfl_insights", lambda _plugin, card, *_args, **_kwargs: card)
     monkeypatch.setattr(SportsDashboard, "_worlds_knockout_matches", lambda *_args: [])
     monkeypatch.setattr(SportsDashboard, "_worlds_title_odds", lambda *_args: [])
 

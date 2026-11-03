@@ -13,7 +13,7 @@ import math
 
 from .common import *
 from .card_backdrops import paint_list_backdrop
-from .scorebug_kit import KIT_SCOREBOARD_ROW_HEIGHT, ScorebugSpec
+from .scorebug_kit import KIT_SCOREBOARD_ROW_HEIGHT, KIT_TILE_HEIGHT, ScorebugSpec
 
 SportsDashboard = None
 
@@ -23,6 +23,10 @@ NCAA_LIST_WIDTH = 214
 FOOTBALL_ZONE_LOGO = 18
 FOOTBALL_SPOT_LOGO = 18
 FOOTBALL_WIN_LOGO = 16
+# Before kick-off ESPN's matchup predictor (nfl_insights) reads as a win-share bar under the tiles,
+# then one line with the matchup quality and the projected margin; each team's row adds its FPI rank
+# and its playoff and title chances after the record.
+FOOTBALL_PREDICTOR_ROW = 12
 FOOTBALL_SPEC_KEYS = {
     "NFL": ("nfl_accent", "nfl_live", "nfl_tag", "nfl_field_tint"),
     "NCAA": ("ncaa_accent", "ncaa_live", "ncaa_tag", "ncaa_field_tint"),
@@ -160,6 +164,7 @@ class FootballRenderMixin:
             current_period=lambda event: football._lpl_int_value(event.get("period")),
             linescore=lambda event, side: event.get(f"linescore_{side}"),
             row_widget=row_widget,
+            row_note=lambda event, side, state: football._football_row_note(event, side),
             pregame_value=football._kit_spread_for_side,
             state_labels=football._nfl_scoreboard_state_labels,
             row_flag=lambda event: bool(event.get("red_zone")),
@@ -395,10 +400,71 @@ class FootballRenderMixin:
             ("TV", str(event.get("broadcast") or "").strip() or "TBD"),
             ("O/U", str(event.get("over_under") or "").replace("O/U", "").strip() or "--"),
         ]
-        tiles_bottom = self._draw_kit_tiles(draw, (x1, y1, x2, y2), tiles, spec, image=image, glass=True)
+        predictor = event.get("predictor") or {}
+        has_predictor = isinstance(predictor.get("win_a"), (int, float)) and isinstance(predictor.get("win_b"), (int, float))
+        # ESPN's projection takes the room of the second season leader, and a little of the tiles'.
+        tiles_bottom = self._draw_kit_tiles(draw, (x1, y1, x2, y2), tiles, spec, image=image, glass=True,
+                                            tile_h=KIT_TILE_HEIGHT - (4 if has_predictor else 0))
+        leaders_top = tiles_bottom + 6
+        if has_predictor:
+            self._draw_nfl_predictor(image, draw, (x1, tiles_bottom + 4, x2, tiles_bottom + 4 + FOOTBALL_PREDICTOR_ROW),
+                                     event, predictor, sport)
+            leaders_top = tiles_bottom + 4 + 2 * FOOTBALL_PREDICTOR_ROW + 5
         # Before kickoff ESPN's leaders are season totals for the two teams.
-        self._draw_kit_leader_rows(image, draw, x1, tiles_bottom + 6, x2, y2 - 14, event, event.get("leaders"), spec, max_rows=2)
+        self._draw_kit_leader_rows(image, draw, x1, leaders_top, x2, y2 - 14, event, event.get("leaders"), spec, max_rows=2)
         self._draw_football_footer(image, draw, (x1, y2 - 12, x2, y2), event, sport, include_tv=False)
+
+    def _draw_nfl_predictor(self, image, draw, box, event, predictor, sport):
+        """The two win chances as a share bar, then '对阵质量 89 · 预计 海鹰 +1.8'."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        spec = self._football_spec(sport)
+        win_a, win_b = float(predictor["win_a"]), float(predictor["win_b"])
+        share = win_a / (win_a + win_b) if win_a + win_b > 0 else 0.5
+        self._draw_kit_share_bar(
+            draw, box,
+            f"{self._football_short_team(event, 'a', sport)} {round(win_a * 100)}%",
+            f"{round(win_b * 100)}% {self._football_short_team(event, 'b', sport)}", share,
+            self._kit_team_ink_key(event.get("team_a_color"), spec.accent),
+            self._kit_team_ink_key(event.get("team_b_color"), spec.accent),
+            image=image, logos=tuple(self._football_inline_logo(event, side, sport, FOOTBALL_PREDICTOR_ROW) for side in ("a", "b")),
+        )
+        caption = SportsDashboard._nfl_predictor_caption(event, predictor, sport)
+        if caption:
+            caption, font = self._fit_text_ellipsis(draw, caption, x2 - x1 - 28, 9, bold=False, min_size=8)
+            self._draw_text_in_box(draw, (x1 + 28, y2 + 2, x2, y2 + 2 + FOOTBALL_PREDICTOR_ROW), caption, font, COLORS["text"])
+
+    @staticmethod
+    def _nfl_predictor_caption(event, predictor, sport="NFL"):
+        """'对阵质量 89 · 预计 海鹰 +1.8' (the favourite's projected margin)."""
+        parts = []
+        quality = predictor.get("quality")
+        if isinstance(quality, (int, float)):
+            parts.append(f"对阵质量 {round(quality)}")
+        margin = predictor.get("margin_a")
+        if isinstance(margin, (int, float)) and abs(margin) >= 0.05:
+            side = "a" if margin > 0 else "b"
+            parts.append(f"预计 {SportsDashboard._football_short_team(event, side, sport)} +{abs(margin):.1f}")
+        return " · ".join(parts)
+
+    @staticmethod
+    def _football_row_note(event, side):
+        """A team row's line under its name: the record, then its FPI rank and its chances of the
+        playoffs and the title ('5-2 · FPI#3 · 季后赛98% · 夺冠13%')."""
+        record = str((event or {}).get(f"record_{side}") or "").strip()
+        fpi = (event or {}).get(f"fpi_{side}") or {}
+        if not isinstance(fpi, Mapping) or not isinstance(fpi.get("rank"), int):
+            return record
+
+        def percent(value):
+            value = float(value) * 100
+            return "<1%" if 0 < value < 1 else f"{value:.0f}%"
+
+        parts = [record, f"FPI#{fpi['rank']}"]
+        if isinstance(fpi.get("playoffs"), (int, float)):
+            parts.append(f"季后赛{percent(fpi['playoffs'])}")
+        if isinstance(fpi.get("title"), (int, float)):
+            parts.append(f"夺冠{percent(fpi['title'])}")
+        return " · ".join(part for part in parts if part)
 
     def _draw_football_footer(self, image, draw, box, event, sport, include_tv=True):
         """The card's foot line, the stadium as its official logo where it has one, else as the
