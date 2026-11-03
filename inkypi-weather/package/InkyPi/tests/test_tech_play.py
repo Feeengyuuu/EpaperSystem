@@ -443,3 +443,127 @@ def test_papers_render_with_their_figures_logos_or_neither(mode):
     image = render_page((800, 480), payload, {"_inkypi_theme": {"mode": mode}}, NOW, images)
 
     assert image.size == (800, 480)
+
+
+def _embedded_run(run_id="r1", level=None, values=None):
+    variables = [{"id": "seed", "is-subcategory": True}, {"id": "platform", "is-subcategory": False}]
+    return {"id": run_id, "times": {"primary_t": 89.5}, "status": {"verify-date": "2026-10-21T20:51:21Z"},
+            "category": {"data": {"id": "cat1", "name": "Any%", "variables": {"data": variables}}},
+            "level": {"data": level or []}, "values": values or {"seed": "random", "platform": "pc"},
+            "players": {"data": [{"rel": "user", "names": {"international": "Rockie"}}]}}
+
+
+def test_a_run_keeps_its_leaderboard_and_only_the_variables_that_split_it():
+    entry = sources.run_entry(_embedded_run())
+    level_entry = sources.run_entry(_embedded_run(level={"id": "lvl9", "name": "World 1"}))
+
+    assert (entry["id"], entry["category_id"], entry["level_id"]) == ("r1", "cat1", "")
+    assert entry["subcategories"] == {"seed": "random"}
+    assert (level_entry["level_id"], level_entry["category"]) == ("lvl9", "World 1 · Any%")
+
+
+def test_a_world_record_is_first_place_on_its_own_leaderboard(monkeypatch):
+    asked = []
+
+    def get_json(method, url, context, **kwargs):
+        asked.append((url, kwargs["params"]))
+        return {"data": {"runs": [{"place": 1, "run": {"id": "r1"}}]}}
+
+    monkeypatch.setattr(sources, "_get_json", get_json)
+    full_game = sources.run_entry(_embedded_run())
+    level = sources.run_entry(_embedded_run("r2", level={"id": "lvl9", "name": "World 1"}))
+
+    assert sources.is_world_record("game1", full_game, _context()) is True
+    assert sources.is_world_record("game1", level, _context()) is False
+    assert asked == [
+        (f"{sources.SPEEDRUN_LEADERBOARDS_URL}/game1/category/cat1", {"top": 1, "var-seed": "random"}),
+        (f"{sources.SPEEDRUN_LEADERBOARDS_URL}/game1/level/lvl9/cat1", {"top": 1, "var-seed": "random"}),
+    ]
+    assert sources.is_world_record("../x", full_game, _context()) is None
+
+
+def test_records_are_looked_up_once_a_run_and_a_failed_lookup_is_tried_again(monkeypatch):
+    calls = []
+
+    def lookup(game_id, run, context):
+        calls.append(run["id"])
+        if run["id"] == "bad":
+            raise sources.HttpClientError("down")
+        return run["id"] == "wr"
+
+    monkeypatch.setattr(sources, "is_world_record", lookup)
+    top = [{"id": "g", "runs": [{"id": "wr"}, {"id": "bad"}, {"id": "third"}]},
+           {"id": "h", "runs": [{"id": "known"}]}]
+
+    records = sources._world_records(top, {"known": True}, _context())
+
+    assert calls == ["wr", "bad"]  # the third run is not shown; the known one is not asked again
+    assert records == {"wr": True, "known": True}
+    assert top[0]["runs"][0]["record"] is True and "record" not in top[0]["runs"][1]
+    assert top[1]["runs"][0]["record"] is True
+
+
+def test_the_run_feed_reads_at_most_three_pages(monkeypatch):
+    pages = []
+
+    def get_json(method, url, context, **kwargs):
+        if url == sources.SPEEDRUN_RUNS_URL and "game" not in kwargs["params"]:
+            pages.append(kwargs["params"]["offset"])
+            start = len(pages) * sources.FEED_PAGE
+            return {"data": [_feed_run("g", (start + index) / 100) for index in range(sources.FEED_PAGE)]}
+        if url.startswith(sources.SPEEDRUN_GAMES_URL):
+            return {"data": {"names": {"international": "Game"}}}
+        return {"data": []}
+
+    monkeypatch.setattr(sources, "_get_json", get_json)
+    monkeypatch.setattr(sources, "wikipedia_cover", lambda name, context: None)
+    monkeypatch.setattr(sources, "steam_cover", lambda name, context: None)
+
+    sources.fetch_speedrun_week({}, NOW, _context())
+
+    assert sources.MAX_FEED_PAGES == 3 and pages == [0, 200, 400]
+
+
+def test_steam_wishlist_reads_names_and_app_ids():
+    data = sources.normalize_wishlist({"items": [
+        {"name": "Deadlock", "logo": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1422450/x/capsule_sm_120.jpg"},
+        {"name": "地下城公会经理 Dungeons &amp; Dynasties", "logo": "https://x/no-app.jpg"},
+        {"name": "  "}, "bad",
+        *[{"name": f"Game {index}", "logo": ""} for index in range(6)]]})
+
+    assert data["items"][:2] == [{"name": "Deadlock", "appid": 1422450},
+                                 {"name": "地下城公会经理 Dungeons & Dynasties", "appid": None}]
+    assert len(data["items"]) == sources.MAX_WISHLIST
+    with pytest.raises(ValueError):
+        sources.normalize_wishlist({"items": []})
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_the_wishlist_column_and_world_record_tags_are_drawn(mode):
+    from plugins.tech_play import render
+
+    payload = _payload()
+    payload["upcoming"]["data"]["items"] = [
+        {"name": f"Game {index}", "date": None, "date_text": "2026", "platforms": ["PC"], "image": None}
+        for index in range(4)]
+    payload["wishlist"] = {"state": "live", "data": {"items": [{"name": "Deadlock"}, {"name": "Light No Fire 无火之光"}]}}
+    payload["speedrun"]["data"]["top"][0]["runs"][0]["record"] = True
+    drawn = []
+    original = render.PageCanvas.text
+
+    def text(canvas, xy, value, *args, **kwargs):
+        drawn.append(str(value))
+        return original(canvas, xy, value, *args, **kwargs)
+
+    render.PageCanvas.text = text
+    try:
+        image = render_page((800, 480), payload, {"_inkypi_theme": {"mode": mode}}, NOW, {})
+    finally:
+        render.PageCanvas.text = original
+
+    assert image.size == (800, 480)
+    assert {"愿望单最多", "Deadlock", "Light No Fire 无火之光", "WR", "Game 2"} <= set(drawn)
+    assert "Game 3" not in drawn  # three coming games beside the list
+    gold = render._rgb((render.NIGHT if mode == "night" else render.DAY)["gold"])
+    speed = image.crop(render.SPEED_CARD).convert("RGB").get_flattened_data()
+    assert sum(1 for pixel in speed if pixel == gold) > 60

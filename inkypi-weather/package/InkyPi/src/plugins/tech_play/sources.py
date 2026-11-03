@@ -1,5 +1,5 @@
-"""Bounded feeds for the Tech & Play page: service status, Epic giveaways, upcoming games,
-new arXiv papers and speedrun world records."""
+"""Bounded feeds for the Tech & Play page: service status, Epic giveaways, upcoming games and
+Steam's most wishlisted, new arXiv papers and speedrun runs with their world-record standing."""
 
 from __future__ import annotations
 
@@ -44,6 +44,7 @@ STEAM_ICON_URL = "https://cdn.cloudflare.steamstatic.com/steamcommunity/public/i
 ARXIV_URL = "https://export.arxiv.org/api/query"
 SPEEDRUN_GAMES_URL = "https://www.speedrun.com/api/v1/games"
 SPEEDRUN_RUNS_URL = "https://www.speedrun.com/api/v1/runs"
+SPEEDRUN_LEADERBOARDS_URL = "https://www.speedrun.com/api/v1/leaderboards"
 WIKIPEDIA_API_URL = "https://en.wikipedia.org/w/api.php"
 DEFAULT_ARXIV = "cs.AI"
 IMAGE_HOSTS = ("arxiv.org", "cdn1.epicgames.com", "cdn2.unrealengine.com", "images.igdb.com",
@@ -54,7 +55,15 @@ INDICATORS = {"none", "minor", "major", "critical", "maintenance"}
 MAX_UPCOMING = 6
 WEEK = timedelta(days=7)
 FEED_PAGE = 200
-MAX_FEED_PAGES = 5
+# A page of 200 runs is about 250 KB and covers some 45 minutes of verifications; three pages keep a
+# refresh (and the first fill) under 800 KB. A longer gap restarts the coverage honestly.
+MAX_FEED_PAGES = 3
+# The runs on the page whose world-record standing is looked up (each leaderboard answer is about 1.5 KB).
+RECORD_RUNS_PER_GAME = 2
+RECORDS_KEPT = 24
+# Steam's most wishlisted coming games (about 5 KB).
+MAX_WISHLIST = 5
+SPEEDRUN_ID = re.compile(r"[A-Za-z0-9_]{1,16}")
 MAX_GAMES_PER_DAY = 300
 TOP_GAMES = 3
 
@@ -278,6 +287,33 @@ def fetch_steam_upcoming(context):
     return {"source": "Steam", "items": items}
 
 
+def normalize_wishlist(payload):
+    """Steam's most wishlisted coming games, most wishlisted first: name and app id."""
+    items = []
+    for row in (payload or {}).get("items") or []:
+        name = _clean(unescape(str((row or {}).get("name") or "")), 60) if isinstance(row, dict) else ""
+        if not name:
+            continue
+        match = re.search(r"/apps/(\d+)/", str(row.get("logo") or ""))
+        items.append({"name": name, "appid": int(match.group(1)) if match else None})
+        if len(items) >= MAX_WISHLIST:
+            break
+    if not items:
+        raise ValueError("Steam returned no wishlisted games")
+    return {"items": items}
+
+
+def fetch_steam_wishlist(context):
+    search = _get_json("GET", STEAM_UPCOMING_URL, context, max_bytes=256 * 1024, params={
+        "filter": "popularwishlist", "json": 1, "cc": "us", "l": "schinese", "count": MAX_WISHLIST + 3})
+    return normalize_wishlist(search)
+
+
+def valid_wishlist(data):
+    items = (data or {}).get("items")
+    return isinstance(items, list) and all(isinstance(item, dict) and item.get("name") for item in items)
+
+
 def valid_upcoming(data):
     items = (data or {}).get("items")
     return isinstance(items, list) and all(isinstance(item, dict) and item.get("name") for item in items)
@@ -470,12 +506,42 @@ def run_entry(run):
     if not runner or runner.lower() in {"not applicable", "n/a"}:
         return None
     country = str((((players[0]).get("location") or {}).get("country") or {}).get("code") or "")
-    category = _clean((((run.get("category") or {}).get("data")) or {}).get("name"), 40)
+    category_data = ((run.get("category") or {}).get("data")) or {}
+    category_data = category_data if isinstance(category_data, dict) else {}
+    category = _clean(category_data.get("name"), 40)
     level = run.get("level")
-    level_name = _clean(((level.get("data") or {}) if isinstance(level, dict) else {}).get("name"), 30)
+    level_data = (level.get("data") or {}) if isinstance(level, dict) else {}
+    level_data = level_data if isinstance(level_data, dict) else {}
+    level_name = _clean(level_data.get("name"), 30)
+    # The run's subcategories (the variables that split its leaderboard), for looking up its standing.
+    variables = ((category_data.get("variables") or {}).get("data")) or []
+    splits = {str(variable.get("id")) for variable in variables
+              if isinstance(variable, dict) and variable.get("is-subcategory")}
+    values = run.get("values") if isinstance(run.get("values"), dict) else {}
     return {"category": f"{level_name} · {category}" if level_name else category,
             "seconds": float(seconds), "verified": verified.isoformat(), "runner": runner,
-            "country": country[:2].lower() if re.fullmatch(r"[a-z]{2}(/.*)?", country) else ""}
+            "country": country[:2].lower() if re.fullmatch(r"[a-z]{2}(/.*)?", country) else "",
+            "id": str(run.get("id") or ""), "category_id": str(category_data.get("id") or ""),
+            "level_id": str(level_data.get("id") or ""),
+            "subcategories": {str(key): str(value) for key, value in values.items() if str(key) in splits}}
+
+
+def is_world_record(game_id, run, context):
+    """Whether ``run`` holds first place on its leaderboard (its level's for an individual level, with
+    its subcategories): True or False, or None when it cannot be told."""
+    ids = [str(game_id or ""), run.get("category_id") or "", run.get("id") or ""]
+    level = run.get("level_id") or ""
+    if not all(SPEEDRUN_ID.fullmatch(value) for value in ids) or (level and not SPEEDRUN_ID.fullmatch(level)):
+        return None
+    path = f"level/{level}/{run['category_id']}" if level else f"category/{run['category_id']}"
+    params = {"top": 1, **{f"var-{key}": value for key, value in (run.get("subcategories") or {}).items()}}
+    payload = _get_json("GET", f"{SPEEDRUN_LEADERBOARDS_URL}/{game_id}/{path}", context, max_bytes=256 * 1024,
+                        params=params)
+    places = ((payload or {}).get("data") or {}).get("runs")
+    if not isinstance(places, list):
+        return None
+    return any(isinstance(entry, dict) and entry.get("place") == 1
+               and ((entry.get("run") or {}).get("id")) == run["id"] for entry in places)
 
 
 def is_real_run(run):
@@ -656,14 +722,36 @@ def fetch_speedrun_week(previous, now, context):
         info = known.get(game_id) or _game_info(game_id, context)
         latest = _get_json("GET", SPEEDRUN_RUNS_URL, context, max_bytes=1024 * 1024, params={
             "game": game_id, "status": "verified", "orderby": "verify-date", "direction": "desc",
-            "max": 5, "embed": "category,level,players"})
+            "max": 5, "embed": "category.variables,level,players"})
         runs = [entry for entry in (run_entry(run) for run in (latest or {}).get("data") or []) if entry]
         top.append({**info, "week_runs": count, "runs": runs[:3]})
+    records = _world_records(top, previous.get("records"), context)
     games = {game_id: info for game_id, info in known.items() if game_id in totals}
     games.update({item["id"]: {key: item[key] for key in ("id", "name", "released", "cover")} for item in top})
     return {"days": days, "last_verified": newest.isoformat() if newest else None,
             "since": since.isoformat(), "games": dict(list(games.items())[:12]), "top": top,
-            "total": sum(totals.values())}
+            "total": sum(totals.values()), "records": records}
+
+
+def _world_records(top, known, context):
+    """Marks each shown run of the ``top`` games with whether it is a world record (``record``), looked
+    up once a run (``known`` holds the earlier answers); returns the answers to keep."""
+    known = known if isinstance(known, dict) else {}
+    records = {}
+    for game in top:
+        for run in game["runs"][:RECORD_RUNS_PER_GAME]:
+            found = known.get(run["id"])
+            if found is None:
+                try:
+                    found = is_world_record(game["id"], run, context)
+                except TaskCancelled:
+                    raise
+                except (HttpClientError, ValueError, KeyError, TypeError, AttributeError):
+                    found = None  # asked again next refresh
+            if found is not None:
+                run["record"] = bool(found)
+                records[run["id"]] = bool(found)
+    return dict(list(records.items())[:RECORDS_KEPT])
 
 
 def valid_speedrun_week(data):

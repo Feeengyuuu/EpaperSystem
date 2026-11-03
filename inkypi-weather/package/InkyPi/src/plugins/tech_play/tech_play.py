@@ -1,4 +1,5 @@
-"""Tech & Play: service status, Epic giveaways, upcoming games, new arXiv papers and speedrun records."""
+"""Tech & Play: service status, Epic giveaways, upcoming games and Steam's most wishlisted, new arXiv papers
+and speedrun records."""
 
 from __future__ import annotations
 
@@ -97,7 +98,11 @@ class TechPlay(BasePlugin):
                                 fresh_seconds=3 * 3600, usable_seconds=3 * 86400, validate=sources.valid_epic,
                                 timeout_seconds=8)),
             "upcoming": load(upcoming_spec),
-            "arxiv": load(Source("arxiv", {"category": category}, lambda ctx: sources.fetch_arxiv(category, ctx),
+            # Steam's most wishlisted coming games beside them; the page leaves the list out without it.
+            "wishlist": load(Source("wishlist", {"source": "steam"}, sources.fetch_steam_wishlist,
+                                    fresh_seconds=12 * 3600, usable_seconds=5 * 86400,
+                                    validate=sources.valid_wishlist, timeout_seconds=10)),
+            "arxiv":load(Source("arxiv", {"category": category}, lambda ctx: sources.fetch_arxiv(category, ctx),
                                  fresh_seconds=6 * 3600, usable_seconds=3 * 86400, validate=sources.valid_arxiv,
                                  timeout_seconds=10)),
             "arxiv_category": category,

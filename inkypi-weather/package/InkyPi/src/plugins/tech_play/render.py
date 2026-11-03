@@ -1,7 +1,8 @@
 """800 x 480 Tech & Play page, laid out as outlined cards with coloured accent bars.
 
 Left: service status tiles and numbered arXiv papers. Right: Epic giveaways, upcoming
-releases, and per-game speedrun world records with box art, trophies and runner flags.
+releases beside Steam's most wishlisted games, and per-game speedrun runs with box art, trophies,
+runner flags and a WR tag on a world record.
 """
 
 from __future__ import annotations
@@ -88,6 +89,10 @@ PLATFORMS = ("PC", "PS", "Xbox", "Switch")
 # pixel of its own), this far apart; each game's own, after its date, smaller and closer.
 LEGEND_MARK, LEGEND_GAP = 13, 9
 ROW_MARK, ROW_GAP = 11, 3
+# Steam's most wishlisted coming games stand in a column at the card's right, this wide, beside three
+# coming games (four without the list).
+WISHLIST_W = 150
+WISHLIST_ROWS = 4
 
 
 def _rgb(value):
@@ -586,18 +591,22 @@ def _upcoming(canvas, payload, images, now):
         # IGDB's logo is black lettering: it takes the page's ink, so it stays bright at night.
         logo = _inked(logo, canvas.color("ink"))
     detail = "IGDB 期待度排行" if source_name == "IGDB" else "Steam 热门即将推出" if source_name else ""
-    count, gap = 4, 8
+    wished = ((payload.get("wishlist") or {}).get("data") or {}).get("items") or []
+    count, gap = (3 if wished else 4), 8
     families = [platform_families(item.get("platforms")) for item in items[:count]]
     # The frames' colours, named in the header in place of the detail.
     legend = [(family, f"platform_{family.lower()}") for family in PLATFORMS
               if any(family in shown for shown in families)]
     _card(canvas, UPCOMING_CARD, "upcoming_bar", "即将发售", logo=logo, detail=detail, legend=legend)
     left, right = UPCOMING_CARD[0] + 8, UPCOMING_CARD[2] - 8
+    top = UPCOMING_CARD[1] + HEADER + 4
+    if wished:
+        _wishlist(canvas, (right - WISHLIST_W, top, right, UPCOMING_CARD[3] - 8), wished[:WISHLIST_ROWS])
+        right -= WISHLIST_W + 12
     if not items:
         canvas.text((left, 260), "新作列表暂不可用", 14, "muted", anchor="lm")
         return
     width = (right - left - gap * (count - 1)) // count
-    top = UPCOMING_CARD[1] + HEADER + 4
     for index, item in enumerate(items[:count]):
         x = left + index * (width + gap)
         box = (x, top, x + width, top + 46)
@@ -639,6 +648,20 @@ def _upcoming(canvas, payload, images, now):
             mark_x += mark.width + ROW_GAP
 
 
+def _wishlist(canvas, box, items):
+    """Steam's most wishlisted coming games down a column: a heading, then each game's rank in the
+    card's cobalt and its name in ink."""
+    left, top, right, bottom = box
+    canvas.rule((left - 6, top + 2, left - 6, bottom - 2))
+    draw_icon(canvas.draw, "heart", (left, top + 2), 11, canvas.color("upcoming_bar"), canvas.color("paper"))
+    canvas.text((left + 15, top + 8), "愿望单最多", 12, anchor="lm")
+    row_h = (bottom - top - 18) / max(1, WISHLIST_ROWS)
+    for index, item in enumerate(items):
+        middle = top + 18 + row_h * (index + 0.5)
+        canvas.text((left + 5, middle), str(index + 1), 12, "upcoming_bar", anchor="mm")
+        canvas.text((left + 15, middle), item.get("name") or "", 11, anchor="lm", width=right - left - 15)
+
+
 def _initials(name):
     """'DOP 4: Draw One Part' -> 'DOP4'; 'Super Mario 64' -> 'SM64'."""
     words = re.findall(r"[A-Za-z0-9]+", str(name or "").split(":")[0])
@@ -658,6 +681,14 @@ def coverage_label(data, now):
     if span >= 2 * 86400:
         return f"近 {int(span // 86400)} 天"
     return f"近 {max(1, int(span // 3600))} 小时"
+
+
+def _record_chip(canvas, right, middle):
+    """A gold WR tag ending at ``right``; its width."""
+    width = canvas.width("WR", 10) + 8
+    canvas.draw.rounded_rectangle((right - width, middle - 7, right, middle + 7), radius=3, fill=canvas.color("gold"))
+    canvas.text((right - width / 2, middle), "WR", 10, (20, 20, 20), anchor="mm")
+    return width
 
 
 def _speedruns(canvas, payload, images, now):
@@ -700,6 +731,9 @@ def _speedruns(canvas, payload, images, now):
             canvas.draw.ellipse((x, y + 3, x + 8, y + 11), fill=canvas.color("speed_bar"), outline=canvas.color("ink"))
             time_text = run_time(run["seconds"])
             time_width = canvas.text((x + width, y + 7), time_text, 12, anchor="rm")
+            if run.get("record"):
+                # A world record: a gold WR tag before its time.
+                time_width += _record_chip(canvas, x + width - time_width - 4, y + 7) + 4
             canvas.text((x + 13, y + 7), run.get("category") or "", 11, anchor="lm", width=width - time_width - 19)
             flag = images.get(flag_url(run.get("country")))
             runner_x = x + 13
