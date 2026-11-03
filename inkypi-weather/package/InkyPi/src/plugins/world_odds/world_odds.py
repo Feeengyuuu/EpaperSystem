@@ -25,12 +25,15 @@ from . import sources
 logger = logging.getLogger(__name__)
 PLUGIN_ID = "world_odds"
 CACHE_SCHEMA = 1
-CACHE_BUDGET = CacheBudget(7 * 86400, 8, 2 * 1024 * 1024)
+# Polymarket, Kalshi, two week charts and two month sparklines, with room for yesterday's tokens.
+CACHE_BUDGET = CacheBudget(7 * 86400, 12, 2 * 1024 * 1024)
 DEFAULT_FONT = "Microsoft YaHei"
 TASK_SECONDS = 50
 # Prices move through the day; a reading still shows the shape of the odds for two.
 FRESH_SECONDS = 30 * 60
 USABLE_SECONDS = 2 * 86400
+# A month of daily closes gains one point a day.
+SPARK_FRESH_SECONDS = 3 * 3600
 THUMB_PIXELS = (320, 320)
 # The lead's likeliest outcomes whose week of prices the page charts.
 CHARTED_OUTCOMES = 2
@@ -85,9 +88,30 @@ class WorldOdds(BasePlugin):
                                now, allow_network=allow_network, context=context, force=force)
             if (result.get("data") or {}).get("points"):
                 histories[token] = result["data"]["points"]
-        return {**results, "lead": lead, "tiles": tiles, "histories": histories,
-                "board": (results["kalshi"].get("data") or {}).get("board") or {},
+        board = (results["kalshi"].get("data") or {}).get("board") or {}
+        return {**results, "lead": lead, "tiles": tiles, "histories": histories, "board": board,
+                "sparks": self._sparks(book, board, now, allow_network=allow_network, context=context, force=force),
                 "provenance": combined_provenance(results.values())}
+
+    @staticmethod
+    def _sparks(book, board, now, *, allow_network, context, force):
+        """A month of daily odds for the board's headline markets (the Fed's likeliest decision,
+        CPI's pivot threshold): {series: {"points", "ticker", ...}}; a series without them is left out."""
+        sparks = {}
+        for series in sources.SPARK_SERIES:
+            market = sources.spark_market(series, board.get(series))
+            if market is None:
+                continue
+            result = book.load(Source("candles", {"series": series, "ticker": market["ticker"]},
+                                      lambda ctx, series=series, ticker=market["ticker"]: sources.fetch_candles(
+                                          series, ticker, ctx, now),
+                                      fresh_seconds=SPARK_FRESH_SECONDS, usable_seconds=USABLE_SECONDS,
+                                      validate=sources.valid_history, timeout_seconds=10),
+                               now, allow_network=allow_network, context=context, force=force)
+            points = (result.get("data") or {}).get("points")
+            if points:
+                sparks[series] = {**market, "points": points}
+        return sparks
 
     def _images(self, payload, *, allow_network, context):
         """The events' pictures, and their shown outcomes' own (a portrait, a party's or company's mark)."""

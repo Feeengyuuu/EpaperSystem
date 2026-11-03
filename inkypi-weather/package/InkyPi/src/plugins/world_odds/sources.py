@@ -10,25 +10,37 @@ the market's median expectation. Every fetcher returns a small normalised dict.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
+from runtime.refresh_contracts import TaskCancelled
 from utils.http_client import get_http_client
 
 
+logger = logging.getLogger(__name__)
 PACIFIC = ZoneInfo("America/Los_Angeles")
 USER_AGENT = "InkyPi WorldOdds/1.0 (personal e-paper display)"
 REQUEST_TIMEOUT = (3, 12)
 POLYMARKET_EVENTS = "https://gamma-api.polymarket.com/events"
-KALSHI_EVENTS = "https://api.elections.kalshi.com/trade-api/v2/events"
+KALSHI_API = "https://api.elections.kalshi.com/trade-api/v2"
+KALSHI_EVENTS = f"{KALSHI_API}/events"
 PRICE_HISTORY = "https://clob.polymarket.com/prices-history"
 # A week of an outcome's price at one point every three hours.
 HISTORY_MINUTES = 180
 # Polymarket tags in the page's order, with their Chinese names.
 CATEGORIES = {"politics": "政治", "geopolitics": "地缘", "economy": "经济", "tech": "科技", "crypto": "加密"}
-EVENTS_PER_TAG = 4
+# A tag's listing comes without markets (about 6 KB an event); only the events the page shows are
+# then read whole, one at a time, since one event's markets can run to 600 KB.
+EVENTS_PER_TAG = 6
+LIST_MAX_BYTES = 256 * 1024
+EVENT_MAX_BYTES = 1024 * 1024
+# The busiest events tried for the lead, and each category's tried for its tile, when one fails.
+LEAD_TRIES = 2
+TILE_TRIES = 2
+EVENT_ID = re.compile(r"\d{1,12}")
 MAX_OUTCOMES = 5
 ON_THE_BOARD = re.compile(r"\bFed\b|\bFOMC\b|\bCPI\b|inflation|recession|rate (?:cut|hike)", re.I)
 MONTHS = {name: number for number, name in enumerate(
@@ -52,6 +64,11 @@ LADDER_POINTS = 40
 FED_OUTCOMES = {"Cut >25bps": "降息>25", "Cut 25bps": "降息25", "Fed maintains rate": "维持", "Hike 0bps": "维持",
                 "Hike 25bps": "加息25", "Hike >25bps": "加息>25"}
 FED_ORDER = ("降息>25", "降息25", "维持", "加息25", "加息>25")
+# The series whose headline market gets a month of daily closes: the Fed's likeliest decision, and
+# for CPI the threshold the market is least sure of (nearest even odds).
+SPARK_SERIES = ("KXFEDDECISION", "KXCPIYOY")
+SPARK_DAYS = 30
+KALSHI_TICKER = re.compile(r"[A-Z0-9][A-Z0-9.\-]{2,63}")
 
 
 def local_now(now=None):
@@ -109,10 +126,12 @@ def _labels(market):
 
 
 def normalize_polymarket_event(event, category):
-    """{"title", "category", "volume_24h", "volume", "ends", "image", "outcomes": [{name, chance, change}]}.
+    """{"title", "category", "volume_24h", "volume", "liquidity", "open_interest", "ends", "image",
+    "outcomes": [{name, chance, change, week}]}.
 
     A multi-market event's outcomes are its markets (each one's Yes price); a single market's are
-    its own outcomes (Yes / No, or the two sides of a match). The likeliest come first."""
+    its own outcomes (Yes / No, or the two sides of a match). The likeliest come first. ``change``
+    and ``week`` are the moves over a day and a week (None where the market gives no week)."""
     markets = [market for market in event.get("markets") or [] if isinstance(market, dict)
                and not market.get("closed") and market.get("active", True)]
     outcomes = []
@@ -124,13 +143,15 @@ def normalize_polymarket_event(event, category):
                 # A candidate's own picture (a portrait, a party's mark) when the event gives one.
                 image = safe_image_url(market.get("image") or market.get("icon"))
                 outcomes.append({"name": name, "chance": prices[0], "change": _float(market.get("oneDayPriceChange")),
+                                 "week": _move(market.get("oneWeekPriceChange")),
                                  "image": image if image != safe_image_url(event.get("image")) else None,
                                  "token": _token(market, 0), "volume_24h": _float(market.get("volume24hr"))})
     elif markets:
         market = markets[0]
-        change = _float(market.get("oneDayPriceChange"))
+        change, week = _float(market.get("oneDayPriceChange")), _move(market.get("oneWeekPriceChange"))
         for index, (name, chance) in enumerate(zip(_labels(market), _prices(market))):
             outcomes.append({"name": _clean(name, 40), "chance": chance, "change": change if index == 0 else -change,
+                             "week": None if week is None else (week if index == 0 else -week),
                              "image": None, "token": _token(market, index),
                              "volume_24h": _float(market.get("volume24hr"))})
     outcomes = [outcome for outcome in outcomes if 0 <= outcome["chance"] <= 1]
@@ -140,9 +161,16 @@ def normalize_polymarket_event(event, category):
         return None
     return {"id": str(event.get("id") or event.get("slug") or title), "title": title, "category": category,
             "volume_24h": _float(event.get("volume24hr")), "volume": _float(event.get("volume")),
+            "liquidity": _float(event.get("liquidity")), "open_interest": _float(event.get("openInterest")),
             "comments": int(_float(event.get("commentCount"))),
             "ends": str(event.get("endDate") or "")[:10], "image": safe_image_url(event.get("image") or event.get("icon")),
             "outcomes": outcomes[:MAX_OUTCOMES]}
+
+
+def _move(value):
+    """A price move as a share (-1..1), or None when the market gives none."""
+    move = _float(value, None)
+    return move if move is not None and -1 <= move <= 1 else None
 
 
 def _token(market, index):
@@ -173,17 +201,62 @@ def valid_history(data):
     return len((data or {}).get("points") or []) >= 2
 
 
+def _isolated(label, fetch):
+    """``fetch()``, or None when it fails: one tag's or one event's fault leaves the rest of the
+    board standing. Cancellation (and the source's own deadline) still ends the walk."""
+    try:
+        return fetch()
+    except TaskCancelled:
+        raise
+    except Exception as error:  # a provider fault costs only this part of the board
+        logger.warning("Polymarket %s skipped (%s)", label, type(error).__name__)
+        return None
+
+
+def _list_tag(tag, context):
+    """A tag's busiest open events by 24-hour volume, without their markets."""
+    payload = _get(POLYMARKET_EVENTS, context, max_bytes=LIST_MAX_BYTES,
+                   params={"tag_slug": tag, "order": "volume24hr", "ascending": "false", "closed": "false",
+                           "limit": EVENTS_PER_TAG, "include_markets": "false"})
+    return [row for row in payload if isinstance(row, dict) and EVENT_ID.fullmatch(str(row.get("id") or ""))
+            and _clean(row.get("title"), 90)] if isinstance(payload, list) else []
+
+
 def fetch_polymarket(context):
-    """The busiest open events in each category, by 24-hour volume."""
-    events = []
+    """The events the page shows, with their outcomes, by 24-hour volume: the busiest of all (the
+    lead) and each category's busiest that Kalshi's board does not price (its tile).
+
+    Each tag is listed without markets (about 40 KB where the full listing ran to 750 KB), then only
+    those events are read whole. A tag or an event that fails is left out and the others stand; a
+    lead or tile that fails gives way to the next busiest in its place."""
+    listed, seen = [], set()
     for tag, category in CATEGORIES.items():
-        payload = _get(POLYMARKET_EVENTS, context, max_bytes=1536 * 1024,
-                       params={"tag_slug": tag, "order": "volume24hr", "ascending": "false", "closed": "false",
-                               "limit": EVENTS_PER_TAG})
-        for raw in payload if isinstance(payload, list) else []:
-            event = normalize_polymarket_event(raw, category) if isinstance(raw, dict) else None
-            if event is not None:
-                events.append(event)
+        for row in _isolated(f"tag {tag}", lambda tag=tag: _list_tag(tag, context)) or []:
+            if str(row["id"]) not in seen:
+                seen.add(str(row["id"]))
+                listed.append((category, row))
+    listed.sort(key=lambda pair: _float(pair[1].get("volume24hr")), reverse=True)
+    events, tried = [], set()
+
+    def read(category, row):
+        event_id = str(row["id"])
+        tried.add(event_id)
+        raw = _isolated(f"event {event_id}", lambda: _get(f"{POLYMARKET_EVENTS}/{event_id}", context,
+                                                          max_bytes=EVENT_MAX_BYTES))
+        event = normalize_polymarket_event(raw, category) if isinstance(raw, dict) else None
+        if event is not None:
+            events.append(event)
+        return event is not None
+
+    for category, row in listed[:LEAD_TRIES]:
+        if read(category, row):
+            break
+    for category in CATEGORIES.values():
+        candidates = [row for owner, row in listed if owner == category and str(row["id"]) not in tried
+                      and not ON_THE_BOARD.search(str(row.get("title") or ""))]
+        for row in candidates[:TILE_TRIES]:
+            if read(category, row):
+                break
     if not events:
         raise ValueError("Polymarket returned no open events")
     return {"events": events}
@@ -233,11 +306,37 @@ def median_of_thresholds(markets):
     return points[-1][0] if points else None
 
 
+def _ticker(market):
+    ticker = str(market.get("ticker") or "")
+    return ticker if KALSHI_TICKER.fullmatch(ticker) else None
+
+
+def _notional(markets, field):
+    """The markets' total of a contract count (Kalshi's fixed-point strings) in dollars at each
+    contract's notional value ($1)."""
+    return sum(max(0.0, _float(market.get(field))) * _float(market.get("notional_value_dollars"), 1.0)
+               for market in markets)
+
+
+def pivot_market(markets):
+    """The "above x" market nearest even odds (where the market is least sure), as
+    {"ticker", "strike", "chance"}; None without one."""
+    priced = [(market, _kalshi_price(market)) for market in markets
+              if market.get("strike_type") == "greater" and _ticker(market)]
+    priced = [(market, price) for market, price in priced if price is not None]
+    if not priced:
+        return None
+    market, price = min(priced, key=lambda pair: abs(pair[1] - 0.5))
+    return {"ticker": _ticker(market), "strike": _float(market.get("floor_strike")), "chance": price}
+
+
 def normalize_kalshi_event(event, kind):
-    """One Kalshi event read for the page: its title, settle date and value (by ``kind``)."""
+    """One Kalshi event read for the page: its title, settle date and value (by ``kind``), and
+    its markets' 24-hour volume and open interest in dollars."""
     markets = [market for market in event.get("markets") or [] if isinstance(market, dict)]
     base = {"title": _clean(event.get("title"), 60), "when": _clean(event.get("sub_title"), 40),
-            "date": str(event.get("strike_date") or "")[:10]}
+            "date": str(event.get("strike_date") or "")[:10],
+            "volume_24h": _notional(markets, "volume_24h_fp"), "open_interest": _notional(markets, "open_interest_fp")}
     if kind == "decision":
         outcomes = {}
         for market in markets:
@@ -245,7 +344,7 @@ def normalize_kalshi_event(event, kind):
             price = _kalshi_price(market)
             if label and price is not None:
                 previous = _float(market.get("previous_price_dollars"), price)
-                outcomes[label] = {"chance": price, "change": price - previous}
+                outcomes[label] = {"chance": price, "change": price - previous, "ticker": _ticker(market)}
         if not outcomes:
             return None
         return {**base, "outcomes": [{"name": name, **outcomes[name]} for name in FED_ORDER if name in outcomes]}
@@ -270,7 +369,52 @@ def normalize_kalshi_event(event, kind):
     if len(ladder) > LADDER_POINTS:
         step = len(ladder) / LADDER_POINTS
         ladder = [ladder[int(index * step)] for index in range(LADDER_POINTS)]
-    return None if median is None else {**base, "median": median, "ladder": ladder}
+    return None if median is None else {**base, "median": median, "ladder": ladder, "pivot": pivot_market(markets)}
+
+
+def spark_market(series, reading):
+    """The headline market of a series on the board whose month of odds the page charts: the
+    Fed's likeliest decision ({"ticker", "name"}) or CPI's pivot ({"ticker", "strike"}); None
+    for any other series or without one."""
+    if series not in SPARK_SERIES or not reading:
+        return None
+    if reading.get("kind") == "decision":
+        outcomes = [outcome for outcome in reading.get("outcomes") or [] if outcome.get("ticker")]
+        best = max(outcomes, key=lambda outcome: outcome["chance"], default=None)
+        return {"ticker": best["ticker"], "name": best["name"]} if best else None
+    pivot = reading.get("pivot") or {}
+    return {"ticker": pivot["ticker"], "strike": pivot.get("strike")} if pivot.get("ticker") else None
+
+
+def _candle_price(candle):
+    """A daily candle's closing chance: its last trade, else the middle of its closing bid and ask."""
+    close = _float((candle.get("price") or {}).get("close_dollars"), -1)
+    if 0 <= close <= 1:
+        return close
+    bid = _float((candle.get("yes_bid") or {}).get("close_dollars"), -1)
+    ask = _float((candle.get("yes_ask") or {}).get("close_dollars"), -1)
+    return (bid + ask) / 2 if 0 <= bid <= 1 and 0 <= ask <= 1 else None
+
+
+def fetch_candles(series, ticker, context, now=None):
+    """A Kalshi market's daily closing chance over the past SPARK_DAYS days (about 14 KB):
+    {"points": [[unix seconds, chance], ...]}, oldest first."""
+    if series not in SPARK_SERIES or not KALSHI_TICKER.fullmatch(str(ticker or "")):
+        raise ValueError("not a charted Kalshi market")
+    end = int((now or utc_now()).timestamp())
+    payload = _get(f"{KALSHI_API}/series/{series}/markets/{ticker}/candlesticks", context, max_bytes=128 * 1024,
+                   params={"start_ts": end - SPARK_DAYS * 86400, "end_ts": end, "period_interval": 1440})
+    candles = payload.get("candlesticks") if isinstance(payload, dict) else None
+    points = []
+    for candle in candles if isinstance(candles, list) else []:
+        if not isinstance(candle, dict):
+            continue
+        when, price = int(_float(candle.get("end_period_ts"))), _candle_price(candle)
+        if when > 0 and price is not None:
+            points.append([when, price])
+    if len(points) < 2:
+        raise ValueError("Kalshi returned no candles")
+    return {"points": sorted(points)}
 
 
 def fetch_kalshi(context):

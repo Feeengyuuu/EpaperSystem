@@ -193,3 +193,170 @@ def test_pictures_keep_their_transparency_in_their_own_cache(tmp_path):
 
     assert (kept.mode, flat.mode, cached.mode) == ("RGBA", "RGB", "RGBA")
     assert cached.getpixel((0, 0))[3] == 0 and len(list(tmp_path.iterdir())) == 2
+
+
+def _listing(*rows):
+    return [{"id": str(identifier), "title": title, "volume24hr": volume} for identifier, title, volume in rows]
+
+
+def _full(identifier, title, volume):
+    return {"id": str(identifier), "title": title, "volume24hr": volume, "liquidity": 3.8e7, "openInterest": 4.2e6,
+            "markets": [_market("Yes side", 0.6, 0.02), _market("Other side", 0.3, -0.01)]}
+
+
+class _FakeGamma:
+    """Polymarket's listing (without markets) per tag and each event in full, with chosen failures."""
+
+    def __init__(self, lists, events, broken=()):
+        self.lists, self.events, self.broken, self.calls = lists, events, set(broken), []
+
+    def __call__(self, url, context, *, max_bytes, params=None):
+        self.calls.append((url, dict(params or {}), max_bytes))
+        if url == sources.POLYMARKET_EVENTS:
+            assert params["include_markets"] == "false" and max_bytes <= 256 * 1024
+            if params["tag_slug"] in self.broken:
+                raise RuntimeError("HTTP response exceeded the cap")
+            return self.lists.get(params["tag_slug"], [])
+        identifier = url.rsplit("/", 1)[-1]
+        if identifier in self.broken:
+            raise RuntimeError("event failed")
+        return self.events[identifier]
+
+
+def _gamma(broken=()):
+    lists = {"politics": _listing((1, "Senate swing states", 2.4e7), (2, "Balance of Power", 8e6)),
+             "geopolitics": _listing((3, "US-Iran ceasefire", 1.3e6)),
+             "economy": _listing((4, "Fed Decision in December?", 6e5), (5, "Hormuz traffic", 9e4),
+                                 (6, "China sanctions", 4e4)),
+             "tech": _listing((7, "Best AI model", 4.6e4)),
+             "crypto": _listing((8, "Bitcoin in November", 1.6e6))}
+    events = {row["id"]: _full(row["id"], row["title"], row["volume24hr"]) for rows in lists.values() for row in rows}
+    return _FakeGamma(lists, events, broken)
+
+
+def test_polymarket_lists_without_markets_then_reads_only_the_lead_and_tiles(monkeypatch):
+    gamma = _gamma()
+    monkeypatch.setattr(sources, "_get", gamma)
+    events = sources.fetch_polymarket(object())["events"]
+    read = [url.rsplit("/", 1)[-1] for url, _params, _cap in gamma.calls if url != sources.POLYMARKET_EVENTS]
+
+    # The lead (busiest of all), then each category's busiest that the Kalshi board does not price.
+    assert read == ["1", "2", "3", "5", "7", "8"]
+    lead, tiles = sources.lead_and_categories(events)
+    assert lead["id"] == "1" and [tile["id"] for tile in tiles] == ["2", "3", "5", "7", "8"]
+    assert (lead["liquidity"], lead["open_interest"]) == (3.8e7, 4.2e6)
+
+
+def test_one_failing_category_or_event_leaves_the_others(monkeypatch):
+    # The politics listing is too large and Hormuz's event fails: the lead moves to the next
+    # busiest, economy falls back to its next event, the rest stand.
+    monkeypatch.setattr(sources, "_get", _gamma(broken={"politics", "5"}))
+    lead, tiles = sources.lead_and_categories(sources.fetch_polymarket(object())["events"])
+
+    assert lead["id"] == "8"
+    assert sorted(tile["id"] for tile in tiles) == ["3", "6", "7"]
+
+
+def test_cancellation_still_ends_the_polymarket_walk(monkeypatch):
+    from runtime.refresh_contracts import TaskCancelled
+
+    def cancelled(*_args, **_kwargs):
+        raise TaskCancelled("stop")
+
+    monkeypatch.setattr(sources, "_get", cancelled)
+    with pytest.raises(TaskCancelled):
+        sources.fetch_polymarket(object())
+
+
+def test_nothing_read_is_an_error_so_the_cache_stands(monkeypatch):
+    monkeypatch.setattr(sources, "_get", _gamma(broken=set(sources.CATEGORIES)))
+    with pytest.raises(ValueError):
+        sources.fetch_polymarket(object())
+
+
+def test_outcomes_carry_their_week_move_when_the_market_has_one():
+    week_old = {**_market("Google", 0.555, 0.02), "oneWeekPriceChange": 0.22}
+    young = _market("Anthropic", 0.385, 0.02)
+    multi = sources.normalize_polymarket_event({"id": 1, "title": "Best AI model", "markets": [week_old, young]}, "科技")
+    binary = sources.normalize_polymarket_event(
+        {"id": 2, "title": "Hormuz", "markets": [{"outcomes": '["Yes", "No"]', "outcomePrices": '["0.1", "0.9"]',
+                                                  "oneDayPriceChange": -0.01, "oneWeekPriceChange": "0.03"}]}, "经济")
+
+    assert [(o["name"], o["week"]) for o in multi["outcomes"]] == [("Google", 0.22), ("Anthropic", None)]
+    assert [(o["name"], o["week"]) for o in binary["outcomes"]] == [("No", -0.03), ("Yes", 0.03)]
+
+
+def test_kalshi_rows_carry_their_money_and_headline_market():
+    fed = sources.normalize_kalshi_event({"markets": [
+        {"ticker": "KXFEDDECISION-26DEC-H0", "yes_sub_title": "Fed maintains rate", "last_price_dollars": "0.27",
+         "volume_24h_fp": "29896.84", "open_interest_fp": "488266.88", "notional_value_dollars": "1.0000"},
+        {"ticker": "KXFEDDECISION-26DEC-H25", "yes_sub_title": "Hike 25bps", "last_price_dollars": "0.73",
+         "volume_24h_fp": "34064.58", "open_interest_fp": "378726.49"}]}, "decision")
+    cpi = sources.normalize_kalshi_event({"markets": [
+        {"ticker": "KXCPIYOY-26NOV-T3.8", "strike_type": "greater", "floor_strike": 3.8, "last_price_dollars": "0.61"},
+        {"ticker": "KXCPIYOY-26NOV-T3.9", "strike_type": "greater", "floor_strike": 3.9, "last_price_dollars": "0.41"},
+        {"ticker": "bad ticker/../x", "strike_type": "greater", "floor_strike": 4.0, "last_price_dollars": "0.50"}]},
+        "percent")
+
+    assert fed["volume_24h"] == pytest.approx(63961.42) and fed["open_interest"] == pytest.approx(866993.37)
+    assert sources.spark_market("KXFEDDECISION", {**fed, "kind": "decision"}) == {
+        "ticker": "KXFEDDECISION-26DEC-H25", "name": "加息25"}
+    # CPI's pivot is the valid threshold nearest even odds.
+    assert sources.spark_market("KXCPIYOY", {**cpi, "kind": "percent"}) == {
+        "ticker": "KXCPIYOY-26NOV-T3.9", "strike": 3.9}
+    assert sources.spark_market("KXGDP", {**cpi, "kind": "percent"}) is None
+
+
+def test_kalshi_candles_close_on_the_last_trade_else_the_quote(monkeypatch):
+    seen = {}
+
+    def fake_get(url, _context, *, max_bytes, params=None):
+        seen.update(url=url, params=params, cap=max_bytes)
+        return {"candlesticks": [
+            {"end_period_ts": 200, "price": {"close_dollars": None},
+             "yes_bid": {"close_dollars": "0.41"}, "yes_ask": {"close_dollars": "0.43"}},
+            {"end_period_ts": 100, "price": {"close_dollars": "0.29"}},
+            {"end_period_ts": 300, "price": {}, "yes_bid": {}, "yes_ask": {}}, "junk"]}
+
+    monkeypatch.setattr(sources, "_get", fake_get)
+    points = sources.fetch_candles("KXCPIYOY", "KXCPIYOY-26NOV-T3.9", object(), NOW)["points"]
+
+    assert points == [[100, 0.29], [200, pytest.approx(0.42)]]
+    assert seen["url"].endswith("/series/KXCPIYOY/markets/KXCPIYOY-26NOV-T3.9/candlesticks")
+    assert seen["params"]["period_interval"] == 1440
+    assert seen["params"]["end_ts"] - seen["params"]["start_ts"] == 30 * 86400
+    with pytest.raises(ValueError):
+        sources.fetch_candles("KXCPIYOY", "../evil", object(), NOW)
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_the_page_shows_week_moves_money_and_month_sparklines(mode):
+    from PIL import ImageChops
+
+    lead = {"id": "a", "title": "Which Senate Swing States will Republicans win?", "category": "政治",
+            "volume_24h": 2.4e7, "volume": 4.8e7, "liquidity": 3.8e7, "open_interest": 4.2e6, "comments": 14,
+            "ends": "2026-11-03", "image": None,
+            "outcomes": [{"name": f"Outcome {n}", "chance": 0.4 / n, "change": 0.01,
+                          "week": (-0.2 if n > 1 else None), "token": str(n)} for n in range(1, 5)]}
+    tiles = [{**lead, "id": c, "category": c} for c in ("地缘", "经济", "科技", "加密")]
+    board = {"KXFEDDECISION": {"label": "美联储议息", "kind": "decision", "date": "2026-12-09", "volume_24h": 7.8e4,
+                               "open_interest": 1.9e6,
+                               "outcomes": [{"name": "维持", "chance": 0.27, "change": -0.02},
+                                            {"name": "加息25", "chance": 0.73, "change": 0.02}]},
+             "KXCPIYOY": {"label": "CPI 同比", "kind": "percent", "median": 3.9, "when": "In Nov 2026",
+                          "ladder": [[3.0, 0.99], [3.9, 0.41], [5.0, 0.01]]}}
+    sparks = {"KXFEDDECISION": {"name": "加息25", "points": [[n * 86400, 0.7 + n / 300] for n in range(30)]},
+              "KXCPIYOY": {"strike": 3.9, "points": [[n * 86400, 0.3 + n / 100] for n in range(30)]}}
+    payload = {"lead": lead, "tiles": tiles, "board": board, "histories": {}, "sparks": sparks}
+    theme = {"_inkypi_theme": {"mode": mode}}
+    full = render_page((800, 480), payload, theme, NOW, {})
+    bare = render_page((800, 480), {**payload, "sparks": {}}, theme, NOW, {})
+    # A page cached before these details (no week, money or sparks) still draws.
+    old = render_page((800, 480), {"lead": {key: value for key, value in lead.items()
+                                            if key not in ("liquidity", "open_interest")},
+                                   "tiles": [], "board": {}}, theme, NOW, {})
+
+    assert full.size == old.size == (800, 480)
+    # The sparklines land on the Kalshi board and nowhere else.
+    box = ImageChops.difference(full.convert("RGB"), bare.convert("RGB")).getbbox()
+    assert box is not None and box[0] >= 528

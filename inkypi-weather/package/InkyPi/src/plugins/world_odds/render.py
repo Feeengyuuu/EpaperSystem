@@ -1,12 +1,13 @@
 """800 x 480 世界赔率榜 page.
 
 Left: Polymarket's busiest event leads: its likeliest outcomes as bars (each with its portrait or
-mark, its move over the day and its own volume) beside a week's chart of the two likeliest, then
-when it settles, how much has been traded and how many have commented. The busiest event of each
-other category sits beneath in a 2 x 2 grid with its two likeliest outcomes. Right: Kalshi's US
-economy board, the Fed's next decision as a split bar over its outcomes, then the year's recession
-odds and what the markets expect for CPI, GDP, jobs, gas, the S&P 500 and bitcoin, each with the
-little chart of the odds it is read from.
+mark, its moves over the day and the week and its own volume) beside a week's chart of the two
+likeliest, then how much has been traded, is held open and stands in the book, when it settles and
+how many have commented. The busiest event of each other category sits beneath in a 2 x 2 grid
+with its two likeliest outcomes. Right: Kalshi's US economy board, the Fed's next decision as a
+split bar over its outcomes with a month of its likeliest's odds and the money on it, then the
+year's recession odds and what the markets expect for CPI (with a month of its pivot threshold's
+odds), GDP, jobs, gas, the S&P 500 and bitcoin, each with the little chart of the odds it is read from.
 """
 
 from __future__ import annotations
@@ -242,20 +243,55 @@ def _chip(canvas, x, middle, text, fill, size=10, icon=None):
     return width
 
 
-def _change(canvas, x, middle, change, *, anchor="rm", size=10):
-    """The day's move in percentage points: a small triangle and the points, ending (or starting) at x."""
+def _change(canvas, x, middle, change, *, anchor="rm", size=10, prefix=""):
+    """A move in percentage points (the day's, or with ``prefix`` "周" the week's): a small
+    triangle and the points, after the prefix, ending (or starting) at x. Returns its width."""
     points = round(float(change or 0) * 100)
+    lead = canvas.width(prefix, size, bold=False) + 2 if prefix else 0
     if points == 0:
-        return canvas.text((x, middle), "持平", size, "muted", anchor=anchor, bold=False)
+        label = f"{prefix}持平" if prefix else "持平"
+        return canvas.text((x, middle), label, size, "muted", anchor=anchor, bold=False)
     tone = "up" if points > 0 else "down"
     label = f"{abs(points)}"
-    width = canvas.width(label, size) + 9
+    width = lead + canvas.width(label, size) + 9
     left = x - width if anchor == "rm" else x
+    if prefix:
+        canvas.text((left, middle), prefix, size, "muted", anchor="lm", bold=False)
+        left += lead
     triangle = ((left, middle + 3), (left + 7, middle + 3), (left + 3.5, middle - 4)) if points > 0 else \
         ((left, middle - 3), (left + 7, middle - 3), (left + 3.5, middle + 4))
     canvas.draw.polygon(triangle, fill=canvas.color(tone))
     canvas.text((left + 9, middle), label, size, tone, anchor="lm")
     return width
+
+
+def _spark(canvas, box, points, color):
+    """A month of daily odds drawn small: the line over a quiet fill, today's value as a dot. The
+    scale fits the month's range (at least ten points wide, so a quiet month stays flat)."""
+    left, top, right, bottom = box
+    values = [chance for _when, chance in points]
+    if len(values) < 2 or right - left < 12:
+        return
+    low, high = min(values), max(values)
+    if high - low < 0.1:
+        middle = (high + low) / 2
+        low, high = max(0.0, middle - 0.05), min(1.0, middle + 0.05)
+        if high - low < 0.1:
+            low, high = (0.0, 0.1) if low <= 0 else (0.9, 1.0)
+    start, end = points[0][0], points[-1][0]
+    xy = [(left + (right - left - 3) * (when - start) / max(1, end - start),
+           bottom - (bottom - top) * (chance - low) / (high - low)) for when, chance in points]
+    canvas.draw.polygon([(xy[0][0], bottom), *xy, (xy[-1][0], bottom)], fill=canvas.color("track"))
+    canvas.draw.line(xy, fill=color, width=2, joint="curve")
+    canvas.draw.ellipse((xy[-1][0] - 2.5, xy[-1][1] - 2.5, xy[-1][0] + 2.5, xy[-1][1] + 2.5), fill=color)
+
+
+def _fitted(canvas, facts, size, width, *, keep=1, bold=False):
+    """The facts joined by " · ", dropping from the end (never the first ``keep``) until they fit."""
+    facts = [fact for fact in facts if fact]
+    while len(facts) > keep and canvas.width(" · ".join(facts), size, bold) > width:
+        facts.pop()
+    return " · ".join(facts)
 
 
 def _bar(canvas, box, share, fill):
@@ -323,12 +359,15 @@ def _lead(canvas, payload, images):
     for line in lines:
         canvas.text((x, y), line, size)
         y += size + 3
-    facts = [f"累计成交 {money_text(event['volume'])}"]
-    if event.get("ends"):
-        facts.append(f"截止 {date_text(event['ends'])}")
-    if event.get("comments"):
-        facts.append(f"{event['comments']:,} 条评论")
-    canvas.text((x, max(y + 2, top + 66)), " · ".join(facts), 10, "muted", bold=False, width=right - 12 - x)
+    # The money behind it (traded, held open, standing in the order book), then when it settles;
+    # the comment count gives way first when the line is full.
+    facts = [f"累计成交 {money_text(event['volume'])}",
+             f"持仓 {money_text(event['open_interest'])}" if event.get("open_interest") else "",
+             f"流动性 {money_text(event['liquidity'])}" if event.get("liquidity") else "",
+             f"截止 {date_text(event['ends'])}" if event.get("ends") else "",
+             f"{event['comments']:,} 条评论" if event.get("comments") else ""]
+    canvas.text((x, max(y + 2, top + 66)), _fitted(canvas, facts, 10, right - 12 - x), 10, "muted", bold=False,
+                width=right - 12 - x)
     # The outcomes on the left, a week of the two likeliest's odds on the right.
     rows_top, rows_bottom = top + 84, bottom - 8
     chart_left = right - 10 - LEAD_CHART_W
@@ -339,6 +378,7 @@ def _lead(canvas, payload, images):
     if series:
         _week_chart(canvas, (chart_left, rows_top, right - 10, rows_bottom), series)
     row_h = (rows_bottom - rows_top) / max(1, len(outcomes))
+    weekly = any(outcome.get("week") is not None for outcome in outcomes)
     # Each outcome's portrait, else its mark (the flags of the states it names, a ✓ / ✗, a None
     # sign...), centred in a column as wide as the widest, the names lined up after it.
     side = int(min(row_h - 6, 22))
@@ -354,12 +394,17 @@ def _lead(canvas, payload, images):
         if outcome.get("volume_24h"):
             canvas.text((x, middle + 8), f"24h {money_text(outcome['volume_24h'])}", 9, "muted", anchor="lm",
                         bold=False, width=name_w)
-        track = (left + 18 + LEAD_NAME_W, middle - (4 if index == 0 else 3), rows_right - 78,
+        track = (left + 18 + LEAD_NAME_W, middle - (4 if index == 0 else 3), rows_right - 84,
                  middle + (4 if index == 0 else 3))
         _bar(canvas, track, outcome["chance"], tint)
-        canvas.text((rows_right - 34, middle), chance_text(outcome["chance"]), 16 if index == 0 else 13,
+        canvas.text((rows_right - 40, middle), chance_text(outcome["chance"]), 16 if index == 0 else 13,
                     POLYMARKET if index == 0 else "ink", anchor="rm")
-        _change(canvas, rows_right, middle, outcome["change"])
+        # The day's move beside the name, the week's under it beside the 24h volume (a market
+        # younger than a week has none).
+        week = outcome.get("week")
+        _change(canvas, rows_right, middle - (5 if weekly else 0), outcome["change"])
+        if week is not None:
+            _change(canvas, rows_right, middle + 8, week, size=9, prefix="周")
 
 
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
@@ -486,8 +531,11 @@ def _tile(canvas, box, event, images):
             canvas.text(middle, event["category"][0], 18, (255, 255, 255), anchor="mm")
     x = picture_box[2] + 8
     used = _chip(canvas, x, top + 16, event["category"], color, size=9, icon=CATEGORY_DOODLES.get(event["category"]))
-    meta = f"24h {money_text(event['volume_24h'])}" + (f" · 截止 {date_text(event['ends'])}" if event.get("ends") else "")
-    canvas.text((x + used + 6, top + 16), meta, 9, "muted", anchor="lm", bold=False, width=right - 8 - x - used - 6)
+    room = right - 8 - x - used - 6
+    meta = _fitted(canvas, [f"24h {money_text(event['volume_24h'])}",
+                            f"持仓 {money_text(event['open_interest'])}" if event.get("open_interest") else "",
+                            f"截止 {date_text(event['ends'])}" if event.get("ends") else ""], 9, room)
+    canvas.text((x + used + 6, top + 16), meta, 9, "muted", anchor="lm", bold=False, width=room)
     for number, line in enumerate(canvas.wrap(event["title"], 12, right - 8 - x, 2)):
         canvas.text((x, top + 26 + number * 15), line, 12)
     outcomes = event["outcomes"]
@@ -520,8 +568,9 @@ def _tiles(canvas, payload, images):
 
 # --- Kalshi ----------------------------------------------------------------------------------------
 
-def _fed(canvas, row, top, left, right):
-    """The Fed's next decision: a split bar over its outcomes, the two likeliest named under it."""
+def _fed(canvas, row, top, left, right, spark=None):
+    """The Fed's next decision: a split bar over its outcomes, the two likeliest named under it,
+    then the likeliest's month of odds (``spark``) and the money traded and held on the meeting."""
     when = date_text(row.get("date")) or sources.chinese_when(row.get("when"))
     taken = _paste_mark(canvas, "KXFEDDECISION", left, top + 8)
     canvas.text((left + taken, top + 8), "美联储议息", 13, anchor="lm")
@@ -545,7 +594,18 @@ def _fed(canvas, row, top, left, right):
         x += 13
         x += canvas.text((x, top + 46), f"{outcome['name']} {chance_text(outcome['chance'])}", 12, anchor="lm") + 4
         x += _change(canvas, x, top + 46, outcome["change"], anchor="lm") + 10
-    return top + 58
+    money = _fitted(canvas, [f"24h {money_text(row['volume_24h'])}" if row.get("volume_24h") else "",
+                             f"持仓 {money_text(row['open_interest'])}" if row.get("open_interest") else ""], 10,
+                    (right - left) // 2, keep=0)
+    points = (spark or {}).get("points") or []
+    if not money and len(points) < 2:
+        return top + 58
+    money_w = canvas.text((right, top + 65), money, 10, "muted", anchor="rm", bold=False) if money else 0
+    if len(points) >= 2:
+        label_w = canvas.text((left, top + 65), "30天", 9, "muted", anchor="lm", bold=False) + 4
+        color = FED_COLORS.get(spark.get("name"), KALSHI)
+        _spark(canvas, (left + label_w, top + 58, right - money_w - 10, top + 71), points, color)
+    return top + 78
 
 
 def _ladder(canvas, box, row):
@@ -583,6 +643,20 @@ def _ladder(canvas, box, row):
         canvas.draw.line((x, top, x, bottom), fill=canvas.color("ink"), width=1)
 
 
+def _pivot_spark(canvas, span, spark):
+    """A threshold row's month of odds in the room between its label and value (``span`` is left,
+    middle, right): the chance of "above <strike>" the market is least sure of, named before it."""
+    left, middle, right = span
+    strike = spark.get("strike")
+    label = f">{strike:g}%" if isinstance(strike, (int, float)) else ""
+    label_w = canvas.width(label, 9, bold=False) + 3 if label else 0
+    if right - left - label_w < 30:
+        return
+    if label:
+        canvas.text((left, middle), label, 9, "muted", anchor="lm", bold=False)
+    _spark(canvas, (left + label_w, middle - 6, min(right, left + label_w + 64), middle + 6), spark["points"], KALSHI)
+
+
 def _board(canvas, payload):
     left, top, right, bottom = BOARD
     board = payload.get("board") or {}
@@ -598,8 +672,9 @@ def _board(canvas, payload):
         return
     inner_left, inner_right = left + 12, right - 12
     y = top + BAR + 28
+    sparks = payload.get("sparks") or {}
     if "KXFEDDECISION" in board:
-        y = _fed(canvas, board["KXFEDDECISION"], y, inner_left, inner_right)
+        y = _fed(canvas, board["KXFEDDECISION"], y, inner_left, inner_right, sparks.get("KXFEDDECISION"))
     rows = [(series, board[series]) for series in BOARD_ROWS if series in board]
     row_h = (bottom - 4 - y) / max(1, len(rows))
     for index, (series, row) in enumerate(rows):
@@ -608,11 +683,13 @@ def _board(canvas, payload):
         value, note = board_value(row)
         top_line, low_line = y0 + row_h * 0.34, y0 + row_h * 0.73
         taken = _paste_mark(canvas, series, inner_left, y0 + row_h / 2)
-        canvas.text((inner_left + taken, top_line), row["label"], 13, anchor="lm")
+        label_w = canvas.text((inner_left + taken, top_line), row["label"], 13, anchor="lm")
         tone = KALSHI if row.get("kind") != "yes" else ((0xD4, 0x20, 0x20) if row.get("chance", 0) >= 0.3 else KALSHI)
         value_w = canvas.text((inner_right, top_line), value, 16, tone, anchor="rm")
         if row.get("kind") == "yes" and row.get("change"):
             _change(canvas, inner_right - value_w - 6, top_line, row["change"])
+        elif series in sparks:
+            _pivot_spark(canvas, (inner_left + taken + label_w + 8, top_line, inner_right - value_w - 8), sparks[series])
         canvas.text((inner_left + taken, low_line), note, 10, "muted", anchor="lm", bold=False,
                     width=inner_right - inner_left - taken - LADDER_W - 6)
         _ladder(canvas, (inner_right - LADDER_W, low_line - LADDER_H / 2, inner_right, low_line + LADDER_H / 2), row)
