@@ -264,6 +264,102 @@ def test_fetch_live_payload_uses_feed_order_filters_min_score_and_user_agent(tmp
     assert any(call[1]["headers"]["User-Agent"].startswith("InkyPi TechPulse") for call in session.urls)
 
 
+def _hit(story_id, title, points=100, comments=20, url="https://example.com/story", when=1782520200):
+    return {"objectID": str(story_id), "title": title, "url": url, "points": points, "num_comments": comments,
+            "author": "alice", "created_at_i": when}
+
+
+def test_front_page_comes_from_algolia_in_hn_order_with_one_item_for_the_lead(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    now = datetime.fromtimestamp(1782523800, timezone.utc)
+    session = FakeSession({
+        "topstories.json": [3, 1, 9, 2],
+        "hn.algolia.com": {"hits": [_hit(1, "Second on HN", 500), _hit(2, "Fourth", 40), _hit(3, "Lead on HN", 90, 12),
+                                    _hit(4, "Off the top list", 900)]},
+        # Not tagged by Algolia yet: fetched on its own.
+        "/item/9.json": _story(9, "Just reached the front page", score=70),
+        "/item/3.json": {**_story(3, "Lead on HN", score=90), "kids": [301]},
+        "/item/301.json": _comment(301, "First!", by="carol"),
+        "showstories.json": [3, 50, 51],
+        "/item/50.json": _story(50, "Show HN: A tiny e-paper OS", score=33, descendants=4),
+        "askstories.json": [60],
+        "/item/60.json": {**_story(60, "Ask HN: What are you reading?", score=12, descendants=40), "url": None},
+    })
+    monkeypatch.setattr("plugins.tech_pulse.tech_pulse.get_http_session", lambda: session)
+
+    payload = plugin._fetch_live_payload("topstories", max_stories=4, min_score=50, now=now)
+
+    assert [story["title"] for story in payload["stories"]] == ["Lead on HN", "Second on HN", "Just reached the front page"]
+    assert [story["rank"] for story in payload["stories"]] == [1, 2, 3]
+    lead = payload["stories"][0]
+    assert (lead["score"], lead["comments"], lead["by"], lead["domain"]) == (90, 12, "alice", "example.com")
+    assert lead["top_comment"]["text"] == "First!"
+    # The lead story is already on the page, so Show HN's head is the next story on its page.
+    assert payload["show"]["title"] == "Show HN: A tiny e-paper OS"
+    assert payload["ask"]["title"] == "Ask HN: What are you reading?"
+    fetched = [url for url, _kwargs in session.urls]
+    assert sum("/item/" in url for url in fetched) == 5  # 9, the lead's item, its comment, 50 and 60
+    assert not any(url.endswith(("/item/1.json", "/item/2.json")) for url in fetched)
+    assert payload["status"]["source_urls"][1] == tech_pulse_module.ALGOLIA_SEARCH_URL
+
+
+def test_front_page_falls_back_to_hn_items_when_algolia_is_down(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    now = datetime.fromtimestamp(1782523800, timezone.utc)
+    session = FakeSession({"topstories.json": [1], "/item/1.json": _story(1, "Item story")})
+    monkeypatch.setattr("plugins.tech_pulse.tech_pulse.get_http_session", lambda: session)
+
+    payload = plugin._fetch_live_payload("topstories", max_stories=1, min_score=None, now=now)
+
+    assert [story["title"] for story in payload["stories"]] == ["Item story"]
+    assert payload["show"] is None and payload["ask"] is None
+    assert any("hn.algolia.com" in url for url, _kwargs in session.urls)
+
+
+def test_best_stories_keep_reading_hn_items(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    now = datetime.fromtimestamp(1782523800, timezone.utc)
+    session = FakeSession({"beststories.json": [7], "/item/7.json": _story(7, "Best story")})
+    monkeypatch.setattr("plugins.tech_pulse.tech_pulse.get_http_session", lambda: session)
+
+    payload = plugin._fetch_live_payload("beststories", max_stories=1, min_score=None, now=now)
+
+    assert [story["title"] for story in payload["stories"]] == ["Best story"]
+    assert not any("hn.algolia.com" in url for url, _kwargs in session.urls)
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_show_and_ask_rows_close_the_hn_panel_inside_it(tmp_path, monkeypatch, mode):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc)
+    stories = [plugin._parse_story_item(_story(index, f"Story number {index} " * 4, score=100 * index), now=now)
+               for index in range(1, 6)]
+    for index, story in enumerate(stories, start=1):
+        story["rank"] = index
+    payload = plugin._build_payload("topstories", stories, "live", now, [HN_DOCS_URL])
+    payload["show"] = plugin._parse_story_item(_story(50, "Show HN: " + "A very long project name " * 5), now=now)
+    payload["ask"] = plugin._parse_story_item(_story(60, "Ask HN: What are you reading?", score=12), now=now)
+    boxes = []
+    original = plugin._draw_text
+
+    def capture(local_draw, xy, text, font, fill, **kwargs):
+        boxes.append((str(text), local_draw.textbbox(xy, str(text), font=font, anchor=kwargs.get("anchor"))))
+        return original(local_draw, xy, text, font, fill, **kwargs)
+
+    monkeypatch.setattr(plugin, "_draw_text", capture)
+    plugin._render_page((800, 480), payload, {"_inkypi_theme": canonical_theme(mode)}, now, _ai_boards(), {})
+
+    texts = [text for text, _bbox in boxes]
+    assert {"Show HN", "Ask HN", "What are you reading?"} <= set(texts)
+    assert any(text.startswith("A very long project name") and text.endswith("...") for text in texts)
+    # The fourth front-page story gives way to them.
+    assert not any(text.startswith("Story number 4") for text in texts)
+    hn = tech_pulse_module.HN_BOX
+    for text, bbox in boxes:
+        if text in {"Show HN", "Ask HN", "What are you reading?"}:
+            assert hn[0] < bbox[0] and bbox[2] < hn[2] and hn[1] < bbox[1] and bbox[3] < hn[3]
+
+
 def test_cancelled_refresh_stops_instead_of_caching_a_partial_feed(tmp_path, monkeypatch):
     plugin = _plugin(tmp_path)
     now = datetime.fromtimestamp(1782523800, timezone.utc)

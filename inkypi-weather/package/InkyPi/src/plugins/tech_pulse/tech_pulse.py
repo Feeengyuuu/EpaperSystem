@@ -53,6 +53,25 @@ FEED_LABELS = {
     "beststories": "Best Stories",
     "newstories": "New Stories",
 }
+# The front page's stories with their points and comments in one small request (about 7 KB),
+# ordered as topstories.json orders them; only the lead story's item is still fetched, for its
+# ranked comments.
+ALGOLIA_SEARCH_URL = "https://hn.algolia.com/api/v1/search"
+ALGOLIA_FRONT_PAGE_PARAMS = {
+    "tags": "front_page",
+    "hitsPerPage": 50,
+    "attributesToRetrieve": "title,url,points,num_comments,author,created_at_i",
+    "attributesToHighlight": "none",
+}
+# A story near the top that Algolia has not tagged yet is fetched on its own, up to this many.
+FRONT_PAGE_ITEM_FALLBACKS = 3
+# The heads of HN's Show and Ask pages, under the front page's stories.
+SIDE_FEEDS = (
+    ("show", f"{HN_BASE_URL}/showstories.json", "Show HN"),
+    ("ask", f"{HN_BASE_URL}/askstories.json", "Ask HN"),
+)
+SIDE_CANDIDATES = 3
+SIDE_ROW_H = 24
 USER_AGENT = "InkyPi TechPulse/1.0 (+https://github.com/HackerNews/API)"
 # The AI boards come from AI Ecosystem Pulse's sources and caches, so both pages share
 # one fetch schedule and GitHub's star history.
@@ -380,24 +399,34 @@ class TechPulse(BasePlugin):
         if not isinstance(story_ids, list):
             raise RuntimeError(f"Unexpected Hacker News feed response for {feed}")
 
+        front_page = self._fetch_front_page(session, headers, now) if feed == "topstories" else {}
+        stories, lead_kids = (self._front_page_stories(session, headers, story_ids, front_page, max_stories,
+                                                       min_score, now) if front_page else ([], None))
+        source_urls = [feed_url, ALGOLIA_SEARCH_URL, HN_DOCS_URL] if stories else [feed_url, HN_DOCS_URL]
+        if not stories:
+            stories, lead_kids = self._item_stories(session, headers, story_ids, max_stories, min_score, now)
+
+        if not stories:
+            raise RuntimeError("No displayable Hacker News stories were returned")
+
+        top_comment = self._fetch_top_comment(session, headers, lead_kids, now)
+        if top_comment:
+            stories[0]["top_comment"] = top_comment
+
+        payload = self._build_payload(feed, stories, "live", now, source_urls)
+        shown = {story["id"] for story in stories[:1 + HN_LIST_ROWS]}
+        for key, url, _label in SIDE_FEEDS:
+            payload[key] = self._fetch_side_story(session, headers, url, front_page, shown, now)
+        return payload
+
+    def _item_stories(self, session, headers, story_ids, max_stories, min_score, now):
+        """The feed's first displayable stories, one item request each; with the lead's comment ids."""
         stories = []
         lead_kids = None
         inspect_count = min(len(story_ids), max(20, max_stories * 6))
         for raw_id in story_ids[:inspect_count]:
-            try:
-                item_response = session.get(
-                    f"{HN_BASE_URL}/item/{int(raw_id)}.json",
-                    timeout=REQUEST_TIMEOUT,
-                    headers=headers,
-                )
-                item_response.raise_for_status()
-                item = item_response.json()
-                story = self._parse_story_item(item, now=now)
-            except TaskCancelled:
-                raise  # a cancelled refresh must not cache the stories fetched so far
-            except Exception as exc:
-                logger.debug("Skipping HN item %s: %s", raw_id, exc)
-                continue
+            item = self._fetch_item(session, headers, raw_id)
+            story = self._parse_story_item(item, now=now)
             if not story:
                 continue
             if min_score is not None and story["score"] < min_score:
@@ -408,15 +437,97 @@ class TechPulse(BasePlugin):
             stories.append(story)
             if len(stories) >= max_stories:
                 break
+        return stories, lead_kids
 
-        if not stories:
-            raise RuntimeError("No displayable Hacker News stories were returned")
+    def _fetch_item(self, session, headers, raw_id):
+        """One HN item, or None when it cannot be read."""
+        try:
+            response = session.get(f"{HN_BASE_URL}/item/{int(raw_id)}.json", timeout=REQUEST_TIMEOUT,
+                                   headers=headers)
+            response.raise_for_status()
+            return response.json()
+        except TaskCancelled:
+            raise  # a cancelled refresh must not cache the stories fetched so far
+        except Exception as exc:
+            logger.debug("Skipping HN item %s: %s", raw_id, exc)
+            return None
 
-        top_comment = self._fetch_top_comment(session, headers, lead_kids, now)
-        if top_comment:
-            stories[0]["top_comment"] = top_comment
+    def _fetch_front_page(self, session, headers, now):
+        """{story id: story} for the stories Algolia tags as on the front page; {} when it fails."""
+        try:
+            response = session.get(ALGOLIA_SEARCH_URL, params=ALGOLIA_FRONT_PAGE_PARAMS, timeout=REQUEST_TIMEOUT,
+                                   headers=headers)
+            response.raise_for_status()
+            hits = (response.json() or {}).get("hits")
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.info("Tech Pulse falls back to HN items: Algolia front page unavailable (%s)", exc)
+            return {}
+        stories = {}
+        for hit in hits if isinstance(hits, list) else []:
+            story = self._parse_algolia_hit(hit, now)
+            if story:
+                stories[story["id"]] = story
+        return stories
 
-        return self._build_payload(feed, stories, "live", now, [feed_url, HN_DOCS_URL])
+    def _parse_algolia_hit(self, hit, now):
+        """An Algolia front-page hit as the page's story (the same fields an HN item gives)."""
+        if not isinstance(hit, dict):
+            return None
+        story_id = self._optional_int(hit.get("objectID"))
+        if not story_id:
+            return None
+        return self._parse_story_item({
+            "id": story_id, "type": "story", "title": hit.get("title"), "url": hit.get("url"),
+            "by": hit.get("author"), "time": hit.get("created_at_i"), "score": hit.get("points"),
+            "descendants": hit.get("num_comments"),
+        }, now=now)
+
+    def _front_page_stories(self, session, headers, story_ids, front_page, max_stories, min_score, now):
+        """The front page's stories in HN's order from Algolia's hits; a story near the top Algolia
+        has not tagged yet is fetched on its own. Returns (stories, the lead's comment ids)."""
+        stories = []
+        fallbacks = 0
+        for raw_id in story_ids[:len(front_page) + FRONT_PAGE_ITEM_FALLBACKS]:
+            story_id = self._optional_int(raw_id)
+            story = dict(front_page[story_id]) if story_id in front_page else None
+            if story is None and fallbacks < FRONT_PAGE_ITEM_FALLBACKS:
+                fallbacks += 1
+                story = self._parse_story_item(self._fetch_item(session, headers, raw_id), now=now)
+            if not story or (min_score is not None and story["score"] < min_score):
+                continue
+            story["rank"] = len(stories) + 1
+            stories.append(story)
+            if len(stories) >= max_stories:
+                break
+        lead_kids = None
+        if stories:
+            # HN's item lists the lead's comments in their ranked order; Algolia's do not.
+            lead = self._fetch_item(session, headers, stories[0]["id"]) or {}
+            lead_kids = lead.get("kids")
+        return stories, lead_kids
+
+    def _fetch_side_story(self, session, headers, url, front_page, shown, now):
+        """The first story on HN's Show or Ask page not already on the page, or None."""
+        try:
+            response = session.get(url, timeout=REQUEST_TIMEOUT, headers=headers)
+            response.raise_for_status()
+            ids = response.json()
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.debug("Tech Pulse side feed %s unavailable: %s", url, exc)
+            return None
+        for raw_id in (ids if isinstance(ids, list) else [])[:SIDE_CANDIDATES]:
+            story_id = self._optional_int(raw_id)
+            if not story_id or story_id in shown:
+                continue
+            story = front_page.get(story_id) or self._parse_story_item(
+                self._fetch_item(session, headers, raw_id), now=now)
+            if story:
+                return dict(story)
+        return None
 
     def _fetch_top_comment(self, session, headers, kids, now):
         # HN lists kids in ranked display order, so the first live comment is
@@ -677,8 +788,33 @@ class TechPulse(BasePlugin):
         lead_bottom = self._draw_lead(image, draw, (x0 + 12, y0 + 30, x1 - 12, y1), stories[0], settings, palette,
                                       fonts, board, now)
         draw.line((x0 + 12, lead_bottom + 6, x1 - 12, lead_bottom + 6), fill=palette["rule"], width=1)
-        self._draw_story_list(draw, (x0 + 12, lead_bottom + 8, x1 - 12, y1 - 4), stories[1:1 + HN_LIST_ROWS],
-                              settings, palette, fonts, board, now)
+        # The heads of HN's Show and Ask pages close the panel, in place of the front page's fourth story.
+        side = [(key, label, payload[key]) for key, _url, label in SIDE_FEEDS
+                if isinstance(payload.get(key), dict) and self._clean_text(payload[key].get("title"))]
+        rows = HN_LIST_ROWS - (1 if side else 0)
+        list_bottom = y1 - 4 - (len(side) * SIDE_ROW_H + 4 if side else 0)
+        self._draw_story_list(draw, (x0 + 12, lead_bottom + 8, x1 - 12, list_bottom), stories[1:1 + rows],
+                              settings, palette, fonts, board, now, rows)
+        if side:
+            draw.line((x0 + 12, list_bottom + 2, x1 - 12, list_bottom + 2), fill=palette["rule"], width=1)
+            # One chip width for both, so their titles line up.
+            chip_w = max(self._text_width(draw, label, fonts["tiny_bold"]) for _key, label, _story in side) + 12
+            for index, (key, label, story) in enumerate(side):
+                top = list_bottom + 4 + index * SIDE_ROW_H
+                self._side_row(draw, (x0 + 12, top, x1 - 12, top + SIDE_ROW_H), key, label, story, chip_w, palette,
+                               fonts)
+
+    def _side_row(self, draw, box, key, label, story, chip_w, palette, fonts):
+        """A Show HN or Ask HN story on one line: its page's chip, its title and its points and comments."""
+        x0, y0, x1, y1 = box
+        middle = (y0 + y1) / 2
+        draw.rounded_rectangle((x0, middle - 8, x0 + chip_w, middle + 8), radius=5, fill=palette[key])
+        self._draw_text(draw, (x0 + chip_w / 2, middle), label, fonts["tiny_bold"], palette["panel"], anchor="mm")
+        right = self._draw_story_metrics(draw, x1, middle, story, palette, fonts)
+        title = re.sub(r"^(?:show|ask)\s+hn\s*[:\-]\s*", "", self._clean_text(story.get("title")), flags=re.IGNORECASE)
+        title_x = x0 + chip_w + 8
+        self._draw_text(draw, (title_x, middle), self._fit_text(draw, title, fonts["row"], right - 10 - title_x),
+                        fonts["row"], palette["ink"], anchor="lm")
 
     def _draw_lead(self, image, draw, box, story, settings, palette, fonts, history, now):
         """The top story: title, meta, points trend and top comment; returns its bottom edge."""
@@ -717,9 +853,9 @@ class TechPulse(BasePlugin):
                                     fonts["label"], fonts["body"])
         return preview_top + 78
 
-    def _draw_story_list(self, draw, box, stories, settings, palette, fonts, history, now):
+    def _draw_story_list(self, draw, box, stories, settings, palette, fonts, history, now, rows=HN_LIST_ROWS):
         x0, y0, x1, y1 = box
-        row_h = (y1 - y0) / HN_LIST_ROWS
+        row_h = (y1 - y0) / max(1, rows)
         for index, story in enumerate(stories):
             top = y0 + index * row_h
             self._story_row(draw, (x0, top, x1, top + row_h), story, settings, palette, fonts, history, now)
@@ -1244,6 +1380,8 @@ class TechPulse(BasePlugin):
                 "hf": (255, 210, 30),
                 "hf_text": (196, 120, 0),
                 "gh": (31, 136, 61),
+                "show": (5, 150, 105),
+                "ask": (37, 84, 199),
             }
         roles = {
             name: tuple(value)
@@ -1266,6 +1404,8 @@ class TechPulse(BasePlugin):
             "hf": (255, 210, 30),
             "hf_text": (255, 210, 30),
             "gh": (72, 196, 106),
+            "show": (52, 211, 153),
+            "ask": (122, 162, 255),
         }
 
     def _write_context(self, payload, now, ai=None):
@@ -1276,6 +1416,8 @@ class TechPulse(BasePlugin):
                 {
                     "feed": payload.get("feed"),
                     "stories": payload.get("stories") or [],
+                    "show": payload.get("show"),
+                    "ask": payload.get("ask"),
                     "stats": payload.get("stats") or {},
                     "status": payload.get("status") or {},
                     "source_provenance": payload.get("_source_provenance"),
