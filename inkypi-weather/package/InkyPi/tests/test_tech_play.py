@@ -272,6 +272,9 @@ def test_games_get_their_small_steam_icon_by_name_or_appid(monkeypatch):
     assert icons["Home - A Unique Horror Adventure"].endswith("/apps/559680/" + "b" * 40 + ".jpg")
     assert icons["影之刃零"].endswith("/apps/3047/" + "c" * 40 + ".jpg") and "GTA VI" not in icons
     assert "影之刃零" not in searches and len(batches) == 1
+    # Steam's shared community_assets path: the older steamcommunity/public one 404s for newer games.
+    assert icons["影之刃零"].startswith("https://shared.fastly.steamstatic.com/community_assets/images/apps/")
+    assert sources.safe_image_url(icons["影之刃零"]) == icons["影之刃零"]
 
 
 def test_a_steam_cover_url_names_its_app():
@@ -536,6 +539,53 @@ def test_steam_wishlist_reads_names_and_app_ids():
     assert len(data["items"]) == sources.MAX_WISHLIST
     with pytest.raises(ValueError):
         sources.normalize_wishlist({"items": []})
+
+
+def test_each_wishlisted_game_leads_with_its_small_steam_icon():
+    from PIL import Image
+
+    from plugins.tech_play import render
+
+    payload = _payload()
+    payload["wishlist"] = {"state": "live", "data": {"items": [
+        {"name": "Deadlock", "appid": 1422450}, {"name": "Light No Fire 无火之光", "appid": 2719590},
+        {"name": "No Icon Yet", "appid": 9}]}}
+    deadlock = "https://shared.fastly.steamstatic.com/community_assets/images/apps/1422450/" + "a" * 40 + ".jpg"
+    payload["icons"] = {"state": "live", "data": {"icons": {"Deadlock": deadlock}}}
+    calls = []
+    original = render._game_icon
+
+    def spy(canvas, page, images, name, xy, size):
+        calls.append((name, size))
+        return original(canvas, page, images, name, xy, size)
+
+    render._game_icon = spy
+    try:
+        image = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW,
+                            {deadlock: Image.new("RGB", (32, 32), (200, 30, 160))})
+    finally:
+        render._game_icon = original
+
+    assert [call for call in calls if call[1] == render.WISHLIST_ICON] == [
+        ("Deadlock", render.WISHLIST_ICON), ("Light No Fire 无火之光", render.WISHLIST_ICON),
+        ("No Icon Yet", render.WISHLIST_ICON)]
+    column = image.crop((render.UPCOMING_CARD[2] - render.WISHLIST_W - 8, render.UPCOMING_CARD[1],
+                         render.UPCOMING_CARD[2], render.UPCOMING_CARD[3])).convert("RGB")
+    assert sum(1 for pixel in column.get_flattened_data() if pixel == (200, 30, 160)) > 100
+
+
+def test_the_icon_lookup_covers_the_wishlisted_games_by_their_app_ids():
+    from plugins.tech_play.tech_play import icon_games
+
+    payload = {"epic": {"data": {"current": [{"title": "Sorry We're Closed"}], "upcoming": []}},
+               "upcoming": {"data": {"items": [{"name": "Deadlock", "image": None}, {"name": "Hela", "appid": 7}]}},
+               "wishlist": {"data": {"items": [{"name": "Deadlock", "appid": 1422450},
+                                               {"name": "神鬼寓言", "appid": 2769570}, {"name": ""}]}}}
+
+    assert icon_games(payload) == [("Sorry We're Closed", None), ("Deadlock", None), ("Hela", 7),
+                                   ("Deadlock", 1422450), ("神鬼寓言", 2769570)]
+    # Without the list (its source failed), the rest still get theirs.
+    assert icon_games({**payload, "wishlist": {"data": {}}})[-1] == ("Hela", 7)
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])

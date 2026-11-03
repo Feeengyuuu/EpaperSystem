@@ -93,6 +93,8 @@ ROW_MARK, ROW_GAP = 11, 3
 # coming games (four without the list).
 WISHLIST_W = 150
 WISHLIST_ROWS = 4
+# Each listed game's small Steam icon before its name, this many px square.
+WISHLIST_ICON = 15
 
 
 def _rgb(value):
@@ -601,7 +603,8 @@ def _upcoming(canvas, payload, images, now):
     left, right = UPCOMING_CARD[0] + 8, UPCOMING_CARD[2] - 8
     top = UPCOMING_CARD[1] + HEADER + 4
     if wished:
-        _wishlist(canvas, (right - WISHLIST_W, top, right, UPCOMING_CARD[3] - 8), wished[:WISHLIST_ROWS])
+        _wishlist(canvas, payload, images, (right - WISHLIST_W, top, right, UPCOMING_CARD[3] - 8),
+                  wished[:WISHLIST_ROWS])
         right -= WISHLIST_W + 12
     if not items:
         canvas.text((left, 260), "新作列表暂不可用", 14, "muted", anchor="lm")
@@ -648,9 +651,9 @@ def _upcoming(canvas, payload, images, now):
             mark_x += mark.width + ROW_GAP
 
 
-def _wishlist(canvas, box, items):
+def _wishlist(canvas, payload, images, box, items):
     """Steam's most wishlisted coming games down a column: a heading, then each game's rank in the
-    card's cobalt and its name in ink."""
+    card's cobalt, its small Steam icon (when it has one) and its name in ink."""
     left, top, right, bottom = box
     canvas.rule((left - 6, top + 2, left - 6, bottom - 2))
     draw_icon(canvas.draw, "heart", (left, top + 2), 11, canvas.color("upcoming_bar"), canvas.color("paper"))
@@ -659,7 +662,12 @@ def _wishlist(canvas, box, items):
     for index, item in enumerate(items):
         middle = top + 18 + row_h * (index + 0.5)
         canvas.text((left + 5, middle), str(index + 1), 12, "upcoming_bar", anchor="mm")
-        canvas.text((left + 15, middle), item.get("name") or "", 11, anchor="lm", width=right - left - 15)
+        name = item.get("name") or ""
+        name_x = left + 15 + _game_icon(canvas, payload, images, name, (left + 15, middle - WISHLIST_ICON / 2),
+                                        WISHLIST_ICON)
+        # A long name steps down a size before it is cut short.
+        size = 11 if canvas.width(name, 11) <= right - name_x else 10
+        canvas.text((name_x, middle), name, size, anchor="lm", width=right - name_x)
 
 
 def _initials(name):

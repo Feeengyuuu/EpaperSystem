@@ -40,7 +40,9 @@ STEAM_ITEMS_URL = "https://api.steampowered.com/IStoreBrowseService/GetItems/v1/
 IGDB_STEAM_SOURCE = 1
 IGDB_STEAM_FIELDS = "external_games.uid,external_games.category,external_games.external_game_source"
 # A game's small Steam icon (the 32 px community icon of its store page).
-STEAM_ICON_URL = "https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/{appid}/{icon}.jpg"
+# A game's small community icon. Steam's older steamcommunity/public path 404s for newer games
+# (Dear Passengers, 神鬼寓言), the shared community_assets path serves old and new alike.
+STEAM_ICON_URL = "https://shared.fastly.steamstatic.com/community_assets/images/apps/{appid}/{icon}.jpg"
 ARXIV_URL = "https://export.arxiv.org/api/query"
 SPEEDRUN_GAMES_URL = "https://www.speedrun.com/api/v1/games"
 SPEEDRUN_RUNS_URL = "https://www.speedrun.com/api/v1/runs"

@@ -48,6 +48,19 @@ def _checkpoint(context):
         raise TaskCancelled("Tech & Play instance changed during refresh")
 
 
+def icon_games(payload):
+    """The (name, Steam app id or None) of every game the page shows by name: Epic's two
+    giveaways, the coming games and the most wishlisted, whose list carries its app ids, so their
+    icons need no name search."""
+    epic = (payload.get("epic") or {}).get("data") or {}
+    games = [(item.get("title"), None) for item in (epic.get("current", []) + epic.get("upcoming", []))[:2]]
+    games += [(item.get("name"), item.get("appid") or sources.steam_appid_from_url(item.get("image")))
+              for item in ((payload.get("upcoming") or {}).get("data") or {}).get("items", [])[:4]]
+    games += [(item.get("name"), item.get("appid"))
+              for item in ((payload.get("wishlist") or {}).get("data") or {}).get("items", [])[:sources.MAX_WISHLIST]]
+    return list(dict.fromkeys((name, appid) for name, appid in games if name))
+
+
 class TechPlay(BasePlugin):
     def generate_settings_template(self):
         params = super().generate_settings_template()
@@ -118,13 +131,11 @@ class TechPlay(BasePlugin):
             timeout_seconds=20, min_remaining_seconds=10))
         epic = payload["epic"]["data"]
         # Each shown game's small Steam icon, looked up once a week for the names on the page.
-        games = [(item.get("title"), None) for item in (epic.get("current", []) + epic.get("upcoming", []))[:2]]
-        games += [(item.get("name"), item.get("appid") or sources.steam_appid_from_url(item.get("image")))
-                  for item in payload["upcoming"]["data"].get("items", [])[:4]]
-        games = [(name, appid) for name, appid in games if name]
-        # "match" versions the lookup rule, so a rule change looks the names up again.
+        games = icon_games(payload)
+        # "match" versions the lookup rule and "path" the icons' address, so a change to either
+        # looks the names up again.
         payload["icons"] = load(Source("steam-icons", {"games": sorted(name for name, _appid in games),
-                                                       "match": "whole-words"},
+                                                       "match": "whole-words", "path": "community_assets"},
                                        lambda ctx: sources.fetch_steam_icons(games, ctx),
                                        fresh_seconds=7 * 86400, usable_seconds=30 * 86400,
                                        validate=sources.valid_steam_icons, timeout_seconds=15))
