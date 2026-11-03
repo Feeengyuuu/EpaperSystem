@@ -24,11 +24,11 @@ from .traffic_icons import draw_icon
 DAY = dict(paper="#ffffff", ink="#152839", muted="#43586a", rule="#b4bdc6", blue="#005b9c",
            pale="#eaf2f8", orange="#bd450b", soft="#faf0e8", planned="#596779", chart="#dcebf5",
            water_mid="#b9daea", water_deep="#8fc2dc", foam="#ffffff",
-           crimson="#c81e32", emerald="#059669", plate="#111a22", plate_ink="#ffffff", plate_muted="#c9d3db")
+           crimson="#c81e32", emerald="#059669")
 NIGHT = dict(paper="#080e14", ink="#eef4f9", muted="#b3c5d2", rule="#465562", blue="#7cc9fa",
              pale="#102538", orange="#ffb67c", soft="#301e14", planned="#bac8d6", chart="#102a3d",
              water_mid="#1f4a66", water_deep="#275a7c", foam="#cfe8f7",
-             crimson="#ff6b78", emerald="#34d399", plate="#1b2a36", plate_ink="#eef4f9", plate_muted="#b3c5d2")
+             crimson="#ff6b78", emerald="#34d399")
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 # The tide card's readouts in a display face (the bundled Space Grotesk, SIL OFL) and the weight
 # set on it as a variable font (None for a static one); Inter stands in without it.
@@ -190,14 +190,14 @@ def header(page, now):
 
 
 def sign_plate(page, sign, box=SIGN_BOX):
-    """One of Caltrans' travel-time signs near home as the sign itself shows it: a dark plate with
-    the route's shield, its direction and the message's time at the left, then each destination
-    with its minutes aligned at the right. Nothing without a current sign."""
+    """One of Caltrans' travel-time signs near home laid out as the sign shows it, straight on the
+    page with no plate behind it: the route's shield, its direction and the message's time at the
+    left, then each destination with its minutes aligned at the right. Nothing without a current
+    sign."""
     if not sign or not sign.get("lines"):
         return
     left, top, right, bottom = box
     d, p = page.draw, page.palette
-    d.rounded_rectangle(box, radius=5, fill=p["plate"], outline=p["rule"] if page.mode == "night" else None)
     strip = left + 44
     route = str(sign.get("route") or "")
     if route in SIGN_SHIELDS:
@@ -206,23 +206,23 @@ def sign_plate(page, sign, box=SIGN_BOX):
         page.image.paste(art, (round(left + (strip - left - art.width) / 2), top + 4), art)
         art.close()
     else:
-        page.text(((left + strip) / 2, top + 9), route.replace("SR-", "").replace("US-", ""), 11, "plate_ink",
+        page.text(((left + strip) / 2, top + 9), route.replace("SR-", "").replace("US-", ""), 11, "ink",
                   role="number", align="center", width=40)
     direction = DIRECTIONS.get(sign.get("direction"), "")
     if direction:
-        page.text(((left + strip) / 2, top + 30), direction, 9, "plate_ink", align="center", width=40)
+        page.text(((left + strip) / 2, top + 30), direction, 9, "ink", align="center", width=40)
     shown = parse_time(sign.get("time"))
     if shown:
-        page.text(((left + strip) / 2, top + 41), shown.astimezone(PACIFIC).strftime("%H:%M"), 8, "plate_muted",
+        page.text(((left + strip) / 2, top + 41), shown.astimezone(PACIFIC).strftime("%H:%M"), 8, "muted",
                   role="number", bold=False, align="center", width=40)
-    d.line((strip, top + 6, strip, bottom - 6), fill=p["plate_muted"], width=1)
+    d.line((strip, top + 6, strip, bottom - 6), fill=p["muted"], width=1)
     lines = sign["lines"][:3]
     pitch = (bottom - top - 8) / 3
     for index, line in enumerate(lines):
         y = round(top + 5 + index * pitch + (pitch - 11) / 2)
         minutes = f"{line['minutes']} MIN"
-        width = page.text((right - 9, y), minutes, 10, "plate_ink", role="road", align="right")
-        page.text((strip + 9, y), line["to"], 10, "plate_ink", role="road", width=right - 9 - width - 12 - strip - 9)
+        width = page.text((right - 9, y), minutes, 10, "ink", role="road", align="right")
+        page.text((strip + 9, y), line["to"], 10, "ink", role="road", width=right - 9 - width - 12 - strip - 9)
 
 
 def section_titles(page):
