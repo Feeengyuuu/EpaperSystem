@@ -64,7 +64,7 @@ STEAM_OWNED_GAMES_URL = "https://api.steampowered.com/IPlayerService/GetOwnedGam
 STEAM_TAG_LIST_URL = "https://api.steampowered.com/IStoreService/GetTagList/v1/"
 SHELF_LANGUAGE = "schinese"
 # Store facts cached under an older shape are fetched again.
-SHELF_DETAILS_VERSION = 3
+SHELF_DETAILS_VERSION = 4
 # A studio's logo: its creator clan's Steam avatar, from the clan's public profile (shared with
 # Steam Charts, plugins.base_plugin.steam_studios).
 STEAM_CLAN_XML_URL = steam_studios.CLAN_XML_URL
@@ -77,6 +77,10 @@ MAX_STUDIOS = 300
 MAX_NEW_STUDIO_LOGOS = 4
 # Steam Deck compatibility categories worth a word.
 DECK_LABELS = {3: "Steam Deck 已验证", 2: "Steam Deck 可玩"}
+# Simplified Chinese (Steam's language 6) as the store lists it: full audio, subtitles, the
+# interface only, or not at all.
+SCHINESE_LANGUAGE = 6
+ZH_LANGUAGE_LABELS = {"audio": "中文配音", "subtitles": "简中字幕", "interface": "简中界面", "none": "无简中"}
 SHELF_DETAILS_TTL = 6 * 3600
 WISHLIST_TTL = 6 * 3600
 WISHLIST_DEALS_TTL = 3 * 3600
@@ -1121,7 +1125,7 @@ class SteamDailyArt(BasePlugin):
                     stale[:STORE_ITEMS_BATCH],
                     country,
                     {"include_basic_info": True, "include_tag_count": 6, "include_reviews": True, "include_release": True,
-                     "include_platforms": True},
+                     "include_platforms": True, "include_supported_languages": True},
                 )
             except TaskCancelled:
                 raise
@@ -1150,8 +1154,11 @@ class SteamDailyArt(BasePlugin):
                 return 0
 
         basic = entry.get("basic_info") if isinstance(entry.get("basic_info"), dict) else {}
-        reviews = (entry.get("reviews") or {}).get("summary_filtered") if isinstance(entry.get("reviews"), dict) else None
-        reviews = reviews if isinstance(reviews, dict) else {}
+        summaries = entry.get("reviews") if isinstance(entry.get("reviews"), dict) else {}
+        reviews = summaries.get("summary_filtered") if isinstance(summaries.get("summary_filtered"), dict) else {}
+        # The reviews written in the shelf's language (Simplified Chinese) on their own.
+        local = summaries.get("summary_language_specific")
+        local = local if isinstance(local, dict) else {}
         release = entry.get("release") if isinstance(entry.get("release"), dict) else {}
         option = entry.get("best_purchase_option") if isinstance(entry.get("best_purchase_option"), dict) else {}
         developers = [item for item in basic.get("developers") or [] if isinstance(item, dict) and item.get("name")]
@@ -1160,6 +1167,11 @@ class SteamDailyArt(BasePlugin):
         tags = entry.get("tags") if isinstance(entry.get("tags"), list) else []
         platforms = entry.get("platforms") if isinstance(entry.get("platforms"), dict) else {}
         review_count = number(reviews.get("review_count"))
+        local_count = number(local.get("review_count"))
+        discount = 0 if option.get("hide_discount_pct_for_compliance") else number(option.get("discount_pct"))
+        # When the sale ends: the soonest end of the purchase option's running discounts.
+        ends = [number(item.get("discount_end_date")) for item in option.get("active_discounts") or []
+                if isinstance(item, dict)]
         return {
             "name": " ".join(str(entry.get("name") or "").split())[:120],
             "description": " ".join(str(basic.get("short_description") or "").split())[:400],
@@ -1181,10 +1193,28 @@ class SteamDailyArt(BasePlugin):
             "release": number(release.get("steam_release_date")),
             "coming_soon": bool(release.get("is_coming_soon")),
             "free": bool(entry.get("is_free")),
-            "discount": 0 if option.get("hide_discount_pct_for_compliance") else number(option.get("discount_pct")),
+            "discount": discount,
             "final": str(option.get("formatted_final_price") or "")[:24],
             "original": str(option.get("formatted_original_price") or "")[:24],
+            "sale_ends": min((end for end in ends if end > 0), default=0) if discount else 0,
+            "zh_review_percent": number(local.get("percent_positive")) if local_count else 0,
+            "zh_review_count": local_count,
+            "zh_language": SteamDailyArt._zh_language(entry.get("supported_languages")),
         }
+
+    @staticmethod
+    def _zh_language(languages):
+        """How the game speaks Simplified Chinese: "audio", "subtitles", "interface" or "none";
+        "" when the store did not list its languages."""
+        if not isinstance(languages, list):
+            return ""
+        entry = next((item for item in languages if isinstance(item, dict)
+                      and item.get("elanguage") == SCHINESE_LANGUAGE), {})
+        if entry.get("full_audio") is True:
+            return "audio"
+        if entry.get("subtitles") is True:
+            return "subtitles"
+        return "interface" if entry.get("supported") is True else "none"
 
     def _tag_names(self):
         """Steam's tag names in simplified Chinese by tag id."""
@@ -1328,11 +1358,14 @@ class SteamDailyArt(BasePlugin):
             return None
         names = self._tag_names()
         now = self._shelf_now()
+        language = ZH_LANGUAGE_LABELS.get(facts.get("zh_language") or "")
         return {
-            # The Steam Deck's verdict, with Steam's own mark, follows the reasons while there is room.
+            # Whether it speaks Simplified Chinese, then the Steam Deck's verdict with Steam's own mark,
+            # follow the reasons while there is room.
             "reasons": self._shelf_reasons(item, facts, now)
+            + ([("zh_language", language)] if language else [])
             + ([("steam_icon", DECK_LABELS[facts["deck"]])] if facts.get("deck") in DECK_LABELS else []),
-            "price": self._shelf_price(facts),
+            "price": self._shelf_price(facts, now),
             "line": self._blurbs({appid: {**facts, "tag_names": [names[tag] for tag in facts.get("tags") or [] if tag in names]}}).get(appid)
             or facts.get("name") or str(item.get("name") or ""),
             "tags": [names[tag] for tag in facts.get("tags") or [] if tag in names][:4],
@@ -1344,6 +1377,7 @@ class SteamDailyArt(BasePlugin):
                     (f"{facts['publisher']} 发行" if facts.get("publisher") else "", 3),
                     (self._release_label(facts, now), 2),
                     (self._review_label(facts), 1),
+                    (self._zh_review_label(facts), 1),
                 )
                 if text
             ],
@@ -1432,11 +1466,17 @@ class SteamDailyArt(BasePlugin):
         return reasons[:3]
 
     @staticmethod
-    def _shelf_price(facts):
+    def _shelf_price(facts, now=None):
         if facts.get("free"):
             return {"label": "免费开玩"}
         if facts.get("discount") and facts.get("final"):
-            return {"discount": facts["discount"], "final": facts["final"], "original": facts.get("original") or ""}
+            price = {"discount": facts["discount"], "final": facts["final"], "original": facts.get("original") or ""}
+            # The sale's last day as a date, never a count of days: the page is drawn ahead and
+            # may be shown up to two days later.
+            ends = facts.get("sale_ends")
+            if now is not None and ends and ends > now.timestamp():
+                price["ends"] = f"{datetime.fromtimestamp(int(ends), tz=now.tzinfo):%m/%d} 截止"
+            return price
         if facts.get("final"):
             return {"final": facts["final"]}
         if facts.get("coming_soon"):
@@ -1462,6 +1502,11 @@ class SteamDailyArt(BasePlugin):
         if not facts.get("review_label") or not facts.get("review_count"):
             return ""
         return f"{facts['review_label']} {facts['review_percent']}%"
+
+    @staticmethod
+    def _zh_review_label(facts):
+        """The share of positive Simplified Chinese reviews, when there are any."""
+        return f"简中 {facts['zh_review_percent']}%" if facts.get("zh_review_count") else ""
 
     def _blurbs(self, details, *, allow_generate=False):
         """All languages share a versioned Chinese line cache; only DATA may generate."""

@@ -1943,6 +1943,10 @@ def test_store_details_are_fetched_in_one_batch_parsed_and_cached(tmp_path, monk
     again = plugin._store_details(["2", "1"], {})
 
     assert len(calls) == 1 and "schinese" in calls[0]
+    # The same request asks for the languages too (whether it speaks Simplified Chinese).
+    from urllib.parse import parse_qs, urlsplit
+    query = json.loads(parse_qs(urlsplit(calls[0]).query)["input_json"][0])
+    assert query["data_request"]["include_supported_languages"] is True
     assert set(details) == {"1", "2"} and again == details
     assert details["1"]["review_label"] == "特别好评" and details["1"]["discount"] == 30
     assert details["2"]["review_label"] == "" and details["2"]["discount"] == 0
@@ -2225,3 +2229,81 @@ def test_a_studio_avatars_flat_ground_is_cut_away():
     # A photo-like avatar with no flat ground keeps its rounded square.
     photo = Image.linear_gradient("L").convert("RGB").resize((64, 64))
     assert shelf._studio_cutout(photo) is None
+
+
+def test_store_details_read_the_sales_end_chinese_reviews_and_chinese_support():
+    source = _store_entry(1245620, "一款动作角色扮演游戏")
+    source["reviews"]["summary_language_specific"] = {"review_count": 182_497, "percent_positive": 90,
+                                                      "review_score_label": "特别好评"}
+    source["best_purchase_option"]["active_discounts"] = [
+        {"discount_amount": "300", "discount_end_date": 1794592800},
+        {"discount_amount": "100", "discount_end_date": 1794852000}]
+    source["supported_languages"] = [
+        {"elanguage": 0, "supported": True, "full_audio": True, "subtitles": True},
+        {"elanguage": 6, "supported": True, "full_audio": False, "subtitles": True}]
+
+    facts = SteamDailyArt._parse_store_details(source)
+
+    assert facts["sale_ends"] == 1794592800
+    assert (facts["zh_review_percent"], facts["zh_review_count"]) == (90, 182_497)
+    assert facts["zh_language"] == "subtitles"
+    # Without a running discount there is no end; without the language list nothing is claimed.
+    source["best_purchase_option"]["discount_pct"] = 0
+    source.pop("supported_languages")
+    source["reviews"].pop("summary_language_specific")
+    facts = SteamDailyArt._parse_store_details(source)
+    assert (facts["sale_ends"], facts["zh_language"], facts["zh_review_count"]) == (0, "", 0)
+
+
+@pytest.mark.parametrize(("languages", "spoken"), [
+    ([{"elanguage": 6, "supported": True, "full_audio": True, "subtitles": True}], "audio"),
+    ([{"elanguage": 6, "supported": True, "full_audio": False, "subtitles": False}], "interface"),
+    ([{"elanguage": 6, "supported": False, "full_audio": False, "subtitles": False}], "none"),
+    ([{"elanguage": 0, "supported": True, "full_audio": True, "subtitles": True}], "none"),
+    (None, ""),
+])
+def test_chinese_support_reads_steams_language_six(languages, spoken):
+    assert SteamDailyArt._zh_language(languages) == spoken
+
+
+def test_shelf_info_dates_the_sales_end_and_names_chinese_support_and_reviews(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    from datetime import timedelta, timezone
+
+    now = datetime(2026, 11, 2, 18, 0, tzinfo=timezone(timedelta(hours=-8)))
+    facts = {"name": "Elden Ring", "description": "动作角色扮演", "developer": "FromSoftware", "tags": [],
+             "review_label": "特别好评", "review_percent": 93, "review_count": 835_064, "release": 0,
+             "free": False, "discount": 40, "final": "$35.99", "original": "$59.99",
+             "sale_ends": int(datetime(2026, 11, 6, 10, 0, tzinfo=timezone(timedelta(hours=-8))).timestamp()),
+             "zh_review_percent": 90, "zh_review_count": 182_497, "zh_language": "audio", "deck": 3}
+    monkeypatch.setattr(plugin, "_store_details", lambda appids, _settings: {"1245620": facts})
+    monkeypatch.setattr(plugin, "_tag_names", lambda: {})
+    monkeypatch.setattr(plugin, "_shelf_now", lambda: now)
+    item = {"id": 1245620, "type": 0, "_category_tags": ["specials"]}
+
+    info = plugin._shelf_info(item, {})
+
+    assert info["price"] == {"discount": 40, "final": "$35.99", "original": "$59.99", "ends": "11/06 截止"}
+    assert info["reasons"] == [("deal", "特惠"), ("zh_language", "中文配音"), ("steam_icon", "Steam Deck 已验证")]
+    assert info["credit"] == [("FromSoftware", 0), ("特别好评 93%", 1), ("简中 90%", 1)]
+    # A sale already over by the time the page is drawn names no end.
+    monkeypatch.setattr(plugin, "_shelf_now", lambda: now + timedelta(days=5))
+    assert "ends" not in plugin._shelf_info(item, {})["price"]
+
+
+def test_the_sales_end_stands_before_the_struck_price_with_a_clock(monkeypatch):
+    drawn = []
+    real = ImageDraw.ImageDraw.text
+
+    def capture(self, xy, text, *args, **kwargs):
+        drawn.append((xy[0], str(text)))
+        return real(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture)
+    info = dict(SHELF_INFO, price=dict(SHELF_INFO["price"], ends="11/06 截止"))
+    info_shelf.draw_shelf(_field_art(), info, info_shelf.find_flat_band(_field_art()))
+
+    positions = {text: x for x, text in drawn}
+    assert positions["11/06 截止"] < positions["$6.99"] < positions["$4.89"]
+    # The reasons still come first at the left.
+    assert positions["愿望单特惠"] < positions["11/06 截止"]

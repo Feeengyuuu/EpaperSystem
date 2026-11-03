@@ -3,8 +3,9 @@
 Store art often paints a third of itself in one flat colour (a field, a sky, the mat around
 a wide header). The shelf turns that block, or a soft band at the foot of any other art,
 into why the game is on screen: its reasons (on your wishlist, a deal, new, a top seller,
-already yours), its price, one line on what it is, its tags and who made it, with the
-Steam wordmark. The shelf takes the art's own hue, deep and calm; its words are pure white.
+already yours) and whether it speaks Simplified Chinese, its price and the day its sale
+ends, one line on what it is, its tags, who made it and its reviews (overall and those
+written in Simplified Chinese), with the Steam wordmark. The shelf takes the art's own hue, deep and calm; its words are pure white.
 
 Pixel art drawn at a whole-number scale is brought back to its own pixel grid and
 enlarged without smoothing, so its pixels stay square and sharp on the panel.
@@ -44,6 +45,8 @@ PRICE_SIZE = 28
 CUT_SIZE = 22
 ORIGINAL_SIZE = 15
 ICON_SIZE = 18
+# The clock before the day a sale ends.
+CLOCK_SIZE = 15
 WORDMARK_HEIGHT = 15
 # The developer's logo before its name in the credit line.
 STUDIO_LOGO = 18
@@ -295,9 +298,17 @@ def _text_y(draw, text, font, top, height):
     return top + (height - (box[3] - box[1])) / 2 - box[1]
 
 
+def _clock(draw, x, middle, size):
+    """A white clock face ``size`` across, its left edge at ``x``."""
+    top = middle - size / 2
+    draw.ellipse((x, top, x + size - 1, top + size - 1), outline=WHITE, width=2)
+    centre = (x + (size - 1) / 2, top + (size - 1) / 2)
+    draw.line((centre[0], top + 3, centre[0], centre[1], x + size - 4, centre[1]), fill=WHITE, width=2)
+
+
 def _draw_head(canvas, draw, info, y, width, colours):
     """The reasons as chips at the left (icon and words); at the right the price, the price
-    paid largest, after Steam's discount box and the struck price."""
+    paid largest, after Steam's discount box, the struck price and the day the sale ends."""
     right = width - MARGIN
     price = info.get("price") or {}
     final_font = _font(PRICE_SIZE, True)
@@ -320,6 +331,13 @@ def _draw_head(canvas, draw, info, y, width, colours):
             middle = y + HEAD_HEIGHT // 2
             draw.line((right - original_w, middle, right, middle), fill=WHITE, width=1)
             right -= original_w + 10
+        ends = str(price.get("ends") or "")
+        if ends:
+            ends_font = _font(14, True)
+            ends_w = draw.textlength(ends, font=ends_font)
+            draw.text((right - ends_w, _text_y(draw, ends, ends_font, y, HEAD_HEIGHT)), ends, font=ends_font, fill=WHITE)
+            _clock(draw, right - ends_w - 5 - CLOCK_SIZE, y + HEAD_HEIGHT / 2, CLOCK_SIZE)
+            right -= ends_w + 5 + CLOCK_SIZE + 12
     elif price.get("label") or price.get("final"):
         label = str(price.get("label") or price.get("final"))
         label_w = draw.textlength(label, font=final_font)
