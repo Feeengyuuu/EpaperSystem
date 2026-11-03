@@ -713,10 +713,85 @@ class ClubFootballMixin:
                     "fetched_at": payload.get("fetched_at") or fetched_at,
                     "provider_status_delayed": provider_status_delayed,
                     **SportsDashboard._club_espn_moneyline_odds(competition),
+                    "match_details": SportsDashboard._club_espn_match_details(competition, home, away, status),
                 }
             )
             parsed_events.append(event)
         return parsed_events
+
+    @staticmethod
+    def _club_espn_match_details(competition, home, away, status):
+        """What ESPN's scoreboard says beyond the score, by side ("home" / "away"): each team's
+        last five results oldest first ("form", before kick-off), and once the ball is rolling its
+        possession, its goals ({"name", "minute", "kind": "" | "pen" | "og"}, credited to the side
+        that benefits) and its cards ({"name", "minute", "red"})."""
+        sides = {str((item.get("team") or {}).get("id") or ""): side
+                 for side, item in (("home", home), ("away", away))}
+        details = {}
+        if status == "SCHEDULED":
+            form = {}
+            for side, item in (("home", home), ("away", away)):
+                # ESPN lists the most recent result first.
+                results = "".join(char for char in str(item.get("form") or "").upper() if char in "WDL")[:5][::-1]
+                if results:
+                    form[side] = results
+            if form:
+                details["form"] = form
+            return details
+        possession = {}
+        for side, item in (("home", home), ("away", away)):
+            for stat in item.get("statistics") or []:
+                if isinstance(stat, Mapping) and stat.get("name") == "possessionPct":
+                    try:
+                        value = float(stat.get("displayValue"))
+                    except (TypeError, ValueError):
+                        continue
+                    if 0 <= value <= 100:
+                        possession[side] = value
+        if set(possession) == {"home", "away"} and sum(possession.values()) > 0:
+            details["possession"] = possession
+        goals, cards = [], []
+        for item in (competition or {}).get("details") or []:
+            if not isinstance(item, Mapping) or item.get("shootout"):
+                continue
+            side = sides.get(str((item.get("team") or {}).get("id") or ""))
+            athletes = [athlete for athlete in item.get("athletesInvolved") or [] if isinstance(athlete, Mapping)]
+            name = SportsDashboard._club_detail_player_name(athletes[0]) if athletes else ""
+            minute = str((item.get("clock") or {}).get("displayValue") or "").strip()
+            if not side or not minute:
+                continue
+            if item.get("scoringPlay"):
+                kind = "og" if item.get("ownGoal") else ("pen" if item.get("penaltyKick") else "")
+                goals.append({"side": side, "name": name, "minute": minute, "kind": kind})
+            elif item.get("redCard") or item.get("yellowCard"):
+                cards.append({"side": side, "name": name, "minute": minute, "red": bool(item.get("redCard"))})
+        if goals:
+            details["goals"] = goals[:12]
+        if cards:
+            details["cards"] = cards[:20]
+        return details
+
+    @staticmethod
+    def _club_detail_player_name(athlete):
+        """A scorer or booked player by surname: "D. Burn" -> "Burn", "V. van Dijk" -> "van Dijk"."""
+        short = " ".join(str(athlete.get("shortName") or "").split())
+        name = re.sub(r"^(?:[A-Z][a-z]?\.\s*)+", "", short).strip()
+        if name:
+            return name[:24]
+        full = " ".join(str(athlete.get("displayName") or "").split())
+        return full.split(" ")[-1][:24] if full else ""
+
+    @staticmethod
+    def _club_swap_match_details(details):
+        """The same details with home and away exchanged (a schedule listing the sides reversed)."""
+        swap = {"home": "away", "away": "home"}
+        result = {}
+        for key, value in (details or {}).items():
+            if isinstance(value, Mapping):
+                result[key] = {swap.get(side, side): item for side, item in value.items()}
+            elif isinstance(value, list):
+                result[key] = [{**item, "side": swap.get(item.get("side"), item.get("side"))} for item in value]
+        return result
 
     @staticmethod
     def _parse_club_football_data_events(
@@ -984,6 +1059,8 @@ class ClubFootballMixin:
                     "odds_provider": score.get("odds_provider"),
                     "odds_provider_short": score.get("odds_provider_short"),
                     "odds_source": score.get("odds_source"),
+                    "match_details": (SportsDashboard._club_swap_match_details(score.get("match_details"))
+                                      if reverse_order else dict(score.get("match_details") or {})),
                 }
             )
             merged_events.append(merged)
@@ -2310,6 +2387,15 @@ class ClubFootballMixin:
             "league_logo_url": str(event.get("league_logo_url") or "").strip(),
             "season": str(start.year),
         }
+        details = event.get("match_details") if isinstance(event.get("match_details"), Mapping) else {}
+        for key, values in details.items():
+            if key in ("form", "possession") and isinstance(values, Mapping):
+                for side, target in (("home", "a"), ("away", "b")):
+                    if values.get(side) is not None:
+                        adapted[f"{key}_{target}"] = values[side]
+            elif key in ("goals", "cards") and isinstance(values, list) and show_score:
+                adapted[key] = [{**item, "side": "a" if item.get("side") == "home" else "b"}
+                                for item in values if isinstance(item, Mapping) and item.get("side") in ("home", "away")]
         if SportsDashboard._club_event_has_complete_odds(event):
             adapted["odds"] = {
                 "team_a": f"{float(event['odds_home_decimal']):.2f}",

@@ -374,8 +374,12 @@ class FootballRenderMixin:
         x1, y1, x2, y2 = [int(value) for value in box]
         spec = self._football_spec(sport)
         leaders = list(event.get("leaders") or [])
+        recap = str(event.get("recap") or "").strip()
+        if recap:
+            # ESPN's one-line recap over the foot line; the leader rows close up above it.
+            self._draw_kit_recap_line(draw, (x1, y2 - 28, x2, y2 - 16), recap)
         if leaders:
-            self._draw_kit_leader_rows(image, draw, x1, y1, x2, y2 - 14, event, leaders, spec)
+            self._draw_kit_leader_rows(image, draw, x1, y1, x2, y2 - (30 if recap else 14), event, leaders, spec)
         else:
             winner = SportsDashboard._football_final_winner_label(event, sport)
             if winner:
@@ -401,8 +405,19 @@ class FootballRenderMixin:
         football stadium icon and its name."""
         venue = str((event or {}).get("venue") or "").strip()
         rest = SportsDashboard._football_footer_label({**(event or {}), "venue": ""}, sport, include_tv=include_tv)
+        weather = SportsDashboard._football_weather_label(event)
+        rest = "  ·  ".join(part for part in (rest, weather) if part)
         if not self._draw_kit_venue_line(image, draw, box, venue, after=rest, kind="football"):
-            self._draw_kit_footer(draw, box, SportsDashboard._football_footer_label(event, sport, include_tv=include_tv))
+            label = SportsDashboard._football_footer_label(event, sport, include_tv=include_tv)
+            self._draw_kit_footer(draw, box, "  ·  ".join(part for part in (label, weather) if part))
+
+    @staticmethod
+    def _football_weather_label(event):
+        """'47°F 晴间多云' for an outdoor game's forecast, else ''."""
+        weather = (event or {}).get("weather") or {}
+        if not isinstance(weather.get("temp"), int):
+            return ""
+        return f"{weather['temp']}°F {weather.get('condition') or ''}".strip()
 
     # Labels and geometry -----------------------------------------------------
 

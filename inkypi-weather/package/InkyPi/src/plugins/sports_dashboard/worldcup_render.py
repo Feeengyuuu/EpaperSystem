@@ -1,7 +1,7 @@
 from .common import *
 from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_alias
 from .card_backdrops import card_backdrop_box, paint_card_backdrop, paint_list_backdrop
-from .scorebug_kit import KIT_RESULT_EXTRA, _kit_inked_where_faint
+from .scorebug_kit import KIT_RESULT_EXTRA, _kit_inked_where_faint, _kit_result_ink
 from .score_fonts import football_score_league
 from .tv_networks import tv_logo_width_ratio, tv_network_parts, tv_watch_rank
 
@@ -12,6 +12,12 @@ LOCAL_CLUB_TEAM_LOGO_SCHEME = "local-club://"
 CLUB_CARD_TV_LOGO_HEIGHT, ROW_TV_LOGO_HEIGHT, TV_LOGO_MIN_SHARE = 15, 10, 0.7
 # The ground's logo on a club card's round line.
 CLUB_CARD_VENUE_LOGO_HEIGHT = 12
+# ESPN's scoreboard extras on a club card: before kick-off each team's last five as cells under its
+# name (wins emerald, draws grey, losses crimson); once under way each side's scorers and cards (a
+# ball, a yellow card with the count, a red card with the player), then possession as a share bar.
+CLUB_FORM_CELL, CLUB_FORM_GAP = 7, 2
+CLUB_EVENT_ICON, CLUB_EVENT_GAP = 8, 6
+CLUB_YELLOW_CARD = (240, 192, 32)
 
 
 class WorldCupRenderMixin:
@@ -1046,6 +1052,17 @@ class WorldCupRenderMixin:
         metas = [self._worldcup_team_points_meta(event, side) for side in ("a", "b")]
         probabilities = None if any(metas) else self._club_win_probabilities(event)
         width = right_area[1] - left_area[0]
+        if (is_live or is_recent) and (event.get("goals") or event.get("cards") or event.get("possession_a") is not None):
+            self._draw_club_match_events(draw, (left_area[0] - 4, name_y + 8, right_area[1] + 2, y2 - 4), center_x, event)
+            return
+        forms = [str(event.get(f"form_{side}") or "") for side in ("a", "b")]
+        if any(forms) and not any(metas):
+            # Each team's last five under its name; the win chances, if any, close up under them.
+            form_y = name_y + 10
+            for form, (left, right) in zip(forms, (left_area, right_area)):
+                if form:
+                    self._draw_club_form(draw, ((left + right) / 2, form_y + CLUB_FORM_CELL / 2), form)
+            label_top, bar_bottom = form_y + CLUB_FORM_CELL + 2, y2 - 5
         if any(metas):
             for meta, (left, right) in zip(metas, (left_area, right_area)):
                 self._draw_worldcup_odds_text(draw, (left, label_top + 4, right, label_top + 15), meta, max_size=8)
@@ -1068,6 +1085,95 @@ class WorldCupRenderMixin:
                                               f"X {odds.get('draw')}", max_size=9)
             self._draw_worldcup_odds_text(draw, (right_area[1] - width / 3, row[0], right_area[1], row[1]),
                                           odds.get("team_b"), max_size=9)
+
+    def _draw_club_form(self, draw, center, form):
+        """A team's last five results as solid cells, oldest first: a win emerald, a draw in the
+        rule colour, a loss crimson."""
+        cx, cy = center
+        width = len(form) * (CLUB_FORM_CELL + CLUB_FORM_GAP) - CLUB_FORM_GAP
+        left, top = round(cx - width / 2), round(cy - CLUB_FORM_CELL / 2)
+        for index, result in enumerate(form):
+            x = left + index * (CLUB_FORM_CELL + CLUB_FORM_GAP)
+            fill = _kit_result_ink("win") if result == "W" else _kit_result_ink("loss") if result == "L" else COLORS["line"]
+            draw.rounded_rectangle((x, top, x + CLUB_FORM_CELL - 1, top + CLUB_FORM_CELL - 1), radius=2, fill=fill)
+
+    def _draw_club_match_events(self, draw, box, center_x, event):
+        """Under a live or finished match's names: each side's scorers with their minutes and its
+        cards (a yellow card with the count, a red card with the player), then possession as a bar."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        possession = [event.get(f"possession_{side}") for side in ("a", "b")]
+        has_possession = all(isinstance(value, (int, float)) for value in possession) and sum(possession) > 0
+        font = self._font(9, True)
+        for side, (left, right), align in (("a", (x1, int(center_x) - 6), "left"), ("b", (int(center_x) + 6, x2), "right")):
+            runs = self._club_side_event_runs(event, side)
+            if self._club_runs_width(draw, runs, font) > right - left:
+                # Too many to name: the goals as their minutes alone.
+                runs = self._club_side_event_runs(event, side, compact=True)
+            self._draw_club_event_runs(draw, (left, y1, right, y1 + 11), runs, align)
+        if has_possession:
+            share = possession[0] / sum(possession)
+            self._draw_kit_share_bar(draw, (x1 + 4, y2 - 11, x2 - 2, y2), f"{round(share * 100)}%",
+                                     f"{round((1 - share) * 100)}%", share, "blue", "text", label="控球")
+
+    @staticmethod
+    def _club_side_event_runs(event, side, compact=False):
+        """[(kind, text)] for one side: its scorers ("Kane 12' 45'", a penalty marked 点, an own goal
+        乌龙; ``compact``: one run of the minutes alone), then its yellow cards' count and each red
+        card's player."""
+        runs, scorers = [], {}
+        for goal in event.get("goals") or []:
+            if goal.get("side") != side:
+                continue
+            mark = {"pen": "点", "og": "乌龙"}.get(goal.get("kind"), "")
+            name = str(goal.get("name") or "").strip() or "?"
+            scorers.setdefault(name, []).append(f"{goal.get('minute')}{mark}")
+        if compact and scorers:
+            runs.append(("goal", " ".join(minute for minutes in scorers.values() for minute in minutes)))
+        else:
+            runs.extend(("goal", f"{name} {' '.join(minutes)}") for name, minutes in scorers.items())
+        cards = [card for card in event.get("cards") or [] if card.get("side") == side]
+        yellows = sum(1 for card in cards if not card.get("red"))
+        if yellows:
+            runs.append(("yellow", str(yellows)))
+        runs.extend(("red", str(card.get("name") or "").strip()) for card in cards if card.get("red"))
+        return runs
+
+    def _club_runs_width(self, draw, runs, font):
+        return sum(CLUB_EVENT_ICON + 2 + (self._text_width(draw, text, font) if text else 0) for _kind, text in runs)             + CLUB_EVENT_GAP * max(0, len(runs) - 1)
+
+    def _draw_club_event_runs(self, draw, box, runs, align):
+        """Goal runs after a small ball, cards as small solid cards; whole runs only, '+N' for the rest."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        font = self._font(9, True)
+        middle = (y1 + y2) // 2
+        shown, total = [], 0
+        for index, (kind, text) in enumerate(runs):
+            gap = CLUB_EVENT_GAP if shown else 0
+            width = CLUB_EVENT_ICON + 2 + (self._text_width(draw, text, font) if text else 0)
+            rest = len(runs) - index - 1
+            reserve = CLUB_EVENT_GAP + self._text_width(draw, f"+{rest}", font) if rest else 0
+            if total + gap + width + reserve > x2 - x1:
+                break
+            total += gap + width
+            shown.append((kind, text, width))
+        more = f"+{len(runs) - len(shown)}" if len(runs) > len(shown) else ""
+        if more:
+            total += (CLUB_EVENT_GAP if shown else 0) + self._text_width(draw, more, font)
+        x = x1 if align == "left" else x2 - total
+        top = middle - CLUB_EVENT_ICON // 2
+        for kind, text, width in shown:
+            if kind == "goal":
+                draw.ellipse((x, top, x + CLUB_EVENT_ICON - 1, top + CLUB_EVENT_ICON - 1), fill=COLORS["panel"],
+                             outline=COLORS["text"], width=1)
+                draw.rectangle((x + 3, top + 3, x + CLUB_EVENT_ICON - 4, top + CLUB_EVENT_ICON - 4), fill=COLORS["text"])
+            else:
+                fill = CLUB_YELLOW_CARD if kind == "yellow" else _kit_result_ink("loss")
+                draw.rectangle((x + 1, top - 1, x + CLUB_EVENT_ICON - 2, top + CLUB_EVENT_ICON), fill=fill)
+            if text:
+                self._draw_text_in_box(draw, (x + CLUB_EVENT_ICON + 2, y1, x + width + 1, y2), text, font, COLORS["text"])
+            x += width + CLUB_EVENT_GAP
+        if more:
+            self._draw_text_in_box(draw, (x, y1, x2 + 1, y2), more, font, COLORS["text"])
 
     @staticmethod
     def _club_win_probabilities(event):

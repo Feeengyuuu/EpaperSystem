@@ -14,6 +14,9 @@ MONTH_TTL_SECONDS = 12 * 3600
 ESPN_TIMEZONE = ZoneInfo("America/New_York")
 # The panel shows these leader groups; the rest of ESPN's leader data is dropped.
 LEADER_CATEGORIES = ("points", "rebounds", "assists")
+# A game under way or over keeps these team box statistics (a scheduled game's are season totals) and
+# its recap's one-line headline.
+BOX_STATISTICS = ("fieldGoalPct", "threePointFieldGoalsMade", "threePointFieldGoalsAttempted", "rebounds")
 
 
 def _stamp(value):
@@ -51,7 +54,8 @@ def _compact(event):
                        "linescores", "lineScores", "records", "record", "team")
     team_keys = ("id", "uid", "abbreviation", "shortDisplayName", "displayName",
                  "name", "location", "logo", "logos", "color", "alternateColor")
-    for competition in result["competitions"]:
+    played = str(((event.get("status") or {}).get("type") or {}).get("state") or "").lower() in {"in", "post"}
+    for source, competition in zip(event.get("competitions", [])[:1], result["competitions"]):
         competitors = []
         for item in competition.get("competitors", []):
             competitor = {key: item[key] for key in competitor_keys if key in item}
@@ -60,8 +64,17 @@ def _compact(event):
             leaders = _compact_leaders(item.get("leaders"))
             if leaders:
                 competitor["leaders"] = leaders
+            statistics = [{"name": stat.get("name"), "displayValue": stat.get("displayValue")}
+                          for stat in item.get("statistics") or [] if isinstance(stat, dict) and stat.get("name") in BOX_STATISTICS]
+            if played and statistics:
+                competitor["statistics"] = statistics
             competitors.append(competitor)
         competition["competitors"] = competitors
+        recaps = [{"type": "Recap", "shortLinkText": str(item.get("shortLinkText") or "")[:200]}
+                  for item in source.get("headlines") or []
+                  if isinstance(item, dict) and item.get("type") == "Recap" and item.get("shortLinkText")]
+        if played and recaps:
+            competition["headlines"] = recaps[:1]
     return result
 
 

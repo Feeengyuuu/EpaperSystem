@@ -62,6 +62,8 @@ KIT_RESULT_SCORE_RE = re.compile(r"\s*(\d+)\s*([-:–])\s*(\d+)\s*")
 # caller can fit the text to its room less this.
 KIT_RESULT_EXTRA = 2
 KIT_TILE_HEIGHT = 36
+# A finished game's one-line recap (ESPN's headline) after a cobalt "战报" chip (day, then night).
+KIT_RECAP_FILLS = ((37, 84, 199), (104, 146, 246))
 # The space either side of the rule between a TV tile's networks and its venue logo.
 KIT_TILE_VENUE_GAP = 7
 # Raised frosted-glass panels over a card's stadium art: the art beneath blurred this much (so its
@@ -773,6 +775,17 @@ class ScorebugKitMixin:
             self._draw_text_in_box(draw, (x1, y1, x1 + label_w, y2), label, label_font, COLORS["text"])
         text, font = self._fit_text_ellipsis(draw, text, x2 - x1 - label_w, 10, bold=bold, min_size=8)
         self._draw_text_in_box(draw, (x1 + label_w, y1, x2, y2), text, font, COLORS["text"])
+
+    def _draw_kit_recap_line(self, draw, box, recap):
+        """A cobalt '战报' chip, then a finished game's recap headline on one line."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        chip_font = self._font(9, True)
+        chip_w = self._text_width(draw, "战报", chip_font) + 8
+        fill = KIT_RECAP_FILLS[1] if _kit_luminance(COLORS["panel"]) < 0.2 else KIT_RECAP_FILLS[0]
+        draw.rounded_rectangle((x1, y1, x1 + chip_w, y2), radius=3, fill=fill)
+        self._draw_centered_in_box(draw, (x1, y1, x1 + chip_w, y2), "战报", chip_font, _kit_ink_on(fill))
+        text, font = self._fit_text_ellipsis(draw, recap, x2 - x1 - chip_w - 6, 9, bold=False, min_size=8)
+        self._draw_text_in_box(draw, (x1 + chip_w + 6, y1, x2, y2), text, font, COLORS["text"])
 
     def _draw_kit_footer(self, draw, box, text):
         if not text:

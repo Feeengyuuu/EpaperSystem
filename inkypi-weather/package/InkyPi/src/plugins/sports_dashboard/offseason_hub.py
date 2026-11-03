@@ -6,6 +6,14 @@ from . import hockey
 from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_alias
 
 SportsDashboard = None
+# AccuWeather's condition numbers (ESPN's weather.conditionId) in short Chinese, night icons alike.
+FOOTBALL_WEATHER_CONDITIONS = {
+    **dict.fromkeys(("1", "2", "33", "34"), "晴"), **dict.fromkeys(("3", "4", "35", "36"), "晴间多云"),
+    **dict.fromkeys(("5", "37"), "霾"), **dict.fromkeys(("6", "7", "38"), "多云"), "8": "阴", "11": "雾",
+    **dict.fromkeys(("12", "13", "14", "39", "40"), "阵雨"), **dict.fromkeys(("15", "16", "17", "41", "42"), "雷雨"),
+    "18": "雨", **dict.fromkeys(("19", "20", "21", "43"), "小雪"), **dict.fromkeys(("22", "23", "44"), "雪"),
+    "24": "结冰", **dict.fromkeys(("25", "29"), "雨夹雪"), "26": "冻雨", "30": "炎热", "31": "严寒", "32": "大风",
+}
 
 # One people request adds the probable starters' throwing hand and season/postseason lines.
 MLB_PITCHER_HYDRATE = "stats(group=[pitching],type=[season],gameType=[R,P])"
@@ -759,6 +767,9 @@ class OffseasonHubMixin:
             "drive_start_yard": None,
             "win_pct_a": None,
             "win_pct_b": None,
+            # Before kick-off at an open-air stadium, ESPN's forecast; after the final whistle its recap.
+            "weather": SportsDashboard._football_weather(event, competition) if state == "scheduled" else {},
+            "recap": SportsDashboard._espn_recap_headline(competition) if state == "final" else "",
         }
         if state != "live":
             return fields
@@ -883,6 +894,20 @@ class OffseasonHubMixin:
             if headline:
                 return headline[:40]
         return ""
+
+    @staticmethod
+    def _football_weather(event, competition):
+        """{"temp": 47, "condition": "晴间多云"} of an outdoor game's forecast (ESPN's AccuWeather
+        figures, Fahrenheit); {} indoors or without a temperature."""
+        venue = (competition or {}).get("venue") if isinstance((competition or {}).get("venue"), Mapping) else {}
+        weather = (event or {}).get("weather") or (competition or {}).get("weather") or {}
+        if venue.get("indoor") is not False or not isinstance(weather, Mapping):
+            return {}
+        temperature = weather.get("temperature", weather.get("highTemperature"))
+        if not isinstance(temperature, (int, float)) or isinstance(temperature, bool) or not -40 <= temperature <= 130:
+            return {}
+        condition = FOOTBALL_WEATHER_CONDITIONS.get(str(weather.get("conditionId") or "").strip(), "")
+        return {"temp": round(temperature), "condition": condition}
 
     @staticmethod
     def _football_event_note(event, competition):

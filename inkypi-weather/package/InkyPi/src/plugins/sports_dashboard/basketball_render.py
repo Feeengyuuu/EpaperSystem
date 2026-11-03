@@ -55,6 +55,10 @@ LEADERS_PENDING_MIN_HEIGHT = 40
 # is expected back ("待定" for a game-time decision), "+N" for those that do not fit.
 FACEOFF_FORM_CELL, FACEOFF_FORM_GAP = 8, 2
 FACEOFF_PREGAME_ROW, FACEOFF_PREGAME_GAP, FACEOFF_PREGAME_LOGO = 12, 5, 11
+# Once a game is under way the duel's foot shows the two teams' box score (field goal %, threes
+# made/attempted, rebounds; the leader rows close up to make room), and after the final whistle a
+# cobalt "战报" chip and ESPN's one-line recap take the duel's head.
+DUEL_BOX_ROW, DUEL_TIGHT_PITCH = 12, 17
 # The series list's roomy rows (date in large type) and their pitch, used when every game fits.
 WNBA_SERIES_ROW_HEIGHT, WNBA_SERIES_ROW_PITCH = 20, 22
 # The game card's networks, as logos under its tiles.
@@ -480,7 +484,15 @@ class BasketballRenderMixin:
         middle = (x1 + x2) // 2
         header_font = self._font(9, True)
         heads = image is not None and spec.sport in LEADER_DUEL_TEAM_HEADS
+        recap = "" if heads else str(event.get("recap") or "").strip()
+        box_rows = SportsDashboard._basketball_box_rows(event)
+        # The box score takes the foot of the area, the leader rows close up above it.
+        rows_y2, pitch = (y2 - DUEL_BOX_ROW - 2, DUEL_TIGHT_PITCH) if box_rows else (y2, 19)
+        if recap:
+            self._draw_kit_recap_line(draw, (x1, y1, x2, y1 + 12), recap)
         for side, align, left, right in (("a", "left", x1 + 2, middle - 20), ("b", "right", middle + 20, x2 - 2)):
+            if recap:
+                break
             if heads:
                 # The team's logo at the outer edge, its Chinese name beside it.
                 logo_x = left if side == "a" else right - DUEL_TEAM_LOGO_SIZE
@@ -493,15 +505,19 @@ class BasketballRenderMixin:
                 continue
             code = str(event.get(f"team_{side}_code") or "").upper()
             self._draw_text_in_box(draw, (left, y1, right, y1 + 12), code, header_font, COLORS["text"], align=align)
-        self._draw_centered_in_box(draw, (middle - 20, y1, middle + 20, y1 + 12), "LEADERS", self._font(8, False), COLORS["text"])
+        if not recap:
+            self._draw_centered_in_box(draw, (middle - 20, y1, middle + 20, y1 + 12), "LEADERS", self._font(8, False), COLORS["text"])
         draw.line((x1, y1 + 14, x2, y1 + 14), fill=COLORS["border"], width=1)
+        if box_rows:
+            draw.line((x1, y2 - DUEL_BOX_ROW - 1, x2, y2 - DUEL_BOX_ROW - 1), fill=COLORS["line"], width=1)
+            self._draw_basketball_box_row(draw, (x1, y2 - DUEL_BOX_ROW, x2, y2), box_rows)
         leaders = {
             side: {item.get("label"): item for item in event.get(f"team_leaders_{side}") or []}
             for side in ("a", "b")
         }
         y = y1 + 18
         for label in LEADER_DUEL_LABELS.get(spec.sport, ("PTS", "REB", "AST")):
-            if y + 16 > y2:
+            if y + 16 > rows_y2:
                 break
             a = leaders["a"].get(label) or {}
             b = leaders["b"].get(label) or {}
@@ -540,14 +556,48 @@ class BasketballRenderMixin:
                 self._draw_text_in_box(draw, value_box, value, value_font, COLORS["text"], align=align)
                 name, name_font = self._fit_text_ellipsis(draw, item.get("name") or "", name_box[2] - name_box[0], 10, bold=False, min_size=8)
                 self._draw_text_in_box(draw, name_box, name, name_font, COLORS["text"], align=align)
-            y += 19
+            y += pitch
         if y == y1 + 18:
             margin = SportsDashboard._basketball_margin_label(event)
             if margin:
                 self._draw_kit_labeled_line(draw, (x1, y, x2, y + 14), "", margin)
                 y += 18
-            if y2 - y >= LEADERS_PENDING_MIN_HEIGHT:
-                self._draw_basketball_leaders_pending(draw, (x1, y, x2, y2), event, spec)
+            if rows_y2 - y >= LEADERS_PENDING_MIN_HEIGHT:
+                self._draw_basketball_leaders_pending(draw, (x1, y, x2, rows_y2), event, spec)
+
+    @staticmethod
+    def _basketball_box_rows(event):
+        """[(label, away value, home value, better side)] of the team box score both sides report."""
+        rows = []
+        for key, label in (("fg", "FG%"), ("three", "3PT"), ("reb", "REB")):
+            a, b = (((event or {}).get(f"box_{side}") or {}).get(key) for side in "ab")
+            if not a or not b:
+                continue
+            try:
+                values = [float(str(value).split("/")[0]) for value in (a, b)]
+            except ValueError:
+                continue
+            rows.append((label, str(a), str(b), "a" if values[0] > values[1] else "b" if values[1] > values[0] else ""))
+        return rows
+
+    def _draw_basketball_box_row(self, draw, box, rows):
+        """The two teams' shooting and rebounds side by side: '44.0 FG% 42.0' per statistic, the
+        better figure in bold."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        width = (x2 - x1) / len(rows)
+        label_font = self._font(8, False)
+        for index, (label, a, b, better) in enumerate(rows):
+            left, right = int(x1 + index * width), int(x1 + (index + 1) * width)
+            middle = (left + right) // 2
+            label_w = self._text_width(draw, label, label_font)
+            self._draw_centered_in_box(draw, (middle - label_w // 2 - 1, y1, middle + label_w // 2 + 1, y2), label, label_font,
+                                       COLORS["text"])
+            for side, value, value_box, align in (("a", a, (left, y1, middle - label_w // 2 - 5, y2), "right"),
+                                                  ("b", b, (middle + label_w // 2 + 5, y1, right, y2), "left")):
+                value, font = self._fit_text(draw, value, value_box[2] - value_box[0], 10, bold=better == side, min_size=8)
+                self._draw_text_in_box(draw, value_box, value, font, COLORS["text"], align=align)
+            if index:
+                draw.line((left, y1 + 2, left, y2 - 2), fill=COLORS["line"], width=1)
 
     def _draw_basketball_leaders_pending(self, draw, box, event, spec):
         """Before any player stats: the two teams' jerseys passing a ball across."""

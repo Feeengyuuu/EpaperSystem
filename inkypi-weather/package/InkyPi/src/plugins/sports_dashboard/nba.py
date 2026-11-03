@@ -284,7 +284,37 @@ class NBAMixin:
             "headline": SportsDashboard._football_event_headline(event, competition),
             "series_summary": str((series or {}).get("summary") or "").strip(),
             "series_length": SportsDashboard._lpl_int_value((series or {}).get("totalCompetitions")),
+            # Box score and recap exist once the game is under way (before it, ESPN's team
+            # statistics are season totals).
+            "box_a": SportsDashboard._basketball_team_box(away) if state != "unstarted" else {},
+            "box_b": SportsDashboard._basketball_team_box(home) if state != "unstarted" else {},
+            "recap": SportsDashboard._espn_recap_headline(competition) if state == "completed" else "",
         }
+
+    @staticmethod
+    def _basketball_team_box(competitor):
+        """{"fg": "44.0", "three": "12/44", "reb": "41"} from a competitor's team statistics."""
+        stats = {str(item.get("name")): str(item.get("displayValue") or "").strip()
+                 for item in (competitor or {}).get("statistics") or [] if isinstance(item, Mapping)}
+        box = {}
+        if re.fullmatch(r"\d{1,3}(?:\.\d)?", stats.get("fieldGoalPct", "")):
+            box["fg"] = stats["fieldGoalPct"]
+        made, tried = stats.get("threePointFieldGoalsMade", ""), stats.get("threePointFieldGoalsAttempted", "")
+        if made.isdigit() and tried.isdigit():
+            box["three"] = f"{made}/{tried}"
+        if stats.get("rebounds", "").isdigit():
+            box["reb"] = stats["rebounds"]
+        return box
+
+    @staticmethod
+    def _espn_recap_headline(competition):
+        """The one-line headline of ESPN's recap of a finished game ("Luka Doncic has 45 points ...")."""
+        for item in (competition or {}).get("headlines") or []:
+            if isinstance(item, Mapping) and str(item.get("type") or "") == "Recap":
+                text = " ".join(str(item.get("shortLinkText") or "").split())
+                if text:
+                    return text[:200]
+        return ""
 
     @staticmethod
     def _basketball_team_leaders(competitor):
