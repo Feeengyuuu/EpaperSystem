@@ -773,3 +773,140 @@ def test_strips_show_each_route_as_its_progress_between_two_big_codes():
     assert theme["ink"] in set(image.crop((10, 4, 70, 26)).get_flattened_data())
     assert theme["ink"] in set(image.crop((230, 4, 290, 26)).get_flattened_data())
     assert theme["blue"] in set(image.crop((100, 4, 230, 26)).get_flattened_data())
+
+
+def _taf_period(start, end, change=None, wx=None, clouds=(), wspd=8, wgst=None, visib="6+", probability=None):
+    return {"timeFrom": start, "timeTo": end, "fcstChange": change, "probability": probability, "wdir": 180,
+            "wspd": wspd, "wgst": wgst, "visib": visib, "wxString": wx, "vertVis": None,
+            "clouds": [{"cover": cover, "base": base} for cover, base in clouds]}
+
+
+# KOAK's TAF of 2026-11-02 23:36Z (the source scout's sample), its periods from 00Z on the 3rd.
+TAF_ROWS = [
+    {"icaoId": "KOAK", "fcsts": [
+        _taf_period(1793664000, 1793685600, clouds=[("BKN", 20000)], wspd=5),
+        _taf_period(1793685600, 1793718000, "FM", clouds=[("BKN", 10000)], wspd=7),
+        _taf_period(1793718000, 1793728800, "FM", "VCSH", [("OVC", 5000)], wspd=9),
+        _taf_period(1793728800, 1793736000, "FM", "-RA", [("BKN", 2500), ("OVC", 5000)], wspd=12, visib=6),
+        _taf_period(1793736000, 1793761200, "FM", "-SHRA", [("FEW", 2000), ("BKN", 3000)], wspd=7),
+    ]},
+    {"icaoId": "KSJC", "fcsts": [
+        _taf_period(1793664000, 1793700000, clouds=[("FEW", 8000)]),
+        _taf_period(1793710800, 1793718000, "TEMPO", "-SHRA BR", [("BKN", 2800)], wspd=None, visib="4"),
+        _taf_period(1793700000, 1793750000, "FM", None, [("SCT", 6000)]),
+    ]},
+    {"icaoId": "KSFO", "fcsts": [_taf_period(1793664000, 1793750000, clouds=[("FEW", 8000)], wgst=None)]},
+    {"icaoId": "KLAX", "fcsts": [_taf_period(1793664000, 1793750000, "FM", "TSRA")]},
+]
+PACIFIC_ZONE = flight_radar_module.ZoneInfo("America/Los_Angeles")
+TAF_NOW = datetime(2026, 11, 2, 15, 40, tzinfo=PACIFIC_ZONE)
+
+
+def test_taf_gives_each_bay_airport_its_next_significant_change():
+    airports = flight_radar_module.parse_taf(TAF_ROWS)
+
+    assert set(airports) == {"OAK", "SJC", "SFO"}
+    rain = airports["OAK"][3]
+    assert (rain["change"], rain["wx"], rain["ceiling_ft"], rain["wind_kt"]) == ("FM", "-RA", 2500, 12)
+    # Showers only in the vicinity and a 5,000 ft deck do not count; the rain from 18Z does.
+    assert flight_radar_module.taf_outlook(airports["OAK"], TAF_NOW) == "明 10 时起 小雨 · 云底 2,500ft"
+    assert flight_radar_module.taf_outlook(airports["SJC"], TAF_NOW) == "明 5–7 时间有 小阵雨轻雾 · 云底 2,800ft · 能见 4SM"
+    assert flight_radar_module.taf_outlook(airports["SFO"], TAF_NOW) == "预报平稳"
+    # Once the rain is on, it reads as now; after the forecast ends there is nothing to say.
+    during = datetime(2026, 11, 3, 10, 30, tzinfo=PACIFIC_ZONE)
+    assert flight_radar_module.taf_outlook(airports["OAK"], during) == "现 小雨 · 云底 2,500ft"
+    assert flight_radar_module.taf_outlook(airports["OAK"], datetime(2026, 11, 5, tzinfo=PACIFIC_ZONE)) == ""
+    probable = [{"start": 1793700000, "end": 1793710000, "change": "PROB", "probability": 30, "wx": "TSRA",
+                 "wind_kt": 10, "gust_kt": 30, "visibility": 3, "ceiling_ft": 1500}]
+    assert flight_radar_module.taf_outlook(probable, TAF_NOW) == "明 2 时 30% 可能 雷雨 · 云底 1,500ft · 能见 3SM · 阵风 30KT"
+    assert [flight_radar_module.taf_weather(wx) for wx in ("+RA", "TSRA", "VCSH", "FG", "-DZ BR", "")] == [
+        "大雨", "雷雨", "", "雾", "小毛毛雨轻雾", ""]
+    assert flight_radar_module.parse_taf({"error": 1}) == {}
+
+
+def test_taf_is_cached_reused_offline_and_dropped_when_old(monkeypatch, tmp_path):
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path / "cache"))
+    plugin = _plugin()
+    calls = []
+
+    class Client:
+        def request_json(self, *_args, **kwargs):
+            calls.append(kwargs["params"]["ids"])
+            return type("Result", (), {"data": TAF_ROWS})()
+
+    monkeypatch.setattr(plugin, "_client", lambda: Client())
+    first = plugin._taf_status(1000.0, allow_network=True)
+    assert set(first) == {"OAK", "SJC", "SFO"} and calls == ["KSFO,KSJC,KOAK"]
+    assert plugin._taf_status(1600.0, allow_network=True) == first and len(calls) == 1
+
+    class Down:
+        def request_json(self, *_args, **_kwargs):
+            raise OSError("offline")
+
+    monkeypatch.setattr(plugin, "_client", lambda: Down())
+    assert plugin._taf_status(1000.0 + 3 * 3600, allow_network=True) == first
+    assert plugin._taf_status(1000.0 + 3 * 3600, allow_network=False) == first
+    assert plugin._taf_status(1000.0 + 9 * 3600, allow_network=True) is None
+
+
+def test_targets_keep_the_altitude_they_are_cleared_to():
+    from plugins.flight_radar import pro_view
+
+    plugin = _plugin()
+    raw = {"hex": "a24493", "flight": "SWA3212 ", "lat": 37.59, "lon": -122.29, "alt_baro": 14525, "gs": 370.8,
+           "track": 132.8, "baro_rate": 3456, "nav_altitude_mcp": 19008, "t": "B737"}
+    climbing = plugin._normalize_readsb_aircraft(raw, "adsb_lol", 37.62, -122.38)
+    assert climbing["target_altitude_ft"] == 19000
+    assert pro_view.target_level(plugin, climbing) == (1, "190")
+    assert pro_view._altitude_with_target(plugin, climbing) == "14,500→FL190"
+    fms = plugin._normalize_readsb_aircraft({**raw, "nav_altitude_mcp": None, "nav_altitude_fms": 11000},
+                                            "adsb_lol", 37.62, -122.38)
+    assert fms["target_altitude_ft"] == 11000 and pro_view.target_level(plugin, fms) is None  # it climbs away
+    assert plugin._normalize_readsb_aircraft({**raw, "nav_altitude_mcp": -5}, "adsb_lol", 37.62,
+                                             -122.38)["target_altitude_ft"] is None
+    # Level at its target, or with none: nothing to add.
+    assert pro_view.target_level(plugin, {**climbing, "altitude_ft": 18900, "vertical_rate": 0}) is None
+    assert pro_view.target_level(plugin, {**climbing, "target_altitude_ft": None}) is None
+    descending = {**climbing, "altitude_ft": 9000, "vertical_rate": 0, "target_altitude_ft": 5000}
+    assert pro_view.target_level(plugin, descending) == (-1, "050")
+    assert pro_view._altitude_with_target(plugin, descending) == "9,000→5,000 ft"
+
+
+def test_data_blocks_and_the_board_show_cleared_levels_and_the_forecast(monkeypatch):
+    from PIL import ImageDraw as Draw
+
+    plugin = _plugin()
+    snapshot = _sample_snapshot()
+    snapshot["aircraft"][0].update(altitude_ft=14525, vertical_rate=3456, target_altitude_ft=19000, type="B737")
+    snapshot["metar"] = flight_radar_module.parse_metar(METAR_ROWS)
+    snapshot["taf"] = flight_radar_module.parse_taf(TAF_ROWS)
+    drawn = []
+    original = Draw.ImageDraw.text
+
+    def record(self, xy, text, *args, **kwargs):
+        drawn.append(str(text))
+        return original(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(Draw.ImageDraw, "text", record)
+    image = plugin._render(snapshot, (800, 480), {"_inkypi_theme": _canonical_theme("night")}, TAF_NOW)
+
+    assert image.size == (800, 480)
+    assert {"145", "190", "44", "TAF"} <= set(drawn)
+    assert "明 10 时起 小雨 · 云底 2,500ft" in drawn and "预报平稳" in drawn
+    drawn.clear()
+    snapshot.pop("taf")
+    plugin._render(snapshot, (800, 480), {"_inkypi_theme": _canonical_theme("day")}, TAF_NOW)
+    assert "KOAK · 奥克兰" in drawn and "TAF" not in drawn
+
+
+def test_nothing_from_the_scope_lands_on_the_airport_board():
+    from plugins.flight_radar import pro_view
+
+    plugin = _plugin()
+    snapshot = _sample_snapshot()
+    theme = plugin._theme(_canonical_theme("day"))
+    image = Image.new("RGB", (800, 480), theme["bg"])
+    pro_view._scope(plugin, image, snapshot, theme, {}, None)
+    x0, y0, x1, y1 = pro_view.SCOPE
+    outside = [image.getpixel((x, y)) for x in range(0, 800, 2) for y in range(0, y0 - 1, 2)]
+    assert set(outside) == {theme["bg"]}

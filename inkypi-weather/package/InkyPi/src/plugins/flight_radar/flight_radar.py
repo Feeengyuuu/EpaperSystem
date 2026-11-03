@@ -110,6 +110,21 @@ FAA_SEVERITY = {"closed": 4, "stop": 3, "gdp": 2, "delay": 1}
 METAR_URL = "https://aviationweather.gov/api/data/metar"
 METAR_FRESH_SECONDS = 600
 METAR_USABLE_SECONDS = 3 * 3600
+# The same airports' terminal forecasts (TAF, about 8 KB for all three), for each one's next
+# significant change on the board; TAFs are issued every six hours and amended between.
+TAF_URL = "https://aviationweather.gov/api/data/taf"
+TAF_FRESH_SECONDS = 1800
+TAF_USABLE_SECONDS = 8 * 3600
+# What a forecast period must bring to count: weather (not merely in the vicinity), a ceiling
+# under TAF_CEILING_FT, visibility under TAF_VISIBILITY_SM or wind or gusts from TAF_WIND_KT.
+TAF_CEILING_FT = 3000
+TAF_VISIBILITY_SM = 5
+TAF_WIND_KT = 25
+TAF_WEATHER = (("TS", "雷暴"), ("FZRA", "冻雨"), ("SHRA", "阵雨"), ("RA", "雨"), ("DZ", "毛毛雨"), ("SHSN", "阵雪"),
+               ("SN", "雪"), ("GR", "冰雹"), ("FG", "雾"), ("BR", "轻雾"), ("HZ", "霾"), ("FU", "烟"))
+# A climb or descent target (the autopilot's selected altitude) shows when it is this far from the
+# aircraft's altitude.
+TARGET_ALTITUDE_GAP_FT = 300
 
 SOURCE_LABELS = {
     "adsb_lol": "ADSB.lol",
@@ -342,6 +357,7 @@ class FlightRadar(RefreshOnDisplayPresentationMixin, BasePlugin):
             snapshot = self._get_cached_snapshot_for_theme(settings)
             snapshot["airports"] = self._airport_status(time.time(), allow_network=False)
             snapshot["metar"] = self._metar_status(time.time(), allow_network=False)
+            snapshot["taf"] = self._taf_status(time.time(), allow_network=False)
             snapshot_time = self._snapshot_time(snapshot, device_config)
             return attach_source_provenance(
                 self._render(snapshot, dimensions, settings, snapshot_time, device_config),
@@ -352,6 +368,7 @@ class FlightRadar(RefreshOnDisplayPresentationMixin, BasePlugin):
         snapshot = self._get_snapshot(settings, device_config, now)
         snapshot["airports"] = self._airport_status(time.time(), allow_network=True)
         snapshot["metar"] = self._metar_status(time.time(), allow_network=True)
+        snapshot["taf"] = self._taf_status(time.time(), allow_network=True)
         self._write_radar_context(snapshot, now)
         warning = str(snapshot.get("warning") or "").upper()
         if warning == "STALE CACHE":
@@ -415,6 +432,33 @@ class FlightRadar(RefreshOnDisplayPresentationMixin, BasePlugin):
             raise
         except Exception as exc:
             logger.warning("FlightRadar METAR failed: %s", type(exc).__name__)
+            return cached["airports"] if usable else None
+
+    def _taf_status(self, now_ts, *, allow_network):
+        """{airport: [forecast period]} from the airports' TAFs, kept TAF_FRESH_SECONDS and used up
+        to TAF_USABLE_SECONDS when the feed fails; None when there is nothing usable. The board
+        reads each airport's next significant change from the periods when it is drawn."""
+        path = _runtime_cache_dir() / "taf_status.json"
+        cached = self._read_json(path)
+        age = now_ts - float(cached.get("fetched_at") or 0)
+        usable = isinstance(cached.get("airports"), dict) and -300 <= age <= TAF_USABLE_SECONDS
+        if usable and (age < TAF_FRESH_SECONDS or not allow_network):
+            return cached["airports"]
+        if not allow_network:
+            return None
+        try:
+            response = self._client().request_json(
+                "GET", TAF_URL, headers=HTTP_HEADERS, timeout=(4, 8), max_bytes=256 * 1024,
+                params={"ids": ",".join("K" + code for code in FAA_AIRPORTS), "format": "json"})
+            airports = parse_taf(response.data)
+            if not airports:
+                raise ValueError("no TAF for the Bay airports")
+            self._write_json(path, {"fetched_at": now_ts, "airports": airports})
+            return airports
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("FlightRadar TAF failed: %s", type(exc).__name__)
             return cached["airports"] if usable else None
 
     def _get_cached_snapshot_for_theme(self, settings):
@@ -726,6 +770,9 @@ class FlightRadar(RefreshOnDisplayPresentationMixin, BasePlugin):
             # the transponder code, for the scope's symbols and data blocks.
             "vertical_rate": self._number(item.get("baro_rate") if item.get("baro_rate") is not None
                                           else item.get("geom_rate")),
+            # The altitude the crew has set the autopilot to climb or descend to (the MCP/FCU
+            # selected altitude, else the FMS's), in feet.
+            "target_altitude_ft": self._target_altitude(item),
             "category": self._clean_label(item.get("category") or "", 2).upper(),
             "squawk": self._clean_label(item.get("squawk") or "", 4),
             "route": "",
@@ -736,6 +783,13 @@ class FlightRadar(RefreshOnDisplayPresentationMixin, BasePlugin):
             "destination_city": "",
             "source": source_key,
         }
+
+    def _target_altitude(self, item):
+        for key in ("nav_altitude_mcp", "nav_altitude_fms"):
+            value = self._number(item.get(key))
+            if value is not None and 0 < value <= 60000:
+                return round(value / 100) * 100
+        return None
 
     def _normalize_opensky_state(self, state, center_lat, center_lon, radius_nm):
         if not isinstance(state, list) or len(state) < 11:
@@ -2622,3 +2676,121 @@ def parse_metar(rows):
             "raw": str(row.get("rawOb") or "")[:160],
         }
     return found
+
+
+def _taf_cover_base(layer):
+    if not isinstance(layer, dict) or str(layer.get("cover") or "").upper() not in ("BKN", "OVC", "OVX", "VV"):
+        return None
+    return _metar_number(layer.get("base"))
+
+
+def parse_taf(rows):
+    """aviationweather.gov's TAF JSON as {airport: [period]} for FAA_AIRPORTS (keyed by their IATA
+    codes), each period {start, end, change, probability, wx, wind_kt, gust_kt, visibility,
+    ceiling_ft}: the epoch seconds it runs, how it begins (FM, BECMG, TEMPO, PROB or none for the
+    first), and only the conditions the forecast gives for it (a TEMPO gives just what changes)."""
+    found = {}
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        code = str(row.get("icaoId") or "").upper()[-3:]
+        if code not in FAA_AIRPORTS or str(row.get("icaoId") or "").upper() != "K" + code:
+            continue
+        periods = []
+        for item in row.get("fcsts") or []:
+            if not isinstance(item, dict):
+                continue
+            start, end = _metar_number(item.get("timeFrom")), _metar_number(item.get("timeTo"))
+            if start is None or end is None or end <= start:
+                continue
+            bases = [base for base in map(_taf_cover_base, item.get("clouds") or []) if base is not None]
+            vertical = _metar_number(item.get("vertVis"))
+            if vertical is not None:
+                bases.append(vertical)
+            visibility = str(item.get("visib") or "")
+            periods.append({
+                "start": int(start), "end": int(end),
+                "change": "PROB" if str(item.get("fcstChange") or "").upper().startswith("PROB")
+                else str(item.get("fcstChange") or "").upper()[:6],
+                "probability": int(_metar_number(item.get("probability")) or 0),
+                "wx": " ".join(str(item.get("wxString") or "").split())[:40],
+                "wind_kt": _metar_number(item.get("wspd")), "gust_kt": _metar_number(item.get("wgst")),
+                "visibility": _metar_number(visibility.rstrip("+")) if visibility else None,
+                "ceiling_ft": min(bases) if bases else None,
+            })
+        if periods:
+            found[code] = sorted(periods, key=lambda period: period["start"])[:24]
+    return found
+
+
+def taf_weather(wx):
+    """A TAF weather group in Chinese: '-RA' 小雨, '+SHRA' 大阵雨, 'TSRA' 雷雨, 'BR' 轻雾; groups only
+    in the vicinity (VCSH) are left out."""
+    words = []
+    for token in str(wx or "").upper().split():
+        if token.startswith("VC"):
+            continue
+        intensity = "小" if token.startswith("-") else "大" if token.startswith("+") else ""
+        core = token.lstrip("+-")
+        for code, name in TAF_WEATHER:
+            if code in core:
+                if code == "TS":
+                    name = "雷雨" if "RA" in core else name
+                    intensity = ""
+                word = (intensity if code in ("SHRA", "RA", "DZ", "SHSN", "SN") else "") + name
+                if word not in words:
+                    words.append(word)
+                break
+    return "".join(words[:2])
+
+
+def taf_phrases(period):
+    """What makes a forecast period worth reading: its weather, a low ceiling, poor visibility,
+    strong wind or gusts ([] when it brings none of them)."""
+    phrases = []
+    weather = taf_weather(period.get("wx"))
+    if weather:
+        phrases.append(weather)
+    ceiling = period.get("ceiling_ft")
+    if ceiling is not None and ceiling < TAF_CEILING_FT:
+        phrases.append(f"云底 {int(ceiling):,}ft")
+    visibility = period.get("visibility")
+    if visibility is not None and visibility < TAF_VISIBILITY_SM:
+        phrases.append(f"能见 {visibility:g}SM")
+    gust, wind = period.get("gust_kt"), period.get("wind_kt")
+    if (gust or 0) >= TAF_WIND_KT:
+        phrases.append(f"阵风 {int(gust)}KT")
+    elif (wind or 0) >= TAF_WIND_KT:
+        phrases.append(f"风 {int(wind)}KT")
+    return phrases
+
+
+def _taf_day(stamp, now):
+    days = (stamp.date() - now.date()).days
+    return "今" if days == 0 else "明" if days == 1 else "后天" if days == 2 else "周" + "一二三四五六日"[stamp.weekday()]
+
+
+def taf_outlook(periods, now):
+    """An airport's next significant change in its TAF, in Chinese, from ``now`` (an aware local
+    time): "明 10 时起 小雨 · 云底 2,500ft" for a change from then on, "今 13–15 时间有 阵雨" for a
+    temporary one, "明 4 时 30% 可能 雷雨" for a probability, "现 小雨 · 云底 1,200ft" when it
+    holds now; "预报平稳" when nothing significant is forecast, "" without periods."""
+    periods = [period for period in periods or [] if isinstance(period, dict) and period.get("end", 0) > now.timestamp()]
+    if not periods:
+        return ""
+    for period in periods:
+        phrases = taf_phrases(period)
+        if not phrases:
+            continue
+        start = datetime.fromtimestamp(period["start"], now.tzinfo)
+        end = datetime.fromtimestamp(period["end"], now.tzinfo)
+        what = " · ".join(phrases)
+        if period["start"] <= now.timestamp():
+            return f"现 {what}" if period.get("change") not in ("TEMPO", "PROB") else f"现间有 {what}"
+        day = _taf_day(start, now)
+        if period.get("change") == "TEMPO":
+            return f"{day} {start.hour}–{end.hour} 时间有 {what}"
+        if period.get("change") == "PROB" or period.get("probability"):
+            return f"{day} {start.hour} 时 {period.get('probability') or 30}% 可能 {what}"
+        return f"{day} {start.hour} 时起 {what}"
+    return "预报平稳"

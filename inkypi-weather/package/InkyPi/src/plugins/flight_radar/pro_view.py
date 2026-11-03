@@ -33,7 +33,7 @@ from utils.safe_image import ImageLimits, safe_open_image
 
 from .flight_radar import (
     DEFAULT_CENTER_LABEL, DEFAULT_DISPLAY_RADIUS_NM, DEFAULT_LATITUDE, DEFAULT_LONGITUDE, DEFAULT_RADIUS_NM, FAA_AIRPORTS,
-    faa_label,
+    TARGET_ALTITUDE_GAP_FT, faa_label, taf_outlook,
 )
 
 
@@ -172,7 +172,7 @@ def render_pro(plugin, image, snapshot, theme, now, settings, device_config):
     draw = ImageDraw.Draw(image)
     draw.rectangle((0, 0, image.width, image.height), fill=theme["bg"])
     _header(plugin, image, draw, snapshot, theme, now)
-    _board(plugin, image, draw, snapshot, theme)
+    _board(plugin, image, draw, snapshot, theme, now)
     _scope(plugin, image, snapshot, theme, settings, device_config)
     _strips(plugin, image, snapshot, theme, now)
 
@@ -201,6 +201,25 @@ def _altitude(plugin, plane):
         return "高度 --"
     value = max(0.0, value)  # barometric altitude reads a little below zero on the runway
     return f"FL{round(value / 100):03d}" if value >= 18000 else f"{int(round(value, -2)):,} ft"
+
+
+def _clear_visibility(value):
+    """Whether a METAR visibility ("10+", "6", "1/2") is 6 statute miles or more."""
+    try:
+        return float(str(value).rstrip("+")) >= 6
+    except ValueError:
+        return False
+
+
+def _altitude_with_target(plugin, plane):
+    """The altitude and the level the aircraft is cleared to: "14,500→FL190", "2,500→5,000 ft";
+    just the altitude without a target."""
+    cleared = target_level(plugin, plane)
+    if not cleared:
+        return _altitude(plugin, plane)
+    target = plugin._number(plane.get("target_altitude_ft"))
+    target_text = f"FL{round(target / 100):03d}" if target >= 18000 else f"{int(target):,} ft"
+    return f"{_altitude(plugin, plane).replace(' ft', '')}→{target_text}"
 
 
 # --- header and airport board ------------------------------------------------------------------
@@ -255,9 +274,13 @@ def _wind(weather):
     return f"{heading}/{int(speed)}KT" + (f" G{int(gust)}" if gust else "")
 
 
-def _board(plugin, image, draw, snapshot, theme):
+def _board(plugin, image, draw, snapshot, theme, now=None):
+    """Each airport's card: its logo, the METAR's flight category and wind and the FAA's status on
+    the first line; the TAF's next significant change (or the city, without a TAF) and visibility
+    or ceiling and temperature on the second."""
     metar = snapshot.get("metar") or {}
     faa = snapshot.get("airports")
+    taf = snapshot.get("taf") or {}
     x0, y0, x1, y1 = BOARD
     gap = 8
     width = (x1 - x0 - gap * (len(FAA_AIRPORTS) - 1)) / len(FAA_AIRPORTS)
@@ -273,16 +296,41 @@ def _board(plugin, image, draw, snapshot, theme):
             image.paste(logo, (round(bx + 8), y0 + 5), logo)
         else:
             draw.text((bx + 8, y0 + 3), code, font=code_font, fill=theme["ink"])
-        draw.text((bx + 8, y0 + 24), f"K{code} · {AIRPORT_CITIES.get(code, code)}", font=city_font, fill=theme["muted"])
         weather = metar.get(code) or {}
         category = weather.get("category") or ""
-        cx = bx + 80
+        cx = bx + 78
+        wind_x = cx
         if category:
             chip_w = draw.textlength(category, font=chip_font) + 12
             draw.rounded_rectangle((cx, y0 + 5, cx + chip_w, y0 + 19), radius=7,
                                    fill=theme[CATEGORY_ROLES.get(category, "muted")])
             draw.text((cx + chip_w / 2, y0 + 12), category, font=chip_font, fill=WHITE, anchor="mm")
-        draw.text((cx, y0 + 24), _wind(weather) if weather else "METAR --", font=line_font, fill=theme["ink"])
+            wind_x = cx + chip_w + 6
+        draw.text((wind_x, y0 + 12), _wind(weather) if weather else "METAR --", font=line_font, fill=theme["ink"],
+                  anchor="lm")
+        # The terminal forecast's next significant change, in place of the city it serves.
+        outlook = taf_outlook(taf.get(code), now) if now is not None and taf.get(code) else ""
+        right_text = ""
+        if weather:
+            # A low ceiling, else the visibility (left out at 6 SM and more when the forecast
+            # needs the room), then the temperature.
+            ceiling = weather.get("ceiling_ft")
+            visibility = str(weather.get("visibility") or "--")
+            parts = [f"云底 {int(ceiling):,}" if ceiling is not None and ceiling < 5000 else
+                     "" if outlook and _clear_visibility(visibility) else f"能见 {visibility}SM"]
+            if weather.get("temp_c") is not None:
+                parts.append(f"{weather['temp_c']:.0f}°C")
+            right_text = " · ".join(part for part in parts if part)
+        right_w = draw.textlength(right_text, font=line_font) if right_text else 0
+        if outlook:
+            calm = outlook == "预报平稳"
+            label_w = draw.textlength("TAF", font=chip_font)
+            draw.text((bx + 8, y0 + 24), "TAF", font=chip_font, fill=theme["muted"])
+            draw.text((bx + 12 + label_w, y0 + 24), _fit(draw, outlook, line_font, width - 26 - label_w - right_w),
+                      font=line_font, fill=theme["muted"] if calm else theme["ink"])
+        else:
+            draw.text((bx + 8, y0 + 24), f"K{code} · {AIRPORT_CITIES.get(code, code)}", font=city_font,
+                      fill=theme["muted"])
         # The FAA's word on the airport, and visibility, ceiling and temperature under it.
         if isinstance(faa, dict):
             problem = faa.get(code) or {}
@@ -291,13 +339,8 @@ def _board(plugin, image, draw, snapshot, theme):
             status_w = draw.textlength(status, font=chip_font)
             draw.ellipse((bx1 - 8 - status_w - 11, y0 + 8, bx1 - 8 - status_w - 4, y0 + 15), fill=theme[role])
             draw.text((bx1 - 8, y0 + 5), status, font=chip_font, fill=theme["ink"], anchor="ra")
-        if weather:
-            ceiling = weather.get("ceiling_ft")
-            parts = [f"云底 {int(ceiling):,}" if ceiling is not None and ceiling < 5000 else
-                     f"能见 {weather.get('visibility') or '--'}SM"]
-            if weather.get("temp_c") is not None:
-                parts.append(f"{weather['temp_c']:.0f}°C")
-            draw.text((bx1 - 8, y0 + 24), " · ".join(parts), font=line_font, fill=theme["muted"], anchor="ra")
+        if right_text:
+            draw.text((bx1 - 8, y0 + 24), right_text, font=line_font, fill=theme["muted"], anchor="ra")
 
 
 # --- the radar scope ---------------------------------------------------------------------------
@@ -337,7 +380,10 @@ def _scope(plugin, image, snapshot, theme, settings, device_config):
         plugin._draw_plane_trail(trail_draw, px, py, plane, cx, cy, label, center_lat, center_lon, display_nm,
                                  radius_px, theme, airport_xy=airport)
     if plotted:
-        image.paste(Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB"))
+        # The trails stay inside the scope: a long history would otherwise run out over the board.
+        region = tuple(round(value) for value in inner)
+        base = image.crop(region).convert("RGBA")
+        image.paste(Image.alpha_composite(base, overlay.crop(region)).convert("RGB"), region[:2])
     draw = ImageDraw.Draw(image)
     for plane, (px, py) in plotted:
         if not _draw_aircraft(plugin, image, draw, (px, py), plane, theme):
@@ -459,7 +505,8 @@ def _chart_layer(plugin, image, box, center, display_nm, centre, radius, theme):
     for runway in features.get("runways") or []:
         a, b = at(*runway["ends"][:2]), at(*runway["ends"][2:])
         airport = kinds.get(runway["airport"]) or {}
-        if a and b:
+        # Only runways on the chart: one beyond it would otherwise be drawn over the airport board.
+        if a and b and all(x0 < x < x1 and y0 < y < y1 for x, y in (a, b)):
             draw.line((*a, *b), fill=theme["ink"], width=sizes.get(airport.get("type"), 2))
     for airport in kinds.values():
         point = at(airport["lat"], airport["lon"])
@@ -655,11 +702,27 @@ def _draw_aircraft(plugin, image, draw, point, plane, theme):
     return True
 
 
+def target_level(plugin, plane):
+    """(direction, level) of the altitude the aircraft is cleared to, as a data block writes it
+    ("190" for 19,000 ft; direction +1 climbing to it, -1 descending), or None when it holds its
+    altitude, has no target, or moves away from it (a missed-approach altitude set above an
+    aircraft descending to land)."""
+    target = plugin._number(plane.get("target_altitude_ft"))
+    altitude = plugin._number(plane.get("altitude_ft"))
+    if target is None or altitude is None or plane.get("on_ground"):
+        return None
+    gap = target - altitude
+    rate = plugin._number(plane.get("vertical_rate")) or 0
+    if abs(gap) < TARGET_ALTITUDE_GAP_FT or (abs(rate) >= VERTICAL_ARROW_FPM and rate * gap < 0):
+        return None
+    return (1 if gap > 0 else -1), f"{round(target / 100):03d}"
+
+
 def _data_blocks(plugin, draw, plotted, box, theme):
     """ATC full data blocks for the nearest airborne targets, on a leader line in the first free
     corner around the target: the callsign; the altitude in hundreds of feet with a climb or
-    descent arrow, then the ground speed in tens of knots; and the aircraft type (or, for an
-    emergency squawk, its code and meaning in red)."""
+    descent arrow and the level it is cleared to after it ("145↑190"), then the ground speed in
+    tens of knots; and the aircraft type (or, for an emergency squawk, its code and meaning in red)."""
     call_font, data_font = plugin._font(9, "bold"), plugin._font(8, "bold")
     airborne = [(plane, point) for plane, point in plotted if not plane.get("on_ground") and plane.get("callsign")]
     airborne.sort(key=lambda item: plugin._number(item[0].get("distance_nm")) or 999)
@@ -671,11 +734,16 @@ def _data_blocks(plugin, draw, plotted, box, theme):
         rate = plugin._number(plane.get("vertical_rate")) or 0
         level = f"{round(max(0.0, altitude or 0) / 100):03d}"
         knots = f"{round((speed or 0) / 10):02d}"
+        cleared = target_level(plugin, plane)
+        # The arrow points the way the aircraft moves, else the way to its cleared level.
+        direction = (1 if rate > 0 else -1) if abs(rate) >= VERTICAL_ARROW_FPM else cleared[0] if cleared else 0
+        target = cleared[1] if cleared else ""
         squawk = str(plane.get("squawk") or "")
         third = f"{squawk} {EMERGENCY_SQUAWKS[squawk]}" if squawk in EMERGENCY_SQUAWKS else \
             str(plane.get("type") or "").split(" ")[0][:4]
-        arrow_w = 7 if abs(rate) >= VERTICAL_ARROW_FPM else 3
-        data_w = draw.textlength(level, font=data_font) + arrow_w + draw.textlength(knots, font=data_font)
+        arrow_w = 7 if direction else 3
+        target_w = draw.textlength(target, font=data_font) + 3 if target else 0
+        data_w = draw.textlength(level, font=data_font) + arrow_w + target_w + draw.textlength(knots, font=data_font)
         width = max(draw.textlength(callsign, font=call_font), data_w, draw.textlength(third, font=data_font)) + 2
         height = 31 if third else 21
         for ox, oy in ((14, -height - 5), (14, 6), (-14 - width, -height - 5), (-14 - width, 6)):
@@ -692,12 +760,16 @@ def _data_blocks(plugin, draw, plotted, box, theme):
             draw.text((bx, by + 11), level, font=data_font, fill=theme["muted"], stroke_width=2,
                       stroke_fill=theme["panel"])
             arrow_x = bx + draw.textlength(level, font=data_font) + 1
-            if abs(rate) >= VERTICAL_ARROW_FPM:
+            if direction:
                 # Up for a climb, down for a descent, beside the altitude it changes.
-                tip, base = (by + 12, by + 18) if rate > 0 else (by + 18, by + 12)
+                tip, base = (by + 12, by + 18) if direction > 0 else (by + 18, by + 12)
                 draw.polygon(((arrow_x, base), (arrow_x + 5, base), (arrow_x + 2.5, tip)), fill=theme["ink"])
-            draw.text((arrow_x + arrow_w - 1, by + 11), knots, font=data_font, fill=theme["muted"], stroke_width=2,
-                      stroke_fill=theme["panel"])
+            if target:
+                # The level it is cleared to, in ink after the arrow, before the speed.
+                draw.text((arrow_x + arrow_w - 1, by + 11), target, font=data_font, fill=theme["ink"], stroke_width=2,
+                          stroke_fill=theme["panel"])
+            draw.text((arrow_x + arrow_w - 1 + target_w, by + 11), knots, font=data_font, fill=theme["muted"],
+                      stroke_width=2, stroke_fill=theme["panel"])
             if third:
                 emergency = squawk in EMERGENCY_SQUAWKS
                 draw.text((bx, by + 21), third, font=data_font, fill=theme["red"] if emergency else theme["muted"],
@@ -947,20 +1019,29 @@ def _strips(plugin, image, snapshot, theme, now):
         # Line 2: the route with its progress and time.
         _strip_route(plugin, image, draw, plane, phase, (sx0 + 10, sy0 + 22, sx1 - 10, sy0 + 50),
                      flight_time(plugin, plane, now), theme)
-        # Line 3: the aircraft, then its level and speed, then its distance.
+        # Line 3: the aircraft, then its level (and the level it is cleared to) and speed, then its distance.
         speed = plugin._number(plane.get("speed_kt"))
         aircraft = " · ".join(piece for piece in (str(plane.get("type") or "").upper(),
                                                   str(plane.get("registration") or "").upper()) if piece)
-        state = " · ".join(piece for piece in (_altitude(plugin, plane), f"{int(speed)} kt" if speed is not None
-                                               and not plane.get("on_ground") else "") if piece)
+        knots = f"{int(speed)} kt" if speed is not None and not plane.get("on_ground") else ""
         foot = sy0 + 58
         aircraft_font = _airport_font(plugin, 9, text=aircraft)
-        draw.text((sx0 + 10, foot), _fit(draw, aircraft, aircraft_font, (sx1 - sx0) / 2 - 40), font=aircraft_font,
-                  fill=theme["muted"], anchor="lm")
-        draw.text(((sx0 + sx1) / 2 + 12, foot), state, font=_airport_font(plugin, 9, text=state),
-                  fill=theme["ink"], anchor="mm")
-        draw.text((sx1 - 10, foot), plugin._format_distance(plane.get("distance_nm")), font=meta_font,
-                  fill=theme["muted"], anchor="rm")
+        aircraft = _fit(draw, aircraft, aircraft_font, (sx1 - sx0) / 2 - 40)
+        draw.text((sx0 + 10, foot), aircraft, font=aircraft_font, fill=theme["muted"], anchor="lm")
+        distance = plugin._format_distance(plane.get("distance_nm"))
+        # The state sits centred a little right of the middle, clear of the aircraft and the distance.
+        centre = (sx0 + sx1) / 2 + 12
+        room = 2 * min(centre - (sx0 + 16 + draw.textlength(aircraft, font=aircraft_font)),
+                       sx1 - 16 - draw.textlength(distance, font=meta_font) - centre)
+        state = ""
+        for level in (_altitude_with_target(plugin, plane), _altitude(plugin, plane)):
+            state = " · ".join(piece for piece in (level, knots) if piece)
+            # Inter sets the arrow too; only Chinese (地面) takes the UI face.
+            state_font = _airport_font(plugin, 9, text=state.replace("→", ""))
+            if draw.textlength(state, font=state_font) <= room:
+                break
+        draw.text((centre, foot), state, font=state_font, fill=theme["ink"], anchor="mm")
+        draw.text((sx1 - 10, foot), distance, font=meta_font, fill=theme["muted"], anchor="rm")
     if not planes:
         draw.text(((x0 + x1) / 2, (y0 + y1) / 2), "等待航班数据", font=plugin._font(13, "bold"), fill=theme["muted"],
                   anchor="mm")
