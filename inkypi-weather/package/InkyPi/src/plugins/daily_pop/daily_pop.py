@@ -131,6 +131,14 @@ class DailyPop(BasePlugin):
             "epic": load(Source("epic", {"collection": "natural"}, sources.fetch_epic, fresh_seconds=3 * 3600,
                                 usable_seconds=4 * 86400, validate=sources.valid_epic, timeout_seconds=8)),
         }
+        # The shown shows' episode count, genre and air dates: twelve small requests a day at most,
+        # kept apart from the page's provenance (missing details only hide their marks).
+        shown = [show["id"] for show in ((results["bangumi"].get("data") or {}).get("shows") or [])[:sources.BANGUMI_SHOWN]
+                 if isinstance(show, dict) and show.get("id")]
+        details = load(Source("bangumi_details", {"ids": ",".join(map(str, shown))},
+                              lambda ctx: sources.fetch_show_details(shown, now, ctx), fresh_seconds=86400,
+                              usable_seconds=3 * 86400, validate=sources.valid_show_details,
+                              timeout_seconds=20)) if shown else {}
         history = self._read_history()
         changed = False
         if allow_network:
@@ -142,11 +150,12 @@ class DailyPop(BasePlugin):
                     atomic_write_json(self._history_path(), history)
                 except OSError as exc:
                     logger.warning("Daily Pop history not saved: %s", exc)
-        return {**results, "history": history, "provenance": combined_provenance(results.values())}
+        return {**results, "history": history, "bangumi_details": (details.get("data") or {}).get("shows") or {},
+                "provenance": combined_provenance(results.values())}
 
     def _images(self, payload, now, *, allow_network, context):
         urls = [video.get("cover") for video in payload["bilibili"]["data"].get("videos", [])[:4]]
-        urls += [show.get("cover") for show in payload["bangumi"]["data"].get("shows", [])[:6]]
+        urls += [show.get("cover") for show in payload["bangumi"]["data"].get("shows", [])[:sources.BANGUMI_SHOWN]]
         urls += [song.get("artwork") for song in payload["songs"]["data"].get("songs", [])[:3]]
         urls += [payload["puzzle"]["data"].get("image")]
         options = {"http": get_http_client(), "context": context, "safe_url": sources.safe_image_url,

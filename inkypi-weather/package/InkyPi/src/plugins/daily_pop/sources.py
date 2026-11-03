@@ -23,6 +23,18 @@ USER_AGENT = "InkyPi DailyPop/1.0 (personal e-paper display)"
 REQUEST_TIMEOUT = (3, 9)
 BILIBILI_URL = "https://api.bilibili.com/x/web-interface/popular"
 BANGUMI_URL = "https://api.bgm.tv/calendar"
+# A shown show's own record (genres, episode count) and its episodes' air dates (Bangumi asks for
+# a User-Agent naming the client, which USER_AGENT does).
+BANGUMI_SUBJECT_URL = "https://api.bgm.tv/v0/subjects/{id}"
+BANGUMI_EPISODES_URL = "https://api.bgm.tv/v0/episodes"
+TOKYO = ZoneInfo("Asia/Tokyo")
+# Bangumi's official tags that say what a show is rather than its genre.
+BANGUMI_PLAIN_TAGS = {"TV", "WEB", "OVA", "OAD", "剧场版", "日本", "中国", "韩国", "欧美", "美国", "原创", "小说改",
+                      "漫画改", "游戏改", "轻小说改", "短片", "动画", "季番", "续作"}
+# A long-running show lists its last BANGUMI_RECENT_EPISODES episodes only; each show keeps
+# BANGUMI_KEPT_EPISODES (episode, air date) pairs around today.
+BANGUMI_RECENT_EPISODES = 40
+BANGUMI_KEPT_EPISODES = 30
 APPLE_SONGS_URL = "https://rss.marketingtools.apple.com/api/v2/us/music/most-played/10/songs.json"
 # The iTunes Store's own top-songs feed: the stand-in while Apple's marketing RSS is down
 # (it answered 502/504 for hours on 2026-10-24).
@@ -37,6 +49,8 @@ IMAGE_HOSTS = ("i0.hdslb.com", "i1.hdslb.com", "i2.hdslb.com", "lain.bgm.tv", "i
                "upload.wikimedia.org", "www.chess.com", "epic.gsfc.nasa.gov")
 MAX_VIDEOS = 6
 MAX_SHOWS = 8
+# The page shows today's first BANGUMI_SHOWN shows; only they get their details fetched.
+BANGUMI_SHOWN = 6
 MAX_SONGS = 5
 BILIBILI_COVER_SIZE = "@640w_360h_1c.jpg"
 MAX_ARTICLES = 6
@@ -132,6 +146,7 @@ def normalize_bangumi(payload, weekday):
         rating = (item.get("rating") or {})
         images = item.get("images") or {}
         shows.append({
+            "id": _count(item.get("id")), "rank": _count(item.get("rank")),
             "name": _clean(item.get("name_cn") or item.get("name"), 40),
             "score": float(rating.get("score") or 0), "votes": _count(rating.get("total")),
             "watching": _count((item.get("collection") or {}).get("doing")),
@@ -149,6 +164,73 @@ def fetch_bangumi(now, context):
 
 def valid_bangumi(data):
     return bool((data or {}).get("shows"))
+
+
+def show_genre(subject):
+    """The show's first official tag that names a genre ("奇幻"), "" without one."""
+    tags = subject.get("meta_tags") if isinstance(subject.get("meta_tags"), list) else []
+    return next((_clean(tag, 6) for tag in tags if str(tag).strip() and str(tag).strip() not in BANGUMI_PLAIN_TAGS), "")
+
+
+def normalize_show_details(subject, episodes):
+    """A show's episode count, genre, rank and its episodes' (number, air date) pairs."""
+    subject = subject if isinstance(subject, dict) else {}
+    pairs = []
+    for episode in ((episodes or {}).get("data") if isinstance(episodes, dict) else None) or []:
+        if not isinstance(episode, dict):
+            continue
+        number = episode.get("ep") or episode.get("sort")
+        airdate = str(episode.get("airdate") or "")
+        if isinstance(number, (int, float)) and number > 0 and re.fullmatch(r"\d{4}-\d{2}-\d{2}", airdate):
+            pairs.append([int(number), airdate])
+    rating = subject.get("rating") if isinstance(subject.get("rating"), dict) else {}
+    return {"episodes": _count(subject.get("eps") or subject.get("total_episodes")), "genre": show_genre(subject),
+            "rank": _count(rating.get("rank")), "aired": pairs}
+
+
+def kept_episodes(pairs, today):
+    """The BANGUMI_KEPT_EPISODES pairs around ``today`` (an ISO date): the latest aired and the next ones."""
+    pairs = sorted(pairs, key=lambda pair: pair[1])
+    aired = [index for index, (_number, airdate) in enumerate(pairs) if airdate <= today]
+    start = max(0, (aired[-1] if aired else 0) - BANGUMI_KEPT_EPISODES // 2)
+    return pairs[start:start + BANGUMI_KEPT_EPISODES]
+
+
+def fetch_show_details(show_ids, now, context):
+    """{"shows": {id: details}} for the shows the page shows; a show that fails is left out."""
+    today = now.astimezone(TOKYO).date().isoformat()
+    shows = {}
+    for show_id in show_ids:
+        try:
+            subject = _get(BANGUMI_SUBJECT_URL.format(id=int(show_id)), context, max_bytes=256 * 1024)
+            count = _count((subject or {}).get("eps") or (subject or {}).get("total_episodes"))
+            # A long runner (One Piece is past 1,150) lists only its latest episodes.
+            offset = max(0, count - BANGUMI_RECENT_EPISODES) if count > 100 else 0
+            episodes = _get(BANGUMI_EPISODES_URL, context, max_bytes=256 * 1024,
+                            params={"subject_id": int(show_id), "type": 0, "offset": offset,
+                                    "limit": BANGUMI_RECENT_EPISODES if offset else 100})
+            details = normalize_show_details(subject, episodes)
+            details["aired"] = kept_episodes(details["aired"], today)
+            shows[str(int(show_id))] = details
+        except TaskCancelled:
+            raise
+        except Exception as exc:  # noqa: BLE001 - one show's failure leaves only its details out.
+            logger.info("Bangumi details for %s skipped: %s", show_id, type(exc).__name__)
+    if not shows:
+        raise ValueError("Bangumi returned no show details")
+    return {"shows": shows}
+
+
+def valid_show_details(data):
+    return bool((data or {}).get("shows"))
+
+
+def episode_progress(details, now):
+    """(latest aired episode, episode count) for a show on ``now``'s date in Tokyo, where its air dates
+    are; (0, count) before its first episode."""
+    today = now.astimezone(TOKYO).date().isoformat()
+    aired = [number for number, airdate in (details or {}).get("aired") or [] if airdate <= today]
+    return (max(aired) if aired else 0), _count((details or {}).get("episodes"))
 
 
 # --- Apple Music most played ---------------------------------------------------------------

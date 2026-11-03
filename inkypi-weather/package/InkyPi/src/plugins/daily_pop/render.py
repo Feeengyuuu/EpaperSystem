@@ -80,6 +80,10 @@ BILI_THUMB_TITLE = 0.8
 BILI_TWO_LINE_SIZE = 14
 # The translucent chips over the covers: how much of their fill covers the picture.
 CHIP_ALPHA, PILL_ALPHA = 0.8, 0.58
+# 今日新番: a show among Bangumi's top BANGUMI_TOP_RANK wears its rank on its cover; every show
+# with its episodes known shows how far it has aired along its cover's foot.
+BANGUMI_TOP_RANK = 1000
+EPISODE_BAR = 3
 
 
 def _rgb(value):
@@ -333,7 +337,8 @@ def _bangumi(canvas, payload, images, now):
         return
     cell_w = (right - left - 16) / 3
     cell_h = (bottom - 6 - top) / 2
-    for index, show in enumerate(shows[:6]):
+    every_details = payload.get("bangumi_details") or {}
+    for index, show in enumerate(shows[:sources.BANGUMI_SHOWN]):
         column, row = index % 3, index // 3
         x0 = left + 8 + column * cell_w
         y0 = top + row * cell_h
@@ -345,9 +350,39 @@ def _bangumi(canvas, payload, images, now):
             canvas.draw.rounded_rectangle((cover[2] - width - 3, cover[1] + 3, cover[2] - 3, cover[1] + 18), radius=7,
                                           fill=BRANDS["bangumi"])
             canvas.text((cover[2] - 3 - width / 2, cover[1] + 10.5), label, 10, (255, 255, 255), anchor="mm")
+        details = every_details.get(str(show.get("id"))) or {}
+        rank = details.get("rank") or show.get("rank")
+        if rank and rank <= BANGUMI_TOP_RANK:
+            label = f"#{rank}"
+            width = canvas.width(label, 9) + 8
+            _glass(canvas, (cover[0] + 3, cover[1] + 3, cover[0] + 3 + width, cover[1] + 17), canvas.color("shade"),
+                   CHIP_ALPHA, 6)
+            canvas.text((cover[0] + 3 + width / 2, cover[1] + 10), label, 9, (255, 255, 255), anchor="mm")
+        _episodes(canvas, cover, *sources.episode_progress(details, now))
         canvas.text((x0 + 3, cover[3] + 4), show.get("name"), 11, width=cell_w - 6)
-        canvas.text((x0 + 3, cover[3] + 18), f"{count_text(show.get('watching'))}在追", 9, "muted", bold=False,
-                    width=cell_w - 6)
+        line = f"{count_text(show.get('watching'))}在追"
+        # Its genre follows when the line has room for it whole.
+        if details.get("genre") and canvas.width(f"{line} · {details['genre']}", 9, False) <= cell_w - 6:
+            line += f" · {details['genre']}"
+        canvas.text((x0 + 3, cover[3] + 18), line, 9, "muted", bold=False, width=cell_w - 6)
+
+
+def _episodes(canvas, cover, aired, count):
+    """How far a show has aired, over its cover's foot: "5/12话" on a dark glass chip and a bar
+    filled to that share along the very bottom (the bar left out when its length is unknown)."""
+    if not aired:
+        return
+    x0, _y0, x1, y1 = cover
+    label = f"{aired}/{count}话" if count >= aired else f"第{aired}话"
+    width = canvas.width(label, 9) + 8
+    bar_top = y1 - EPISODE_BAR
+    _glass(canvas, (x0 + 3, bar_top - 16, x0 + 3 + width, bar_top - 3), canvas.color("shade"), CHIP_ALPHA, 6)
+    canvas.text((x0 + 3 + width / 2, bar_top - 9.5), label, 9, (255, 255, 255), anchor="mm")
+    if count >= aired:
+        # The bar keeps inside the cover's rounded corners: a dark glass track, filled in the source's pink.
+        left, right = x0 + 2, x1 - 2
+        _glass(canvas, (left, bar_top, right, y1 - 1), canvas.color("shade"), PILL_ALPHA, 1)
+        canvas.image.paste(BRANDS["bangumi"], (left, bar_top, left + round((right - left) * aired / count), y1))
 
 
 # --- Wikipedia most read -------------------------------------------------------------------------

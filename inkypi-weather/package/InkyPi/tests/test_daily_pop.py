@@ -203,3 +203,82 @@ def test_the_header_names_each_source_by_its_logo_and_a_card_without_a_note_sets
     assert not {"B站", "新番", "维基", "地球", "棋题"} & set(texts)
     puzzle = next(entry for entry in drawn if entry[0] == "每日棋题")
     assert puzzle[2] == "rm" and puzzle[1] == render.CARDS["puzzle"][2] - 10
+
+
+SUBJECT = {"id": 624923, "eps": 12, "total_episodes": 12, "rating": {"rank": 812, "score": 6.4},
+           "meta_tags": ["TV", "奇幻", "日本", "百合", "小说改"]}
+AIRDATES = ("2026-10-05", "2026-10-12", "2026-10-19", "2026-10-26", "2026-11-02", "2026-11-09")
+# Six dated episodes and one without a date yet.
+EPISODES = {"total": 12, "data": [{"ep": number, "sort": number, "airdate": airdate}
+                                  for number, airdate in enumerate(AIRDATES, start=1)] + [{"ep": 7, "airdate": ""}]}
+
+
+def test_a_shows_details_give_its_genre_rank_and_how_far_it_has_aired():
+    details = sources.normalize_show_details(SUBJECT, EPISODES)
+
+    assert (details["episodes"], details["genre"], details["rank"]) == (12, "奇幻", 812)
+    assert details["aired"][0] == [1, "2026-10-05"] and len(details["aired"]) == 6
+    # Air dates are Tokyo's: early on 11-02 in California it is already 11-02 evening there.
+    morning = datetime(2026, 11, 2, 7, 0, tzinfo=sources.PACIFIC)
+    assert sources.episode_progress(details, morning) == (5, 12)
+    assert sources.episode_progress(details, datetime(2026, 10, 1, tzinfo=sources.PACIFIC)) == (0, 12)
+    assert sources.episode_progress({}, morning) == (0, 0)
+    assert sources.show_genre({"meta_tags": ["TV", "日本"]}) == ""
+    # Only the episodes around today are kept.
+    many = [[number, f"2026-{1 + number // 28:02d}-{1 + number % 28:02d}"] for number in range(1, 200)]
+    kept = sources.kept_episodes(many, "2026-05-10")
+    assert len(kept) == sources.BANGUMI_KEPT_EPISODES and kept[0][1] < "2026-05-10" < kept[-1][1]
+
+
+def test_show_details_ask_only_for_a_long_runners_latest_episodes(monkeypatch):
+    asked = []
+
+    def fake_get(url, context, *, max_bytes, params=None, timeout=None):
+        asked.append((url, dict(params or {})))
+        if url.endswith("/975"):
+            return {"eps": 1160}
+        if url.endswith("/13"):
+            raise RuntimeError("down")
+        if "subjects" in url:
+            return SUBJECT
+        return EPISODES
+
+    monkeypatch.setattr(sources, "_get", fake_get)
+    data = sources.fetch_show_details([624923, 975, 13], NOW, None)
+
+    assert set(data["shows"]) == {"624923", "975"} and sources.valid_show_details(data)
+    episodes = {params["subject_id"]: params for url, params in asked if url == sources.BANGUMI_EPISODES_URL}
+    assert episodes[624923]["offset"] == 0 and episodes[624923]["limit"] == 100
+    assert episodes[975]["offset"] == 1160 - sources.BANGUMI_RECENT_EPISODES
+    monkeypatch.setattr(sources, "_get", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
+    with pytest.raises(ValueError):
+        sources.fetch_show_details([1], NOW, None)
+
+
+def test_bangumi_keeps_each_shows_id_and_rank():
+    payload = [{"weekday": {"id": 1}, "items": [{"id": 624923, "rank": 5310, "name": "Witch", "collection": {"doing": 9}}]}]
+
+    assert sources.normalize_bangumi(payload, 1)["shows"][0]["id"] == 624923
+    assert sources.normalize_bangumi(payload, 1)["shows"][0]["rank"] == 5310
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_a_show_wears_its_episodes_genre_and_top_rank(mode, monkeypatch):
+    from PIL import ImageDraw
+
+    drawn = []
+    original = ImageDraw.ImageDraw.text
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text",
+                        lambda self, xy, text, *a, **k: drawn.append(str(text)) or original(self, xy, text, *a, **k))
+    payload = _payload()
+    payload["bangumi"]["data"]["shows"] = [
+        {"id": 1, "rank": 812, "name": "魔女", "score": 6.4, "watching": 87, "cover": ""},
+        {"id": 2, "rank": 5310, "name": "战记", "score": 6.5, "watching": 2107, "cover": ""},
+    ]
+    payload["bangumi_details"] = {"1": sources.normalize_show_details(SUBJECT, EPISODES),
+                                  "2": {"episodes": 0, "genre": "很长很长的类型名字", "rank": 5310, "aired": [[3, "2026-10-19"]]}}
+    render_page((800, 480), payload, {"_inkypi_theme": {"mode": mode}}, datetime(2026, 11, 2, 7, 0, tzinfo=sources.PACIFIC), {})
+
+    assert {"5/12话", "#812", "87在追 · 奇幻", "第3话", "2107在追"} <= set(drawn)
+    # Rank 5310 is not shown, nor a genre that does not fit beside the count.
+    assert "#5310" not in drawn and not any("很长" in text for text in drawn)
