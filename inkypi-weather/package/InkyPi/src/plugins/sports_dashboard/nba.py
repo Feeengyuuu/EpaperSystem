@@ -1,3 +1,5 @@
+from runtime.refresh_contracts import TaskCancelled
+
 from .common import *
 from .nba_free_odds import attach_free_odds
 from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_alias
@@ -877,20 +879,23 @@ class NBAMixin:
             logger.warning("Failed to update NBA scoreboard request counter: %s", exc)
 
     def _attach_nba_odds(self, events, settings, device_config, timezone_info):
+        """Prices from a keyed provider when one is set, then ESPN's free game summaries: their
+        moneylines otherwise, and always the matchup predictor, recent form and injury report.
+        ``nbaOddsEnabled`` off makes no request at all."""
         if not events or not self._bool_setting(settings, "nbaOddsEnabled", True):
             return events
         provider = self._nba_odds_provider(settings, device_config)
         api_key = self._nba_odds_api_key(settings, device_config, provider)
-        if not api_key:
-            return attach_free_odds(self, events, settings)
-        try:
-            odds_events, _source_state, _fetched_at = self._load_nba_odds(settings, api_key, provider)
-            if not odds_events:
-                return events
-            return self._merge_nba_odds(events, odds_events, timezone_info, settings)
-        except Exception as exc:
-            logger.warning("NBA odds overlay failed: %s", _safe_exception_text(exc))
-            return events
+        if api_key:
+            try:
+                odds_events, _source_state, _fetched_at = self._load_nba_odds(settings, api_key, provider)
+                if odds_events:
+                    events = self._merge_nba_odds(events, odds_events, timezone_info, settings)
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                logger.warning("NBA odds overlay failed: %s", _safe_exception_text(exc))
+        return attach_free_odds(self, events, settings, include_odds=not api_key)
 
     @staticmethod
     def _nba_odds_api_key(settings, device_config=None, provider=None):

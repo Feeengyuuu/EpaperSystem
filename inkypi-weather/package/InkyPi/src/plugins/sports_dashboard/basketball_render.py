@@ -18,7 +18,7 @@ The NBA offseason page is drawn by nba.py and is unchanged.
 
 from .common import *
 from .card_backdrops import card_backdrop_box, paint_card_backdrop, paint_list_backdrop
-from .scorebug_kit import KIT_TILE_HEIGHT, ScorebugSpec, _kit_inked_where_faint, stat_icon_path
+from .scorebug_kit import KIT_TILE_HEIGHT, ScorebugSpec, _kit_ink_on, _kit_inked_where_faint, _kit_result_ink, stat_icon_path
 from . import hockey
 
 SportsDashboard = None
@@ -48,6 +48,13 @@ FACEOFF_CENTER_HALF_WIDTH = 72
 FACEOFF_LOGO_SIZE, FACEOFF_NAME_SIZE = 62, 20
 # Below this height the leader area stays plain when no player stats exist yet.
 LEADERS_PENDING_MIN_HEIGHT = 40
+# Before tip-off ESPN's game summary (nba_free_odds) adds each team's last five results under its
+# record, oldest first, as solid cells (a win emerald, a loss crimson) after a "近5" caption; and
+# under the tiles its matchup predictor as a share bar and the injury report as one line: a crimson
+# "伤停" chip, then each team's logo and its players out (a season leader in bold) with the day each
+# is expected back ("待定" for a game-time decision), "+N" for those that do not fit.
+FACEOFF_FORM_CELL, FACEOFF_FORM_GAP = 8, 2
+FACEOFF_PREGAME_ROW, FACEOFF_PREGAME_GAP, FACEOFF_PREGAME_LOGO = 12, 5, 11
 # The series list's roomy rows (date in large type) and their pitch, used when every game fits.
 WNBA_SERIES_ROW_HEIGHT, WNBA_SERIES_ROW_PITCH = 20, 22
 # The game card's networks, as logos under its tiles.
@@ -194,9 +201,19 @@ class BasketballRenderMixin:
                 ("TV", str(event.get("broadcast") or "").strip() or "TBD"),
                 ("O/U", str(event.get("over_under") or "").replace("O/U", "").strip() or "--"),
             ]
-            # The venue already sits on the strip above the tiles.
-            self._draw_kit_tiles(draw, (x1, lower_y1 + 4, split_x, y2), tiles, spec, tile_h=min(KIT_TILE_HEIGHT + 10, y2 - lower_y1 - 8),
-                                 image=image, glass=True)
+            rows = [row for row in ("win" if SportsDashboard._faceoff_predictor_share(event) is not None else "",
+                                    "injuries" if any(event.get(f"injuries_{side}") for side in "ab") else "") if row]
+            # The venue already sits on the strip above the tiles; the summary's rows take room from them.
+            tile_h = min(KIT_TILE_HEIGHT + 10 - 4 * len(rows), y2 - lower_y1 - 8 - len(rows) * (FACEOFF_PREGAME_ROW + FACEOFF_PREGAME_GAP))
+            row_y = self._draw_kit_tiles(draw, (x1, lower_y1 + 4, split_x, y2), tiles, spec, tile_h=tile_h,
+                                         image=image, glass=True) + FACEOFF_PREGAME_GAP
+            for row in rows:
+                row_box = (x1, row_y, split_x, row_y + FACEOFF_PREGAME_ROW)
+                if row == "win":
+                    self._draw_faceoff_predictor(image, draw, row_box, event, spec)
+                else:
+                    self._draw_faceoff_injuries(image, draw, row_box, event, spec)
+                row_y += FACEOFF_PREGAME_ROW + FACEOFF_PREGAME_GAP
         else:
             self._draw_basketball_leader_duel(draw, (x1, lower_y1, split_x, y2), event, spec, image=image)
         self._draw_kit_ticker(image, draw, (split_x + 14, lower_y1 - 2, x2, y2), others, now, spec)
@@ -213,7 +230,8 @@ class BasketballRenderMixin:
         logo_y = y1 + (y2 - y1 - logo_size) // 2
         name = spec.hook("team_name", event, side, True, default=event.get(prefix) or "TBD")
         record = str(event.get(f"record_{side}") or "").strip()
-        name_top = y1 + (y2 - y1 - 40) // 2
+        form = str(event.get(f"form_{side}") or "") if state == "scheduled" else ""
+        name_top = y1 + (y2 - y1 - (52 if form else 40)) // 2
         if side == "a":
             draw.rectangle((x1, y1 + 10, x1 + 3, y2 - 10), fill=ink)
             logo_x = x1 + 8
@@ -234,6 +252,130 @@ class BasketballRenderMixin:
         if note:
             note, note_font = self._fit_text(draw, note, text_x2 - text_x1, 11, bold=False, min_size=8)
             self._draw_text_in_box(draw, (text_x1, name_top + 27, text_x2, name_top + 40), note, note_font, COLORS["text"], align=align)
+        if form:
+            self._draw_faceoff_form(draw, (text_x1, name_top + 43, text_x2, name_top + 52), form, align)
+
+    def _draw_faceoff_form(self, draw, box, form, align):
+        """'近5' and the five results as cells, the caption on the outer side of the cells."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        caption_font = self._font(8, False)
+        caption = "近5"
+        caption_w = self._text_width(draw, caption, caption_font)
+        cells_w = len(form) * (FACEOFF_FORM_CELL + FACEOFF_FORM_GAP) - FACEOFF_FORM_GAP
+        if caption_w + 4 + cells_w > x2 - x1:
+            return
+        if align == "right":
+            caption_x, cells_x = x2 - cells_w - 4 - caption_w, x2 - cells_w
+        else:
+            caption_x, cells_x = x1 + cells_w + 4, x1
+        self._draw_text_in_box(draw, (caption_x, y1 - 1, caption_x + caption_w, y2 + 1), caption, caption_font, COLORS["text"])
+        top = (y1 + y2 + 1 - FACEOFF_FORM_CELL) // 2
+        for index, result in enumerate(form):
+            left = cells_x + index * (FACEOFF_FORM_CELL + FACEOFF_FORM_GAP)
+            fill = _kit_result_ink("win" if result == "W" else "loss")
+            draw.rounded_rectangle((left, top, left + FACEOFF_FORM_CELL - 1, top + FACEOFF_FORM_CELL - 1), radius=2, fill=fill)
+
+    @staticmethod
+    def _faceoff_predictor_share(event):
+        """The away side's share of ESPN's pregame projection, or None."""
+        away, home = (event or {}).get("predictor_a"), (event or {}).get("predictor_b")
+        if not isinstance(away, (int, float)) or not isinstance(home, (int, float)) or away + home <= 0:
+            return None
+        return away / (away + home)
+
+    def _faceoff_inline_logo(self, event, side, spec, size):
+        fallback = spec.hook("logo_fallback", event, side, default=event.get(f"team_{side}_code"))
+        logo = self._load_local_team_logo(fallback, size) or self._load_team_logo_for_render(event.get(f"team_{side}_logo"), size)
+        return self._team_logo_for_panel(logo) if logo is not None else None
+
+    def _draw_faceoff_predictor(self, image, draw, box, event, spec):
+        share = SportsDashboard._faceoff_predictor_share(event)
+        names = [spec.hook("team_name", event, side, False, default=event.get(f"team_{side}_code") or "") for side in "ab"]
+        self._draw_kit_share_bar(
+            draw, box, f"{names[0]} {round(share * 100)}%", f"{round((1 - share) * 100)}% {names[1]}", share,
+            self._kit_team_ink_key(event.get("team_a_color"), spec.accent),
+            self._kit_team_ink_key(event.get("team_b_color"), spec.accent),
+            image=image, logos=tuple(self._faceoff_inline_logo(event, side, spec, FACEOFF_PREGAME_LOGO) for side in "ab"),
+        )
+
+    def _draw_faceoff_injuries(self, image, draw, box, event, spec):
+        x1, y1, x2, y2 = [int(value) for value in box]
+        chip_font = self._font(9, True)
+        chip_w = self._text_width(draw, "伤停", chip_font) + 8
+        chip_fill = _kit_result_ink("loss")
+        draw.rounded_rectangle((x1, y1, x1 + chip_w, y2), radius=3, fill=chip_fill)
+        self._draw_centered_in_box(draw, (x1, y1, x1 + chip_w, y2), "伤停", chip_font, _kit_ink_on(chip_fill))
+        teams = []
+        for side in "ab":
+            players = [player for player in event.get(f"injuries_{side}") or [] if isinstance(player, Mapping)]
+            if players:
+                logo = self._faceoff_inline_logo(event, side, spec, FACEOFF_PREGAME_LOGO)
+                teams.append((logo, players, (logo.width + 3) if logo is not None else 0))
+        if not teams:
+            return
+        left, gap = x1 + chip_w + 6, 10
+        room = x2 - left - gap * (len(teams) - 1)
+        natural = [lead + self._runs_width(draw, self._faceoff_injury_runs(players, len(players)))
+                   for _logo, players, lead in teams]
+        # A team needing less than an even share gives the rest to the other.
+        shares = list(natural) if sum(natural) <= room else [room // len(teams)] * len(teams)
+        if len(teams) == 2 and sum(natural) > room:
+            short = min((0, 1), key=lambda index: natural[index])
+            if natural[short] < room // 2:
+                shares[short], shares[1 - short] = natural[short], room - natural[short]
+        for (logo, players, lead), share in zip(teams, shares):
+            if logo is not None:
+                image.paste(logo, (left, (y1 + y2 + 1 - logo.height) // 2), logo)
+            count = len(players)
+            while count > 1 and lead + self._runs_width(draw, self._faceoff_injury_runs(players, count)) > share:
+                count -= 1
+            x = left + lead
+            for text, font in self._faceoff_injury_runs(players, count):
+                if count == 1 and x + self._text_width(draw, text, font) > left + share:
+                    # Not even one player fits whole: the name alone, shortened.
+                    text, font = self._fit_text_ellipsis(draw, text, max(1, left + share - x), 9, bold=bool(players[0].get("key")),
+                                                         min_size=8)
+                    self._draw_text_in_box(draw, (x, y1, left + share, y2), text, font, COLORS["text"])
+                    break
+                self._draw_text_in_box(draw, (x, y1, x + self._text_width(draw, text, font) + 1, y2), text, font, COLORS["text"])
+                x += self._text_width(draw, text, font)
+            left += share + gap
+
+    def _faceoff_injury_runs(self, players, count):
+        """(text, font) runs for the first ``count`` players ('Morant 12/1', a season leader's
+        name in bold), then '+N' for the others."""
+        plain = self._font(9, False)
+        runs = []
+        for index, player in enumerate(players[:count]):
+            if index:
+                runs.append((" · ", plain))
+            runs.append((SportsDashboard._faceoff_injury_name(player.get("name")), self._font(9, bool(player.get("key")))))
+            when = SportsDashboard._faceoff_return_label(player)
+            if when:
+                runs.append((f" {when}", plain))
+        if len(players) > count:
+            runs.append((f" · +{len(players) - count}", plain))
+        return runs
+
+    def _runs_width(self, draw, runs):
+        return sum(self._text_width(draw, text, font) for text, font in runs)
+
+    @staticmethod
+    def _faceoff_injury_name(name):
+        """A player by surname ('J. Morant' -> 'Morant'), as the report lists only its own team."""
+        name = str(name or "").strip()
+        return re.sub(r"^[A-Z][A-Za-z]?\.\s+", "", name) or name
+
+    @staticmethod
+    def _faceoff_return_label(player):
+        """'11/5' for a player out until that day, '待定' for a game-time decision."""
+        if str((player or {}).get("status") or "").upper() == "GTD":
+            return "待定"
+        try:
+            day = datetime.strptime(str((player or {}).get("return") or ""), "%Y-%m-%d")
+        except ValueError:
+            return ""
+        return f"{day.month}/{day.day}"
 
     def _draw_faceoff_center(self, image, draw, box, event, state, now, spec):
         x1, y1, x2, y2 = [int(value) for value in box]
