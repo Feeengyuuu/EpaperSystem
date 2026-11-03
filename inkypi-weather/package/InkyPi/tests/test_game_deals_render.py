@@ -208,3 +208,39 @@ def test_the_store_and_the_price_source_are_named_by_their_official_marks(mode):
     shark = [page.getpixel((x, y)) for x in range(14, 40) for y in range(452, 474)]
     assert any(red > 180 and green > 120 and blue < 90 for red, green, blue in shark)
     assert ink in {page.getpixel((x, y)) for x in range(40, 120) for y in range(456, 470)}
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_reviews_and_all_time_low_sit_on_the_capsule_corners(mode):
+    cover = Image.new("RGB", (231, 87), (120, 120, 120))
+    marked = dict(offers()[0], metacritic=89, steam_rating="Very Positive", steam_rating_percent=90,
+                  steam_rating_count=123165, sale_price="2.99", lowest_price="2.99")
+    above = dict(offers()[1], metacritic=62, steam_rating="Mixed", steam_rating_percent=55,
+                 steam_rating_count=900, sale_price="2.99", lowest_price="1.49")
+    plain = offers()[2]
+    page = render_page(DealSnapshot((marked, above, plain), NOW, "live", "steam"),
+                       {"0": cover, "1": cover, "2": cover}, theme={"mode": mode}, now=NOW)
+    first, second, third = page.info["game_deals_layout"]
+    assert first["marks"] == [("low", "史低"), ("metacritic", "89"), ("steam_rating", "90%")]
+    assert second["marks"] == [("low", "史低 $1.49"), ("metacritic", "62"), ("steam_rating", "55%")]
+    assert third["marks"] == []
+    # Each mark stays on its own capsule: the page around it is untouched, and the title column too.
+    left, top, right, bottom = first["art_rect"]
+    paper = page.getpixel((0, 0))
+    assert page.getpixel((left + 3, top + 3)) != (120, 120, 120)
+    assert page.getpixel((left + 3, bottom - 3)) != (120, 120, 120)
+    assert page.getpixel((right - 3, bottom - 3)) != (120, 120, 120)
+    assert all(page.getpixel((x, top - 2)) == paper for x in range(left, right))
+    # Metacritic's band colours: green from 75, yellow below.
+    assert page.getpixel((left + 2, bottom - 2))[1] > 120
+    second_left, _, _, second_bottom = second["art_rect"]
+    red, green, blue = page.getpixel((second_left + 2, second_bottom - 2))
+    assert red > 200 and green > 140 and blue < 60
+
+
+def test_marks_leave_a_small_capsule_alone():
+    cover = Image.new("RGB", (60, 20), (27, 144, 233))
+    deal = dict(offers()[0], metacritic=89, steam_rating="Very Positive", steam_rating_percent=90,
+                steam_rating_count=10, lowest_price="2.99")
+    page = render_page(DealSnapshot((deal,), NOW, "live", "steam"), {"0": cover}, theme={"mode": "day"}, now=NOW)
+    assert page.info["game_deals_layout"][0]["marks"] == []

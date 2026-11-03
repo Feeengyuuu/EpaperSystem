@@ -12,8 +12,18 @@ Prices and availability can change before the next scheduled fetch.
   of local backoff. No store redirect is followed by the device.
 - Official destination URLs use CheapShark's required `/redirect?dealID=...`
   form, retained in the data cache. There is no QR dependency on the display.
-- No historical-low claim is made: the list response does not prove a Steam
-  historical low, and the cross-store history endpoint is not requested.
+- Each capsule carries small solid marks: Metacritic's score at its foot's left
+  (green from 75, yellow from 50, red below) and Steam's review share with a
+  thumb at its right (cobalt from 70%, amber from 40%, crimson below), both from
+  the `/deals` row (`metacriticScore`, `steamRatingText/Percent/Count`); at its
+  top left the all-time low: crimson 史低 at or under it, 近史低 within 10%,
+  else a graphite "史低 $x.xx" (曾免费 when it was once given away). The low is
+  `cheapestPriceEver` across every store CheapShark tracks, from one keyless
+  `/games?ids=` request per offer refresh (about 1.2 KB per offer). Store names
+  come from `/stores` (about 6 KB, kept 30 days in `stores.json`, retried after
+  six hours on failure), so `store_name` is never "商店 N" for a known store.
+  Missing values hide their mark; either lookup failing only drops the marks;
+  capsules narrower than 100 px carry none.
 - Titles use Steam's Simplified Chinese store name when one exists. After each
   successful offer fetch, one keyless `IStoreBrowseService/GetItems` request
   (`language=schinese`, `country_code=US`) looks up the offers' `steamAppID`s.

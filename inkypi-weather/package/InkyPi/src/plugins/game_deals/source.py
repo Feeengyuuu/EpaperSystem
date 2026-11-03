@@ -13,6 +13,7 @@ from runtime.refresh_contracts import TaskCancelled, TaskDeadlineExceeded
 from utils.atomic_file import atomic_write_json
 from utils.plugin_cache import parse_datetime
 
+from .facts import StoreNames, game_lows, history, ratings
 from .names import ChineseNameCache, chinese_title
 
 
@@ -24,6 +25,8 @@ MAX_JSON_BYTES = 128 * 1024
 MAX_ITEMS = 10
 SCHEMA_VERSION = 1
 NAME_LANGUAGE = "schinese"
+# Offers cached before reviews and all-time lows were kept are fetched again once.
+FACTS_VERSION = 1
 _ABORT = (TaskCancelled, TaskDeadlineExceeded)
 
 
@@ -64,7 +67,7 @@ def safe_thumbnail_url(value):
     return value
 
 
-def normalize_deals(payload, *, scope="steam"):
+def normalize_deals(payload, *, scope="steam", store_names=None):
     if not isinstance(payload, list) or len(payload) > 60:
         raise ValueError("CheapShark deals response must be a bounded list")
     deals, seen = [], set()
@@ -93,11 +96,15 @@ def normalize_deals(payload, *, scope="steam"):
             "title_zh": chinese_title(row.get("title_zh")),
             "steam_app_id": steam_app_id if steam_app_id.isdecimal() and len(steam_app_id) <= 12 else "",
             "deal_id": deal_id, "game_id": game_id, "store_id": store_id,
-            "store_name": "Steam" if store_id == "1" else f"商店 {store_id}",
+            "store_name": (store_names or {}).get(store_id) or ("Steam" if store_id == "1" else f"商店 {store_id}"),
             "sale_price": str(sale), "normal_price": str(normal),
             "discount_percent": min(discount, 100),
             "thumbnail_url": safe_thumbnail_url(row.get("thumb")),
             "redirect_url": redirect_url(deal_id),
+            # Metacritic and Steam's review summary from the row; the all-time low from /games
+            # (cached offers carry it already).
+            **ratings(row),
+            **history(row),
         })
         if len(deals) == MAX_ITEMS:
             break
@@ -138,8 +145,15 @@ class DealRepository:
                      "gameID": item["game_id"], "storeID": item["store_id"],
                      "salePrice": item["sale_price"], "normalPrice": item["normal_price"],
                      "thumb": item.get("thumbnail_url", ""), "title_zh": item.get("title_zh", ""),
-                     "steamAppID": item.get("steam_app_id", "")} for item in deals]
-            envelope["deals"] = normalize_deals(rows, scope=scope)
+                     "steamAppID": item.get("steam_app_id", ""),
+                     "metacriticScore": item.get("metacritic"), "steamRatingText": item.get("steam_rating"),
+                     "steamRatingPercent": item.get("steam_rating_percent"),
+                     "steamRatingCount": item.get("steam_rating_count"),
+                     "lowest_price": item.get("lowest_price"), "lowest_at": item.get("lowest_at")}
+                    for item in deals]
+            names = {item["store_id"]: item["store_name"] for item in deals
+                     if isinstance(item, dict) and isinstance(item.get("store_name"), str)}
+            envelope["deals"] = normalize_deals(rows, scope=scope, store_names=names)
             return envelope
         except (OSError, ValueError, TypeError, KeyError):
             return {}
@@ -156,6 +170,24 @@ class DealRepository:
         state = "stale" if stale else ("live" if live else "fresh_cache")
         return DealSnapshot(tuple(envelope.get("deals") or ()), fetched, state, scope, error)
 
+    def _add_history(self, deals, *, now, context):
+        """Each offer's all-time low (across CheapShark's stores) and its store's name.
+
+        Either lookup failing only leaves the offers without them."""
+        stores = StoreNames(self.cache_dir / "stores.json", http=self.http, user_agent=USER_AGENT).names(
+            now=now, context=context)
+        try:
+            lows = game_lows(self.http, [deal["game_id"] for deal in deals], context=context, user_agent=USER_AGENT)
+        except (TaskCancelled, TaskDeadlineExceeded):
+            raise
+        except Exception:
+            lows = {}
+        for deal in deals:
+            if deal["store_id"] in stores:
+                deal["store_name"] = stores[deal["store_id"]]
+            low = lows.get(deal["game_id"]) or {}
+            deal.update(history({"lowest_price": low.get("price"), "lowest_at": low.get("date")}))
+
     def load(self, settings, *, now=None, context=None, cached_only=False, force=False):
         now = now or datetime.now(timezone.utc)
         if now.tzinfo is None:
@@ -169,7 +201,8 @@ class DealRepository:
         if retry_at and retry_at > now:
             return snapshot
         # A cache written before Chinese names existed is refreshed once, not kept for two hours.
-        if not force and snapshot.state == "fresh_cache" and envelope.get("names") == NAME_LANGUAGE:
+        if (not force and snapshot.state == "fresh_cache" and envelope.get("names") == NAME_LANGUAGE
+                and envelope.get("facts") == FACTS_VERSION):
             return snapshot
         if context:
             context.raise_if_cancelled()
@@ -193,8 +226,12 @@ class DealRepository:
                 deal["title_zh"] = names.get(deal["steam_app_id"], "")
             if context:
                 context.raise_if_cancelled()
+            self._add_history(deals, now=now, context=context)
+            if context:
+                context.raise_if_cancelled()
             envelope = {"schema": SCHEMA_VERSION, "scope": scope, "currency": "USD",
-                        "names": NAME_LANGUAGE, "fetched_at": now.isoformat(), "deals": deals}
+                        "names": NAME_LANGUAGE, "facts": FACTS_VERSION,
+                        "fetched_at": now.isoformat(), "deals": deals}
             atomic_write_json(self._path(scope), envelope)
             return self._snapshot(envelope, now=now, scope=scope, live=True)
         except _ABORT:
