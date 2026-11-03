@@ -508,6 +508,14 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 	_header_logo_cache = {}
 	_section_wordmark_cache = {}
 
+	def render_cached_display(self, settings, device_config, *, resolved_theme_context):
+		"""The dashboard redrawn from the last refresh's source cache just before it goes on screen
+		(the theme-only path: no provider, no history or cache write). The page refreshes its data
+		once a day after the close, so a new release's layout shows on the next display turn rather
+		than the next day."""
+		return self.render_themed_image(settings, device_config, theme_render_only=True,
+										resolved_theme_context=resolved_theme_context)
+
 	def generate_image(self, settings, device_config):
 
 		"""Generate stock portfolio dashboard"""

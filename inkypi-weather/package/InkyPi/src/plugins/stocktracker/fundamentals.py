@@ -3,8 +3,10 @@ Radar's to show).
 
 On the Yahoo (yfinance) path these come from the ``info`` the tracker already fetches. Rows from
 Robinhood's MCP or Massive carry no such fields, so they are filled from Nasdaq's keyless quote
-pages (two small JSON replies per symbol, about 3 KB in all), kept a day per symbol on disk and
-fetched for a few symbols per refresh. A missing field just leaves its mark off the table.
+pages (two small JSON replies per symbol, about 3 KB in all), kept a day per symbol on disk. The
+page refreshes once a day after the close, so one refresh fetches every stale symbol it can within
+FETCH_SECONDS (FETCH_PER_REFRESH at most); those it has no time for keep their cached fields until
+the next. A missing field just leaves its mark off the table.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from runtime.refresh_contracts import TaskContext
+from runtime.refresh_contracts import TaskContext, TaskDeadlineExceeded
 from utils.http_client import HttpClientError, get_http_client
 
 
@@ -32,7 +34,9 @@ REQUEST_TIMEOUT = (3, 8)
 MAX_BYTES = 64 * 1024
 FRESH_SECONDS = 86400
 USABLE_SECONDS = 7 * 86400
-FETCH_PER_REFRESH = 3
+# A refresh fetches up to this many stale symbols, within this many seconds of its own deadline.
+FETCH_PER_REFRESH = 20
+FETCH_SECONDS = 20
 SYMBOL = re.compile(r"[A-Z][A-Z0-9./\-]{0,9}")
 
 
@@ -164,12 +168,17 @@ def _write(path, now, data):
     temp.replace(path)
 
 
-def attach(stock_data, directory, *, context: TaskContext, now=None, fetch=None, budget=FETCH_PER_REFRESH):
+def attach(stock_data, directory, *, context: TaskContext, now=None, fetch=None, budget=FETCH_PER_REFRESH,
+           seconds=FETCH_SECONDS):
     """Fill the fields of each row that has none of its own from the per-symbol cache in
-    ``directory``, fetching at most ``budget`` stale or missing symbols this time."""
+    ``directory``, fetching at most ``budget`` stale or missing symbols within ``seconds``: when
+    that window runs out the remaining rows keep their cached fields, while the refresh's own
+    deadline or cancellation still stops it."""
     now = now or datetime.now(timezone.utc)
     fetch = fetch or fetch_nasdaq
     directory = Path(directory)
+    window = TaskContext(context.cancel_event, min(context.deadline_monotonic, context.clock() + seconds),
+                         context.clock)
     for row in stock_data:
         symbol = str(row.get("symbol") or "").strip().upper()
         if not SYMBOL.fullmatch(symbol) or symbol == "CASH" or any(row.get(key) is not None for key in FIELDS):
@@ -178,11 +187,18 @@ def attach(stock_data, directory, *, context: TaskContext, now=None, fetch=None,
         cached = _read(path)
         age = (now - cached[0]).total_seconds() if cached else None
         data = cached[1] if cached else None
-        if (age is None or not 0 <= age < FRESH_SECONDS) and budget > 0:
+        if (age is None or not 0 <= age < FRESH_SECONDS) and budget > 0 and window.remaining_seconds() > 0:
             budget -= 1
             try:
-                data = fetch(symbol, context)
+                data = fetch(symbol, window)
                 _write(path, now, data)
+            except TaskDeadlineExceeded:
+                # The window ran out: the refresh's own deadline or cancellation ends it here,
+                # else the rest keep what they have cached.
+                context.raise_if_cancelled()
+                logger.info("Nasdaq fundamentals window spent at %s; the rest wait for the next refresh", symbol)
+                budget = 0
+                data = cached[1] if cached and age is not None and age <= USABLE_SECONDS else None
             except (HttpClientError, ValueError, TypeError, KeyError, OSError) as error:
                 logger.info("Nasdaq fundamentals unavailable for %s: %s", symbol, type(error).__name__)
                 data = cached[1] if cached and age is not None and age <= USABLE_SECONDS else None

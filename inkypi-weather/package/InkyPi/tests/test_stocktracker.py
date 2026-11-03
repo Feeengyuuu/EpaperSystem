@@ -1533,6 +1533,39 @@ def test_stock_theme_only_uses_matching_source_cache_without_provider_or_state_w
     assert source_files[0].read_bytes() == source_bytes
 
 
+def test_stock_display_turn_redraws_from_the_source_cache_with_the_running_code(monkeypatch, tmp_path):
+    """The page refreshes once a day: on its display turns it is redrawn from the last refresh's
+    source cache (no provider, no history or cache write), so a new release shows at once."""
+    from plugins.plugin_manifest import PluginManifest
+
+    manifest = PluginManifest.from_path(Path(stocktracker_module.__file__).with_name("plugin-info.json"))
+    assert manifest.capabilities.supports_cached_display_redraw is True
+    plugin = StockTracker({"id": "stocktracker", "_manifest": manifest})
+    device = FakeDeviceConfig()
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("INKYPI_DATA_DIR", str(tmp_path / "data"))
+    settings = {"tickers": "AAPL,NVDA", "shares": "2,3", "period": "1mo", "data_provider": "yfinance",
+                "ticker_theme": "auto"}
+    provider_calls = []
+    monkeypatch.setattr(plugin, "_fetch_stock_data", lambda ticker, shares, period, **_kwargs: (
+        provider_calls.append(ticker) or _stock(ticker, [100.0, 110.0], shares)))
+    monkeypatch.setattr(plugin, "_massive_client", lambda *_args: None)
+    monkeypatch.setattr(plugin, "_record_portfolio_snapshot", lambda *_args, **_kwargs: [])
+    plugin.generate_image({**settings, "_inkypi_theme": _canonical_theme("day")}, device)
+    provider_calls.clear()
+    for name in ("_record_portfolio_snapshot", "_write_source_cache", "_attach_fundamentals"):
+        monkeypatch.setattr(plugin, name, lambda *_args, name=name, **_kwargs: pytest.fail(f"redraw ran {name}"))
+
+    images = {}
+    for mode in ("day", "night"):
+        images[mode] = plugin.render_cached_display(settings, device, resolved_theme_context=_canonical_theme(mode))
+        assert images[mode].size == (800, 480)
+        assert images[mode].info["inkypi_theme_mode"] == mode
+    assert images["night"].getpixel((0, 100)) == _canonical_theme("night")["palette"]["background"]
+    assert images["day"].tobytes() != images["night"].tobytes()
+    assert provider_calls == []
+
+
 def test_stock_theme_only_cold_or_incompatible_cache_fails_closed_without_provider(
     monkeypatch,
     tmp_path,
@@ -1850,6 +1883,52 @@ def test_rows_without_their_own_fields_take_them_from_a_day_old_cache(tmp_path):
     assert rows[3] == {"symbol": "NVDA", "low_52w": 10.0, "high_52w": 20.0, "target_price": 25.0, "rating": "hold"}
     assert rows[4] == {"symbol": "SPCX"} and rows[5] == {"symbol": "CASH"}
     assert json.loads((tmp_path / "NVDA.json").read_text())["data"]["target_price"] == 25.0
+
+
+def test_one_refresh_fetches_every_stale_symbol_within_its_window(tmp_path):
+    now = datetime(2026, 11, 3, 21, 30, tzinfo=_timezone.utc)
+    symbols = ["AAPL", "NVDA", "FIG", "GOOGL", "TSLA", "SPCX", "VTI", "VXUS", "SPY", "NTDOY", "TTWO", "VGIT", "BRK.B"]
+    fetched = []
+
+    def fetch(symbol, context):
+        context.raise_if_cancelled()
+        fetched.append(symbol)
+        return {"low_52w": 1.0, "high_52w": 2.0}
+
+    rows = [{"symbol": symbol} for symbol in symbols]
+    fundamentals_module.attach(rows, tmp_path, context=_never(), now=now, fetch=fetch)
+
+    # The page refreshes once a day, so a single refresh fills the whole table.
+    assert fetched == symbols and all(row.get("high_52w") == 2.0 for row in rows)
+
+
+def test_a_spent_fetch_window_leaves_the_rest_on_their_cache_but_the_refresh_deadline_stops_it(tmp_path):
+    now = datetime(2026, 11, 3, 21, 30, tzinfo=_timezone.utc)
+    (tmp_path / "SPY.json").write_text(json.dumps({"fetched_at": "2026-11-01T21:00:00+00:00",
+                                                   "data": {"low_52w": 500.0, "high_52w": 760.0}}))
+    clock = {"now": 0.0}
+    fetched = []
+
+    def slow(symbol, context):
+        clock["now"] += 8
+        context.raise_if_cancelled()
+        fetched.append(symbol)
+        return {"low_52w": 1.0, "high_52w": 2.0}
+
+    context = _TaskContext.never_cancelled(deadline_monotonic=1000.0, clock=lambda: clock["now"])
+    rows = [{"symbol": symbol} for symbol in ("AAPL", "NVDA", "FIG", "SPY", "VTI")]
+    fundamentals_module.attach(rows, tmp_path, context=context, now=now, fetch=slow, seconds=20)
+
+    # Two fit in the 20 s window; the third runs it out and stops the fetching; SPY keeps its
+    # two-day-old cache and VTI waits for the next refresh.
+    assert fetched == ["AAPL", "NVDA"]
+    assert [row.get("high_52w") for row in rows] == [2.0, 2.0, None, 760.0, None]
+
+    clock["now"] = 0.0
+    tight = _TaskContext.never_cancelled(deadline_monotonic=10.0, clock=lambda: clock["now"])
+    with pytest.raises(fundamentals_module.TaskDeadlineExceeded):
+        fundamentals_module.attach([{"symbol": "AAPL"}, {"symbol": "NVDA"}], tmp_path / "other", context=tight,
+                                   now=now, fetch=slow, seconds=20)
 
 
 def test_the_52_week_column_takes_the_share_counts_place():
