@@ -1,5 +1,6 @@
-"""Nature Nearby: what people are observing around home on iNaturalist, refreshed through the day,
-and the notable birds eBird reports nearby when an EBIRD_API_KEY is configured."""
+"""Nature Nearby: what people are observing around home on iNaturalist, refreshed through the day
+(the newest find's species with its Chinese Wikipedia lead and months around home, and this week's
+threatened species), and the notable birds eBird reports nearby when an EBIRD_API_KEY is configured."""
 
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ from . import sources
 logger = logging.getLogger(__name__)
 PLUGIN_ID = "nature_nearby"
 CACHE_SCHEMA = 1
-CACHE_BUDGET = CacheBudget(14 * 86400, 12, 1024 * 1024)
+CACHE_BUDGET = CacheBudget(14 * 86400, 24, 1024 * 1024)
 DEFAULT_FONT = "Microsoft YaHei"
 TASK_SECONDS = 45
 
@@ -77,11 +78,27 @@ class NatureNearby(BasePlugin):
                                  timeout_seconds=10)) if ebird_key else None,
         }
         recent = payload["recent"]["data"].get("items", [])
-        # The newest find's species in more depth: its family, Red List category and reach.
+        # The newest find's species in more depth: its family, Red List category and reach, then
+        # its Chinese Wikipedia lead and the months it is seen around home.
         taxon_id = recent[0].get("taxon_id") if recent else None
         payload["taxon"] = load(Source("taxon", {"taxon": taxon_id}, lambda ctx: sources.fetch_taxon(taxon_id, ctx),
                                        fresh_seconds=7 * 86400, usable_seconds=30 * 86400,
                                        validate=sources.valid_taxon, timeout_seconds=8)) if taxon_id else None
+        taxon = (payload["taxon"] or {}).get("data") or {}
+        title, name = taxon.get("wiki_title"), taxon.get("name") or ""
+        payload["blurb"] = load(Source("blurb", {"taxon": taxon_id, "title": title},
+                                       lambda ctx: sources.fetch_blurb(title, name, ctx),
+                                       fresh_seconds=14 * 86400, usable_seconds=30 * 86400,
+                                       validate=sources.valid_blurb, timeout_seconds=8)) if title else None
+        payload["season"] = load(Source("season", {"taxon": taxon_id, **identity},
+                                        lambda ctx: sources.fetch_season(taxon_id, home, radius, ctx),
+                                        fresh_seconds=7 * 86400, usable_seconds=30 * 86400,
+                                        validate=sources.valid_season, timeout_seconds=8)) if taxon_id else None
+        # Then this week's threatened species around home: how many, and the most observed.
+        payload["threatened"] = load(Source("threatened", identity,
+                                            lambda ctx: sources.fetch_threatened(home, radius, now, ctx),
+                                            fresh_seconds=6 * 3600, usable_seconds=3 * 86400,
+                                            validate=sources.valid_threatened, timeout_seconds=10))
         species = payload["species"]["data"].get("items", [])
         urls = [recent[0]["photo"]] if recent else []
         urls += [item.get("photo") for item in species[:6]] + [item.get("photo") for item in recent[1:6]]

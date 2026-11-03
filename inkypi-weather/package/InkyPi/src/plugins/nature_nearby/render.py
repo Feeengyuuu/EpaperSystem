@@ -15,7 +15,7 @@ from utils.local_wordmark import paste_header_art, paste_local_wordmark
 from utils.fonts import load_font
 from utils.page_canvas import PageCanvas
 
-from .sources import ESTABLISHMENT, IUCN_CATEGORIES, group_info, local_now, parse_time
+from .sources import ESTABLISHMENT, IUCN_CATEGORIES, group_info, is_simplified, local_now, parse_time
 
 
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -31,6 +31,11 @@ FONT_DIR = Path(__file__).resolve().parents[2] / "static" / "fonts"
 FACES = {"serif": FONT_DIR / "NotoSerifSC-SemiBold-Nature.ttf", "latin": FONT_DIR / "Lora-Italic-VF.ttf"}
 LATIN_WEIGHT = 560
 HERO_PHOTO_HEIGHT = 132
+# With the species' blurb or its months to show, the photo gives up a third of its height.
+COMPACT_PHOTO_HEIGHT = 98
+# The months it is seen around home: twelve bars this wide and tall, shown with at least
+# SEASON_MIN sightings in all.
+SEASON_BAR, SEASON_GAP, SEASON_HEIGHT, SEASON_MIN = 5, 2, 12, 12
 # Pure white or black paper and neutral grey rules: an off-white or tinted ground, or a tinted
 # grey, dithers into scattered yellow, blue or green dots on the panel. Accents are refined
 # crimson, cobalt, emerald and gold rather than the panel's pure inks (owner's choice).
@@ -237,6 +242,69 @@ def _iucn_chip(canvas, right, y, code):
     return width
 
 
+def blurb_text(payload):
+    """The featured species' Chinese Wikipedia lead in Simplified Chinese: Wikipedia's own zh-cn
+    text, else iNaturalist's copy when that is already Simplified; "" otherwise."""
+    blurb = ((payload.get("blurb") or {}).get("data") or {}).get("text") or ""
+    if blurb:
+        return blurb
+    summary = (((payload.get("taxon") or {}).get("data")) or {}).get("wiki_summary") or ""
+    return summary if is_simplified(summary) else ""
+
+
+def season_months(payload):
+    """The featured species' twelve monthly counts around home, or None with too few sightings."""
+    months = ((payload.get("season") or {}).get("data") or {}).get("months")
+    return months if isinstance(months, list) and len(months) == 12 and sum(months) >= SEASON_MIN else None
+
+
+def _season(canvas, months, right, middle, now):
+    """The months it is seen around home as twelve small bars ending at ``right``, this month in
+    the card's green, with the peak month named before them; returns the width used."""
+    peak = max(months)
+    width = 12 * SEASON_BAR + 11 * SEASON_GAP
+    left = right - width
+    for index, count in enumerate(months):
+        x = left + index * (SEASON_BAR + SEASON_GAP)
+        height = max(1, round(SEASON_HEIGHT * count / peak)) if peak else 1
+        colour = canvas.color("green") if index == now.month - 1 else canvas.color("muted")
+        canvas.draw.rectangle((x, middle + SEASON_HEIGHT / 2 - height, x + SEASON_BAR - 1,
+                               middle + SEASON_HEIGHT / 2), fill=colour)
+    label = f"高峰 {months.index(peak) + 1} 月"
+    label_w = canvas.text((left - 5, middle), label, 10, "muted", anchor="rm", bold=False)
+    return width + 5 + label_w
+
+
+def _hero_compact(canvas, payload, images, now, item, taxon, blurb, months):
+    """The newest find with its species' blurb and months: a shorter photo, then the name, its
+    scientific name, its lineage, two lines of the Wikipedia lead, where and when, and the
+    photographer beside the months it is seen around home."""
+    left, top, right = HERO_CARD[0] + 8, HERO_CARD[1] + HEADER + 6, HERO_CARD[2] - 8
+    _photo(canvas, images, item["photo"], (left, top, right, top + COMPACT_PHOTO_HEIGHT), item["group"])
+    y = top + COMPACT_PHOTO_HEIGHT + 16
+    chip = _group_chip(canvas, right, y, item["group"], right_align=True)
+    canvas.serif.text((left, y), _display_name(item), HERO_NAME_SIZE, anchor="lm", width=right - left - chip - 8)
+    canvas.latin.text((left, y + 22), item["scientific"], 13, "muted", anchor="lm", width=right - left)
+    lineage = " · ".join(part for part in (taxon.get("order"), taxon.get("family"),
+                                           ESTABLISHMENT.get(taxon.get("establishment"), "")) if part)
+    chip_w = _iucn_chip(canvas, right, y + 38, taxon["iucn"]) + 6 if taxon.get("iucn") else 0
+    if lineage:
+        canvas.text((left, y + 38), lineage, 11, anchor="lm", width=right - left - chip_w)
+    line_y = y + 53
+    for line in canvas.wrap(blurb, 11, right - left, 2, bold=False) if blurb else []:
+        canvas.text((left, line_y), line, 11, anchor="lm", bold=False)
+        line_y += 14
+    stamp = parse_time(item["time"])
+    where = " · ".join(part for part in (item.get("place"), ago(stamp, now) if stamp else "",
+                                         f"距家 {item['distance_km']:.0f} km" if item.get("distance_km") is not None
+                                         else "") if part)
+    canvas.text((left, line_y + 2), where, 11, anchor="lm", bold=False, width=right - left)
+    bottom = HERO_CARD[3] - 14
+    used = _season(canvas, months, right, bottom, now) + 8 if months else 0
+    canvas.text((left, bottom), f"© {item['observer']}" if item.get("observer") else item.get("attribution", ""),
+                10, "muted", anchor="lm", bold=False, width=right - left - used)
+
+
 def _hero(canvas, payload, images, now):
     items = payload["recent"]["data"].get("items", [])
     taxon = ((payload.get("taxon") or {}).get("data")) or {}
@@ -246,6 +314,10 @@ def _hero(canvas, payload, images, now):
         canvas.text((left, 150), "观察数据暂不可用", 15, "muted", anchor="lm")
         return
     item = items[0]
+    blurb, months = blurb_text(payload), season_months(payload)
+    if blurb or months:
+        _hero_compact(canvas, payload, images, now, item, taxon, blurb, months)
+        return
     _photo(canvas, images, item["photo"], (left, top, right, top + HERO_PHOTO_HEIGHT), item["group"])
     y = top + HERO_PHOTO_HEIGHT + 18
     chip = _group_chip(canvas, right, y, item["group"], right_align=True)
@@ -316,6 +388,10 @@ def _groups(canvas, payload, now):
     if birds:
         _groups_with_birds(canvas, groups, total, payload["birds"]["data"], now)
         return
+    threatened = threatened_data(payload)
+    if threatened:
+        _groups_with_threatened(canvas, groups, total, threatened)
+        return
     bar_top, x = GROUP_CARD[1] + HEADER + 10, float(left)
     for group in groups:
         _label, _icon, tone = group_info(group["group"])
@@ -335,9 +411,18 @@ def _groups(canvas, payload, now):
         canvas.text((cx + column_width - 10, cy), f"{group['count']} 种", 13, anchor="rm")
 
 
-def _groups_with_birds(canvas, groups, total, birds, now):
-    """The life groups as a thin bar and their top three, then eBird's notable birds this week:
-    each the latest report of its species, with where and when."""
+def threatened_data(payload):
+    """This week's threatened species around home ({total, items}), or None without any."""
+    source = payload.get("threatened") or {}
+    data = source.get("data") or {}
+    if source.get("state") in (None, "unavailable", "disabled") or not data.get("total") or not data.get("items"):
+        return None
+    return data
+
+
+def _thin_groups(canvas, groups, total):
+    """The life groups as a thin bar and their top three in a row under it; returns the row's
+    bottom."""
     left, right = GROUP_CARD[0] + 10, GROUP_CARD[2] - 10
     bar_top, x = GROUP_CARD[1] + HEADER + 7, float(left)
     for group in groups:
@@ -353,7 +438,32 @@ def _groups_with_birds(canvas, groups, total, birds, now):
         cx, cy = left + index * column, bar_top + 22
         draw_icon(canvas.draw, icon, (cx, cy - 7), 14, canvas.color(tone), canvas.color("paper"))
         canvas.text((cx + 17, cy), f"{label} {group['count']}", 11, anchor="lm", width=column - 19)
-    y = bar_top + 34
+    return bar_top + 34
+
+
+def _groups_with_threatened(canvas, groups, total, threatened):
+    """The life groups as a thin bar and their top three, then this week's threatened species:
+    how many, and the most observed with their Red List category (as their local status stands
+    for one) and how often they were seen."""
+    left, right = GROUP_CARD[0] + 10, GROUP_CARD[2] - 10
+    y = _thin_groups(canvas, groups, total)
+    canvas.rule((left, y, right, y))
+    draw_icon(canvas.draw, "alert", (left, y + 4), 14, canvas.color("red"), canvas.color("paper"))
+    canvas.text((left + 18, y + 11), "受威胁物种", 11, anchor="lm")
+    canvas.text((right, y + 11), f"本周 {threatened['total']} 种 · 当地评级", 10, "muted", anchor="rm", bold=False)
+    for index, item in enumerate(threatened["items"][:2]):
+        row = y + 28 + index * 17
+        count_w = canvas.text((right, row), f"{item['count']} 次", 11, anchor="rm")
+        chip_w = _iucn_chip(canvas, right - count_w - 6, row, item["iucn"]) + 6 if item.get("iucn") in IUCN_CATEGORIES \
+            else 0
+        canvas.serif.text((left, row), _display_name(item), 12, anchor="lm", width=right - left - count_w - chip_w - 12)
+
+
+def _groups_with_birds(canvas, groups, total, birds, now):
+    """The life groups as a thin bar and their top three, then eBird's notable birds this week:
+    each the latest report of its species, with where and when."""
+    left, right = GROUP_CARD[0] + 10, GROUP_CARD[2] - 10
+    y = _thin_groups(canvas, groups, total)
     canvas.rule((left, y, right, y))
     logo_w = _paste_logo(canvas, "ebird", (left, y + 11), 13)
     if not logo_w:
@@ -396,7 +506,13 @@ def _recent(canvas, payload, images, now):
         meta = " · ".join(part for part in (ago(stamp, now).replace(" ", "") if stamp else "", item.get("place"))
                           if part)
         canvas.text((x, top + 89), meta, 10, "muted", anchor="lm", bold=False, width=width)
-    if stats.get("top_observer"):
+    threatened = threatened_data(payload)
+    if threatened and ((payload.get("birds") or {}).get("data") or {}).get("items"):
+        # With eBird's birds in the groups card, the week's threatened species take this line.
+        names = " · ".join(f"{_display_name(item)} {item['count']} 次" for item in threatened["items"][:3])
+        canvas.text((left, RECENT_CARD[3] - 11), f"受威胁物种 本周 {threatened['total']} 种：{names}", 11, "muted",
+                    anchor="lm", bold=False, width=right - left)
+    elif stats.get("top_observer"):
         canvas.text((left, RECENT_CARD[3] - 11),
                     f"本周最活跃：@{stats['top_observer']} · {stats.get('top_observations', 0)} 条观察 · "
                     f"{stats.get('top_species', 0)} 种", 11, "muted", anchor="lm", bold=False, width=right - left)
