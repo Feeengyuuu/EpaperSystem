@@ -1,0 +1,38 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw), 1088 px, black line doodles on white",
+  "generated": "2026-11-02",
+  "processing": "greyscale, strokes thickened (MinFilter 3) at full size, 360 px square tile, LANCZOS, paper above 232 set to white",
+  "rendering": "density map tiled under each outlet's headline block by utils.doodle_backdrop, in a shade a little off the block's own brand colour",
+  "assets": {
+    "dw.png": {
+      "motifs": "world news broadcasting: globes, broadcast waves and towers, satellite dishes, microphones, world maps, radios, televisions, newspapers, speech bubbles",
+      "job_id": "bad43461-1885-40c8-9c18-8c018b8514f0",
+      "source_sha256": "2009afca6580a6996d268caafa2e2712d378b90f0504ac20e1002a24808c52a3",
+      "sha256": "61c0ec59fa7d65e8f09221e020567598af1f86c216bd2f451446b92deaa002b0",
+      "size": [
+        360,
+        360
+      ]
+    },
+    "nyt.png": {
+      "motifs": "newsroom and typesetting: broadsheets, printing presses, metal type, composing sticks, fountain pens, typewriters, notebooks, magnifiers, coffee, ink bottles",
+      "job_id": "cde20d85-a745-476d-be4a-d99ab28b7e9e",
+      "source_sha256": "008e3e1bb82315e56be8ea2ae84f1be9f447add31c91763cfd5a7138da262445",
+      "sha256": "494824e3c8bd483d42db6b12f63bd4543b5884e96228f80f38456130b75535a0",
+      "size": [
+        360,
+        360
+      ]
+    },
+    "sspai.png": {
+      "motifs": "digital productivity: phones, laptops, tablets and styluses, earbuds, watches, app icons, keyboards, mice, cameras, checklists, calendars, cursors",
+      "job_id": "9654f49a-bb58-4406-93b9-337ccdf6c09c",
+      "source_sha256": "cea953e8e44b2f37d7b0bd6ad96fdc88fd276b962db064d12ed1c821d541b0c9",
+      "sha256": "2d3089e241cd676f2294998bf7a97e2dfa602fd87b7d51e64f76247fba6d07a3",
+      "size": [
+        360,
+        360
+      ]
+    }
+  }
+}

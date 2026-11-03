@@ -27,6 +27,7 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
+from utils.doodle_backdrop import paint_doodles
 from utils.flat_icons import draw_icon
 from utils.local_wordmark import load_source_logo
 from utils.page_canvas import PageCanvas
@@ -89,6 +90,10 @@ ART_TOP = 24
 ART_GAP = 10
 ART_RADIUS = 5
 RANK_SIZE = 17
+# A poster's rating sits on the picture itself: white figures this size in a thin halo of this ink.
+RATING_SIZE = 13
+RATING_HALO = 2
+RATING_HALO_INK = (18, 26, 32)
 NETEASE_ORDER = (19723756, 3779629, 2884035, 3778678)
 NEWS_SIZE = 13
 NEWS_LINE = 18
@@ -289,6 +294,10 @@ NEWS_LOGO_HEIGHTS = {"dw": 15, "nyt": 15, "sspai": 16}
 # nameplate), and 少数派 red #D71A1B (sspai.com's --sspai-red, the same in its light and dark themes).
 NEWS_BRANDS = {"dw": (0x00, 0x2D, 0x5A), "nyt": (0x00, 0x00, 0x00), "sspai": (0xD7, 0x1A, 0x1B)}
 ON_BRAND = (255, 255, 255)
+# Behind each block's headlines, quiet line doodles of its own world (assets/doodles: DW's broadcasting,
+# the Times' newsroom and type, 少数派's devices and apps), drawn a shade off the block's colour: a little
+# lighter on DW Blue and the Times' black, a little darker on 少数派 red, so white type stays clear.
+NEWS_DOODLES = {"dw": ((255, 255, 255), 0.16), "nyt": ((255, 255, 255), 0.17), "sspai": ((80, 0, 0), 0.34)}
 NEWS_GAP = 5
 
 
@@ -334,6 +343,9 @@ def _news(canvas, night, box, payload):
     for (name, label, items), share in zip(feeds, shares):
         height = NEWS_HEAD + share * NEWS_LINE + spare // len(feeds)
         _brand_panel(canvas, night, (left, y, right, y + height), NEWS_BRANDS[name])
+        tint, strength = NEWS_DOODLES[name]
+        paint_doodles(canvas.image, (left + 1, y + 1, right - 1, y + height - 1), ASSETS / "doodles" / f"{name}.png",
+                      tint, strength=strength, radius=RADIUS - 1, offset=(left * 3 + y, y * 2))
         middle = y + NEWS_HEAD / 2 + 1
         mark = logo(name, NEWS_LOGO_HEIGHTS.get(name, 16), False, None)
         x = left + 10
@@ -591,14 +603,19 @@ def _rank(canvas, x, y, rank):
                      fill=(255, 255, 255), anchor="mm")
 
 
-def _rating_chip(canvas, right, bottom, rating):
-    """A rating on a solid ink chip at the poster's foot: the amber star and the score."""
+def _rating_mark(canvas, right, bottom, rating):
+    """A rating straight on the poster's foot, no plate: the amber star and the score in white, each
+    edged in a thin dark halo so they read on a bright poster as on a dark one."""
     text = f"{rating:.1f}"
-    width = 13 + canvas.width(text, 11) + 6
-    left, top = right - width, bottom - 16
-    canvas.draw.rounded_rectangle((left, top, right, bottom), radius=4, fill=canvas.color("ink"))
-    draw_icon(canvas.draw, "star", (left + 3, top + 2), 11, canvas.color("天象"), canvas.color("ink"))
-    canvas.text((left + 14, top + 8), text, 11, "paper", anchor="lm")
+    font = canvas.font(RATING_SIZE, True)
+    width = canvas.draw.textlength(text, font=font)
+    middle = bottom - RATING_SIZE / 2 - 2
+    canvas.draw.text((right - 2, middle), text, font=font, fill=(255, 255, 255), anchor="rm",
+                     stroke_width=RATING_HALO, stroke_fill=RATING_HALO_INK)
+    star = right - 2 - width - 15
+    halo = RATING_HALO
+    draw_icon(canvas.draw, "star", (star - halo, middle - 7 - halo), 13 + 2 * halo, RATING_HALO_INK, RATING_HALO_INK)
+    draw_icon(canvas.draw, "star", (star, middle - 7), 13, canvas.color("天象"), canvas.color("天象"))
 
 
 def _panel_head(canvas, night, box, mark, height, title, note=""):
@@ -648,7 +665,7 @@ def _douban_panel(canvas, night, box, items, title, images):
         _artwork(canvas, images.get(item.get("poster") or ""), poster)
         _rank(canvas, poster[0] - 3, poster[1] - 3, index + 1)
         if item.get("rating"):
-            _rating_chip(canvas, poster[2] - 2, poster[3] - 2, item["rating"])
+            _rating_mark(canvas, poster[2] - 2, poster[3] - 2, item["rating"])
         else:
             canvas.text((centre, poster[3] - 9), "暂无评分", 10, "muted", anchor="mm", bold=False)
         canvas.text((centre, bottom - 7), item["title"], 12, anchor="mm", width=slot_right - slot_left - 4)

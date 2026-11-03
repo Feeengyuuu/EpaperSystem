@@ -439,11 +439,35 @@ def test_a_missing_picture_keeps_its_song_or_title(monkeypatch):
         return original(self, xy, value, *args, **kwargs)
 
     monkeypatch.setattr(PageCanvas, "text", text)
+    ratings = []
+    original_rating = render._rating_mark
+    monkeypatch.setattr(render, "_rating_mark", lambda canvas, right, bottom, rating: (
+        ratings.append(rating), original_rating(canvas, right, bottom, rating)))
     images = {key: picture for key, picture in _images().items() if key not in (COVER_URL, POSTER_URL)}
 
     render.render_page((800, 480), _full_payload(), {}, NOW, images)
 
-    assert "明年依然好时节" in shown and "生日快乐" in shown and "8.9" in shown
+    assert "明年依然好时节" in shown and "生日快乐" in shown and 8.9 in ratings
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_a_posters_rating_sits_on_the_picture_without_a_plate(monkeypatch, mode):
+    placed = []
+    original = render._rating_mark
+    monkeypatch.setattr(render, "_rating_mark", lambda canvas, right, bottom, rating: (
+        placed.append((right, bottom)), original(canvas, right, bottom, rating)))
+    payload = _full_payload()
+    payload["showing"] = {"data": sources.normalize_douban(SHOWING)}
+
+    page = render.render_page((800, 480), payload, {"themeMode": mode}, NOW, _images())
+
+    right, bottom = placed[0]
+    # Left of the star the poster shows through where the old ink chip stood; the score is white,
+    # haloed in dark ink.
+    assert page.getpixel((round(right) - 44, round(bottom) - 6)) == (240, 0, 160)
+    corner = page.crop((round(right) - 40, round(bottom) - 18, round(right), round(bottom))).convert("RGB")
+    colours = set(corner.get_flattened_data())
+    assert (255, 255, 255) in colours and render.RATING_HALO_INK in colours
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])
@@ -500,6 +524,7 @@ def test_each_outlet_reads_in_a_block_of_its_own_brand_colour(monkeypatch, mode)
 
     monkeypatch.setattr(render, "_brand_panel", panel)
     monkeypatch.setattr(PageCanvas, "text", text)
+    monkeypatch.setattr(render, "paint_doodles", lambda *args, **kwargs: False)  # the solid colour alone
     page = render.render_page((800, 480), _full_payload(), {"themeMode": mode}, NOW, _images())
 
     # DW Blue, the Times' black and 少数派 red, top to bottom, a small gap apart, filling the column.
@@ -519,6 +544,30 @@ def test_each_outlet_reads_in_a_block_of_its_own_brand_colour(monkeypatch, mode)
     nyt_left, nyt_top = boxes[1][0], boxes[1][1]
     edge = page.getpixel((nyt_left + 40, nyt_top))
     assert (edge != (0, 0, 0)) == (mode == "night")
+
+
+def test_each_block_carries_its_own_quiet_doodles_off_its_brand_colour(monkeypatch):
+    laid = []
+    original = render.paint_doodles
+    monkeypatch.setattr(render, "paint_doodles", lambda image, box, pattern, tint, **kwargs: (
+        laid.append((Path(pattern).name, tint, kwargs["strength"])), original(image, box, pattern, tint, **kwargs))[1])
+
+    page = render.render_page((800, 480), _full_payload(), {}, NOW, _images())
+
+    assert [name for name, _tint, _strength in laid] == ["dw.png", "nyt.png", "sspai.png"]
+    assert all(strength <= 0.35 for _name, _tint, strength in laid)
+    for name in ("dw", "nyt", "sspai"):
+        assert (render.ASSETS / "doodles" / f"{name}.png").is_file()
+    # Against the same page without them, the blocks' grounds carry strokes only a shade off their colour.
+    monkeypatch.setattr(render, "paint_doodles", lambda *args, **kwargs: False)
+    plain = render.render_page((800, 480), _full_payload(), {}, NOW, _images())
+    column = (212, render.BODY_TOP, 510, render.GRID_BOTTOM)
+    changed = [max(abs(a - b) for a, b in zip(before, after))
+               for before, after in zip(plain.crop(column).get_flattened_data(), page.crop(column).get_flattened_data())
+               if before != after]
+    assert len(changed) > 500
+    # Quiet: a stroke is only a shade off its block's colour, nothing like the white type on it.
+    assert max(changed) <= 60
 
 
 def test_a_reversed_mark_is_white_with_its_white_parts_open():
