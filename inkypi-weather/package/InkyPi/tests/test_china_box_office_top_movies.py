@@ -422,3 +422,29 @@ def test_mainland_placeholder_is_drawn_into_the_right_header_slot():
     colors = crop.getcolors(maxcolors=box[2] * box[3] + 1) or []
     changed_pixels = sum(count for count, color in colors if color != (18, 20, 22))
     assert changed_pixels > 1000
+
+
+THE_NUMBERS_WEEKEND = """<table>
+<tr><th>Rank</th><th>Prev</th><th>Title</th><th>Gross</th><th>Weekly Change</th><th>Theaters</th>
+<th>Theater Average</th><th>Total&nbsp;Gross</th><th>Days in Release</th></tr>
+<tr><td>1</td><td>(2)</td><td><a href="/movie/You-Can-See-Everything-(2026)">You Can See Everything</a></td>
+<td>$11,445,628</td><td>-39%</td><td>3,243</td><td>$3,529</td><td>$64,727,541</td><td>17</td></tr>
+<tr><td>2</td><td>(new)</td><td><a href="/movie/Clayface-(2026)">Clayface</a></td>
+<td>$11,002,116</td><td></td><td>3,478</td><td>$3,163</td><td>$11,002,116</td><td>3</td></tr>
+<tr><td>3</td><td>(25)</td><td><a href="/movie/Wildwood-(2026)">Wildwood</a></td>
+<td>$8,949,324</td><td>+1,255%</td><td>2,977</td><td>$3,006</td><td>$27,356,779</td><td>10</td></tr>
+<tr><td>4</td><td>(-)</td><td><a href="/movie/Jaws-(1975)">Jaws</a></td>
+<td>$4,364,009</td><td>n/a</td><td>2,374</td><td>$1,838</td><td>$13,500,103</td><td>10</td></tr>
+</table>"""
+
+
+def test_the_north_america_chart_reads_last_weeks_rank_and_weekly_change(monkeypatch):
+    plugin = ChinaBoxOfficeTopMovies({"id": "china_box_office_top_movies"})
+    monkeypatch.setattr(plugin, "_fetch_text", lambda _url: THE_NUMBERS_WEEKEND)
+
+    movies, label = plugin._load_movies({"sourceMode": "the_numbers"}, 5)
+
+    assert label == "The Numbers"
+    assert [(movie.extra.get("previous_rank"), movie.extra.get("weekly_change")) for movie in movies] == [
+        (2, "-39%"), ("new", None), (25, "+1,255%"), (None, None)]
+    assert movies[0].extra["theater_average"] == "$3,529"  # the other columns read as before

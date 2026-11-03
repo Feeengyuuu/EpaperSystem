@@ -987,6 +987,7 @@ class BoxOfficeTopMovies(BasePlugin):
                 average_column = chart_columns.get("theateraverage", chart_columns.get("theatreaverage"))
                 if theaters and average_column is not None:
                     extra["theater_average"] = self._money_text(cells[average_column])
+                extra.update(self._the_numbers_movement(cells, chart_columns))
 
             movies.append(BoxOfficeMovie(
                 rank=rank,
@@ -1001,6 +1002,24 @@ class BoxOfficeTopMovies(BasePlugin):
 
         movies.sort(key=lambda movie: movie.rank)
         return movies
+
+    @staticmethod
+    def _the_numbers_movement(cells, columns):
+        """Last week's rank ("(2)" -> 2, "(new)" -> "new"; a re-release's "(-)" is left out) and the
+        change on last week's gross ("-39%", "+1,255%") from The Numbers' Prev and Weekly Change."""
+        movement = {}
+        prev_column, change_column = columns.get("prev"), columns.get("weeklychange")
+        if prev_column is not None:
+            previous = cells[prev_column].strip().strip("()").strip().lower()
+            if previous.isdigit() and 0 < int(previous) < 1000:
+                movement["previous_rank"] = int(previous)
+            elif previous == "new":
+                movement["previous_rank"] = "new"
+        if change_column is not None:
+            change = cells[change_column].strip()
+            if re.fullmatch(r"[+-]\d{1,3}(?:,\d{3})*(?:\.\d+)?%", change):
+                movement["weekly_change"] = change
+        return movement
 
     def _movie_title_from_row(self, row):
         for cell in row[1:5]:

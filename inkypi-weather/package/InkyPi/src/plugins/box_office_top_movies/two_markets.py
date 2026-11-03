@@ -59,6 +59,7 @@ PALETTES = {
         "page": (11, 13, 15), "panel": (13, 15, 18), "text": (255, 255, 255), "subtitle": None,
         "rule": (66, 70, 78), "track": (56, 60, 68), "chip": (16, 18, 22), "chip_line": (62, 66, 74),
         "gold": (247, 184, 38), "gold_text": (12, 12, 12), "camera": (104, 108, 116),
+        "up": (60, 200, 130), "down": (255, 99, 110),
         "china": {"accent": (240, 52, 66), "banner": (196, 26, 42), "tile": (142, 16, 30)},
         "america": {"accent": (58, 128, 255), "banner": (30, 92, 232), "tile": (18, 58, 168)},
     },
@@ -66,6 +67,7 @@ PALETTES = {
         "page": (248, 245, 238), "panel": (255, 255, 255), "text": (20, 22, 24), "subtitle": "accent",
         "rule": (196, 188, 174), "track": (222, 214, 200), "chip": (244, 239, 229), "chip_line": (200, 192, 178),
         "gold": (214, 150, 16), "gold_text": (20, 18, 12), "camera": (150, 144, 132),
+        "up": (22, 150, 96), "down": (214, 62, 72),
         "china": {"accent": (196, 24, 40), "banner": (192, 26, 42), "tile": (140, 16, 30)},
         "america": {"accent": (26, 84, 214), "banner": (28, 88, 222), "tile": (18, 56, 160)},
     },
@@ -177,6 +179,15 @@ def hero_details(market, movie, runner_up=None):
         average = theater_average(movie)
         if average:
             facts.append(("bars", "单馆", average))
+        # Where it stood last week on The Numbers' chart and how its gross moved since.
+        previous = (movie.extra or {}).get("previous_rank")
+        if previous == "new":
+            facts.append(("reel", "上周", "新上映"))
+        elif isinstance(previous, int):
+            facts.append(("reel", "上周", f"#{previous}"))
+        change = weekly_change(movie)
+        if change:
+            facts.append(("bars", "环比", change))
     return [fact for fact in facts if fact[2] not in ("", "—")]
 
 
@@ -212,6 +223,23 @@ def maoyan_caption(movie):
     parts = [str(extra.get("genres") or ""), f"{runtime}分钟" if isinstance(runtime, int) else "",
              f"导演 {extra['director']}" if extra.get("director") else ""]
     return [part for part in parts if part]
+
+
+def weekly_change(movie):
+    """The Numbers' change on last week's gross ("-39%"), or ""."""
+    change = str((movie.extra or {}).get("weekly_change") or "").strip()
+    return change if re.fullmatch(r"[+-][\d,]+(?:\.\d+)?%", change) else ""
+
+
+def rank_move(movie):
+    """("up" | "down" | "new", places) from last week's rank to this week's; None when unchanged
+    or unknown."""
+    previous = (movie.extra or {}).get("previous_rank")
+    if previous == "new":
+        return "new", 0
+    if isinstance(previous, int) and not isinstance(previous, bool) and previous != movie.rank:
+        return ("up" if previous > movie.rank else "down"), abs(previous - movie.rank)
+    return None
 
 
 def china_total(movies):
@@ -472,6 +500,29 @@ def _poster_pill(page, left, bottom, text, size):
                    anchor="mm")
 
 
+def _draw_rank_move(page, x, middle, movie):
+    """Under a row's rank: a solid green or red triangle and how many places it moved, or a
+    gold NEW pill for a film new this week; nothing when it held its place."""
+    move = rank_move(movie)
+    if move is None:
+        return
+    direction, places = move
+    colors = page.colors
+    if direction == "new":
+        font = page.font(9)
+        width = page.draw.textlength("NEW", font=font) / page.sx + 8
+        page.draw.rounded_rectangle((page.x(x), page.y(middle - 6), page.x(x + width), page.y(middle + 6)),
+                                    radius=page.y(6), fill=colors["gold"])
+        page.draw.text((page.x(x + width / 2), page.y(middle)), "NEW", font=font, fill=colors["gold_text"],
+                       anchor="mm")
+        return
+    tip, base = (middle - 4, middle + 3) if direction == "up" else (middle + 4, middle - 3)
+    page.draw.polygon(((page.x(x), page.y(base)), (page.x(x + 8), page.y(base)), (page.x(x + 4), page.y(tip))),
+                      fill=colors[direction])
+    page.draw.text((page.x(x + 11), page.y(middle)), str(places), font=page.font(10), fill=colors["text"],
+                   anchor="lm")
+
+
 def _draw_caption(page, x, y, width, parts, *, lead=""):
     """As many of ``parts`` as fit in ``width``, joined by " · " in the page's ink."""
     font = page.font(12, bold=False)
@@ -498,6 +549,8 @@ def _draw_row(page, left, right, market, movie, top, leader, *, first):
         page.draw.line((page.x(left + 8), page.y(top - 3), page.x(right - 8), page.y(top - 3)),
                        fill=colors["rule"], width=1)
     page.text((left + 10, top + 12), f"#{movie.rank}", 19, colors["gold"])
+    if market == "america":
+        _draw_rank_move(page, left + 12, top + 42, movie)
     page.poster(movie, left + 44, top + 1, 34, 48)
     badge = maoyan_badge(movie, short=True) if market == "china" else ""
     if badge:
@@ -519,7 +572,8 @@ def _draw_row(page, left, right, market, movie, top, leader, *, first):
         page.draw.rounded_rectangle((bar[0], bar[1], filled, bar[3]), radius=page.y(3), fill=accent)
     total = movie.total_gross if market == "china" else compact_money(movie.total_gross)
     seat = rate_text((movie.extra or {}).get("seat_rate")) if market == "china" else ""
-    below = f"上座 {seat}" if seat else ""
+    change = weekly_change(movie) if market == "america" else ""
+    below = f"上座 {seat}" if seat else f"环比 {change}" if change else ""
     if total:
         page.text_right(right - 10, top + (8 if below else 17), f"累计 {total}", 10, colors["text"], bold=False)
     if below:

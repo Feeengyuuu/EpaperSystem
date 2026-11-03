@@ -379,3 +379,44 @@ def test_without_the_new_fields_the_china_column_keeps_its_old_layout(monkeypatc
     texts = [text for _xy, text in drawn]
     assert "今日大盘" not in texts and not any(str(text).startswith("上座") for text in texts)
     assert {xy[1] for xy, text in drawn if text.startswith("累计 ")} == {257, 311, 365, 419}
+
+
+def test_rank_movement_reads_last_weeks_place():
+    movies = america_movies()
+    for movie, previous in zip(movies, (2, 1, 3, "new", None)):
+        if previous is not None:
+            movie.extra["previous_rank"] = previous
+
+    assert [two_markets.rank_move(movie) for movie in movies] == [("up", 1), ("down", 1), None, ("new", 0), None]
+
+
+def test_the_north_america_headliner_adds_last_weeks_rank_and_the_weekly_change():
+    movie = america_movies()[0]
+    movie.extra = {"theaters_verified": True, "theater_average": "$8,609", "previous_rank": 2, "weekly_change": "-39%"}
+
+    facts = two_markets.hero_details("america", movie)
+
+    assert [(label, value) for _icon, label, value in facts][-3:] == [("单馆", "$8,609"), ("上周", "#2"), ("环比", "-39%")]
+    movie.extra = {"previous_rank": "new", "weekly_change": "bogus"}
+    assert [(label, value) for _icon, label, value in two_markets.hero_details("america", movie)][-1] == ("上周", "新上映")
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_north_america_rows_show_their_rank_move_and_weekly_change(mode, monkeypatch):
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    america = america_movies()
+    for movie, previous, change in zip(america, (2, 1, 3, "new", 9), ("-39%", "-54%", "-27%", "", "+12%")):
+        movie.extra.update(previous_rank=previous, **({"weekly_change": change} if change else {}))
+    drawn = _drawn_texts(monkeypatch)
+
+    image = two_markets.render_two_markets(plugin, (800, 480), snapshot(china_movies(), "中国电影票房"),
+                                           snapshot(america, "The Numbers"), {"_inkypi_theme": {"mode": mode}})
+
+    texts = [text for _xy, text in drawn]
+    assert {"环比 -54%", "环比 -27%", "环比 +12%", "NEW", "上周", "#2"} <= set(texts)
+    colors = two_markets.PALETTES[mode]
+    # #2 (Clayface, last week's #1) fell a place: a red triangle under its rank; #5 rose four.
+    fell = image.crop((418, 240 + 36, 430, 240 + 48)).convert("RGB")
+    rose = image.crop((418, 456 - 54 + 36, 430, 456 - 54 + 48)).convert("RGB")
+    assert colors["down"] in set(fell.get_flattened_data()) and colors["up"] in set(rose.get_flattened_data())
+    assert "4" in texts
