@@ -273,3 +273,69 @@ def test_without_papers_the_page_says_so():
 
 def test_counts_read_short():
     assert (render.count_text(75), render.count_text(1520)) == ("75", "1.5k")
+
+
+def test_a_paper_says_whether_its_authors_link_code_and_a_project_page():
+    linked = sources.normalize_paper(_raw("2610.00001", "Linked", 3, githubRepo="https://github.com/a/b",
+                                          projectPage="https://a.github.io/b/"), "2026-10-30")
+    bare = sources.normalize_paper(_raw("2610.00002", "Bare", 3, githubRepo="", projectPage=None), "2026-10-30")
+
+    assert (linked["code"], linked["project"]) == (True, True)
+    assert (bare["code"], bare["project"]) == (False, False)
+
+
+def test_the_hub_repos_name_the_most_liked_model_and_count_the_rest():
+    hub = sources.normalize_repos({
+        "models": [{"id": "fan/quant-4bit", "likes": 19, "downloads": 1788},
+                   {"id": "moonshotai/Kimi-Linear-48B-A3B-Instruct", "likes": 613, "downloads": 81441},
+                   {"likes": 999}],
+        "datasets": [{"id": "d/one"}], "spaces": []})
+
+    assert hub == {"models": 2, "datasets": 1, "spaces": 0,
+                   "model": {"id": "moonshotai/Kimi-Linear-48B-A3B-Instruct", "likes": 613, "downloads": 81441}}
+    assert sources.normalize_repos({"models": []})["model"] is None
+    assert sources.valid_repos(hub) and not sources.valid_repos({"models": "2"})
+
+
+def test_only_the_lead_paper_asks_the_hub_for_its_models(monkeypatch, tmp_path):
+    from plugins.ai_papers.ai_papers import AiPapers
+
+    monkeypatch.setenv("AI_PAPERS_CACHE_DIR", str(tmp_path))
+    asked = []
+    monkeypatch.setattr(sources, "fetch_day", lambda day, context: {
+        "day": day, "papers": [sources.normalize_paper(_raw(f"2610.0000{n}", f"P{n}", 10 * n), day) for n in (1, 2, 3)]})
+    monkeypatch.setattr(sources, "fetch_arxiv_figure", lambda paper_id, context: {"urls": []})
+
+    def fetch_repos(paper_id, context):
+        asked.append(paper_id)
+        return {"models": 1, "datasets": 0, "spaces": 0, "model": {"id": "lab/model", "likes": 5, "downloads": 9}}
+
+    monkeypatch.setattr(sources, "fetch_repos", fetch_repos)
+    plugin = AiPapers({"id": "ai_papers"})
+    payload = plugin._payload({}, NOW, allow_network=True, context=_context())
+    again = plugin._payload({}, NOW, allow_network=True, context=_context())
+
+    assert asked == ["2610.00003"]  # the lead, once: the second refresh reads the cached answer
+    assert payload["papers"][0]["hub"]["model"]["id"] == "lab/model"
+    assert again["papers"][0]["hub"] == payload["papers"][0]["hub"]
+    assert "hub" not in payload["papers"][1]
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_link_chips_and_the_hub_model_are_drawn_in_their_colours(mode):
+    papers = _papers(11)
+    for paper in papers:
+        paper["code"], paper["project"] = True, True
+    papers[0]["hub"] = {"models": 15, "model": {"id": "moonshotai/Kimi-Linear-48B-A3B-Instruct", "likes": 613}}
+    palette = render.NIGHT if mode == "night" else render.DAY
+
+    page = render.render_page((800, 480), {"papers": papers}, {"themeMode": mode}, NOW, {}).convert("RGB")
+
+    colours = {render._rgb(palette["code"]), render._rgb(palette["project"])}
+    for box in (render.LEAD, render.GRID, render.RANKING):
+        pixels = page.crop(box).get_flattened_data()
+        assert all(sum(1 for pixel in pixels if pixel == colour) > 40 for colour in colours)
+    # The lead's Hugging Face mark sits on the line above its standing.
+    lead_text = page.crop((render.LEAD[0] + render.LEAD_FIGURE_WIDTH[0], render.LEAD[3] - 70,
+                           render.LEAD[2], render.LEAD[3] - 40))
+    assert any(pixel[0] > 240 and 150 < pixel[1] < 230 and pixel[2] < 90 for pixel in lead_text.get_flattened_data())

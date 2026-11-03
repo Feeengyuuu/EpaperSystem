@@ -34,6 +34,9 @@ FRESH_SECONDS = 60 * 60
 USABLE_SECONDS = 3 * 86400
 # A paper's arXiv figure does not change.
 FIGURE_SECONDS = 30 * 86400
+# The models citing the lead paper grow over its first days: a reading stands for six hours.
+REPOS_FRESH_SECONDS = 6 * 3600
+REPOS_USABLE_SECONDS = 3 * 86400
 # The papers on the page: the lead and four cards, pictured, and the ranking down the right.
 PICTURED = 5
 SHOWN = PICTURED + render.RANKING_ROWS
@@ -101,6 +104,15 @@ class AiPapers(BasePlugin):
                                       validate=sources.valid_figure, timeout_seconds=10),
                                now, allow_network=allow_network, context=context)
             paper["figures"] = (figure.get("data") or {}).get("urls") or []
+        if papers:
+            # The lead's model on the Hub: the one request the page makes about it.
+            lead = papers[0]
+            hub = book.load(Source("repos", {"id": lead["id"]},
+                                   lambda ctx, paper_id=lead["id"]: sources.fetch_repos(paper_id, ctx),
+                                   fresh_seconds=REPOS_FRESH_SECONDS, usable_seconds=REPOS_USABLE_SECONDS,
+                                   validate=sources.valid_repos, timeout_seconds=10),
+                            now, allow_network=allow_network, context=context)
+            lead["hub"] = hub.get("data") or None
         return {"papers": papers, "days": [(result.get("data") or {}).get("day") for result in listed],
                 "states": [result.get("state") for result in results],
                 "provenance": combined_provenance(results)}

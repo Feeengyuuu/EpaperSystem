@@ -2,10 +2,11 @@
 
 Left: the most upvoted paper leads with its figure down the card's full height, then the
 organisation behind it (its Hub avatar, its logo), its title and one-sentence summary, its
-keywords, and its upvotes, comments, GitHub stars and arXiv id. The next four stand in a 2 x 2 grid
-of cards beneath, each with its figure filling the card's left side. Right: the rest of the
-ranking, each paper's title over its organisation and its upvotes. The header names the sources by
-their logos: Hugging Face Papers and arXiv.
+keywords, its most liked model on the Hub, and its upvotes, comments, GitHub stars and arXiv id. The
+next four stand in a 2 x 2 grid of cards beneath, each with its figure filling the card's left side.
+Right: the rest of the ranking, each paper's title over its organisation and its upvotes. A paper
+whose authors link its code or a project page carries 有代码 / 项目页 chips. The header names the
+sources by their logos: Hugging Face Papers and arXiv.
 
 Figures are shown as large as their boxes allow. A photo fills its box, cropped to it. A diagram
 drawn on white loses its empty margins, is cut to its box's shape only so far (most of it stays)
@@ -31,10 +32,12 @@ from utils.theme_utils import contrast_ratio, relative_luminance
 
 
 ASSETS = Path(__file__).resolve().parent / "assets"
+# A paper's links in their own colours, on solid chips: its code cobalt, its project page emerald.
 DAY = {"paper": "#ffffff", "ink": "#121a20", "muted": "#3a454d", "rule": "#a6a6a6", "track": "#eceef1",
-       "lead": "#fff8dc"}
+       "lead": "#fff8dc", "code": "#2554c7", "project": "#059669"}
 NIGHT = {"paper": "#000000", "ink": "#edf1ea", "muted": "#c6d0d5", "rule": "#5a5a5a", "track": "#24282d",
-         "lead": "#1c1704"}
+         "lead": "#1c1704", "code": "#7aa2ff", "project": "#34d399"}
+LINKS = (("code", "有代码"), ("project", "项目页"))
 # Hugging Face's yellow and orange (its brand), for the solid marks: rank badges and upvote arrows.
 HF_YELLOW = (0xFF, 0xD2, 0x1E)
 HF_ORANGE = (0xFF, 0x9D, 0x00)
@@ -271,6 +274,54 @@ def _stat(canvas, x, middle, icon, text, size=11):
     return 15 + canvas.text((x + 15, middle), text, size, anchor="lm", bold=False)
 
 
+def _links_width(canvas, paper, size=10, gap=4):
+    shown = [label for key, label in LINKS if paper.get(key)]
+    return sum(canvas.width(label, size) + 8 for label in shown) + gap * max(0, len(shown) - 1)
+
+
+def _links(canvas, paper, right, middle, size=10, gap=4):
+    """The paper's 有代码 and 项目页 chips ending at ``right``; the width they take (0 without either)."""
+    width = _links_width(canvas, paper, size, gap)
+    x, height = right - width, size + 6
+    for key, label in LINKS:
+        if not paper.get(key):
+            continue
+        chip = canvas.width(label, size) + 8
+        canvas.draw.rounded_rectangle((x, middle - height / 2, x + chip, middle + height / 2), radius=height // 2,
+                                      fill=canvas.color(key))
+        canvas.text((x + chip / 2, middle), label, size, "paper", anchor="mm")
+        x += chip + gap
+    return width
+
+
+def _hub_model(canvas, hub, x, middle, right):
+    """The lead's most liked model on the Hub on one line: Hugging Face's mark, the model, its likes,
+    and how many more models cite the paper. The model's name comes first: its owner, then the count
+    of the others, then its likes give way until it fits."""
+    model = (hub or {}).get("model") or {}
+    if not model.get("id"):
+        return False
+    x += _paste_logo(canvas, "huggingface_mark", x, middle, 14) + 5
+    others = int((hub or {}).get("models") or 0) - 1
+    likes = count_text(model["likes"]) if model.get("likes") else ""
+    tail = f"+{others} 个模型" if others > 0 else ""
+    names = (model["id"], model["id"].split("/")[-1])
+    options = [(name, likes, tail) for name in names] + [(names[1], likes, ""), (names[1], "", "")]
+    for name, likes, tail in options:
+        need = (canvas.width(name, 11) + (canvas.width(likes, 11) + 20 if likes else 0)
+                + (canvas.width(tail, 10, False) + 8 if tail else 0))
+        if need <= right - x:
+            break
+    if tail:
+        right -= canvas.text((right, middle), tail, 10, "muted", anchor="rm", bold=False) + 8
+    if likes:
+        right -= canvas.text((right, middle), likes, 11, anchor="rm") + 14
+        draw_icon(canvas.draw, "heart", (right, middle - 5), 11, HF_ORANGE, canvas.color("lead"))
+        right -= 6
+    canvas.text((x, middle), name, 11, anchor="lm", width=right - x)
+    return True
+
+
 def _org_line(canvas, paper, images, x, middle, right, size, side=None, *, bold=True):
     """The organisation (its mark and name, a wordmark alone), else the first author and the count
     of the rest."""
@@ -330,7 +381,8 @@ def _lead(canvas, paper, images, chinese):
             kept=LEAD_DIAGRAM_KEPT)
     _badge(canvas, left + 6, top + 6, 1, 24)
     x, text_right = left + figure_width + 12, right - 10
-    _org_line(canvas, paper, images, x, top + 16, text_right, 12)
+    links = _links(canvas, paper, text_right, top + 16, 11)
+    _org_line(canvas, paper, images, x, top + 16, text_right - (links + 8 if links else 0), 12)
     title, summary, translated = shown_text(paper, chinese)
     y = top + 30
     for line in canvas.wrap(title, 18, text_right - x, 3 if not translated else 2):
@@ -341,6 +393,9 @@ def _lead(canvas, paper, images, chinese):
         y += 16
     # The paper's standing closes the column in two lines; the summary and keywords take what is left.
     footer = bottom - 40
+    hub = paper.get("hub") if (paper.get("hub") or {}).get("model") else None
+    if hub:
+        footer -= 22
     for line in canvas.wrap(summary, 12, text_right - x, max(0, min(LEAD_SUMMARY_LINES, (footer - y) // 18))):
         canvas.text((x, y + 2), line, 12, anchor="la", bold=False)
         y += 18
@@ -352,6 +407,8 @@ def _lead(canvas, paper, images, chinese):
         canvas.draw.rounded_rectangle((chip_x, y + 6, chip_x + width, y + 22), radius=8, fill=canvas.color("track"))
         canvas.text((chip_x + width / 2, y + 14), word, 10, anchor="mm", bold=False)
         chip_x += width + 6
+    if hub:
+        _hub_model(canvas, hub, x, footer + 13, text_right)
     _standing(canvas, paper, x, text_right, (bottom - 31, bottom - 12))
 
 
@@ -364,6 +421,7 @@ def _card(canvas, box, rank, paper, images, chinese):
     figure = (left + 1, top + 1, left + 1 + CARD_FIGURE_WIDTH, bottom)
     _figure(canvas, art, drawing, figure, canvas.color("paper"), radius=5, kept=CARD_DIAGRAM_KEPT)
     _badge(canvas, left + 4, top + 4, rank, 18)
+    _links(canvas, paper, figure[0] + 4 + _links_width(canvas, paper), bottom - 12)
     x, text_right = figure[2] + 8, right - 8
     count_w = _upvote(canvas, text_right, top + 13, paper["upvotes"], 11, anchor="rm")
     _org_line(canvas, paper, images, x, top + 13, text_right - count_w - 6, 10)
@@ -414,7 +472,9 @@ def _ranking(canvas, papers, images, chinese, first_rank, title="今日榜单"):
             line_y += RANKING_LINE
         meta = line_y + RANKING_GAP + RANKING_MARK / 2
         count_w = _upvote(canvas, right - 10, meta, paper["upvotes"], 11, anchor="rm")
-        _org_line(canvas, paper, images, text_x, meta, right - 18 - count_w, 10, RANKING_MARK, bold=False)
+        links = _links(canvas, paper, right - 16 - count_w, meta)
+        _org_line(canvas, paper, images, text_x, meta, right - 18 - count_w - (links + 6 if links else 0), 10,
+                  RANKING_MARK, bold=False)
         if index < RANKING_ROWS - 1:
             canvas.rule((left + 10, y + row_h, right - 10, y + row_h), "track")
 

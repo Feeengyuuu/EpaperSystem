@@ -22,6 +22,9 @@ PACIFIC = ZoneInfo("America/Los_Angeles")
 USER_AGENT = "InkyPi AIPapers/1.0 (personal e-paper display)"
 REQUEST_TIMEOUT = (3, 12)
 DAILY_PAPERS = "https://huggingface.co/api/daily_papers"
+# The models, datasets and Spaces on the Hub that cite a paper (about 32 KB): asked for the lead only.
+ARXIV_REPOS = "https://huggingface.co/api/arxiv/{id}/repos"
+REPOS_MAX_BYTES = 512 * 1024
 ARXIV_HTML = "https://arxiv.org/html/{id}v1"
 # A day's list runs to about 50 papers (340 KB); arXiv's HTML version of a paper to about 750 KB.
 LIST_MAX_BYTES = 1536 * 1024
@@ -103,6 +106,9 @@ def normalize_paper(raw, day):
         "author_count": len(authors),
         "image": stills[0] if stills else None,
         "published": str(paper.get("publishedAt") or "")[:10],
+        # Whether the authors link its code (a GitHub repository) and a project page.
+        "code": bool(str(paper.get("githubRepo") or "").strip()),
+        "project": bool(str(paper.get("projectPage") or "").strip()),
     }
 
 
@@ -121,6 +127,39 @@ def fetch_day(day, context):
     papers = [paper for paper in (normalize_paper(raw, day) for raw in payload if isinstance(payload, list))
               if paper is not None] if isinstance(payload, list) else []
     return {"day": day, "papers": papers}
+
+
+def normalize_repos(payload):
+    """How many models, datasets and Spaces on the Hub cite a paper, and its most liked model."""
+    payload = payload if isinstance(payload, dict) else {}
+
+    def listed(key):
+        return [item for item in payload.get(key) or [] if isinstance(item, dict) and str(item.get("id") or "").strip()]
+
+    models = listed("models")
+    best = max(models, key=lambda item: (_int(item.get("likes")), _int(item.get("downloads"))), default=None)
+    return {
+        "models": len(models), "datasets": len(listed("datasets")), "spaces": len(listed("spaces")),
+        "model": ({"id": _clean(best["id"], 120), "likes": _int(best.get("likes")),
+                   "downloads": _int(best.get("downloads"))} if best else None),
+    }
+
+
+def fetch_repos(paper_id, context):
+    """The Hub's models, datasets and Spaces that cite the paper ``paper_id``."""
+    if not ARXIV_ID.match(str(paper_id)):
+        raise ValueError("not an arXiv id")
+    context.raise_if_cancelled()
+    response = get_http_client().request_json(
+        "GET", ARXIV_REPOS.format(id=paper_id), context=context, timeout=REQUEST_TIMEOUT, max_bytes=REPOS_MAX_BYTES,
+        headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
+    context.raise_if_cancelled()
+    return normalize_repos(response.data)
+
+
+def valid_repos(data):
+    return isinstance(data, dict) and isinstance(data.get("models"), int) and (
+        data.get("model") is None or isinstance(data.get("model"), dict))
 
 
 def valid_day(data):
