@@ -14,6 +14,14 @@ Polymarket prices them at: one keyless request for its LoL moneyline markets
 (about 50 KB), cached for half an hour, gives each priced match its decimal
 odds, win shares, best-of and traded volume. Bookmaker odds already on a match
 are kept.
+
+Once the knockout stage is drawn, the card's lower half becomes the bracket:
+lolesports' standings for the tournament (about 23 KB, cached for twenty
+minutes) give the quarter-finals, semi-finals and final with each side's
+games won, the schedule adds each match's day and live score, and Polymarket's
+"Worlds <year>: Winner" event (about 80 KB, half an hour) adds each team still
+in the running's chance of the title. Either one missing leaves the card's
+usual upcoming and recent rows.
 """
 
 import json
@@ -22,6 +30,7 @@ from runtime.refresh_contracts import TaskCancelled
 
 from .common import *
 from .common import _safe_exception_text
+from .scorebug_kit import _kit_result_ink
 
 
 SportsDashboard = None
@@ -35,6 +44,19 @@ POLYMARKET_MARKETS_URL = "https://gamma-api.polymarket.com/markets"
 POLYMARKET_LOL_TAG_ID = 65
 POLYMARKET_CACHE_SECONDS = 30 * 60
 POLYMARKET_MARKETS_LIMIT = 40
+LOLESPORTS_STANDINGS_URL = "https://esports-api.lolesports.com/persisted/gw/getStandings"
+WORLDS_BRACKET_CACHE_SECONDS = 20 * 60
+# The knockout stage's matches in lolesports' order: four quarter-finals, two semi-finals, the final.
+WORLDS_BRACKET_MATCHES = 7
+WORLDS_KNOCKOUT_BLOCKS = ("quarter", "semi", "final", "knockout", "playoff", "bracket")
+POLYMARKET_EVENTS_URL = "https://gamma-api.polymarket.com/events"
+WORLDS_TITLE_EVENT_SLUG = "worlds-{year}-winner"
+WORLDS_TITLE_ODDS_LIMIT = 4
+# The bracket on the card: column captions, a match box's team rows and logos, the gaps between the
+# boxes of a pair and between columns, and the title-odds strip under it.
+WORLDS_BRACKET_CAPTIONS = ("八强", "半决赛", "决赛")
+WORLDS_BRACKET_ROW, WORLDS_BRACKET_LOGO, WORLDS_BRACKET_PAIR_GAP, WORLDS_BRACKET_COLUMN_GAP = 13, 11, 4, 7
+WORLDS_TITLE_STRIP_HEIGHT, WORLDS_TITLE_LOGO = 40, 15
 # lolesports team codes and the names Polymarket gives those teams, where neither the code nor
 # the initials of the name already match.
 POLYMARKET_TEAM_NAMES = {
@@ -63,6 +85,8 @@ class LolWorldsMixin:
             self._worlds_window_contains(window_start, window_end, now)
             and self._lol_selected_has_displayable_event(selected)
         )
+        if (in_window or force) and events:
+            selected = self._attach_worlds_knockouts(selected, events, settings, tournament, now)
         pinned_until = (
             SportsDashboard._worlds_match_day_pin_until(selected, now, window_end)
             if in_window
@@ -134,6 +158,283 @@ class LolWorldsMixin:
         except Exception as exc:
             logger.warning("Worlds schedule fetch failed: %s", _safe_exception_text(exc))
         return [], "WORLDS NO DATA", tournament
+
+    # Knockout bracket and title odds ---------------------------------------------------------
+
+    def _attach_worlds_knockouts(self, selected, events, settings, tournament, now):
+        """``selected`` with the knockout bracket and the title odds once the bracket has teams."""
+        tournament_id = str((tournament or {}).get("id") or "").strip()
+        if not tournament_id or not SportsDashboard._worlds_knockouts_drawn(events):
+            return selected
+        try:
+            matches = self._worlds_knockout_matches(settings, tournament_id)
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("Worlds knockout bracket unavailable: %s", _safe_exception_text(exc))
+            return selected
+        if len(matches) < WORLDS_BRACKET_MATCHES or not any(
+                team["code"] != "TBD" for match in matches for team in match["teams"]):
+            return selected
+        by_match = {str(event.get("source_match_id") or ""): event for event in events or [] if event.get("source_match_id")}
+        bracket = [SportsDashboard._worlds_bracket_match(match, by_match.get(match["id"])) for match in matches]
+        try:
+            title_odds = self._worlds_title_odds(settings, now)
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("Worlds title odds unavailable: %s", _safe_exception_text(exc))
+            title_odds = []
+        teams = {team["code"]: team for match in bracket for team in match["teams"] if team["code"] != "TBD"}
+        priced = []
+        for offer in title_odds:
+            code = next((code for code in teams if SportsDashboard._polymarket_team_is(code, offer["name"])), None)
+            if code:
+                priced.append({**offer, "code": code, "logo": teams[code]["logo"]})
+        return {**selected, "bracket": bracket, "title_odds": priced[:WORLDS_TITLE_ODDS_LIMIT]}
+
+    @staticmethod
+    def _worlds_knockouts_drawn(events):
+        """Whether the schedule has knockout matches and every group-stage match is played, so the
+        bracket is set (no standings request before that)."""
+        knockout = False
+        for event in events or []:
+            block = str(event.get("block") or "").lower()
+            if any(word in block for word in WORLDS_KNOCKOUT_BLOCKS):
+                knockout = True
+            elif str(event.get("state") or "").lower() not in {"completed", "final", "post"}:
+                return False
+        return knockout
+
+    def _worlds_knockout_matches(self, settings, tournament_id):
+        """The knockout stage's matches from a twenty-minute cache or one standings request."""
+        path = self._sports_dashboard_cache_dir() / "worlds_knockouts.json"
+        cache = self._read_json_file(path)
+        now_utc = datetime.now(timezone.utc)
+        cached = cache.get("matches") if cache.get("tournament_id") == tournament_id else None
+        if isinstance(cached, list) and (self._provider_cache_only(settings)
+                                         or self._cache_is_fresh_seconds(cache, WORLDS_BRACKET_CACHE_SECONDS, now_utc)):
+            return cached
+        if self._provider_cache_only(settings):
+            return []
+        try:
+            response = get_http_session().get(
+                LOLESPORTS_STANDINGS_URL, params={"hl": "en-US", "tournamentId": tournament_id},
+                headers={"x-api-key": LOLESPORTS_API_KEY, "Accept": "application/json"}, timeout=15,
+            )
+            response.raise_for_status()
+            matches = SportsDashboard._parse_worlds_knockouts(response.json())
+        except TaskCancelled:
+            raise
+        except Exception:
+            if isinstance(cached, list):
+                return cached
+            raise
+        self._write_json_file(path, {"tournament_id": tournament_id, "fetched_at": now_utc.isoformat(), "matches": matches})
+        return matches
+
+    @staticmethod
+    def _parse_worlds_knockouts(payload):
+        """[{"id", "state", "teams": [{"code", "logo", "wins", "outcome"}]}] of the knockout stage."""
+        standings = ((payload or {}).get("data") or {}).get("standings") or []
+        for standing in standings if isinstance(standings, list) else []:
+            for stage in (standing or {}).get("stages") or []:
+                name = f"{stage.get('slug') or ''} {stage.get('name') or ''}".lower()
+                if "knockout" not in name and "bracket" not in name and "playoff" not in name:
+                    continue
+                matches = []
+                for section in stage.get("sections") or []:
+                    for match in (section or {}).get("matches") or []:
+                        if not isinstance(match, Mapping):
+                            continue
+                        teams = match.get("teams") or []
+                        sides = []
+                        for index in range(2):
+                            code, wins, logo = SportsDashboard._team_info(teams, index)
+                            outcome = str(((teams[index] or {}).get("result") or {}).get("outcome") or "") if index < len(teams) else ""
+                            sides.append({"code": code[:8], "logo": logo, "wins": wins, "outcome": outcome.lower()})
+                        matches.append({"id": str(match.get("id") or ""), "state": str(match.get("state") or "").lower(),
+                                        "teams": sides})
+                return matches
+        return []
+
+    @staticmethod
+    def _worlds_bracket_match(match, event):
+        """A bracket match for the card: lolesports' teams and games won, with the schedule's day
+        and, while it is played, its live games won."""
+        event = event or {}
+        state = str(match.get("state") or "")
+        live = str(event.get("state") or "").lower() in {"inprogress", "in_progress", "live"} or state == "inprogress"
+        teams = [dict(team) for team in match.get("teams") or []]
+        if live:
+            for team, side in zip(teams, ("a", "b")):
+                if event.get(f"wins_{side}") is not None and str(event.get(f"team_{side}") or "") == team["code"]:
+                    team["wins"] = event.get(f"wins_{side}")
+        return {"id": match.get("id"), "state": "live" if live else ("final" if state == "completed" else "scheduled"),
+                "start": event.get("start") if isinstance(event.get("start"), datetime) else None, "teams": teams}
+
+    def _worlds_title_odds(self, settings, now):
+        """[{"name", "share", "week"}] of Polymarket's title market for the edition, best first: only
+        the open markets of teams still in it (its "Team I" / "Other" placeholders are inactive)."""
+        year = getattr(now, "year", None) or datetime.now(timezone.utc).year
+        slug = WORLDS_TITLE_EVENT_SLUG.format(year=year)
+        path = self._sports_dashboard_cache_dir() / "polymarket_worlds_winner.json"
+        cache = self._read_json_file(path)
+        now_utc = datetime.now(timezone.utc)
+        cached = cache.get("teams") if cache.get("slug") == slug else None
+        if isinstance(cached, list) and (self._provider_cache_only(settings)
+                                         or self._cache_is_fresh_seconds(cache, POLYMARKET_CACHE_SECONDS, now_utc)):
+            return cached
+        if self._provider_cache_only(settings):
+            return []
+        try:
+            response = get_http_session().get(
+                POLYMARKET_EVENTS_URL, params={"slug": slug},
+                headers={"Accept": "application/json", "User-Agent": "InkyPi/1.0"}, timeout=10,
+            )
+            response.raise_for_status()
+            teams = SportsDashboard._parse_worlds_title_odds(response.json())
+        except TaskCancelled:
+            raise
+        except Exception:
+            if isinstance(cached, list):
+                return cached
+            raise
+        self._write_json_file(path, {"slug": slug, "fetched_at": now_utc.isoformat(), "teams": teams})
+        return teams
+
+    @staticmethod
+    def _parse_worlds_title_odds(payload):
+        events = payload if isinstance(payload, list) else [payload]
+        teams = []
+        for event in events:
+            for market in (event or {}).get("markets") or [] if isinstance(event, Mapping) else []:
+                if not isinstance(market, Mapping) or not market.get("active") or market.get("closed"):
+                    continue
+                prices = LolWorldsMixin._polymarket_compact({"outcomePrices": market.get("outcomePrices")})["prices"]
+                try:
+                    share = float(prices[0])
+                    week = float(market.get("oneWeekPriceChange") or 0)
+                except (IndexError, TypeError, ValueError):
+                    continue
+                name = str(market.get("groupItemTitle") or "").strip()[:60]
+                if name and 0.0 < share < 1.0:
+                    teams.append({"name": name, "share": share, "week": week})
+        return sorted(teams, key=lambda team: -team["share"])[:12]
+
+    def _draw_worlds_knockouts(self, image, draw, right_x, right_w, y, bottom, selected, now):
+        """The card's lower half in the knockout stage: the bracket, then the title odds."""
+        accent = self._lol_sidebar_color("WORLDS", "accent")
+        self._draw_section_header(draw, right_x, right_w, y, "KNOCKOUTS", accent)
+        x1, x2 = right_x + 14, right_x + right_w - 14
+        odds = list(selected.get("title_odds") or [])
+        strip = WORLDS_TITLE_STRIP_HEIGHT if odds else 0
+        bracket_bottom = bottom - 6 - strip
+        self._draw_worlds_bracket(image, draw, (x1, y + 32, x2, bracket_bottom), selected.get("bracket") or [], accent)
+        if odds:
+            self._draw_worlds_title_odds(image, draw, (x1, bracket_bottom + 4, x2, bottom - 4), odds, accent)
+
+    def _draw_worlds_bracket(self, image, draw, box, bracket, accent):
+        x1, y1, x2, y2 = [int(value) for value in box]
+        gap = WORLDS_BRACKET_COLUMN_GAP
+        width = x2 - x1 - 2 * gap
+        columns = [round(width * 0.37), round(width * 0.33)]
+        columns.append(width - sum(columns))
+        lefts = [x1, x1 + columns[0] + gap, x1 + columns[0] + columns[1] + 2 * gap]
+        caption_font = self._font(8, False)
+        for caption, left, column in zip(WORLDS_BRACKET_CAPTIONS, lefts, columns):
+            self._draw_centered_in_box(draw, (left, y1, left + column, y1 + 10), caption, caption_font, COLORS["text"])
+        top = y1 + 13
+        box_h = 2 * WORLDS_BRACKET_ROW + 2
+        spare = (y2 - top) - 4 * box_h - 2 * WORLDS_BRACKET_PAIR_GAP
+        pair_gap = max(WORLDS_BRACKET_PAIR_GAP, spare)
+        tops = [top, top + box_h + WORLDS_BRACKET_PAIR_GAP]
+        tops += [tops[1] + box_h + pair_gap, tops[1] + 2 * box_h + pair_gap + WORLDS_BRACKET_PAIR_GAP]
+        centers = [value + box_h // 2 for value in tops]
+        semis = [(centers[0] + centers[1]) // 2, (centers[2] + centers[3]) // 2]
+        final = (semis[0] + semis[1]) // 2
+        layout = [(0, center) for center in centers] + [(1, center) for center in semis] + [(2, final)]
+        for (column, center), match in zip(layout, bracket[:WORLDS_BRACKET_MATCHES]):
+            left = lefts[column]
+            right = left + columns[column]
+            self._draw_worlds_bracket_match(image, draw, (left, center - box_h // 2, right, center - box_h // 2 + box_h),
+                                            match, accent, final=column == 2)
+        # Each pair's winners meet in the next column.
+        for column, pairs in ((0, ((centers[0], centers[1], semis[0]), (centers[2], centers[3], semis[1]))),
+                              (1, ((semis[0], semis[1], final),))):
+            right = lefts[column] + columns[column]
+            middle = right + gap // 2
+            for upper, lower, target in pairs:
+                draw.line((right, upper, middle, upper), fill=COLORS["border"], width=1)
+                draw.line((right, lower, middle, lower), fill=COLORS["border"], width=1)
+                draw.line((middle, upper, middle, lower), fill=COLORS["border"], width=1)
+                draw.line((middle, target, lefts[column + 1], target), fill=COLORS["border"], width=1)
+
+    def _draw_worlds_bracket_match(self, image, draw, box, match, accent, final=False):
+        """A match as two team rows (logo, code, games won: the winner's emerald, the loser's
+        crimson); a match still to play shows its day, a live one is outlined in the live colour, the
+        final in the card's accent."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        state = match.get("state")
+        live = state == "live"
+        outline = self._lol_sidebar_color("WORLDS", "live") if live else (accent if final else COLORS["border"])
+        draw.rounded_rectangle((x1, y1, x2, y2), radius=3, fill=COLORS["panel"], outline=outline, width=2 if live or final else 1)
+        teams = list(match.get("teams") or [])[:2]
+        start = match.get("start")
+        day = f"{start.month}/{start.day}" if state == "scheduled" and isinstance(start, datetime) else ""
+        day_w = self._text_width(draw, day, self._font(8, False)) + 3 if day else 0
+        if day:
+            self._draw_text_in_box(draw, (x2 - 3 - day_w, y1, x2 - 3, y2), day, self._font(8, False), COLORS["text"], align="right")
+        winner = next((index for index, team in enumerate(teams) if team.get("outcome") == "win"), None)
+        if state == "final" and winner is None:
+            wins = [SportsDashboard._lpl_int_value(team.get("wins")) or 0 for team in teams]
+            winner = 0 if wins[0] > wins[1] else 1 if wins[1] > wins[0] else None
+        for index, team in enumerate(teams):
+            top = y1 + 1 + index * WORLDS_BRACKET_ROW
+            bottom = top + WORLDS_BRACKET_ROW
+            code = str(team.get("code") or "TBD")
+            if code == "TBD":
+                self._draw_text_in_box(draw, (x1 + 4, top, x2 - 4, bottom), "TBD", self._font(8, False), COLORS["muted"])
+                continue
+            self._draw_team_logo(image, draw, team.get("logo"), x1 + 3, top + (WORLDS_BRACKET_ROW - WORLDS_BRACKET_LOGO) // 2,
+                                 WORLDS_BRACKET_LOGO, code)
+            lost = winner is not None and winner != index
+            score_w = 0
+            if state in {"live", "final"} and team.get("wins") is not None:
+                score = str(team.get("wins"))
+                score_font = self._font(10, True)
+                score_w = self._text_width(draw, score, score_font) + 2
+                ink = COLORS["text"] if winner is None else _kit_result_ink("loss" if lost else "win")
+                self._draw_text_in_box(draw, (x2 - 3 - score_w, top, x2 - 3, bottom), score, score_font, ink, align="right")
+            name_right = x2 - 4 - max(score_w, day_w)
+            name, font = self._fit_text(draw, code, max(1, name_right - (x1 + 17)), 9, bold=not lost, min_size=7)
+            self._draw_text_in_box(draw, (x1 + 17, top, name_right, bottom), name, font, COLORS["text"])
+
+    def _draw_worlds_title_odds(self, image, draw, box, odds, accent):
+        """'夺冠' and Polymarket's mark, then the favourites: logo, title chance and a bar for it."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        draw.line((x1, y1, x2, y1), fill=COLORS["line"], width=1)
+        caption_font = self._font(9, True)
+        self._draw_text_in_box(draw, (x1, y1 + 2, x2, y1 + 13), "夺冠概率", caption_font, COLORS["text"])
+        logo = self._load_local_logo(os.path.join(LOCAL_TEAM_LOGO_DIR, "polymarket.png"), (80, 9), alpha_threshold=8)
+        if logo is not None:
+            tinted = Image.new("RGBA", logo.size, (*COLORS["text"][:3], 255))
+            tinted.putalpha(logo.getchannel("A"))
+            image.paste(tinted, (x2 - tinted.width, y1 + 3 + (10 - tinted.height) // 2), tinted)
+        count = len(odds)
+        width = (x2 - x1) / max(1, count)
+        top = y1 + 16
+        for index, team in enumerate(odds):
+            left = round(x1 + index * width)
+            right = round(x1 + (index + 1) * width) - 4
+            self._draw_team_logo(image, draw, team.get("logo"), left, top, WORLDS_TITLE_LOGO, team.get("code"))
+            share = max(0.0, min(1.0, float(team.get("share") or 0)))
+            label = f"{share * 100:.0f}%" if share >= 0.01 else "<1%"
+            self._draw_text_in_box(draw, (left + WORLDS_TITLE_LOGO + 3, top, right, top + WORLDS_TITLE_LOGO), label,
+                                   self._font(11, index == 0), COLORS["text"])
+            bar_top = top + WORLDS_TITLE_LOGO + 3
+            draw.rectangle((left, bar_top, right, bar_top + 3), fill=COLORS["line"])
+            draw.rectangle((left, bar_top, left + max(1, round((right - left) * share)), bar_top + 3), fill=accent)
 
     def _polymarket_lol_offers(self, settings, timezone_info):
         """Polymarket's priced LoL matches as odds offers, from a half-hour cache or one request;
