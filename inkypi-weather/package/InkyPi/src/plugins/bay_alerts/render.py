@@ -19,7 +19,7 @@ from utils.page_canvas import PageCanvas
 
 from .map_view import (
     alert_tag_size, california_map_size, draw_alert_tag, nearest_fault, paste_logos, quake_age_class,
-    quake_chip_colors, render_bay_map, render_california_map, rgb, tone_ink,
+    quake_chip_colors, render_bay_map, render_california_map, rgb, source_logo, tone_ink,
 )
 from .sources import (
     PACIFIC, PAGER_LEVELS, air_today, compact_message, distance_km, intensity_roman, local_now, parse_time,
@@ -61,6 +61,9 @@ NEARBY_EVENT_KM = 120
 NEAR_HOME_KM = 50
 # A quake this many people reported feeling is listed even when newer ones would fill the rows.
 FELT_NOTABLE = 100
+# Spare the Air's mark beside its status chip, this tall; its winter mark in these months.
+AIR_LOGO_HEIGHT = 32
+WINTER_SEASON = (11, 12, 1, 2)
 # The cards' source logos, this tall before each header's detail.
 CARD_LOGO_HEIGHT = 18
 SAME_FIRE_KM = 15
@@ -131,26 +134,44 @@ def spare_the_air(payload, now):
     return air_today(source.get("data"), now)
 
 
-def _air_chip(canvas, air, left, right):
-    """The Air District's Spare the Air status for today as a chip from ``left``: an emerald outline
-    and ink text on a day without an alert, solid crimson on an alert day (a winter one bans
-    burning wood), with tomorrow's alert named when one is called."""
+def air_mark(air, now):
+    """Which of Spare the Air's own marks names the status: the orange winter one through its
+    wood-burning season (November to February) or on a winter alert, else the blue one."""
+    return "spare_the_air_winter" if air.get("winter") or now.month in WINTER_SEASON else "spare_the_air"
+
+
+def _air_chip(canvas, air, left, right, now):
+    """The Air District's Spare the Air status for today from ``left``: the programme's own round
+    mark (its colours as printed, straight on the paper), then a chip with the status, an emerald
+    outline and ink text on a day without an alert, solid crimson on an alert day (a winter one
+    bans burning wood), with tomorrow's alert named when one is called. The mark's absence puts
+    the programme's name in the chip."""
+    logo = source_logo(air_mark(air, now), AIR_LOGO_HEIGHT)
+    name = "" if logo is not None else "Spare the Air · "
     if air["alert"]:
-        text = "Spare the Air 警报 · " + ("今日禁止烧柴" if air.get("winter") else "今日空气不佳")
+        text = name + "警报 · " + ("今日禁止烧柴" if air.get("winter") else "今日空气不佳")
     else:
-        text = "Spare the Air · 今日无警报" + (" · 明日警报" if air.get("tomorrow_alert") else "")
-    width = min(right - left, canvas.width(text, 12) + 36)
-    if width < 120:
+        text = name + "今日无警报" + (" · 明日警报" if air.get("tomorrow_alert") else "")
+    mark_w = logo.width + 6 if logo is not None else 0
+    width = min(right - left - mark_w, canvas.width(text, 12) + (20 if logo is not None else 36))
+    if width < 80:
         return False
-    box = (left, 15, left + width, 39)
+    if logo is not None:
+        canvas.image.paste(logo, (round(left), round(27 - logo.height / 2)), logo)
+        logo.close()
+    chip_left = left + mark_w
+    box = (chip_left, 15, chip_left + width, 39)
+    text_left = chip_left + (10 if not name else 28)
     if air["alert"]:
         canvas.draw.rounded_rectangle(box, radius=12, fill=canvas.color("alert"))
-        draw_icon(canvas.draw, "haze", (left + 8, 19), 16, canvas.color("badge_ink"), canvas.color("alert"))
-        canvas.text((left + 28, 27), text, 12, "badge_ink", anchor="lm", width=width - 34)
+        if name:
+            draw_icon(canvas.draw, "haze", (chip_left + 8, 19), 16, canvas.color("badge_ink"), canvas.color("alert"))
+        canvas.text((text_left, 27), text, 12, "badge_ink", anchor="lm", width=chip_left + width - 6 - text_left)
     else:
         canvas.draw.rounded_rectangle(box, radius=12, fill=canvas.color("paper"), outline=canvas.color("ok"), width=2)
-        draw_icon(canvas.draw, "haze", (left + 8, 19), 16, canvas.color("ok"), canvas.color("paper"))
-        canvas.text((left + 28, 27), text, 12, anchor="lm", width=width - 34)
+        if name:
+            draw_icon(canvas.draw, "haze", (chip_left + 8, 19), 16, canvas.color("ok"), canvas.color("paper"))
+        canvas.text((text_left, 27), text, 12, anchor="lm", width=chip_left + width - 6 - text_left)
     return True
 
 
@@ -180,7 +201,7 @@ def _header(canvas, payload, now):
     # Between the title and the pill: the Air District's Spare the Air status for today, or the
     # page's subject when the feed has nothing for today.
     air = spare_the_air(payload, now)
-    if not air or not _air_chip(canvas, air, title_right + 14, left - 12):
+    if not air or not _air_chip(canvas, air, title_right + 14, left - 12, now):
         canvas.text((title_right + 14, 30), "地震 · 气象预警 · 自然事件", 14, "muted", anchor="lm", bold=False)
     canvas.rule((12, 52, RIGHT, 52), "ink", 2)
 

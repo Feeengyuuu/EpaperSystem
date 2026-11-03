@@ -711,13 +711,17 @@ def test_the_header_gives_spare_the_air_and_the_weather_card_the_key_messages():
     render.PageCanvas.text = record
     try:
         image = render_page((800, 480), {**_payload(), **_extras()}, {"_inkypi_theme": {"mode": "day"}}, NOW)
-        assert "Spare the Air · 今日无警报" in drawn and "预报员要点" in drawn
+        # Spare the Air's own blue mark names the programme; the chip says the status.
+        assert "今日无警报" in drawn and "预报员要点" in drawn
+        assert not any("Spare the Air" in str(text) for text in drawn)
+        header = set(image.crop((210, 8, 520, 46)).get_flattened_data())
+        assert any(abs(r - 0) < 30 and abs(g - 163) < 30 and abs(b - 214) < 30 for r, g, b in header)
         assert any(str(text).startswith("Hazardous beach conditions thru Tue") for text in drawn)
         assert image.info["column_cards"]["quakes"]["rows"] >= 2
         drawn.clear()
         render_page((800, 480), {**_payload(), **_extras("Spare the Air Alert in Effect")},
                     {"_inkypi_theme": {"mode": "night"}}, NOW)
-        assert "Spare the Air 警报 · 今日空气不佳" in drawn
+        assert "警报 · 今日空气不佳" in drawn
         drawn.clear()
         render_page((800, 480), _payload(), {"_inkypi_theme": {"mode": "day"}}, NOW)
         assert "地震 · 气象预警 · 自然事件" in drawn and "预报员要点" not in drawn
@@ -752,3 +756,25 @@ def test_the_extras_load_beside_the_feeds_and_never_decide_provenance(monkeypatc
     assert later["provenance"] is SourceProvenance.LIVE
     image = render_page((800, 480), later, {"_inkypi_theme": {"mode": "day"}}, NOW + timedelta(days=1))
     assert image.info["column_cards"]["alerts"]["rows"] == 0
+
+
+def test_spare_the_airs_marks_follow_its_seasons_and_keep_their_colours_at_night(monkeypatch):
+    from plugins.bay_alerts import map_view
+
+    quiet = {"alert": False, "winter": False}
+    assert render.air_mark(quiet, NOW) == "spare_the_air"
+    assert render.air_mark(quiet, NOW.replace(month=11, day=2)) == "spare_the_air_winter"
+    assert render.air_mark({"alert": True, "winter": True}, NOW) == "spare_the_air_winter"
+    for name in ("spare_the_air", "spare_the_air_winter"):
+        day, night = map_view.source_logo(name, 26), map_view.source_logo(name, 26, (238, 242, 234))
+        assert day is not None and day.mode == "RGBA" and day.getpixel((0, 0))[3] == 0
+        # A badge in its own colours with white lettering: nothing in it is near-black, so the night ink leaves it.
+        assert day.tobytes() == night.tobytes()
+    # Without the mark the chip names the programme itself.
+    monkeypatch.setattr(render, "source_logo", lambda *_args, **_kwargs: None)
+    drawn = []
+    original = render.PageCanvas.text
+    monkeypatch.setattr(render.PageCanvas, "text",
+                        lambda self, xy, text, *a, **k: drawn.append(text) or original(self, xy, text, *a, **k))
+    render_page((800, 480), {**_payload(), **_extras()}, {"_inkypi_theme": {"mode": "day"}}, NOW)
+    assert "Spare the Air · 今日无警报" in drawn

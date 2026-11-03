@@ -44,6 +44,28 @@
         64
       ],
       "sha256": "b574b8a8c14158f9f0be042de95fce7f50c3ef40aaafedb3a81ecf8decd3a9dd"
+    },
+    "spare_the_air": {
+      "source": "https://www.sparetheair.org/~/media/spare-the-air/images/site-assets/logos/logo_summer-png.png",
+      "page": "https://www.sparetheair.org/",
+      "licence": "Spare the Air's official mark (Bay Area Air Quality Management District) from its own site's header, shown to name the source",
+      "source_sha256": "a003110446418a0bb1d4ab6a3c0aa97db0bc9253bf1cbb5805b7c12b8e91fbf6",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "c8dd4ea002ff65d3a4f6de1661e95d34676d28953d9f79a207e2aaf6f7554d2e"
+    },
+    "spare_the_air_winter": {
+      "source": "https://www.sparetheair.org/~/media/spare-the-air/images/site-assets/logos/logo_winter-png.png",
+      "page": "https://www.sparetheair.org/",
+      "licence": "Winter Spare the Air's official mark (Bay Area Air Quality Management District) from its own site, shown to name the source",
+      "source_sha256": "9633517373b5e1f007fd63eb5977c3d2573656a4eaa5e5c5c88da06714c290ba",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "5a81151f3ad6948b2b2c94965a8502f70e7dcf94c6e49b40f2f4cbf041ec7f6c"
     }
   }
 }

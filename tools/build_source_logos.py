@@ -9,7 +9,9 @@
   tagline under them is too small to read on the panel), for The National Map's credit.
 - NOAA: its round logo from Commons (public domain), for the tide predictions.
 - NWS, CAL FIRE and NASA (for EONET): their logos from Commons (public domain), for 湾区要紧事.
-  USGS goes there too, for its earthquakes.
+  USGS goes there too, for its earthquakes. The Air District's Spare the Air status there carries
+  the programme's own round marks from its site (sparetheair.org): the blue summer one and the
+  orange winter one.
 - The cover pages (Daily Art, Comic Covers, Magazines, through base_plugin/cover_gallery): The
   Met, the Art Institute of Chicago, Europeana, the Grand Comics Database, the Internet Archive,
   Wikimedia Commons, the Library of Congress and Gallica from Commons; Harvard Art Museums' white
@@ -128,6 +130,15 @@ LOGOS = {
     "nasa": ((COMMONS.format(path="e/e5/NASA_logo.svg", name="NASA_logo.svg"),
               "https://commons.wikimedia.org/wiki/File:NASA_logo.svg", PUBLIC_DOMAIN),
              [PLUGINS / "bay_alerts" / "assets" / "logos"], 1.0),
+    "spare_the_air": (("https://www.sparetheair.org/~/media/spare-the-air/images/site-assets/logos/logo_summer-png.png",
+                       "https://www.sparetheair.org/",
+                       "Spare the Air's official mark (Bay Area Air Quality Management District) from its own site's "
+                       "header, shown to name the source"), [PLUGINS / "bay_alerts" / "assets" / "logos"], 1.0),
+    "spare_the_air_winter": (("https://www.sparetheair.org/~/media/spare-the-air/images/site-assets/logos/"
+                              "logo_winter-png.png", "https://www.sparetheair.org/",
+                              "Winter Spare the Air's official mark (Bay Area Air Quality Management District) from "
+                              "its own site, shown to name the source"), [PLUGINS / "bay_alerts" / "assets" / "logos"],
+                             1.0),
     "met": (("https://upload.wikimedia.org/wikipedia/commons/thumb/7/73/The_Metropolitan_Museum_of_Art_Logo.svg/"
              "500px-The_Metropolitan_Museum_of_Art_Logo.svg.png",
              "https://commons.wikimedia.org/wiki/File:The_Metropolitan_Museum_of_Art_Logo.svg", PUBLIC_DOMAIN), [COVERS], 1.0),
