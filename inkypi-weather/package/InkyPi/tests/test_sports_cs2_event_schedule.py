@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 import requests
 
-from tests.test_sports_cs2_follow import FeedResponse, cs_match, loader
+from tests.test_sports_cs2_follow import FeedResponse, bo3_offline, cs_match, loader  # noqa: F401 (bo3_offline: autouse)
 
 SETTINGS = {"pandaScoreCs2HltvLogos": "false"}
 

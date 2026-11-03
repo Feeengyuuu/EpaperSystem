@@ -163,6 +163,17 @@ def _plugin():
     return SportsDashboard({"id": "sports_dashboard"})
 
 
+@pytest.fixture(autouse=True)
+def _keyless_extras_offline(monkeypatch):
+    """bo3.gg's keyless CS2 card and the Worlds bracket and title odds have their own tests; here
+    they never reach the network."""
+    from plugins.sports_dashboard import cs2_bo3
+
+    monkeypatch.setattr(cs2_bo3, "load_bo3_cs2_card", lambda *_args, **_kwargs: (None, "BO3 NO DATA"))
+    monkeypatch.setattr(SportsDashboard, "_worlds_knockout_matches", lambda *_args: [])
+    monkeypatch.setattr(SportsDashboard, "_worlds_title_odds", lambda *_args: [])
+
+
 def test_sports_dashboard_manifest_disables_internal_panel_refresh_on_display():
     manifest_path = (
         Path(__file__).resolve().parents[1]

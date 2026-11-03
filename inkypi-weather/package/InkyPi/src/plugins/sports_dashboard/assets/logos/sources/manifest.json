@@ -155,6 +155,18 @@
         92,
         92
       ]
+    },
+    "bo3": {
+      "source_url": "https://bo3.gg/img/favicon/safari-pinned-tab.svg",
+      "official_site": "https://bo3.gg/",
+      "source_sha256": "79fec03a1ad1c857234d883d4c936b094ff1677642b06044d2232bb0993b58f5",
+      "sha256": "95475e4978461aa27656390c2b341a8283309fa4daa07a6601603315a8a54b83",
+      "size": [
+        96,
+        56
+      ],
+      "processing": "The site's own mark (its pinned-tab SVG: three slanted bars) drawn 8x in the site's mask-icon colour #1e90e8, which its apple-touch-icon also uses, on a transparent ground, cropped to its ink and reduced proportionally to 96 px wide with LANCZOS.",
+      "rights": "bo3.gg trademark, used to identify the data source of CS2 matches."
     }
   }
 }

@@ -1,3 +1,5 @@
+from runtime.refresh_contracts import TaskCancelled
+
 from .common import *
 from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_alias
 from . import event_ranking
@@ -3095,11 +3097,36 @@ class EsportsMixin:
         if self._bool_setting(settings or {}, "pandaScoreCs2AutoFollow", True):
             from .cs2_follow import load_cs2_follow_card
 
-            return load_cs2_follow_card(
+            card, source_state = load_cs2_follow_card(
                 self, settings or {}, device_config, timezone_info, now,
                 session=get_http_session(), game_logo_path=LOCAL_CS_MAJOR_LOGO_PATH,
             )
+            return self._cs2_with_bo3_fallback(card, source_state, settings or {}, timezone_info, now)
         return self._load_pandascore_cs2_fixed_card(settings, device_config, timezone_info, now)
+
+    def _cs2_with_bo3_fallback(self, card, source_state, settings, timezone_info, now):
+        """PandaScore's card, or bo3.gg's keyless S-tier card when PandaScore has no key, only stale
+        data, nothing, or only a result while bo3.gg has a top-tier match live or to come."""
+        state = str(source_state or "").upper()
+        weak = not card or "NO KEY" in state or "STALE" in state or (card or {}).get("status") == "RECENT"
+        if not weak or not self._bool_setting(settings, "cs2Bo3Enabled", True):
+            return card, source_state
+        from .cs2_bo3 import load_bo3_cs2_card
+
+        try:
+            bo3_card, bo3_state = load_bo3_cs2_card(
+                self, settings, timezone_info, now, session=get_http_session(), game_logo_path=LOCAL_CS_MAJOR_LOGO_PATH,
+            )
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("bo3.gg CS2 fallback failed: %s", _safe_exception_text(exc))
+            return card, source_state
+        if not bo3_card:
+            return card, source_state
+        if card and card.get("status") == "RECENT" and "NO KEY" not in state and "STALE" not in state                 and bo3_card.get("status") not in {"LIVE", "NEXT"}:
+            return card, source_state
+        return bo3_card, bo3_state
 
     def _load_pandascore_cs2_fixed_card(
         self,

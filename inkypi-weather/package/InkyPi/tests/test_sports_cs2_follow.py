@@ -6,6 +6,13 @@ import requests
 
 from plugins.sports_dashboard.sports_dashboard import SportsDashboard
 import plugins.sports_dashboard.sports_dashboard as sports_module
+from plugins.sports_dashboard import cs2_bo3
+
+
+@pytest.fixture(autouse=True)
+def bo3_offline(monkeypatch):
+    """PandaScore's contracts are tested on their own: bo3.gg's keyless fallback stays out."""
+    monkeypatch.setattr(cs2_bo3, "load_bo3_cs2_card", lambda *_args, **_kwargs: (None, "BO3 NO DATA"))
 
 
 def cs_match(

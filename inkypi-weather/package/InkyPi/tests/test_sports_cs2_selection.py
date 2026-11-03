@@ -7,7 +7,7 @@ import pytest
 import requests
 
 from plugins.sports_dashboard.sports_dashboard import SportsDashboard
-from tests.test_sports_cs2_follow import cs_match, loader
+from tests.test_sports_cs2_follow import bo3_offline, cs_match, loader  # noqa: F401 (bo3_offline: autouse)
 
 SETTINGS = {"pandaScoreCs2HltvLogos": "false"}
 TZ = ZoneInfo("America/Los_Angeles")

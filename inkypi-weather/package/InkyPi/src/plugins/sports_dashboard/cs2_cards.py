@@ -100,7 +100,7 @@ def safe_logo_url(value):
         valid = (
             parsed.scheme == "https"
             and parsed.hostname
-            in {"cdn-api.pandascore.co", "cdn.pandascore.co", "cdn.pandascore.net", "img-cdn.hltv.org"}
+            in {"cdn-api.pandascore.co", "cdn.pandascore.co", "cdn.pandascore.net", "img-cdn.hltv.org", "files.bo3.gg"}
             and not parsed.username
             and not parsed.password
             and parsed.port in {None, 443}

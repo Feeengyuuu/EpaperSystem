@@ -14,8 +14,8 @@ from .scorebug_kit import KIT_RESULT_EXTRA
 VALVE_FACEOFF_LOGO = 40
 # Match feeds credited on the Valve card as "SOURCE: <feed>", drawn as their official marks: PandaScore's
 # wordmark, else the feed's own icon (assets/logos/sources) before its name.
-VALVE_SOURCE_FEEDS = {"pandascore", "opendota", "hltv"}
-VALVE_FEED_ICONS = {"opendota": ("opendota.png", "OpenDota"), "hltv": ("hltv.png", "HLTV")}
+VALVE_SOURCE_FEEDS = {"pandascore", "opendota", "hltv", "bo3.gg"}
+VALVE_FEED_ICONS = {"opendota": ("opendota.png", "OpenDota"), "hltv": ("hltv.png", "HLTV"), "bo3.gg": ("bo3.png", "bo3.gg")}
 # Where a Valve event's arena stage runs (by its name and the days of that stage on the device's
 # clock, a day early so Asia's afternoons count), for the venue's logo on the card; an event or day
 # not here shows none.
