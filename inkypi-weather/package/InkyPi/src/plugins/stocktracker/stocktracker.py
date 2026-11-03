@@ -88,7 +88,9 @@ from utils.massive_market_data import (
 )
 from utils.robinhood_mcp import RobinhoodMCPClient
 from utils.theme_utils import get_theme_palette
-from plugins.stocktracker import trend_chart
+from plugins.stocktracker import fundamentals, trend_chart
+from runtime.long_task_executor import task_context_or_default
+from runtime.refresh_contracts import TaskCancelled
 import csv
 import hashlib
 import json
@@ -196,6 +198,8 @@ PORTFOLIO_HISTORY_FILE_ENV = "INKYPI_STOCKTRACKER_HISTORY_FILE"
 PORTFOLIO_HISTORY_MAX_DAYS = 180
 SOURCE_CACHE_SCHEMA_VERSION = "stocktracker-source-v2"
 SOURCE_CACHE_LEAF = "source"
+# Per-symbol 52-week range, earnings, ex-dividend and analyst fields for rows that bring none (fundamentals.py).
+FUNDAMENTALS_CACHE_LEAF = "fundamentals"
 WINDOW_SHORT_LABELS = {
 	"1d": "1D",
 	"5d": "1W",
@@ -276,7 +280,7 @@ HOLDING_ROW_MAX_HEIGHT = 24
 # Holdings table columns as fractions of the inner table width.
 HOLDING_COLUMNS = {
 	"price": 0.205,
-	"shares": 0.29,
+	"range": (0.222, 0.315),
 	"value": 0.43,
 	"weight_bar": (0.448, 0.528),
 	"weight": 0.597,
@@ -311,6 +315,14 @@ HOLDING_RAIL_W = 46
 # WEIGHT_DRIFT_MIN points: past the bar's end for a position that grew, beyond it over an
 # outline of the lost share for one that shrank.
 WEIGHT_DRIFT_MIN = 0.3
+# The 52W column (in place of the share count): the year's range as a track, the price a dot on it
+# and the analysts' mean target a triangle above it in its rating's colour (key of the palette).
+RATING_COLOURS = {"strong_buy": "malachite", "buy": "malachite", "hold": "accent_gold", "underperform": "cinnabar",
+	"sell": "cinnabar"}
+# The HOLDINGS title row lists the holdings' coming earnings (财报) and ex-dividend dates (除息) within
+# EVENT_DAYS, each kind behind a solid pill in its colour.
+EVENT_DAYS = 30
+EVENT_KINDS = (("earnings_date", "财报", "accent_blue"), ("ex_dividend_date", "除息", "malachite"))
 # A row's trend ends on a gold star at the window's high and a ring at its low (within
 # EXTREME_SLACK percent).
 EXTREME_SLACK = 0.3
@@ -548,6 +560,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			stock_data.extend(self._portfolio_meta_rows(portfolio_meta, stock_data))
 			if not stock_data:
 				raise RuntimeError("No valid stock data retrieved")
+			self._attach_fundamentals(stock_data)
 			self._publish_holdings_context(stock_data)
 			updated_at = datetime.now()
 			history_points = self._record_portfolio_snapshot(
@@ -584,6 +597,18 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			provenance = SourceProvenance.FRESH_CACHE if theme_render_only else SourceProvenance.LIVE
 			return attach_source_provenance(image, provenance)
 		return image
+
+	def _attach_fundamentals(self, stock_data):
+		"""Each holding's 52-week range, next earnings, ex-dividend date and analyst view: Yahoo's
+		info already carries them; other rows get them from fundamentals.py's per-symbol cache. A
+		failure only leaves those marks off the table."""
+		try:
+			directory = self.cache_dir(leaf=FUNDAMENTALS_CACHE_LEAF, create=True)
+			fundamentals.attach(stock_data, directory, context=task_context_or_default(timeout_seconds=30))
+		except TaskCancelled:
+			raise
+		except (OSError, ValueError, TypeError) as error:
+			logging.warning(f"Holding fundamentals unavailable: {type(error).__name__}: {error}")
 
 	def _publish_holdings_context(self, stock_data):
 		"""Share only the held ticker symbols (largest first) so Money Radar can follow the portfolio."""
@@ -1077,6 +1102,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				'quote_time': quote_time,
 				'extended_hours': quote_source == "extended_1m",
 				'data_provider': "yfinance",
+				**fundamentals.from_yfinance_info(info),
 			}
 		except Exception as e:
 			# Log detailed error information for debugging
@@ -1172,12 +1198,6 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 	@staticmethod
 	def _money(value, decimals=2):
 		return f"${value:,.{decimals}f}"
-
-	@staticmethod
-	def _shares(value):
-		if abs(value - round(value)) < 0.0001:
-			return str(int(round(value)))
-		return f"{value:.2f}".rstrip("0").rstrip(".")
 
 	@staticmethod
 	def _change_text(value, percent):
@@ -2546,9 +2566,11 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		window_short="1M",
 		sorted_by_day=False,
 		keep_symbols=None,
+		today=None,
 	):
 		colors = _active_stock_colors()
 		left, top, right, bottom = box
+		today = today or datetime.now().date()
 		self._draw_box(
 			draw,
 			box,
@@ -2557,7 +2579,8 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			fill=colors["panel"],
 			canvas=img,
 		)
-		self._draw_holdings_status(draw, (right - 14, top + 22), metrics, tracking_window_label)
+		status_left = self._draw_holdings_status(draw, (right - 14, top + 22), metrics, tracking_window_label)
+		self._draw_holding_events(draw, (left + 142, status_left - 18), top + 22, metrics, today)
 		doodles = (left + 3, top + 30, right - 3, bottom - 3)
 		paint_doodles(img, doodles, HOLDINGS_DOODLES_PATH, colors["malachite"], strength=HOLDINGS_DOODLES_STRENGTH,
 					  radius=4, offset=doodles[:2])
@@ -2572,7 +2595,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		for label, key, align in (
 			("SYMBOL", "symbol", "left"),
 			("PRICE", "price", "right"),
-			("SHARES", "shares", "right"),
+			("52W", "range", "left"),
 			("VALUE", "value", "right"),
 			("WEIGHT", "weight_bar", "left"),
 			("DAY", "day", "right"),
@@ -2590,6 +2613,14 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				key_font = self._font(8, True)
 				key_text = f"{window_short} AGO"
 				draw.text((tick_x + 4, self._centered_text_y(draw, key_text, key_font, header_center)), key_text,
+						  fill=colors["ink"], font=key_font)
+			if key == "range":
+				# The triangle on each track is the analysts' target: its key beside the column's name.
+				key_x = x + self._text_width(draw, label, header_font) + 6
+				draw.polygon(((key_x, header_center - 3), (key_x + 7, header_center - 3), (key_x + 3.5, header_center + 3)),
+							 fill=colors["ink"])
+				key_font = self._font(8, True)
+				draw.text((key_x + 10, self._centered_text_y(draw, "TGT", key_font, header_center)), "TGT",
 						  fill=colors["ink"], font=key_font)
 			if sorted_by_day and key == "day_pl":
 				# The rows follow today's impact: a small sort mark before the column's name.
@@ -2770,6 +2801,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			if index < len(parts) - 1:
 				x -= 16
 				draw.ellipse((x + 6, center_y - 1.5, x + 9, center_y + 1.5), fill=colors["ink"])
+		return x
 
 	def _draw_holding_row(self, img, draw, row_box, item, columns, max_weight):
 		colors = _active_stock_colors()
@@ -2800,10 +2832,9 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		text_at(columns["symbol"], symbol, symbol_font, align="left")
 		if item["is_cash"]:
 			text_at(columns["price"], data.get("price_text") or "USD", row_font)
-			text_at(columns["shares"], "-", row_font)
 		else:
 			text_at(columns["price"], self._money(self._finite_float(data.get("price"))), row_font)
-			text_at(columns["shares"], self._shares(self._finite_float(data.get("shares"))), row_font)
+			self._draw_range_bar(draw, columns["range"], center_y, data)
 		text_at(columns["value"], self._money(item["value"]), bold_font)
 
 		self._draw_weight_bar(draw, columns["weight_bar"], center_y, item, max_weight)
@@ -2831,6 +2862,82 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			self._change_color(window_percent),
 		)
 		text_at(columns["window"], f"{window_percent:+.1f}%", bold_font)
+
+	def _draw_range_bar(self, draw, span, center_y, data):
+		"""The 52-week range as a slim track with the price as an ink dot on it and the analysts'
+		mean target as a triangle above it in its rating's colour (held to the track's ends when
+		beyond them); nothing without a range."""
+		colors = _active_stock_colors()
+		low, high, price = (self._finite_float(data.get(key), None) for key in ("low_52w", "high_52w", "price"))
+		if low is None or high is None or price is None or not 0 < low < high:
+			return
+		left, right = span
+		track_y = round(center_y + 2)
+
+		def at(value):
+			return left + (right - left) * min(1.0, max(0.0, (value - low) / (high - low)))
+
+		draw.line((left, track_y, right, track_y), fill=colors["grid"], width=2)
+		for x in (left, right):
+			draw.line((x, track_y - 3, x, track_y + 3), fill=colors["grid"], width=1)
+		target = self._finite_float(data.get("target_price"), None)
+		if target is not None and target > 0:
+			x = at(target)
+			colour = colors[RATING_COLOURS.get(str(data.get("rating") or ""), "muted")]
+			draw.polygon(((x - 3.5, track_y - 8), (x + 3.5, track_y - 8), (x, track_y - 2)), fill=colour)
+		x = at(price)
+		draw.ellipse((x - 3, track_y - 3, x + 3, track_y + 3), fill=colors["ink"], outline=colors["panel"])
+
+	def _holding_events(self, metrics, today):
+		"""[(day, kind label, colour key, symbol)] of the holdings' earnings and ex-dividend dates from
+		today to EVENT_DAYS ahead, soonest first."""
+		events = []
+		for item in metrics:
+			data = item["data"]
+			symbol = str(data.get("symbol") or "").upper()
+			for key, label, colour in EVENT_KINDS:
+				try:
+					day = datetime.strptime(str(data.get(key) or ""), "%Y-%m-%d").date()
+				except ValueError:
+					continue
+				if not item["is_cash"] and 0 <= (day - today).days <= EVENT_DAYS:
+					events.append((day, label, colour, symbol))
+		return sorted(set(events), key=lambda event: (event[0], event[1] != "财报", event[3]))
+
+	def _draw_holding_events(self, draw, span, center_y, metrics, today):
+		"""The title row's coming events: for each kind a solid pill (财报, 除息) in its colour, then its
+		holdings' symbols and dates, as many as fit between ``span``'s ends."""
+		colors = _active_stock_colors()
+		left, right = span
+		events = self._holding_events(metrics, today)
+		if not events or right - left < 80:
+			return
+		pill_font, date_font, symbol_font = get_base_ui_font(10, bold=True), self._font(11), self._font(11, True)
+		x = left
+		for _key, label, colour in EVENT_KINDS:
+			rows = [event for event in events if event[1] == label]
+			if not rows:
+				continue
+			pill_w = self._text_width(draw, label, pill_font) + 10
+			if x + pill_w + 60 > right:
+				break
+			draw.rounded_rectangle((x, center_y - 8, x + pill_w, center_y + 8), radius=8, fill=colors[colour])
+			draw.text((x + 5, self._centered_text_y(draw, label, pill_font, center_y)), label, fill=colors["panel"],
+					  font=pill_font)
+			x += pill_w + 5
+			for day, _label, _colour, symbol in rows:
+				# By symbol, not logo: the Vanguard funds share one mark.
+				when = "TODAY" if day == today else day.strftime("%m/%d")
+				mark_w = self._text_width(draw, symbol, symbol_font)
+				if x + mark_w + 3 + self._text_width(draw, when, date_font) > right:
+					return
+				draw.text((x, self._centered_text_y(draw, symbol, symbol_font, center_y)), symbol, fill=colors["ink"],
+						  font=symbol_font)
+				x += mark_w + 3
+				draw.text((x, self._centered_text_y(draw, when, date_font, center_y)), when, fill=colors["ink"],
+						  font=date_font)
+				x += self._text_width(draw, when, date_font) + 9
+			x += 6
 
 	def _draw_weight_bar(self, draw, span, center_y, item, max_weight):
 		"""The row's weight against the largest shown, filled in its kind's colour, with the tick
@@ -2988,6 +3095,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				window_short=window_short,
 				sorted_by_day=smart,
 				keep_symbols=self._symbols_setting(holdings_pin_symbols) if smart else None,
+				today=(updated_at or datetime.now()).date(),
 			)
 
 			return img

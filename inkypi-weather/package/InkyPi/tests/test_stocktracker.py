@@ -1727,3 +1727,180 @@ def test_a_rows_trend_ends_on_a_star_at_the_windows_high_and_a_ring_at_its_low()
     # The low ends on a ring: its rim in the line's colour around paper.
     assert low.getpixel((50, 25)) == stocktracker_module.PAPER and low.getpixel((46, 25)) == stocktracker_module.CINNABAR
     assert stocktracker_module.COIN_GOLD not in set(middle.get_flattened_data())
+
+
+# --- 52-week range, earnings, ex-dividend and analyst view -------------------------------------
+
+from datetime import date as _date, timezone as _timezone  # noqa: E402
+
+from plugins.stocktracker import fundamentals as fundamentals_module  # noqa: E402
+from runtime.refresh_contracts import TaskContext as _TaskContext  # noqa: E402
+
+_REAL_FETCH_NASDAQ = fundamentals_module.fetch_nasdaq
+_YF_INFO = {"shortName": "Apple Inc.", "fiftyTwoWeekHigh": 351.73, "fiftyTwoWeekLow": 243.42,
+            "earningsTimestamp": 1793653200, "exDividendDate": 1786320000, "targetMeanPrice": 332.3858,
+            "recommendationKey": "buy", "numberOfAnalystOpinions": 38}
+_NASDAQ_SUMMARY = {"data": {"symbol": "AAPL", "summaryData": {
+    "OneYrTarget": {"label": "1 Year Target", "value": "$335.00"},
+    "FiftTwoWeekHighLow": {"label": "52 Week High/Low", "value": "$351.73/$243.42"},
+    "ExDividendDate": {"label": "Ex Dividend Date", "value": "Aug 10, 2026"}}}}
+_NASDAQ_TARGET = {"data": {"consensusOverview": {"priceTarget": 337.77, "buy": 13, "sell": 4, "hold": 9},
+                           "historicalConsensus": [{"z": {"consensus": "Buy"}}, {"z": {"consensus": "Strong Buy"}}]}}
+_NASDAQ_EARNINGS = {"data": {"reportText": "NVIDIA Corporation Common Stock is expected* to report earnings on  "
+                                           "11/17/2026 after market close."}}
+
+
+@pytest.fixture(autouse=True)
+def _offline_fundamentals(monkeypatch):
+    """Rows without Yahoo's info would ask Nasdaq for theirs; the tests stay offline."""
+    def offline(_symbol, _context):
+        raise ValueError("offline in tests")
+
+    monkeypatch.setattr(fundamentals_module, "fetch_nasdaq", offline)
+
+
+def _never():
+    return _TaskContext.never_cancelled(deadline_monotonic=1e12)
+
+
+def test_yahoo_info_gives_the_range_events_and_analyst_view():
+    fields = fundamentals_module.from_yfinance_info(_YF_INFO)
+
+    assert fields == {"low_52w": 243.42, "high_52w": 351.73, "earnings_date": "2026-11-02",
+                      "ex_dividend_date": "2026-08-10", "target_price": 332.39, "rating": "buy", "analysts": 38}
+    assert fundamentals_module.from_yfinance_info({"fiftyTwoWeekHigh": 1, "fiftyTwoWeekLow": 2,
+                                                   "recommendationKey": "none"}) == {}
+    assert fundamentals_module.from_yfinance_info(None) == {}
+
+
+def test_yahoo_rows_carry_the_fields_from_the_info_already_fetched(monkeypatch):
+    fake_stock = FakeStock()
+    fake_stock.info = dict(_YF_INFO)
+    monkeypatch.setattr("plugins.stocktracker.stocktracker._load_yfinance", lambda: FakeYFinance(fake_stock))
+
+    data = StockTracker({"id": "stocktracker"})._fetch_stock_data("AAPL", 2, "1mo")
+
+    assert (data["low_52w"], data["high_52w"], data["target_price"], data["rating"]) == (243.42, 351.73, 332.39, "buy")
+    assert data["earnings_date"] == "2026-11-02" and data["analysts"] == 38
+
+
+def test_nasdaq_quote_pages_give_the_same_fields():
+    fields = fundamentals_module.from_nasdaq(_NASDAQ_SUMMARY, _NASDAQ_TARGET, _NASDAQ_EARNINGS)
+
+    assert fields == {"low_52w": 243.42, "high_52w": 351.73, "target_price": 337.77, "ex_dividend_date": "2026-08-10",
+                      "analysts": 26, "rating": "strong_buy", "earnings_date": "2026-11-17"}
+    etf = {"data": {"summaryData": {"FiftTwoWeekHighLow": {"value": "$385.1199/$310.399"}}}}
+    assert fundamentals_module.from_nasdaq(etf) == {"low_52w": 310.399, "high_52w": 385.1199}
+    unknown = {"data": {"reportText": "Our vendor has not provided the upcoming earnings report date."}}
+    assert fundamentals_module.from_nasdaq({"data": None}, {"data": None}, unknown) == {}
+
+
+def test_nasdaq_asks_for_a_fund_when_the_symbol_is_no_stock(monkeypatch):
+    asked = []
+
+    def fake_get(url, _context, params=None):
+        asked.append((url.rsplit("/", 2)[-2:], params))
+        if url.endswith("/summary") and params == {"assetclass": "stocks"}:
+            return {"data": None}
+        return {"data": {"summaryData": {"FiftTwoWeekHighLow": {"value": "$60.76/$56.35"}}}}
+
+    monkeypatch.setattr(fundamentals_module, "_get", fake_get)
+    fields = _REAL_FETCH_NASDAQ("VGIT", _never())
+
+    assert fields == {"low_52w": 56.35, "high_52w": 60.76}
+    assert asked == [(["VGIT", "summary"], {"assetclass": "stocks"}), (["VGIT", "summary"], {"assetclass": "etf"})]
+
+
+def test_rows_without_their_own_fields_take_them_from_a_day_old_cache(tmp_path):
+    now = datetime(2026, 11, 2, 18, 0, tzinfo=_timezone.utc)
+    fetched = []
+
+    def fetch(symbol, _context):
+        fetched.append(symbol)
+        if symbol == "TSLA":
+            raise ValueError("bad reply")
+        return {"low_52w": 10.0, "high_52w": 20.0, "target_price": 25.0, "rating": "hold"}
+
+    (tmp_path / "TSLA.json").write_text(json.dumps({"fetched_at": "2026-10-30T18:00:00+00:00",
+                                                    "data": {"low_52w": 200.0, "high_52w": 400.0}}))
+    (tmp_path / "AMZN.json").write_text(json.dumps({"fetched_at": "2026-11-02T12:00:00+00:00",
+                                                    "data": {"low_52w": 160.0, "high_52w": 260.0, "bogus": 1}}))
+    rows = [{"symbol": "AAPL", "low_52w": 1.0, "high_52w": 2.0}, {"symbol": "TSLA"}, {"symbol": "AMZN"},
+            {"symbol": "NVDA"}, {"symbol": "SPCX"}, {"symbol": "CASH"}]
+
+    fundamentals_module.attach(rows, tmp_path, context=_never(), now=now, fetch=fetch, budget=2)
+
+    # Yahoo's own fields stay; AMZN's half-day-old cache is fresh; the budget of two asks for
+    # TSLA (failing: its three-day-old cache stands in) and NVDA, and leaves SPCX for next time.
+    assert fetched == ["TSLA", "NVDA"]
+    assert rows[0] == {"symbol": "AAPL", "low_52w": 1.0, "high_52w": 2.0}
+    assert rows[1] == {"symbol": "TSLA", "low_52w": 200.0, "high_52w": 400.0}
+    assert rows[2] == {"symbol": "AMZN", "low_52w": 160.0, "high_52w": 260.0}
+    assert rows[3] == {"symbol": "NVDA", "low_52w": 10.0, "high_52w": 20.0, "target_price": 25.0, "rating": "hold"}
+    assert rows[4] == {"symbol": "SPCX"} and rows[5] == {"symbol": "CASH"}
+    assert json.loads((tmp_path / "NVDA.json").read_text())["data"]["target_price"] == 25.0
+
+
+def test_the_52_week_column_takes_the_share_counts_place():
+    assert "shares" not in stocktracker_module.HOLDING_COLUMNS
+    left, right = stocktracker_module.HOLDING_COLUMNS["range"]
+    assert stocktracker_module.HOLDING_COLUMNS["price"] < left < right < stocktracker_module.HOLDING_COLUMNS["value"]
+
+
+@pytest.mark.parametrize("theme", [None, {"mode": "night", "palette": {"background": (0, 0, 0), "ink": (245, 246, 248)}}])
+def test_the_range_track_marks_the_price_and_the_analysts_target(theme):
+    plugin = StockTracker({"id": "stocktracker"})
+    colors = stocktracker_module._stock_render_colors(theme)
+    token = stocktracker_module._ACTIVE_STOCK_COLORS.set(colors)
+    try:
+        image = Image.new("RGB", (200, 40), colors["panel"])
+        draw = ImageDraw.Draw(image)
+        plugin._draw_range_bar(draw, (20, 180), 20, {"price": 300.0, "low_52w": 200.0, "high_52w": 400.0,
+                                                     "target_price": 500.0, "rating": "sell"})
+        plugin._draw_range_bar(draw, (20, 180), 20, {"price": 300.0})  # no range: nothing
+    finally:
+        stocktracker_module._ACTIVE_STOCK_COLORS.reset(token)
+
+    pixels = {image.getpixel((x, y)) for x in range(170, 186) for y in range(10, 22)}
+    # A sell rating's target past the year's high sits at the track's end in the down colour.
+    assert colors["cinnabar"] in pixels
+    assert image.getpixel((100, 22)) == colors["ink"]  # the price, half way through its range
+
+
+def test_the_title_row_lists_the_coming_earnings_and_ex_dividend_dates():
+    plugin = StockTracker({"id": "stocktracker"})
+    today = _date(2026, 11, 2)
+    metrics = [{"is_cash": False, "data": data} for data in (
+        {"symbol": "NVDA", "earnings_date": "2026-11-17", "ex_dividend_date": "2026-09-10"},
+        {"symbol": "FIG", "earnings_date": "2026-11-04"},
+        {"symbol": "VGIT", "ex_dividend_date": "2026-11-02"},
+        {"symbol": "AAPL", "earnings_date": "2026-10-30"},
+        {"symbol": "TSLA", "earnings_date": "2027-01-20"},
+        {"symbol": "TTWO", "earnings_date": "not a date"})]
+    cash = {"is_cash": True, "data": {"symbol": "CASH", "earnings_date": "2026-11-03"}}
+
+    events = plugin._holding_events(metrics + [cash], today)
+
+    assert [(day.isoformat(), label, symbol) for day, label, _colour, symbol in events] == [
+        ("2026-11-02", "除息", "VGIT"), ("2026-11-04", "财报", "FIG"), ("2026-11-17", "财报", "NVDA")]
+
+
+def test_the_dashboard_shows_the_events_and_the_52_week_column(monkeypatch):
+    plugin = StockTracker({"id": "stocktracker"})
+    texts = []
+    original = ImageDraw.ImageDraw.text
+
+    def record(self, xy, text, *args, **kwargs):
+        texts.append(text)
+        return original(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", record)
+    stock = _stock("NVDA", [200.0, 210.0, 221.31], 10)
+    stock.update({"low_52w": 164.27, "high_52w": 243.37, "target_price": 323.45, "rating": "buy",
+                  "earnings_date": "2026-11-17"})
+
+    image = plugin._create_dashboard([stock, _stock("TSLA", [380.0, 386.6], 5)], (800, 480),
+                                     updated_at=datetime(2026, 11, 2, 16, 0))
+
+    assert image.size == (800, 480)
+    assert {"52W", "TGT", "财报", "NVDA", "11/17"} <= set(texts) and "SHARES" not in texts
