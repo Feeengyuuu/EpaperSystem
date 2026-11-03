@@ -41,6 +41,12 @@
 - Orbital Signal's space-news line: each news site's own mark (NASA's, ESA's and Ars Technica's from
   Commons; SpaceNews', NASASpaceflight's, Spaceflight Now's and European Spaceflight's from their own
   sites) and the Spaceflight News API's logo from its site.
+- 万象速览 (daily_digest), one logo per card: Douban's, Deutsche Welle's DW symbol, The New York
+  Times', EIA's, the Solar Dynamics Observatory's insignia, the Treasury's seal (Fiscal Data is its
+  Bureau of the Fiscal Service's) and NYT Games' Wordle icon from Commons (public domain); NetEase
+  Cloud Music's and 少数派's site icons, ESA/Webb's, ESA/Hubble's and Alternative.me's header logos
+  from their own sites; Hitokoto's (一言) logo, its open-source organisation's avatar, its white
+  ground cleared.
 - The sports page's NHL panel: the league's shield from Commons (public domain).
 - Tech Pulse: OpenRouter's logo and icon from Commons (public domain), for the newest models, and
   their makers' marks: Commons where it has one, else the maker's own site icon.
@@ -96,6 +102,7 @@ ORGANISERS = PLUGINS / "lol_info" / "assets" / "cs2_organisers"
 PAPERS = PLUGINS / "ai_papers" / "assets" / "logos"
 PLATFORM_LOGOS = PLUGINS / "live_radar" / "platform_logos"
 SPACE_NEWS = PLUGINS / "orbital_signal" / "assets" / "news"
+DIGEST = PLUGINS / "daily_digest" / "assets" / "logos"
 COMMONS_FILE = "https://commons.wikimedia.org/wiki/File:{name}"
 CALTRANS = ("https://dot.ca.gov/-/media/dot-media/images/logos/caltrans/caltranslogo.png", "https://dot.ca.gov/",
             "Caltrans' official logo from its own site header, shown to name the source")
@@ -296,6 +303,37 @@ LOGOS = {
                                    "European Spaceflight's site icon, shown to name the story's source"), [SPACE_NEWS], 1.0),
     "snapi": (("https://www.spaceflightnewsapi.net/img/SNAPI_logo.png", "https://www.spaceflightnewsapi.net/",
                "The Spaceflight News API's logo from its own site, shown to name the source"), [SPACE_NEWS], 1.0),
+    # 万象速览 (daily_digest): each card's source.
+    "hitokoto": (("https://avatars.githubusercontent.com/u/61328368?v=4", "https://github.com/hitokoto-osc",
+                  "Hitokoto's (一言) logo, the avatar of its open-source organisation, shown to name the source"),
+                 [DIGEST], "white_ground"),
+    "netease_music": (("https://s1.music.126.net/style/favicon.ico", "https://music.163.com/",
+                       "NetEase Cloud Music's site icon, shown to name the source"), [DIGEST], 1.0),
+    "douban": ((COMMONS.format(path="a/aa/Douban_logo.svg", name="Douban_logo.svg"), COMMONS_FILE.format(name="Douban_logo.svg"),
+                PUBLIC_DOMAIN), [DIGEST], 1.0),
+    "sspai": (("https://cdn-static.sspai.com/favicon/sspai.ico", "https://sspai.com/",
+               "少数派's site icon (its π mark), shown to name the source"), [DIGEST], 1.0),
+    "dw": ((COMMONS.format(path="7/75/Deutsche_Welle_symbol_2012.svg", name="Deutsche_Welle_symbol_2012.svg"),
+            COMMONS_FILE.format(name="Deutsche_Welle_symbol_2012.svg"), PUBLIC_DOMAIN), [DIGEST], 1.0),
+    "nyt": ((COMMONS.format(path="5/58/NewYorkTimes.svg", name="NewYorkTimes.svg"), COMMONS_FILE.format(name="NewYorkTimes.svg"),
+             PUBLIC_DOMAIN), [DIGEST], 1.0),
+    "eia": ((COMMONS.format(path="1/1f/Energy_Information_Administration_logo.svg",
+                            name="Energy_Information_Administration_logo.svg"),
+             COMMONS_FILE.format(name="Energy_Information_Administration_logo.svg"), PUBLIC_DOMAIN), [DIGEST], 1.0),
+    "sdo": ((COMMONS.format(path="e/ec/Solar_Dynamics_Observatory_insignia.svg", name="Solar_Dynamics_Observatory_insignia.svg"),
+             COMMONS_FILE.format(name="Solar_Dynamics_Observatory_insignia.svg"), PUBLIC_DOMAIN), [DIGEST], 1.0),
+    "esa_webb": (("https://esawebb.org/assets/images/esa-jwst-logo.png", "https://esawebb.org/",
+                  "ESA/Webb's logo from its own site header, shown to name the source"), [DIGEST], 1.0),
+    "esa_hubble": (("https://esahubble.org/assets/images/logo.9ab14af4d8f2.png", "https://esahubble.org/",
+                    "ESA/Hubble's logo from its own site header, shown to name the source"), [DIGEST], 1.0),
+    "treasury": ((COMMONS.format(path="c/cb/Seal_of_the_United_States_Department_of_the_Treasury.svg",
+                                 name="Seal_of_the_United_States_Department_of_the_Treasury.svg"),
+                  COMMONS_FILE.format(name="Seal_of_the_United_States_Department_of_the_Treasury.svg"), PUBLIC_DOMAIN),
+                 [DIGEST], 1.0),
+    "alternative_me": (("https://alternative.me/images/alternative-me-logo.png", "https://alternative.me/crypto/fear-and-greed-index/",
+                        "Alternative.me's logo from its own site header, shown to name the source"), [DIGEST], 1.0),
+    "wordle": ((COMMONS.format(path="a/a7/The_New_York_Times_Wordle.svg", name="The_New_York_Times_Wordle.svg"),
+                COMMONS_FILE.format(name="The_New_York_Times_Wordle.svg"), PUBLIC_DOMAIN), [DIGEST], 1.0),
 }
 PUBLISHERS = PLUGINS / "base_plugin" / "assets" / "publisher_logos"
 # The cover pages' publishers and magazines (base_plugin/publisher_logos.py knows their names): key ->

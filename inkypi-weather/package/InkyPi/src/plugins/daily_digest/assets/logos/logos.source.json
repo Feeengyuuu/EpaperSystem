@@ -1,0 +1,148 @@
+{
+  "logos": {
+    "alternative_me": {
+      "source": "https://alternative.me/images/alternative-me-logo.png",
+      "page": "https://alternative.me/crypto/fear-and-greed-index/",
+      "licence": "Alternative.me's logo from its own site header, shown to name the source",
+      "source_sha256": "f2a1bd37a6d768ca7249bf503ce4530c6583b78fcb3762692a3b69c128835dc3",
+      "size": [
+        68,
+        64
+      ],
+      "sha256": "f4b115d07d919c02ca8cdc004a3361f9aa68ecf09bc9d484535fa7473ce8f60d"
+    },
+    "douban": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/aa/Douban_logo.svg/500px-Douban_logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Douban_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "6da2ebb910719f3493485602524d4339ccce15c5e9701c742eb2d891877195b7",
+      "size": [
+        302,
+        64
+      ],
+      "sha256": "30438e4540c801e5d373dabf473b65987f670c66b3e78f99e20bdf77df2f7a31"
+    },
+    "dw": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/75/Deutsche_Welle_symbol_2012.svg/500px-Deutsche_Welle_symbol_2012.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Deutsche_Welle_symbol_2012.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "52ee67f4e67632703f2be525ee9717bf50d1a31c7c21c582839a3814685875e7",
+      "size": [
+        112,
+        64
+      ],
+      "sha256": "ff2fa4047d858040f67b7ec2336ded07109dc5732dd628aa09f5907b2676e069"
+    },
+    "eia": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1f/Energy_Information_Administration_logo.svg/500px-Energy_Information_Administration_logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Energy_Information_Administration_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "5675b3a82c52547ab5f2831a545cc81cb1baaa5c76fe269c8626be57b4da4a00",
+      "size": [
+        87,
+        64
+      ],
+      "sha256": "98555c90040c0407c430e8b570c2e76805d52d98cd6b8fa93c509e87929b5101"
+    },
+    "esa_hubble": {
+      "source": "https://esahubble.org/assets/images/logo.9ab14af4d8f2.png",
+      "page": "https://esahubble.org/",
+      "licence": "ESA/Hubble's logo from its own site header, shown to name the source",
+      "source_sha256": "f30adf1471a80de4bf14e68427dea6e40d69deca6e3cfb9d7e3b095f8a84e728",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "d76eadaeb9dbb3968251ec469ec154c64cf75afea55a1d22cb37ab0b4348b32e"
+    },
+    "esa_webb": {
+      "source": "https://esawebb.org/assets/images/esa-jwst-logo.png",
+      "page": "https://esawebb.org/",
+      "licence": "ESA/Webb's logo from its own site header, shown to name the source",
+      "source_sha256": "873d28dd9c529edd928a8c53a36ebed104c56ba4a6a8b307669c553e1dfed2f8",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "0ebe2c6c00a615a9b1df990eb77523a30154350f88cf8ee3580daa3487e174f1"
+    },
+    "hitokoto": {
+      "source": "https://avatars.githubusercontent.com/u/61328368?v=4",
+      "page": "https://github.com/hitokoto-osc",
+      "licence": "Hitokoto's (\u4e00\u8a00) logo, the avatar of its open-source organisation, shown to name the source",
+      "source_sha256": "94b1d07cebd2f9cce896c629892d93cff05647bf2e13ca02457a31e914df9351",
+      "processing": "the white ground cleared",
+      "size": [
+        56,
+        64
+      ],
+      "sha256": "50c59528ae6739cae33ab8730a132b0c6ac2176b6923e9b5f0102fb36baba22a"
+    },
+    "netease_music": {
+      "source": "https://s1.music.126.net/style/favicon.ico",
+      "page": "https://music.163.com/",
+      "licence": "NetEase Cloud Music's site icon, shown to name the source",
+      "source_sha256": "90d4c1e2dcc6f2728a2627a6a625879e8305821bf1bb297a1041e6ccca0d13b1",
+      "size": [
+        32,
+        32
+      ],
+      "sha256": "f4bcd4d360bd3be31b1c1d9c8ed6426df64544d61005eb71650ffd5bce491d49"
+    },
+    "nyt": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/5/58/NewYorkTimes.svg/500px-NewYorkTimes.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:NewYorkTimes.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "6303d00c7fa2c741d4b42ce00ae9ffd7fde427a36ae2e39988e2e1df4c602cb9",
+      "size": [
+        483,
+        64
+      ],
+      "sha256": "39163a8082bd3c2bbe7991e95d4b838c3eee6a56d9b093cc2dd62011c9b2501f"
+    },
+    "sdo": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/Solar_Dynamics_Observatory_insignia.svg/500px-Solar_Dynamics_Observatory_insignia.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Solar_Dynamics_Observatory_insignia.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "c7109496765790da9110d93d7dab2036ca14ab8241dc45acd795a0b28aaad4fb",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "f8b05b6f551abb19ad3a533ef982c6797c044a9ed6df27563bb84724f77ab3bb"
+    },
+    "sspai": {
+      "source": "https://cdn-static.sspai.com/favicon/sspai.ico",
+      "page": "https://sspai.com/",
+      "licence": "\u5c11\u6570\u6d3e's site icon (its \u03c0 mark), shown to name the source",
+      "source_sha256": "62995e6583087fc0422a38843aeea6c982af3e1b473d3b8aae26e7c13921ea50",
+      "size": [
+        49,
+        50
+      ],
+      "sha256": "8b52eba9e1ebca63efb7a643d80d0a9984a03f16b2ae5aad28eba2cc577bdd3b"
+    },
+    "treasury": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cb/Seal_of_the_United_States_Department_of_the_Treasury.svg/500px-Seal_of_the_United_States_Department_of_the_Treasury.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_the_United_States_Department_of_the_Treasury.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "0e08dab1fd727fb4e0c933f8b9b64a87305882753067c671967751bfb9a97550",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "17b607396b76551d0e4579f7488e86bc48ed2252aa6e252519fb3bc89fea645e"
+    },
+    "wordle": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a7/The_New_York_Times_Wordle.svg/500px-The_New_York_Times_Wordle.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:The_New_York_Times_Wordle.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "12a1c6a3268e029eec9d612f596f5476ef4e12e8080ff6e77301e7c51152cd07",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "54116102c905a0adf91b7ff33e9ae93832eb967fd7127ec4cd0e44c701acbf40"
+    }
+  }
+}
