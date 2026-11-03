@@ -32,13 +32,17 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from plugins.context_cache import write_context
+from runtime.long_task_executor import task_context_or_default
+from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import (
     get_available_font_names,
     get_base_ui_font,
     get_font,
 )
 from utils.fonts import load_font
+from utils.http_client import get_http_client
 from utils.image_utils import text_width
+from utils.remote_thumbnails import load_thumbnails
 from utils.theme_utils import get_theme_palette
 
 from . import news_common as common
@@ -46,7 +50,7 @@ from .news_brief import DEFAULT_MODEL, NEWS_TAG_MAX_CHARS, NewsBriefMixin, summa
 from .news_common import MAINLAND_NEWS_MAX, WORLD_NEWS_MAX
 from .news_layout import NewsPage, date_text as news_date_text
 from .news_market import MARKET_GROUPS, MARKET_LOGOS, MARKET_SHORT_NAMES, NewsMarketMixin
-from .news_sources import NewsSourcesMixin
+from .news_sources import NewsSourcesMixin, lead_image_url
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +74,11 @@ PAGE_NIGHT_COLOURS = {"lead": (220, 48, 66), "red": (255, 99, 112), "blue": (122
                       "green": (52, 211, 153), "panel": (0, 0, 0)}
 # The page is laid out for the 800x480 panel; other displays get it scaled to fit.
 PAGE_SIZE = (800, 480)
+# The lead story's picture (its RSS item's, see news_sources.LEAD_IMAGE_HOSTS): fetched on a data
+# refresh into its own cache, at most this large, within this many seconds; a redraw reads the cache.
+LEAD_PHOTO_PIXELS = (360, 240)
+LEAD_PHOTO_SECONDS = 12
+LEAD_PHOTO_USER_AGENT = "InkyPi Daily AI News/1.0"
 # The lead's headline is set in a newspaper's serif banner face (Noto Serif SC at its heaviest,
 # kept to GB 2312, tools/build_news_headline_font.py); a headline it cannot set whole keeps the
 # page's face.
@@ -384,6 +393,9 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
         palette = self._page_palette(theme_context)
         img = self._base_background(PAGE_SIZE, palette["background"], (theme_context or {}).get("mode", "day"))
         lead, mainland, world = self._page_news(brief, payload)
+        photo = self._lead_photo(lead.get("image_url"), settings) if lead else None
+        if photo is not None:
+            lead["photo"] = photo
         NewsPage(self, img, palette, DEFAULT_FONT).render(
             title=title,
             lead=lead,
@@ -392,6 +404,8 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
             quotes=self._page_quotes(payload),
             meta=self._page_meta(payload, now),
         )
+        if photo is not None:
+            photo.close()
         if tuple(dimensions) != PAGE_SIZE:
             img = self._fit_page(img, dimensions, palette["background"])
         return img
@@ -439,7 +453,37 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
             origin = raw_lead if raw_lead and (raw_lead.get("source") or raw_lead.get("link")) else \
                 self._lead_item(lead["title"], payload) or {}
             lead["source_logo"] = self._source_logo_key(origin.get("source"), origin.get("link"))
+            lead["image_url"] = self._lead_image_url(origin, payload)
         return lead, mainland, world
+
+    @staticmethod
+    def _lead_image_url(origin: dict[str, Any], payload: dict[str, Any]) -> str:
+        """The lead's picture: its RSS item's (found by the story's link), on an allowed host; "" for none."""
+        url = lead_image_url(origin.get("image"))
+        link = str(origin.get("link") or "")
+        if url or not link:
+            return url or ""
+        return next((lead_image_url(item.get("image")) for item in payload.get("items") or []
+                     if isinstance(item, dict) and str(item.get("link") or "") == link
+                     and lead_image_url(item.get("image"))), "")
+
+    def _lead_photo(self, url: str, settings) -> Image.Image | None:
+        """The lead's picture from its cache, fetched first on a data refresh; None when it is not at hand."""
+        if not url:
+            return None
+        cached_only = any(common._enabled(settings.get(key))
+                          for key in ("_theme_render_only", "_cached_render_only", "cached_render_only"))
+        try:
+            found = load_thumbnails([url], self._cache_dir(create=not cached_only) / "lead_photos",
+                                    http=get_http_client(), context=task_context_or_default(LEAD_PHOTO_SECONDS),
+                                    cached_only=cached_only, safe_url=lead_image_url,
+                                    user_agent=LEAD_PHOTO_USER_AGENT, size=LEAD_PHOTO_PIXELS)
+        except TaskCancelled:
+            raise
+        except Exception as exc:  # noqa: BLE001 - a missing picture leaves the lead as it was.
+            logger.warning("Daily AI news lead photo skipped: %s", type(exc).__name__)
+            return None
+        return found.get(url)
 
     @staticmethod
     def _source_logo_key(source: Any, link: Any) -> str:

@@ -13,6 +13,7 @@ from openai import OpenAI
 
 from . import news_common as common
 from .news_common import MAINLAND_NEWS_MAX, WORLD_NEWS_MAX
+from .news_sources import PAGE_ONLY_ITEM_FIELDS
 from .news_text import (
     ENGLISH_NEWS_TERM_REPLACEMENTS,
     TRADITIONAL_PHRASE_REPLACEMENTS,
@@ -245,7 +246,9 @@ def news_request(items: list[dict[str, str]], recent_titles: list[str] | None, n
         "recent_titles": list(recent_titles or [])[:24],
         "output_schema": NEWS_OUTPUT_SCHEMA,
         "rules": [rule for group in NEWS_RULES.values() for rule in group],
-        "items": [{"id": str(index), **item} for index, item in enumerate(items, 1)],
+        # A picture link or script mark is for the page; the model gets each item's words only.
+        "items": [{"id": str(index), **{key: value for key, value in item.items() if key not in PAGE_ONLY_ITEM_FIELDS}}
+                  for index, item in enumerate(items, 1)],
     }
 
 
@@ -826,6 +829,9 @@ class NewsBriefMixin:
                 continue
             source = str(item.get("source") or "").strip()
             summary = str(item.get("summary") or "").strip()
+            # A traditional-script feed's item (BBC 中文) shows only when it converts to simplified whole.
+            if item.get("script") == "traditional" and self._traditional_residue(f"{title} {summary}"):
+                continue
             why = self._summary_fact(summary) or source[:36] or "来自 RSS 源。"
             card = {"title": title[:32], "why": why, "tag": self._source_tag(source)}
             if self._matches_recent_news_title(title, recent_titles):
@@ -1011,6 +1017,24 @@ class NewsBriefMixin:
             simplified = pattern.sub(replacement, simplified)
         simplified = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])", "", simplified)
         return simplified.translate(TRADITIONAL_TO_SIMPLIFIED)
+
+    def _traditional_residue(self, text: str) -> str:
+        """The characters of ``text`` still traditional after conversion: in Big5 but not in GB2312
+        (a rare simplified character is in neither), "" when it converts whole."""
+        def traditional_only(char: str) -> bool:
+            if not "\u4e00" <= char <= "\u9fff":
+                return False
+            try:
+                char.encode("big5")
+            except UnicodeEncodeError:
+                return False
+            try:
+                char.encode("gb2312")
+            except UnicodeEncodeError:
+                return True
+            return False
+
+        return "".join(char for char in self._simplify_chinese_text(text) if traditional_only(char))
 
     def _allow_api_call(self, settings, date_key: str) -> bool:
         limit = common._parse_int(settings.get("daily_api_limit"), 1, 1, 20)

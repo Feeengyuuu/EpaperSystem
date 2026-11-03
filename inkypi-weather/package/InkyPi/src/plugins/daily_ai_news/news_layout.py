@@ -17,7 +17,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from PIL import ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageOps
 
 from utils.fonts import load_font
 
@@ -39,6 +39,10 @@ SOURCE_LOGOS_MAX = 12
 SOURCE_LOGO_SCALES = {"pbs_newshour": 0.68}
 # A vertical red seal reading 头条 marks the lead story.
 SEAL_SIZE = (28, 54)
+# A lead story with a picture (its RSS item's) shows it at the band's left, the seal on its corner,
+# rounded and fading into the page across its right side from LEAD_PHOTO_FADE of its width.
+LEAD_PHOTO_WIDTH = 118
+LEAD_PHOTO_FADE = 0.6
 COLUMN_TOP = 150
 COLUMN_GAP = 24
 COLUMN_BOTTOM = 390
@@ -83,6 +87,8 @@ GLOBE_MIN_HEIGHT = 60
 # The most a short column widens each gap between its stories.
 JUSTIFY_GAP_MAX = 16
 WEEKDAYS = "一二三四五六日"
+# Marks that close a phrase, kept off the start of a wrapped line.
+CLOSING_MARKS = "，。、；：！？）】》」』”’…,.;:!?)"
 
 
 # How far a market sparkline's direction arrow carries on beyond the line's last close.
@@ -144,6 +150,9 @@ class NewsPage:
             if self.width(first + char, size, bold) > max_width - indent:
                 break
             first += char
+        # A closing mark never opens the next line: the character before it goes down with it.
+        while len(first) > 1 and len(first) < len(text) and text[len(first)] in CLOSING_MARKS:
+            first = first[:-1]
         rest = text[len(first):].lstrip()
         if not rest or max_lines <= 1:
             return [first if not rest else self.clip(text, size, max_width - indent, bold)]
@@ -154,8 +163,10 @@ class NewsPage:
         lines, line = [], ""
         for index, char in enumerate(text):
             if line and self.width(line + char, size, bold) > max_width:
-                lines.append(line)
-                line = char
+                # A closing mark never opens a line: the character before it goes down with it.
+                carry = line[-1] if char in CLOSING_MARKS and len(line) > 1 else ""
+                lines.append(line[:-1] if carry else line)
+                line = carry + char
                 if len(lines) == max_lines:
                     lines[-1] = self.clip(lines[-1] + text[index:], size, max_width, bold)
                     return lines
@@ -256,6 +267,9 @@ class NewsPage:
             self.text((MARGIN, top + 28), "新闻源暂无更新", 20, True)
             return
         seal_w, seal_h = SEAL_SIZE
+        photo = lead.get("photo")
+        if photo is not None:
+            self.lead_photo(photo, (MARGIN, top + 1, MARGIN + LEAD_PHOTO_WIDTH, bottom - 1))
         # The generated 头条 badge is 1:2; drawn as a plain seal when the file is missing.
         if not news_art.paste_badge(self.img, "seal", MARGIN + seal_w / 2, top + 9 + seal_h / 2, seal_h // 2, seal_h):
             self.d.rounded_rectangle((MARGIN, top + 9, MARGIN + seal_w, top + 9 + seal_h), radius=3, fill=c["lead"])
@@ -263,7 +277,7 @@ class NewsPage:
             for index, char in enumerate("头条"):
                 self.text((MARGIN + seal_w / 2, top + 9 + seal_h * (1 + 2 * index) / 4), char, 17, True, seal_ink,
                           "mm")
-        text_x = MARGIN + seal_w + 14
+        text_x = MARGIN + (LEAD_PHOTO_WIDTH + 4 if photo is not None else seal_w + 14)
         brief_w = art_left - 12 - text_x
         section, tag = lead.get("section_label"), lead.get("tag")
         kicker = (self.width(section, 13) if section else 0) + (12 if section and tag else 0) \
@@ -315,6 +329,20 @@ class NewsPage:
         kind = news_art.topic_kind(lead.get("tag"), lead["title"])
         news_art.draw_topic_art(self.d, (art_left, top + 4, width - MARGIN - 6, bottom - 4), kind,
                                 c["ink"], c["panel"], c["rule"], c["lead"], image=self.img)
+
+    def lead_photo(self, picture, box, radius=6):
+        """``picture`` filling ``box``, rounded, fading into the page across its right side."""
+        x0, y0, x1, y1 = [int(value) for value in box]
+        size = (max(1, x1 - x0), max(1, y1 - y0))
+        tile = ImageOps.fit(picture.convert("RGB"), size, method=Image.Resampling.LANCZOS, centering=(0.5, 0.4))
+        mask = Image.new("L", size, 0)
+        ImageDraw.Draw(mask).rounded_rectangle((0, 0, size[0] - 1 + radius, size[1] - 1), radius=radius, fill=255)
+        start = round(size[0] * LEAD_PHOTO_FADE)
+        ramp = Image.new("L", (size[0], 1), 255)
+        for index in range(start, size[0]):
+            t = (index - start) / max(1, size[0] - 1 - start)
+            ramp.putpixel((index, 0), round(255 * (1 - t * t * (3 - 2 * t))))
+        self.img.paste(tile, (x0, y0), ImageChops.multiply(mask, ramp.resize(size)))
 
     def headline_font(self, title, max_width, sizes=LEAD_TITLE_SIZES):
         """(font, size) for the lead's headline: the serif banner face at the largest of ``sizes``

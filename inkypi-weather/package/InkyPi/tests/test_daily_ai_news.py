@@ -3082,3 +3082,116 @@ def test_each_section_label_is_led_by_its_generated_badge(monkeypatch):
     pixels = [image.getpixel((x + dx, middle + dy)) for dx in range(-8, 9) for dy in range(-8, 9)]
     assert sum(1 for r, g, b in pixels if r > 150 and g < 90 and b < 100) > 60
     assert any(min(pixel) > 225 for pixel in pixels)
+
+
+NYT_PICTURE = "https://static01.nyt.com/images/2026/11/02/multimedia/02int-ukraine-mediumSquareAt3X.jpg"
+
+
+def test_rss_items_keep_a_nyt_picture_and_mark_bbc_chinese_as_traditional(monkeypatch):
+    plugin = _plugin()
+    feeds_text = "\n".join([
+        "世界新闻:纽约时报国际|https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
+        "世界新闻:BBC中文|https://feeds.bbci.co.uk/zhongwen/simp/rss.xml",
+    ])
+    entries = {
+        "https://rss.nytimes.com/services/xml/rss/nyt/World.xml": [
+            {"title": "Strike Kills Dozens", "summary": "s", "published": "", "link": "https://www.nytimes.com/a.html",
+             "media_content": [{"url": NYT_PICTURE, "medium": "image", "width": "704"}]},
+            {"title": "Elsewhere", "summary": "s", "published": "", "link": "https://www.nytimes.com/b.html",
+             "media_content": [{"url": "https://example.com/x.jpg", "medium": "image"}]},
+        ],
+        "https://feeds.bbci.co.uk/zhongwen/simp/rss.xml": [
+            {"title": "台灣地方選舉", "summary": "摘要", "published": "", "link": "https://www.bbc.com/zhongwen/trad/a"},
+        ],
+    }
+
+    class FakeClient:
+        def request_bytes(self, _method, url, **_kwargs):
+            return type("Result", (), {"data": url.encode("utf-8")})()
+
+    monkeypatch.setattr(news_sources, "get_http_client", lambda: FakeClient())
+    monkeypatch.setattr(news_sources.feedparser, "parse",
+                        lambda content: type("Feed", (), {"entries": entries[content.decode("utf-8")]})())
+
+    items = plugin._fetch_items(feeds_text, 6)
+
+    by_title = {item["title"]: item for item in items}
+    assert by_title["Strike Kills Dozens"]["image"] == NYT_PICTURE
+    # A picture off the allowed hosts is never kept; a feed without pictures adds no field.
+    assert "image" not in by_title["Elsewhere"] and "image" not in by_title["台灣地方選舉"]
+    assert by_title["台灣地方選舉"]["script"] == "traditional" and "script" not in by_title["Elsewhere"]
+    # The model is sent each item's words only.
+    request = news_brief.news_request(items, [], datetime(2026, 11, 2))
+    assert all("image" not in item and "script" not in item for item in request["items"])
+
+
+def test_traditional_feed_items_show_only_when_they_convert_to_simplified_whole():
+    plugin = _plugin()
+    items = [
+        {"source": "BBC中文", "section": "world", "title": "台灣地方選舉：四成「陸配」參選遭剔除", "summary": "法理死結如何困住參政之路",
+         "script": "traditional"},
+        # 镕 is a simplified character outside GB2312; 鬱 has no entry in the plugin's table.
+        {"source": "BBC中文", "section": "world", "title": "憂鬱的城市生活", "summary": "", "script": "traditional"},
+        {"source": "中国新闻网", "section": "mainland", "title": "朱镕基题词的学校迎来百年校庆", "summary": ""},
+    ]
+
+    cards = plugin._simplify_chinese_payload(plugin._rss_news_cards(items, 5))
+
+    assert [card["title"] for card in cards] == ["台湾地方选举：四成「陆配」参选遭剔除", "朱镕基题词的学校迎来百年校庆"]
+    assert plugin._traditional_residue("憂鬱") == "鬱"
+
+
+def test_a_lead_with_a_nyt_picture_shows_it_at_the_bands_left(monkeypatch):
+    plugin = _plugin()
+    payload = _page_payload()
+    payload["brief"]["lead"].update(source="纽约时报国际", link="https://www.nytimes.com/a.html")
+    payload["items"] = payload["items"] + [
+        {"source": "纽约时报国际", "section": "world", "title": "Ebola", "link": "https://www.nytimes.com/a.html"},
+        {"source": "纽约时报国际", "section": "world", "title": "Ebola", "link": "https://www.nytimes.com/a.html",
+         "image": NYT_PICTURE},
+    ]
+    asked = []
+
+    def fake_photo(url, settings):
+        asked.append(url)
+        return Image.new("RGB", (240, 240), (30, 160, 60))
+
+    monkeypatch.setattr(plugin, "_lead_photo", fake_photo)
+    image = plugin._render((800, 480), {"brief_title": "整点新闻"}, payload, datetime(2026, 11, 2, 8, 0), {"mode": "day"})
+
+    # The item that carries the picture is found by the story's link, even after one without it.
+    assert asked == [NYT_PICTURE]
+    green = [image.getpixel((x, 100)) for x in range(news_layout.MARGIN + 30, news_layout.MARGIN + 60)]
+    assert all(pixel[1] > 120 and pixel[0] < 90 for pixel in green)
+    # It fades into the page across its right side.
+    assert image.getpixel((news_layout.MARGIN + news_layout.LEAD_PHOTO_WIDTH - 2, 100)) == image.getpixel((5, 100))
+
+
+def test_a_lead_photo_is_read_from_its_cache_on_a_redraw(monkeypatch, tmp_path):
+    plugin = _plugin()
+    monkeypatch.setattr(plugin, "_cache_dir", lambda create=True: tmp_path)
+    calls = []
+
+    def fake_load(urls, cache_dir, **kwargs):
+        calls.append((urls, kwargs["cached_only"], kwargs["safe_url"](urls[0])))
+        return {}
+
+    monkeypatch.setattr(daily_ai_news_module, "load_thumbnails", fake_load)
+
+    assert plugin._lead_photo(NYT_PICTURE, {}) is None
+    assert plugin._lead_photo(NYT_PICTURE, {"_theme_render_only": True}) is None
+    assert plugin._lead_photo("", {}) is None
+    assert calls == [([NYT_PICTURE], False, NYT_PICTURE), ([NYT_PICTURE], True, NYT_PICTURE)]
+    assert news_sources.lead_image_url("https://example.com/x.jpg") is None
+    assert news_sources.lead_image_url("http://static01.nyt.com/x.jpg") is None
+
+
+def test_a_wrapped_dek_never_opens_a_line_with_a_closing_mark():
+    plugin = _plugin()
+    page = news_layout.NewsPage(plugin, Image.new("RGB", (800, 480), (255, 255, 255)), plugin._page_palette({"mode": "day"}),
+                                "Microsoft YaHei")
+    text = "袭击发生在赫尔松短暂人道主义停火结束次日，救援物资集散点遭导弹直接命中。"
+    for width in range(160, 420, 7):
+        for lines in (page.wrap_after(text, 15, width, 60, 4), page.wrap(text, 15, width, 4)):
+            assert not any(line[:1] in news_layout.CLOSING_MARKS for line in lines[1:])
+            assert "".join(lines).replace("…", "") in text or lines[-1].endswith("…")

@@ -84,6 +84,34 @@ MAINLAND_FEED_HOST_HINTS = (
     "people.com.cn",
     "cctv.com",
 )
+# A lead story's picture comes from its RSS item (media:content, else media:thumbnail), only from
+# these hosts: The New York Times gives every world item a 704 px square.
+LEAD_IMAGE_HOSTS = ("static01.nyt.com",)
+# BBC's Chinese feed: its simplified address answers with the traditional edition since 2026-11,
+# so its items are marked to be shown only when they convert to simplified whole.
+TRADITIONAL_FEED_HINTS = ("bbci.co.uk/zhongwen/", "bbc.co.uk/zhongwen/", "bbc.com/zhongwen/")
+# Item fields kept for the page only, never sent to the summary model.
+PAGE_ONLY_ITEM_FIELDS = frozenset({"image", "script"})
+
+
+def lead_image_url(value: Any) -> str | None:
+    """The picture's https link when it is on one of LEAD_IMAGE_HOSTS, else None."""
+    url = str(value or "").strip()
+    host = re.sub(r"^https://", "", url).split("/")[0].lower() if url.startswith("https://") else ""
+    return url if host in LEAD_IMAGE_HOSTS else None
+
+
+def entry_image(entry: Any) -> str:
+    """An RSS entry's picture from an allowed host (its media:content first), or ""."""
+    for key in ("media_content", "media_thumbnail"):
+        media = entry.get(key) if hasattr(entry, "get") else None
+        for medium in media if isinstance(media, list) else []:
+            if not isinstance(medium, dict) or str(medium.get("medium") or "image") != "image":
+                continue
+            url = lead_image_url(medium.get("url"))
+            if url:
+                return url[:300]
+    return ""
 
 
 class NewsSourcesMixin:
@@ -267,6 +295,7 @@ class NewsSourcesMixin:
         entry_scan_limit = max(12, per_feed_limit * 2)
         for source, url in feeds:
             display_source, section = self._feed_source_and_section(source, url)
+            traditional = any(hint in url for hint in TRADITIONAL_FEED_HINTS)
             try:
                 resp = get_http_client().request_bytes(
                     "GET",
@@ -289,7 +318,7 @@ class NewsSourcesMixin:
                 if key in seen:
                     continue
                 seen.add(key)
-                items.append({
+                item = {
                     "source": display_source,
                     "section": section,
                     "title": title,
@@ -299,7 +328,13 @@ class NewsSourcesMixin:
                     ),
                     "published": common._clean_text(entry.get("published", "") or entry.get("updated", ""), 80),
                     "link": common._clean_text(entry.get("link", ""), 220),
-                })
+                }
+                image = entry_image(entry)
+                if image:
+                    item["image"] = image
+                if traditional:
+                    item["script"] = "traditional"
+                items.append(item)
                 per_feed += 1
                 if per_feed >= per_feed_limit:
                     break
