@@ -16,7 +16,7 @@ import time
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.render_provenance import attach_source_provenance
-from plugins.base_plugin.source_book import Source, SourceBook, combined_provenance
+from plugins.base_plugin.source_book import FRESH_CACHE, LIVE, STALE_CACHE, Source, SourceBook, combined_provenance
 from runtime.long_task_executor import (
     current_instance_identity, current_instance_identity_validator, task_context_or_default,
 )
@@ -63,6 +63,13 @@ SPACE_BUDGET = CacheBudget(70 * 86400, 6, 2 * 1024 * 1024)
 COVER_PIXELS = (160, 160)
 POSTER_PIXELS = (160, 240)
 ART_BUDGET = CacheBudget(7 * 86400, 48, 4 * 1024 * 1024)
+SPACE_STATE_RANK = {LIVE: 0, FRESH_CACHE: 1, STALE_CACHE: 2}
+
+
+def space_result(webb, hubble):
+    """Webb's and Hubble's pictures stand in for each other (the page shows whichever it has), so the
+    pair counts as its healthier member: ESA's slow Hubble site alone does not degrade the page."""
+    return min((webb, hubble), key=lambda result: SPACE_STATE_RANK.get(result.get("state"), len(SPACE_STATE_RANK)))
 
 
 def _checkpoint(context):
@@ -131,8 +138,9 @@ class DailyDigest(BasePlugin):
             "wordle": load("wordle", "wordle", {"day": wordle_day},
                            lambda ctx: sources.fetch_wordle(wordle_day, ctx), sources.valid_wordle, timeout=5),
         }
-        results = [result for key, result in payload.items() if key not in ("news", "music")]
-        results += [*payload["news"].values(), *payload["music"].values()]
+        results = [result for key, result in payload.items() if key not in ("news", "music", "webb", "hubble")]
+        results += [*payload["news"].values(), *payload["music"].values(),
+                    space_result(payload["webb"], payload["hubble"])]
         payload["provenance"] = combined_provenance(results)
         return payload
 

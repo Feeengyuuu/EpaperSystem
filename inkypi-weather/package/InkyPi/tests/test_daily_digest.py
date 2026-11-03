@@ -597,3 +597,10 @@ def test_every_logo_the_page_names_is_built_with_its_provenance():
         assert record[name]["source"] and record[name]["licence"], name
         assert render.logo(name, 16, True, (237, 241, 234)) is not None
     assert render.TITLE.is_file()
+
+
+def test_a_slow_hubble_site_does_not_degrade_the_page_while_webb_is_fresh():
+    webb, hubble = {"state": "live", "data": {"items": [{}]}}, {"state": "stale_cache", "data": {}}
+    assert daily_digest.space_result(webb, hubble) is webb
+    assert daily_digest.space_result({"state": "unavailable", "data": {}}, hubble) is hubble
+    assert daily_digest.combined_provenance([daily_digest.space_result(webb, hubble)]).value == "live"
