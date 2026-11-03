@@ -20,6 +20,7 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from plugins.ai_ecosystem_pulse.ai_ecosystem_pulse import AiEcosystemPulse
+from plugins.ai_ecosystem_pulse.sources import parameter_text, pipeline_label
 from plugins.context_cache import write_context
 from plugins.tech_pulse import openrouter, trends
 from runtime.refresh_contracts import TaskCancelled
@@ -96,8 +97,8 @@ PANEL_DOODLE_STRENGTH = 0.2
 TRENDS_FILE = "trends.json"
 PAGE_SIZE = (800, 480)
 HN_BOX = (14, 62, 404, 414)
-SKILLS_BOX = (414, 62, 786, 186)
-MODELS_BOX = (414, 192, 786, 302)
+SKILLS_BOX = (414, 62, 786, 168)
+MODELS_BOX = (414, 174, 786, 302)
 REPOS_BOX = (414, 308, 786, 414)
 # OpenRouter's newest models run along the foot of the page, under both columns.
 OPENROUTER_BOX = (14, 420, 786, 474)
@@ -119,7 +120,10 @@ PROVIDER_NAMES = {
 }
 PROVIDER_MARK_HEIGHT, PROVIDER_MARK_WIDTH = 16, 46
 HN_LIST_ROWS = 3
-SKILL_ROWS = 5
+SKILL_ROWS = 4
+# The trending Spaces close the Hugging Face panel on one line this tall.
+SPACES_LINE_H = 22
+SPACES_SHOWN = 2
 # The star trend on a repository's second line, just left of its 24-hour chip.
 REPO_TREND_W = 64
 FONT_SPECS = {
@@ -970,13 +974,15 @@ class TechPulse(BasePlugin):
         if rows is None:
             return self._board_offline(draw, box, palette, fonts)
         board = history.get("models") or {}
-        row_h = (y1 - y0 - 30) / 3
+        spaces = [space for space in (ai or {}).get("spaces") or []
+                  if isinstance(space, dict) and space.get("title")][:SPACES_SHOWN]
+        row_h = (y1 - y0 - 30 - (SPACES_LINE_H if spaces else 0)) / 3
         columns = (("trend", "fire", "trending_score", palette["orange"]),
                    ("likes", "heart", "likes", palette["down"]),
                    ("downloads", "download", "downloads_30d", palette["cyan"]))
         for index, model in enumerate(rows[:3]):
             top = y0 + 28 + row_h * index
-            line1, line2 = top + row_h * 0.33, top + row_h * 0.74
+            line1, line2 = top + row_h * 0.31, top + row_h * 0.77
             points = board.get(str(model.get("id") or ""))
             badge = (x0 + 12, line1 - 8, x0 + 30, line1 + 8)
             draw.rounded_rectangle(badge, radius=4, fill=palette["hf"])
@@ -991,12 +997,58 @@ class TechPulse(BasePlugin):
             width = right - (x0 + 38)
             self._draw_text(draw, (x0 + 38, line1), self._fit_text(draw, model.get("id") or "", fonts["name"], width),
                             fonts["name"], palette["ink"], anchor="lm")
-            tag = str(model.get("pipeline_tag") or "model")
-            tag_x = x0 + 38 + (moved_w + 6 if moved_w else 0)
-            self._draw_text(draw, (tag_x, line2), self._fit_text(draw, tag, fonts["tiny"], width - (tag_x - x0 - 38)),
-                            fonts["tiny"], palette["muted"], anchor="lm")
+            self._model_facts(draw, x0 + 38 + (moved_w + 6 if moved_w else 0), line2, right - 6, model, palette, fonts)
             if index < 2:
                 self._dotted(draw, x0 + 12, x1 - 12, top + row_h, palette["rule"])
+        if spaces:
+            self._draw_spaces(draw, (x0 + 12, y1 - 4 - SPACES_LINE_H, x1 - 12, y1 - 4), spaces, palette, fonts)
+
+    def _model_facts(self, draw, x, y, right, model, palette, fonts):
+        """A model's task, then its size in the Hub's colour and how many inference providers serve it;
+        the task gives way first."""
+        tag = pipeline_label(model.get("pipeline_tag"))
+        size = parameter_text(model.get("params"))
+        providers = model.get("providers") if isinstance(model.get("providers"), list) else []
+        served = f"{len(providers)} 家推理" if providers else ""
+        size_w = self._text_width(draw, size, fonts["tiny_bold"]) if size else 0
+        served_w = self._text_width(draw, served, fonts["tiny"]) if served else 0
+        facts_w = size_w + (6 if size_w else 0) + served_w + (6 if served_w else 0)
+        tag_w = min(self._text_width(draw, tag, fonts["tiny"]), max(0, right - x - facts_w))
+        if tag_w >= 24:
+            self._draw_text(draw, (x, y), self._fit_text(draw, tag, fonts["tiny"], tag_w), fonts["tiny"],
+                            palette["muted"], anchor="lm")
+            x += tag_w + 6
+        if size and x + size_w <= right:
+            self._draw_text(draw, (x, y), size, fonts["tiny_bold"], palette["hf_text"], anchor="lm")
+            x += size_w + 6
+        if served and x + served_w <= right:
+            self._draw_text(draw, (x, y), served, fonts["tiny"], palette["muted"], anchor="lm")
+
+    def _draw_spaces(self, draw, box, spaces, palette, fonts):
+        """The trending Spaces on one line under the models: a SPACES chip, then each Space's title and
+        likes while they fit."""
+        x0, y0, x1, y1 = box
+        self._dotted(draw, x0, x1, y0, palette["rule"])
+        middle = (y0 + y1) / 2 + 1
+        label = "SPACES"
+        chip_w = self._text_width(draw, label, fonts["tiny_bold"]) + 10
+        draw.rounded_rectangle((x0, middle - 7, x0 + chip_w, middle + 7), radius=4, fill=palette["hf"])
+        self._draw_text(draw, (x0 + chip_w / 2, middle), label, fonts["tiny_bold"], (24, 27, 31), anchor="mm")
+        x = x0 + chip_w + 8
+        for index, space in enumerate(spaces):
+            likes = self._compact_number(space.get("likes") or 0)
+            likes_w = self._text_width(draw, likes, fonts["metric"]) + 14
+            room = x1 - x - likes_w - 4
+            if room < 40:
+                break
+            if index < len(spaces) - 1:
+                # Leave the next Space a little room when this one's title is long.
+                room = min(room, max(70, (x1 - x) / (len(spaces) - index) - likes_w - 14))
+            title = self._fit_text(draw, self._clean_text(space.get("title")), fonts["small"], room)
+            self._draw_text(draw, (x, middle), title, fonts["small"], palette["ink"], anchor="lm")
+            end = x + self._text_width(draw, title, fonts["small"]) + 4 + likes_w
+            self._metric(draw, end, middle, "heart", likes, palette["down"], palette, fonts)
+            x = end + 14
 
     def _draw_repos(self, image, draw, box, ai, palette, fonts, now):
         x0, y0, x1, y1 = box

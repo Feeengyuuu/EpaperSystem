@@ -32,14 +32,30 @@ from plugins.base_plugin.render_provenance import (  # noqa: E402
     SourceProvenance,
     read_source_provenance,
 )
+from plugins.ai_ecosystem_pulse import ai_ecosystem_pulse as pulse_module  # noqa: E402
 from plugins.ai_ecosystem_pulse.sources import (  # noqa: E402
+    HF_MODELS_URL,
     fetch_github,
     merge_github_candidates,
+    model_facts,
     normalize_hf_models,
+    normalize_hf_spaces,
+    parameter_text,
     parse_skills_html,
+    pipeline_label,
     record_star_snapshot,
     stars_24h,
 )
+
+
+SPACES = [{"id": "nvidia/simready-central", "title": "SimReady Central", "description": "3D asset search",
+           "likes": 351, "trending_score": 164, "url": "https://huggingface.co/spaces/nvidia/simready-central"}]
+
+
+@pytest.fixture(autouse=True)
+def _no_spaces_network(monkeypatch):
+    """Payload tests never reach the Hub for its Spaces; the ones about them set their own answer."""
+    monkeypatch.setattr(pulse_module, "fetch_spaces", lambda: [dict(space) for space in SPACES])
 
 
 SKILLS_HTML = """
@@ -180,6 +196,8 @@ def test_hugging_face_normalizer_skips_bad_rows_and_accepts_numeric_strings():
             "gated": False,
             "tags": [],
             "url": "https://huggingface.co/valid/model",
+            "params": None,
+            "providers": None,
         }
     ]
 
@@ -1564,3 +1582,83 @@ def test_preview_script_exists_and_supports_fixture_and_live_modes():
     assert 'choices=("fixture", "live")' in text
     assert "AI_ECOSYSTEM_PULSE_CACHE_DIR" in text
     assert "image.save(output, format=\"PNG\")" in text
+
+
+def test_models_are_asked_for_only_the_fields_the_boards_read():
+    assert "full=true" not in HF_MODELS_URL
+    for field in ("safetensors", "inferenceProviderMapping", "trendingScore", "likes", "downloads", "pipeline_tag"):
+        assert f"expand%5B%5D={field}" in HF_MODELS_URL
+
+
+def test_hugging_face_normalizer_reads_parameters_and_live_providers():
+    models = normalize_hf_models([
+        {"id": "deepseek-ai/DeepSeek-V4.1-Flash", "trendingScore": 678, "likes": 4694, "downloads": 177009,
+         "safetensors": {"parameters": {"BF16": 1}, "total": 763205315794},
+         "inferenceProviderMapping": [{"provider": "novita", "status": "live"}, {"provider": "together", "status": "live"},
+                                      {"provider": "deepinfra", "status": "staging"}, "bad"]},
+        {"id": "old/mapping", "trendingScore": 1, "likes": 1, "downloads": 1,
+         "inferenceProviderMapping": {"hf-inference": {"status": "live"}, "fal-ai": {"status": "error"}}},
+        {"id": "no/safetensors", "trendingScore": 1, "likes": 1, "downloads": 1, "safetensors": {"total": "x"}},
+    ])
+
+    assert (models[0]["params"], models[0]["providers"]) == (763205315794, ["novita", "together"])
+    assert models[1]["providers"] == ["hf-inference"]
+    assert (models[2]["params"], models[2]["providers"]) == (None, None)
+    assert model_facts(models[0]) == "763B · 2 家推理"
+    assert model_facts(models[2]) == ""
+
+
+def test_parameter_counts_and_tasks_read_short():
+    assert [parameter_text(value) for value in (1728801536, 33697781029, 763205315794, 350_000_000,
+                                                1_200_000_000_000, 0, None, "x")] == [
+        "1.7B", "33.7B", "763B", "350M", "1.2T", "", "", ""]
+    assert pipeline_label("text-generation") == "文本生成"
+    assert pipeline_label("new-task") == "new-task"
+    assert pipeline_label(None) == "model"
+
+
+def test_trending_spaces_leave_out_nsfw_uncensored_and_face_swaps():
+    raw = [
+        {"id": "nvidia/simready-central", "likes": 351, "trendingScore": 164,
+         "cardData": {"title": "SimReady Central", "short_description": "Semantic search for 3D assets"}},
+        {"id": "someone/qwen-image-21-uncensored", "likes": 164, "cardData": {"title": "Qwen Image 2.1 Uncensored"}},
+        {"id": "hugging-apps/bfs-best-face-swap", "likes": 701, "cardData": {"title": "BFS Best Face Swap"}},
+        {"id": "a/heads", "likes": 5, "cardData": {"title": "Heads", "short_description": "Head swap with a LoRA"}},
+        {"id": "b/gen", "likes": 9, "cardData": {"title": "Gen", "tags": ["NSFW"]}},
+        {"id": "c/clean", "likes": "12", "cardData": {}},
+        {"id": "no-owner", "likes": 3},
+        {"id": "d/bad-likes", "likes": "many"},
+        {"id": "e/fourth", "likes": 1, "cardData": {"title": "Fourth"}},
+    ]
+
+    rows = normalize_hf_spaces(raw, limit=3)
+
+    assert [(row["id"], row["title"], row["likes"]) for row in rows] == [
+        ("nvidia/simready-central", "SimReady Central", 351), ("c/clean", "clean", 12), ("e/fourth", "Fourth", 1)]
+    assert rows[0]["url"] == "https://huggingface.co/spaces/nvidia/simready-central"
+
+
+def test_payload_carries_trending_spaces_cached_and_hides_them_without_any(tmp_path, monkeypatch):
+    plugin = AiEcosystemPulse({"id": PLUGIN_ID})
+    plugin._cache_dir = lambda create=True: tmp_path / "cache"
+    plugin._data_dir = lambda create=True: tmp_path / "state"
+    now = datetime(2026, 7, 17, 20, 0, tzinfo=timezone.utc)
+    calls = []
+
+    def spaces():
+        calls.append(1)
+        return [dict(space) for space in SPACES]
+
+    monkeypatch.setattr(pulse_module, "fetch_spaces", spaces)
+    for name in ("fetch_skills", "fetch_huggingface"):
+        monkeypatch.setattr(pulse_module, name, lambda: (_ for _ in ()).throw(RuntimeError("offline")))
+    monkeypatch.setattr(pulse_module, "fetch_github", lambda token="": (_ for _ in ()).throw(RuntimeError("offline")))
+
+    first = plugin._payload({}, FakeDeviceConfig(), now)
+    second = plugin._payload({}, FakeDeviceConfig(), now + timedelta(minutes=30))
+    assert first["spaces"] == second["spaces"] == SPACES and len(calls) == 1
+    assert AiEcosystemPulse._valid_aggregate_payload(first)
+
+    monkeypatch.setattr(pulse_module, "fetch_spaces", lambda: (_ for _ in ()).throw(RuntimeError("down")))
+    assert plugin._payload({}, FakeDeviceConfig(), now + timedelta(hours=3))["spaces"] == SPACES
+    assert plugin._payload({}, FakeDeviceConfig(), now + timedelta(days=2))["spaces"] == []

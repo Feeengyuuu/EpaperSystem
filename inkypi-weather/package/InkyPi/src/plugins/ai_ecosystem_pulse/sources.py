@@ -9,7 +9,24 @@ from utils.http_client import get_http_session
 
 
 SKILLS_URL = "https://www.skills.sh/trending"
-HF_MODELS_URL = "https://huggingface.co/api/models?sort=trendingScore&limit=3&full=true"
+# Only the fields the boards read (about 3.5 KB for three models, against 8 KB with full=true and its
+# file lists): the metrics, each model's parameter count (safetensors) and the inference providers
+# serving it.
+HF_MODEL_FIELDS = ("trendingScore", "likes", "downloads", "pipeline_tag", "safetensors", "inferenceProviderMapping",
+                   "author", "createdAt", "lastModified", "gated")
+HF_MODELS_URL = "https://huggingface.co/api/models?sort=trendingScore&limit=3" + "".join(
+    f"&expand%5B%5D={field}" for field in HF_MODEL_FIELDS)
+# The trending Spaces (the apps people run on the Hub), with their cards' titles and descriptions; a
+# dozen, as some are left out (about 5 KB).
+HF_SPACES_URL = ("https://huggingface.co/api/spaces?sort=trendingScore&limit=12"
+                 "&expand%5B%5D=cardData&expand%5B%5D=likes&expand%5B%5D=trendingScore")
+# Spaces that are not for a wall display: NSFW or "uncensored" generators, face and head swaps,
+# deepfakes and undressing tools, and crude names.
+UNSUITABLE_SPACE = re.compile(
+    r"nsfw|uncensor|unfilter|face[\s_-]*swap|head[\s_-]*swap|deep[\s_-]*fake|nudi|nude|undress|porn|hentai|"
+    r"erotic|lewd|(?<![a-z0-9])(?:xxx|18[+]|r-?18)(?![a-z0-9])|onlyfans|wank|adult",
+    re.IGNORECASE,
+)
 GITHUB_SEARCH_URL = "https://api.github.com/search/repositories"
 GITHUB_TOPICS = ("agent-skills", "ai-agents", "mcp")
 REQUEST_TIMEOUT = (4, 15)
@@ -105,11 +122,110 @@ def normalize_hf_models(payload, limit=3):
             "gated": raw.get("gated", False),
             "tags": [str(tag) for tag in tags[:3]] if isinstance(tags, list) else [],
             "url": f"https://huggingface.co/{model_id}",
+            "params": model_parameters(raw.get("safetensors")),
+            "providers": live_providers(raw.get("inferenceProviderMapping")),
         })
         if len(rows) >= int(limit):
             break
     if not rows:
         raise RuntimeError("Hugging Face returned no usable trending models")
+    return rows
+
+
+def model_parameters(safetensors):
+    """A model's parameter count from its safetensors summary, or None when it has none."""
+    if not isinstance(safetensors, dict):
+        return None
+    total = _required_integer(safetensors.get("total"))
+    return total or None
+
+
+# A model's task in a few characters, so its size and providers fit beside it.
+PIPELINE_TAGS = {
+    "text-generation": "文本生成", "image-text-to-text": "图文理解", "automatic-speech-recognition": "语音识别",
+    "text-to-image": "文生图", "image-to-image": "图像编辑", "text-to-speech": "语音合成",
+    "text-to-video": "文生视频", "image-to-video": "图生视频", "feature-extraction": "向量嵌入",
+    "sentence-similarity": "句向量", "any-to-any": "全模态", "image-to-3d": "图生 3D", "text-to-3d": "文生 3D",
+    "audio-text-to-text": "音频理解", "video-text-to-text": "视频理解", "image-classification": "图像分类",
+    "object-detection": "目标检测", "image-segmentation": "图像分割", "translation": "翻译",
+    "summarization": "摘要", "text-classification": "文本分类", "token-classification": "序列标注",
+    "question-answering": "问答", "depth-estimation": "深度估计", "text-ranking": "重排序",
+    "reinforcement-learning": "强化学习", "robotics": "机器人", "audio-to-audio": "音频处理",
+    "visual-document-retrieval": "文档检索", "zero-shot-image-classification": "零样本分类",
+}
+
+
+def pipeline_label(tag):
+    """A model's task as the boards print it: in Chinese when it is a common one."""
+    tag = str(tag or "").strip() or "model"
+    return PIPELINE_TAGS.get(tag, tag)
+
+
+def parameter_text(count):
+    """A parameter count as people say it: 1728801536 -> "1.7B", 763205315794 -> "763B", 350000000 -> "350M"."""
+    try:
+        count = int(count or 0)
+    except (TypeError, ValueError):
+        return ""
+    for scale, suffix in ((1e12, "T"), (1e9, "B"), (1e6, "M")):
+        if count >= scale:
+            value = count / scale
+            return f"{value:.1f}".rstrip("0").rstrip(".") + suffix if value < 100 else f"{value:.0f}{suffix}"
+    return ""
+
+
+def model_facts(model):
+    """A model's size and how many inference providers serve it: "1.7B · 4 家推理"."""
+    model = model if isinstance(model, dict) else {}
+    providers = model.get("providers")
+    parts = [parameter_text(model.get("params")),
+             f"{len(providers)} 家推理" if isinstance(providers, list) and providers else ""]
+    return " · ".join(part for part in parts if part)
+
+
+def live_providers(mapping):
+    """The inference providers serving a model live (a list of mappings, or the older dict by provider
+    name), or None when the Hub did not say."""
+    if isinstance(mapping, dict):
+        mapping = [{"provider": name, **(value if isinstance(value, dict) else {})} for name, value in mapping.items()]
+    if not isinstance(mapping, list):
+        return None
+    names = []
+    for entry in mapping:
+        if isinstance(entry, dict) and entry.get("status", "live") == "live":
+            name = str(entry.get("provider") or "").strip()
+            if name and name not in names:
+                names.append(name)
+    return names
+
+
+def normalize_hf_spaces(payload, limit=3):
+    """The trending Spaces fit for the page (``UNSUITABLE_SPACE`` ones left out), each with its card's
+    title and one-line description."""
+    rows = []
+    for raw in payload if isinstance(payload, list) else []:
+        if not isinstance(raw, dict):
+            continue
+        space_id = str(raw.get("id") or "").strip()
+        likes = _required_integer(raw.get("likes"))
+        if "/" not in space_id or likes is None:
+            continue
+        card = raw.get("cardData") if isinstance(raw.get("cardData"), dict) else {}
+        title = " ".join(str(card.get("title") or space_id.split("/", 1)[1]).split())[:60]
+        description = " ".join(str(card.get("short_description") or "").split())[:120]
+        tags = card.get("tags") if isinstance(card.get("tags"), list) else []
+        if UNSUITABLE_SPACE.search(" ".join([space_id, title, description, *map(str, tags)])):
+            continue
+        rows.append({
+            "id": space_id,
+            "title": title,
+            "description": description,
+            "likes": likes,
+            "trending_score": _required_integer(raw.get("trendingScore")) or 0,
+            "url": f"https://huggingface.co/spaces/{space_id}",
+        })
+        if len(rows) >= int(limit):
+            break
     return rows
 
 
@@ -236,6 +352,16 @@ def fetch_huggingface(session=None):
     response = session.get(HF_MODELS_URL, timeout=REQUEST_TIMEOUT, headers={"User-Agent": USER_AGENT})
     response.raise_for_status()
     return normalize_hf_models(response.json(), limit=3)
+
+
+def fetch_spaces(session=None):
+    session = session or get_http_session()
+    response = session.get(HF_SPACES_URL, timeout=REQUEST_TIMEOUT, headers={"User-Agent": USER_AGENT})
+    response.raise_for_status()
+    rows = normalize_hf_spaces(response.json(), limit=3)
+    if not rows:
+        raise RuntimeError("Hugging Face returned no suitable trending Spaces")
+    return rows
 
 
 def fetch_github(token="", session=None):

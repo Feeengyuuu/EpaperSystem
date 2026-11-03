@@ -1053,3 +1053,50 @@ def test_ai_boards_carry_fetch_times_and_star_history(tmp_path, monkeypatch):
 
     monkeypatch.setattr(AiEcosystemPulse, "_payload", broken)
     assert plugin._ai_payload({}, FakeDeviceConfig(), now) is None
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_models_show_their_size_and_providers_and_spaces_close_the_panel(tmp_path, monkeypatch, mode):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc)
+    story = plugin._parse_story_item(_story(1, "Lead"), now=now)
+    story["rank"] = 1
+    payload = plugin._build_payload("topstories", [story], "live", now, [HN_DOCS_URL])
+    ai = _ai_boards()
+    ai["models"] = [{**ai["models"][0], "params": 763205315794, "providers": ["novita", "together"]},
+                    {"id": "lab/plain", "pipeline_tag": "text-generation", "trending_score": 3, "likes": 2,
+                     "downloads_30d": 1}]
+    ai["spaces"] = [{"title": "SimReady Central", "likes": 351}, {"title": "Wan2.2 14B Preview", "likes": 1208},
+                    {"title": "Third Space", "likes": 9}]
+    boxes = []
+    original = plugin._draw_text
+
+    def capture(local_draw, xy, text, font, fill, **kwargs):
+        boxes.append((str(text), local_draw.textbbox(xy, str(text), font=font, anchor=kwargs.get("anchor"))))
+        return original(local_draw, xy, text, font, fill, **kwargs)
+
+    monkeypatch.setattr(plugin, "_draw_text", capture)
+    plugin._render_page((800, 480), payload, {"_inkypi_theme": canonical_theme(mode)}, now, ai, {})
+
+    texts = [text for text, _bbox in boxes]
+    assert {"图文理解", "763B", "2 家推理", "文本生成", "SPACES", "SimReady Central", "351", "1.2k"} <= set(texts)
+    assert any(text.startswith("Wan2.2") for text in texts)
+    assert "Third Space" not in texts
+    x0, y0, x1, y1 = tech_pulse_module.MODELS_BOX
+    for text, bbox in boxes:
+        if text in {"763B", "2 家推理", "SPACES", "SimReady Central", "1.2k"} or text.startswith("Wan2.2"):
+            assert x0 < bbox[0] and bbox[2] < x1 and y0 < bbox[1] and bbox[3] < y1, text
+
+
+def test_without_spaces_the_models_keep_the_whole_panel(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    drawn = []
+    monkeypatch.setattr(plugin, "_draw_spaces", lambda *args: drawn.append(args))
+    image = Image.new("RGB", (800, 480))
+    palette = plugin._palette({})
+    fonts = {name: plugin._load_font(None, size, weight) for name, (size, weight) in tech_pulse_module.FONT_SPECS.items()}
+
+    plugin._draw_models(image, ImageDraw.Draw(image), tech_pulse_module.MODELS_BOX, _ai_boards(), palette, fonts, {},
+                        datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc))
+
+    assert drawn == []

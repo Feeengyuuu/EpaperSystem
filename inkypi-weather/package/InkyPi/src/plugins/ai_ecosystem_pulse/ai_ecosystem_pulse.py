@@ -20,12 +20,16 @@ from utils.app_utils import (
     get_base_ui_font,
     get_font,
 )
+from runtime.refresh_contracts import TaskCancelled
 from utils.safe_image import safe_open_image
 
 from .sources import (
     fetch_github,
     fetch_huggingface,
     fetch_skills,
+    fetch_spaces,
+    model_facts,
+    pipeline_label,
     record_star_snapshot,
     stars_24h,
 )
@@ -39,6 +43,10 @@ LOGO_ASSET_PATH = Path(__file__).with_name("assets") / "ai-ecosystem-pulse-logo.
 CACHE_SCHEMA = "ai-ecosystem-pulse-v1"
 GITHUB_CANDIDATE_SCHEMA = "ai-ecosystem-pulse-github-candidates-v1"
 SOURCE_TTLS = {"skills": 360, "huggingface": 60, "github": 60}
+# The trending Spaces ride along with the boards (Tech Pulse shows them): they move slowly, and the
+# last list stands for a day when the Hub cannot be reached; without one they are simply left out.
+SPACES_TTL_MINUTES = 120
+SPACES_USABLE_MINUTES = 24 * 60
 MAX_GITHUB_HISTORY_REPOS = 256
 SOURCE_STATES = {"live", "fresh_cache", "stale_cache", "fixture"}
 
@@ -409,6 +417,28 @@ class AiEcosystemPulse(BasePlugin):
             if cache_is_valid and cached_items:
                 return valid_cached_items, "stale_cache", type(exc).__name__
             return list(fixture), "fixture", type(exc).__name__
+
+    def _resolve_spaces(self, now, force):
+        """The trending Spaces: the cached list while fresh, else a new fetch, else the last list a
+        day old at most, else none."""
+        cache_file = self._cache_dir() / "spaces.json"
+        cached = self._read_json(cache_file, {})
+        items = cached.get("items") if isinstance(cached, dict) and cached.get("schema") == CACHE_SCHEMA else None
+        items = [dict(item) for item in items if isinstance(item, dict) and item.get("title")] if isinstance(
+            items, list) else []
+        if items and not force and self._cache_fresh(cached, now, SPACES_TTL_MINUTES):
+            return items
+        try:
+            fetched = [dict(item) for item in fetch_spaces() if isinstance(item, dict) and item.get("title")]
+            if not fetched:
+                raise ValueError("no Spaces")
+            self._write_json(cache_file, {"schema": CACHE_SCHEMA, "fetched_at": _utc(now).isoformat(), "items": fetched})
+            return fetched
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("AI Ecosystem Pulse spaces unavailable: %s", type(exc).__name__)
+            return items if items and self._cache_fresh(cached, now, SPACES_USABLE_MINUTES) else []
 
     @staticmethod
     def _github_token(device_config):
@@ -835,6 +865,7 @@ class AiEcosystemPulse(BasePlugin):
             "skills": skills[:6],
             "models": models[:3],
             "repos": repos[:3],
+            "spaces": self._resolve_spaces(now, force)[:3],
             "status": {
                 "aggregate": self._aggregate_status(states),
                 "sources": states,
@@ -1296,7 +1327,7 @@ class AiEcosystemPulse(BasePlugin):
                 (rank_right + 6, top + 23),
                 self._fit_text(
                     draw,
-                    model.get("pipeline_tag") or "model",
+                    " · ".join(part for part in (model_facts(model), pipeline_label(model.get("pipeline_tag"))) if part),
                     meta_font,
                     name_width,
                 ),
