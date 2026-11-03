@@ -705,7 +705,18 @@ def test_almanac_rows_sit_under_the_history_with_whole_entries(plugin, payload, 
 
     rows = audit["almanac"]["rows"]
     assert [row["key"] for row in rows] == ["births", "deaths", "holidays"]
-    assert {"诞辰", "逝世", "节日"} <= set(drawn_text)
+    # Each row is led by a drawn icon, not a word: a cake, a candle, a lantern, each solid in its
+    # category's colour (the day's lead accent, ink, the day's second accent), clear of its text.
+    assert [row["icon"] for row in rows] == ["cake", "candle", "lantern"]
+    assert not {"诞辰", "逝世", "节日"} & set(drawn_text)
+    palette = plugin._palette(settings(mode), datetime(2026, 10, 5))
+    for row, role in zip(rows, ("accent", "ink", "accent2")):
+        left, top, right, bottom = row["icon_bounds"]
+        pixels = [image.getpixel((x, y)) for x in range(left, right) for y in range(top, bottom)]
+        assert sum(pixel == palette[role] for pixel in pixels) >= 30
+        assert right <= row["bounds"][0] + swiss_renderer.ALMANAC_ICON_SLOT
+        assert all(other["icon_bounds"][1] >= bottom or other["icon_bounds"][3] <= top
+                   for other in rows if other is not row)
     # Whole entries only: a name with its year and role, a second one by name and year when its
     # role does not fit, and one that does not fit at all is left out, never cut.
     assert rows[0]["text"].startswith("梅尔文·施瓦茨 1932 美国物理学家")
@@ -726,3 +737,14 @@ def test_no_almanac_leaves_the_history_column_as_before(plugin, payload):
     audit = image.info["daily_wiki_layout"]
 
     assert "almanac" not in audit and audit["omitted_events"] == [] and len(audit["events"]) == 5
+
+
+@pytest.mark.parametrize("kind", ["cake", "candle", "lantern"])
+def test_almanac_icons_are_solid_shapes_with_their_gaps_cut(kind):
+    icon = swiss_renderer.almanac_icon(kind, 18)
+
+    assert icon.mode == "L" and icon.size == (22, 18)
+    solid = sum(icon.histogram()[201:])
+    # Solid enough to read at a line's height, never a filled block.
+    assert 60 <= solid <= 0.6 * 22 * 18
+    assert icon.getpixel((0, 0)) == 0 and icon.getpixel((21, 17)) == 0

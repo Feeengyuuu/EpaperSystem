@@ -40,12 +40,20 @@ WIKIMEDIA_LOGO_PATH = Path(__file__).resolve().parent / "assets" / "wikimedia_lo
 WIKIMEDIA_LOGO_SCALE = 1.3
 # Quiet doodles in the day's accent under the photograph's column and the history column.
 DOODLE_DIR = Path(__file__).resolve().parent / "assets" / "doodles"
-# 今日人物与节日 at the foot of the history column: each row's chip, the list it shows and the
-# palette role that fills the chip (the day's lead accent, ink, the day's second accent).
-ALMANAC_ROWS = (("births", "诞辰", "accent"), ("deaths", "逝世", "ink"), ("holidays", "节日", "accent2"))
-# The gap under the block's rule, between its rows, and after a row's chip.
-ALMANAC_TOP_GAP, ALMANAC_ROW_GAP, ALMANAC_CHIP_GAP = 7, 3, 7
+# 今日人物与节日 at the foot of the history column: each row's list, the icon that leads it (a
+# birthday cake, a candle, a lantern) and the palette role it is filled with (the day's lead
+# accent, ink, the day's second accent).
+ALMANAC_ROWS = (("births", "cake", "accent"), ("deaths", "candle", "ink"), ("holidays", "lantern", "accent2"))
+# The gap under the block's rule, between its rows, and after a row's icon slot; the slot's width
+# and the room kept between one row's icon and the next.
+ALMANAC_TOP_GAP, ALMANAC_ROW_GAP, ALMANAC_CHIP_GAP = 5, 4, 7
+ALMANAC_ICON_SLOT, ALMANAC_ICON_SPACING = 30, 1
 ALMANAC_SEPARATOR = (" · ", False)
+# The icons are drawn on an 80 x 64 grid (a cake and a lantern are wider than tall), as tall as a row
+# with its gap less ALMANAC_ICON_SPACING, ALMANAC_ICON_SUPERSAMPLE times that size, then scaled down so
+# their solid shapes stay crisp.
+ALMANAC_ICON_GRID = (80, 64)
+ALMANAC_ICON_SUPERSAMPLE = 4
 
 
 class LayoutOverflowError(ValueError):
@@ -105,6 +113,53 @@ def _almanac_entry(key, item, full=True):
     role = short_role(item.get("role")) if full else ""
     year = _text(item.get("year"))
     return [(name, True), *([(f" {year}", False)] if year else []), *([(f" {role}", False)] if role else [])]
+
+
+def almanac_icon(kind, height):
+    """The ``kind`` icon ("cake", "candle", "lantern") ``height`` px tall (and 5/4 as wide) as an
+    alpha mask of solid shapes: what is drawn 255, the gaps that shape it cut back to 0."""
+    grid_w, grid_h = ALMANAC_ICON_GRID
+    width = round(height * grid_w / grid_h)
+    scale = height * ALMANAC_ICON_SUPERSAMPLE / grid_h
+    mask = Image.new("L", (width * ALMANAC_ICON_SUPERSAMPLE, height * ALMANAC_ICON_SUPERSAMPLE), 0)
+    pen = ImageDraw.Draw(mask)
+
+    def box(x0, y0, x1, y1):
+        return (round(x0 * scale), round(y0 * scale), round(x1 * scale), round(y1 * scale))
+
+    def point(x, y):
+        return (round(x * scale), round(y * scale))
+
+    def flame(x0, y0, x1, y1):
+        """A teardrop: round below, pointed above."""
+        across = x1 - x0
+        pen.ellipse(box(x0, y1 - across, x1, y1), fill=255)
+        pen.polygon([point((x0 + x1) / 2, y0), point(x0 + 0.6, y1 - across / 2), point(x1 - 0.6, y1 - across / 2)],
+                    fill=255)
+
+    if kind == "cake":
+        # One wide tier with a wave of icing cut across it, a candle lit on top.
+        flame(34, 0, 46, 17)
+        pen.rectangle(box(37, 18, 43, 29), fill=255)
+        pen.rounded_rectangle(box(6, 29, 74, 63), radius=round(7 * scale), fill=255)
+        wave = [point(x, 44 + 4 * math.sin((x - 6) / 68 * 3 * math.tau)) for x in range(4, 77, 2)]
+        pen.line(wave, fill=0, width=max(1, round(5 * scale)), joint="curve")
+    elif kind == "candle":
+        # A pillar candle with a drip of wax, its flame clear of the wick, in a dish.
+        flame(33, 0, 47, 23)
+        pen.rounded_rectangle(box(30, 28, 50, 58), radius=round(3 * scale), fill=255)
+        pen.rounded_rectangle(box(45, 27, 54, 42), radius=round(4 * scale), fill=255)
+        pen.rounded_rectangle(box(14, 56, 66, 63), radius=round(3 * scale), fill=255)
+    elif kind == "lantern":
+        # A round paper lantern: hanger, caps, ribs cut through its body, and a tassel.
+        pen.rectangle(box(37.5, 0, 42.5, 6), fill=255)
+        pen.rounded_rectangle(box(26, 5, 54, 13), radius=round(2 * scale), fill=255)
+        pen.ellipse(box(6, 9, 74, 52), fill=255)
+        pen.arc(box(22, 11, 58, 50), start=0, end=360, fill=0, width=max(1, round(4 * scale)))
+        pen.rectangle(box(38, 12, 42, 49), fill=0)
+        pen.rounded_rectangle(box(26, 48, 54, 56), radius=round(2 * scale), fill=255)
+        pen.polygon([point(35, 56), point(45, 56), point(49, 63.9), point(31, 63.9)], fill=255)
+    return mask.resize((width, height), RESAMPLE)
 
 
 def _joined_runs(entries):
@@ -638,14 +693,14 @@ class _Page:
         return None, self.minimum_font
 
     def almanac_rows(self):
-        """今日人物与节日 as rows {key, chip, colour, entries}, each entry a list of (text, bold)
+        """今日人物与节日 as rows {key, icon, colour, entries}, each entry a list of (text, bold)
         runs; a row keeps the entries that fit its line whole, and a row with none is left out."""
         almanac = self.payload.get("almanac") if self.cjk else None
         if not isinstance(almanac, dict):
             return []
-        width = self.right - self.history_left - self.almanac_chip_width() - self.px(ALMANAC_CHIP_GAP)
+        width = self.right - self.history_left - self.px(ALMANAC_ICON_SLOT) - self.px(ALMANAC_CHIP_GAP)
         rows = []
-        for key, chip, colour in ALMANAC_ROWS:
+        for key, icon, colour in ALMANAC_ROWS:
             entries = []
             for item in almanac.get(key) or []:
                 # A person whose role does not fit is still named, by name and year.
@@ -655,17 +710,11 @@ class _Page:
                         entries.append(entry)
                         break
             if entries:
-                rows.append({"key": key, "chip": chip, "colour": colour, "entries": entries})
+                rows.append({"key": key, "icon": icon, "colour": colour, "entries": entries})
         return rows
 
     def almanac_fonts(self):
         return {bold: self.font("国", self.minimum_font, weight=800 if bold else 500) for bold in (False, True)}
-
-    def almanac_chip_font(self):
-        return self.font("诞辰", max(10, self.px(11)), weight=800)
-
-    def almanac_chip_width(self):
-        return math.ceil(self.width_of("诞辰", self.almanac_chip_font())) + self.px(8)
 
     def runs_width(self, runs):
         fonts = self.almanac_fonts()
@@ -678,20 +727,21 @@ class _Page:
         return self.px(ALMANAC_TOP_GAP) + len(rows) * (self.almanac_line_height() + self.px(ALMANAC_ROW_GAP))
 
     def draw_almanac(self, rows, top):
-        """The rows from ``top`` (a rule over them) to the column's foot: each one's chip in its
-        category's colour, then its entries in ink on one baseline."""
+        """The rows from ``top`` (a rule over them) to the column's foot: each one's icon, solid in
+        its category's colour and centred in its slot, then its entries in ink on one baseline."""
         self.draw.line((self.history_left, top, self.right, top), fill=self.palette["ink"], width=self.px(2))
-        fonts, chip_font = self.almanac_fonts(), self.almanac_chip_font()
-        chip_w, line_h = self.almanac_chip_width(), self.almanac_line_height()
+        fonts = self.almanac_fonts()
+        slot, line_h = self.px(ALMANAC_ICON_SLOT), self.almanac_line_height()
+        height = line_h + self.px(ALMANAC_ROW_GAP) - self.px(ALMANAC_ICON_SPACING)
         ascent = fonts[False].getmetrics()[0] if hasattr(fonts[False], "getmetrics") else line_h
         y = top + self.px(ALMANAC_TOP_GAP)
         records = []
         for row in rows:
-            chip_box = (self.history_left, y + self.px(1), self.history_left + chip_w, y + line_h - self.px(1))
-            self.draw.rounded_rectangle(chip_box, radius=self.px(3), fill=self.palette[row["colour"]])
-            self.draw.text(((chip_box[0] + chip_box[2]) / 2, (chip_box[1] + chip_box[3]) / 2), row["chip"],
-                           font=chip_font, fill=self.palette["background"], anchor="mm")
-            x = chip_box[2] + self.px(ALMANAC_CHIP_GAP)
+            icon = almanac_icon(row["icon"], height)
+            icon_box = [self.history_left + (slot - icon.width) // 2, y + (line_h - height) // 2]
+            icon_box += [icon_box[0] + icon.width, icon_box[1] + height]
+            self.image.paste(self.palette[row["colour"]], tuple(icon_box), icon)
+            x = self.history_left + slot + self.px(ALMANAC_CHIP_GAP)
             baseline = y + (line_h - self.px(2) - ascent) // 2 + ascent
             runs = _joined_runs(row["entries"])
             for text, bold in runs:
@@ -699,7 +749,8 @@ class _Page:
                 x += self.draw.textlength(text, font=fonts[bold])
             if x > self.right + 1:
                 raise LayoutOverflowError("An almanac line would exceed the history column.")
-            records.append({"key": row["key"], "text": "".join(text for text, _bold in runs),
+            records.append({"key": row["key"], "icon": row["icon"], "icon_bounds": icon_box,
+                            "text": "".join(text for text, _bold in runs),
                             "bounds": [self.history_left, y, round(x), y + line_h]})
             y += line_h + self.px(ALMANAC_ROW_GAP)
         self.audit["almanac"] = {"rows": records, "bounds": [self.history_left, top, self.right, self.bottom]}
