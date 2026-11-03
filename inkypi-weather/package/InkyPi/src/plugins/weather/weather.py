@@ -12,6 +12,7 @@ from astral import moon
 import pytz
 import math
 from plugins.context_cache import write_context
+from plugins.weather import air_quality
 from plugins.weather.modern_view import build_view
 from utils.theme_utils import (
     EFFECTIVE_THEME_CONTEXT_INFO_KEY,
@@ -65,8 +66,9 @@ WEATHER_URL = "https://api.openweathermap.org/data/3.0/onecall?lat={lat}&lon={lo
 AIR_QUALITY_URL = "https://api.openweathermap.org/data/2.5/air_pollution?lat={lat}&lon={long}&appid={api_key}"
 GEOCODING_URL = "https://api.openweathermap.org/geo/1.0/reverse?lat={lat}&lon={long}&limit=1&appid={api_key}"
 
-OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={long}&hourly=weather_code,temperature_2m,precipitation,precipitation_probability,relative_humidity_2m,surface_pressure,visibility&daily=weathercode,temperature_2m_max,temperature_2m_min,sunrise,sunset&current=temperature,windspeed,winddirection,is_day,precipitation,weather_code,apparent_temperature&timezone=auto&models=best_match&forecast_days={forecast_days}"
-OPEN_METEO_AIR_QUALITY_URL = "https://air-quality-api.open-meteo.com/v1/air-quality?latitude={lat}&longitude={long}&hourly=european_aqi,uv_index,uv_index_clear_sky&timezone=auto"
+OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={long}&hourly=weather_code,temperature_2m,precipitation,precipitation_probability,relative_humidity_2m,surface_pressure,visibility&daily=weathercode,temperature_2m_max,temperature_2m_min,sunrise,sunset,uv_index_max,wind_gusts_10m_max,precipitation_hours&current=temperature,windspeed,winddirection,is_day,precipitation,weather_code,apparent_temperature&minutely_15=precipitation,precipitation_probability&forecast_minutely_15=8&timezone=auto&models=best_match&forecast_days={forecast_days}"
+# The US EPA index (and its PM2.5 and ozone parts); the hourly series is the fallback.
+OPEN_METEO_AIR_QUALITY_URL = "https://air-quality-api.open-meteo.com/v1/air-quality?latitude={lat}&longitude={long}&current=us_aqi,us_aqi_pm2_5,us_aqi_ozone&hourly=us_aqi,uv_index,uv_index_clear_sky&timezone=auto"
 OPEN_METEO_UNIT_PARAMS = {
     "standard": "temperature_unit=celsius&wind_speed_unit=ms&precipitation_unit=mm",  # temperature is converted to Kelvin later
     "metric":   "temperature_unit=celsius&wind_speed_unit=ms&precipitation_unit=mm",
@@ -524,7 +526,28 @@ class Weather(BasePlugin):
         data['data_points'] = self.parse_open_meteo_data_points(weather_data, aqi_data, units, tz, time_format)
         
         data['hourly_forecast'] = self.parse_open_meteo_hourly(weather_data.get('hourly', {}), units, tz, time_format, daily.get('sunrise', []), daily.get('sunset', []))
+        data['nowcast'] = self.parse_open_meteo_nowcast(weather_data.get('minutely_15'), tz)
         return data
+
+    def parse_open_meteo_nowcast(self, minutely, tz):
+        """The next two hours in 15-minute steps: [{"time": "16:15", "precipitation": amount, "chance": %}]."""
+        minutely = minutely if isinstance(minutely, dict) else {}
+        times = minutely.get('time') or []
+        amounts = minutely.get('precipitation') or []
+        chances = minutely.get('precipitation_probability') or []
+        steps = []
+        for index, stamp in enumerate(times[:8]):
+            moment = self._parse_local_datetime(stamp, tz)
+            amount = self._finite_or_none(amounts[index] if index < len(amounts) else None)
+            chance = self._finite_or_none(chances[index] if index < len(chances) else None)
+            if moment is None or amount is None:
+                continue
+            steps.append({
+                "time": moment.strftime("%H:%M"),
+                "precipitation": max(0.0, amount),
+                "chance": None if chance is None else int(chance),
+            })
+        return steps
 
     def parse_openweather_astronomy(self, current, daily_forecast, tz):
         daily_today = daily_forecast[0] if daily_forecast else {}
@@ -696,6 +719,8 @@ class Weather(BasePlugin):
                     "icon": weather_icon_path,
                     "moon_phase_pct": moon_pct,
                     "moon_phase_icon": moon_icon_path,
+                    "uv_max": self._finite_or_none(day.get("uvi")),
+                    "gust_max": self._finite_or_none(day.get("wind_gust")),
                 }
             )
 
@@ -709,6 +734,9 @@ class Weather(BasePlugin):
         weather_codes = daily_data.get('weathercode', [])
         temp_max = daily_data.get('temperature_2m_max', [])
         temp_min = daily_data.get('temperature_2m_min', [])
+        uv_max = daily_data.get('uv_index_max') or []
+        gust_max = daily_data.get('wind_gusts_10m_max') or []
+        rain_hours = daily_data.get('precipitation_hours') or []
         if units == "standard":
             temp_max = [T + 273.15 for T in temp_max]
             temp_min = [T + 273.15 for T in temp_min]
@@ -745,7 +773,10 @@ class Weather(BasePlugin):
                 "low": int(temp_min[i]) if i < len(temp_min) else 0,
                 "icon": weather_icon_path,
                 "moon_phase_pct": f"{illum_pct:.0f}",
-                "moon_phase_icon": moon_icon_path
+                "moon_phase_icon": moon_icon_path,
+                "uv_max": self._finite_or_none(uv_max[i] if i < len(uv_max) else None),
+                "gust_max": self._finite_or_none(gust_max[i] if i < len(gust_max) else None),
+                "rain_hours": self._finite_or_none(rain_hours[i] if i < len(rain_hours) else None),
             })
 
         return forecast
@@ -866,7 +897,7 @@ class Weather(BasePlugin):
             hourly.append(hour_forecast)
         return hourly
 
-    def parse_data_points(self, weather, air_quality, tz, units, time_format):
+    def parse_data_points(self, weather, aqi_data, tz, units, time_format):
         data_points = []
 
         wind_deg = weather.get('current', {}).get("wind_deg", 0)
@@ -920,15 +951,11 @@ class Weather(BasePlugin):
             "icon": self.get_plugin_dir('icons/visibility.png')
         })
 
-        aqi = air_quality.get('list', [])[0].get("main", {}).get("aqi")
-        data_points.append({
-            "label": "Air Quality",
-            "measurement": aqi,
-            "unit": ["Good", "Fair", "Moderate", "Poor", "Very Poor"][int(aqi)-1],
-            "icon": self.get_plugin_dir('icons/aqi.png'),
-            # 0 (good) to 4 (very poor) on OpenWeatherMap's five-step index.
-            "level": int(aqi) - 1,
-        })
+        # OpenWeatherMap's own 1-5 index is not the US scale: the US AQI comes from its pollutants.
+        readings = ((aqi_data or {}).get('list') or [{}])[0] or {}
+        computed = air_quality.from_components(readings.get("components"))
+        data_points.append(air_quality.data_point(
+            computed.get("aqi"), computed.get("pollutants"), self.get_plugin_dir('icons/aqi.png')))
 
         return data_points
 
@@ -1039,30 +1066,32 @@ class Weather(BasePlugin):
             "icon": self.get_plugin_dir('icons/visibility.png')
         })
 
-        # Air Quality
-        aqi_hourly_times = aqi_data.get('hourly', {}).get('time', [])
-        aqi_values = aqi_data.get('hourly', {}).get('european_aqi', [])
-        current_aqi = "N/A"
-        for i, time_str in enumerate(aqi_hourly_times):
-            try:
+        # Air Quality: the US EPA index now, else this hour's value from the hourly series.
+        current_air = aqi_data.get('current') or {}
+        current_aqi = self._finite_or_none(current_air.get('us_aqi'))
+        if current_aqi is None:
+            aqi_hourly_times = aqi_data.get('hourly', {}).get('time', [])
+            aqi_values = aqi_data.get('hourly', {}).get('us_aqi', [])
+            for i, time_str in enumerate(aqi_hourly_times):
                 parsed_time = self._parse_local_datetime(time_str, tz)
-                if parsed_time and parsed_time.hour == current_time.hour:
-                    current_aqi = round(aqi_values[i], 1)
+                if parsed_time and parsed_time.hour == current_time.hour and i < len(aqi_values):
+                    current_aqi = self._finite_or_none(aqi_values[i])
                     break
-            except ValueError:
-                logger.warning(f"Could not parse time string {time_str} for AQI.")
-                continue
-        scale = ""
-        level = None
-        if current_aqi and current_aqi != "N/A":
-            level = int(min(current_aqi // 20, 5))
-            scale = ["Good","Fair","Moderate","Poor","Very Poor","Ext Poor"][level]
-        data_points.append({
-            "label": "Air Quality", "measurement": current_aqi,
-            "unit": scale, "icon": self.get_plugin_dir('icons/aqi.png'), "level": level,
-        })
+        pollutants = {
+            name: value for name, value in (
+                ("pm2_5", self._finite_or_none(current_air.get('us_aqi_pm2_5'))),
+                ("o3", self._finite_or_none(current_air.get('us_aqi_ozone'))),
+            ) if value is not None
+        }
+        data_points.append(air_quality.data_point(current_aqi, pollutants, self.get_plugin_dir('icons/aqi.png')))
 
         return data_points
+
+    @staticmethod
+    def _finite_or_none(value):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return float(value) if math.isfinite(value) else None
 
     def get_wind_arrow(self, wind_deg: float) -> str:
         DIRECTIONS = [

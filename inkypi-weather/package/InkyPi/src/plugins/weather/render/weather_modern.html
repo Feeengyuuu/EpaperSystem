@@ -53,7 +53,17 @@
           <span class="mw-range-item"><svg class="mw-mini mw-mini-high" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l7 8h-4.5V21h-5v-9.5H5z" fill="currentColor"/></svg>{{ v.high }}{{ deg }}</span>
           <span class="mw-range-item"><svg class="mw-mini mw-mini-low" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.5l-7-8h4.5V3h5v9.5H19z" fill="currentColor"/></svg>{{ v.low }}{{ deg }}</span>
         </div>
-        {% if v.mascot.line %}<div class="mw-bubble">{{ v.mascot.line }}</div>{% endif %}
+        {# Rain due within two hours takes the mascot's bubble: 15-minute bars (height the chance,
+           shade the amount) beside when it starts or stops. #}
+        {% if v.nowcast %}
+        <div class="mw-nowcast">
+          <svg class="mw-nowcast-bars" viewBox="0 0 {{ v.nowcast.width }} {{ v.nowcast.height + 2 }}" width="{{ v.nowcast.width }}" height="{{ v.nowcast.height + 2 }}" aria-hidden="true">
+            {% for bar in v.nowcast.bars %}<rect x="{{ bar.x }}" y="{{ bar.y }}" width="{{ bar.width }}" height="{{ bar.height }}" rx="1.5" class="mw-nc mw-nc-{{ bar.shade }}"/>{% endfor %}
+            <line x1="0" y1="{{ v.nowcast.height + 1 }}" x2="{{ v.nowcast.width }}" y2="{{ v.nowcast.height + 1 }}" class="mw-nc-base"/>
+          </svg>
+          <div class="mw-nowcast-text"><div class="mw-nowcast-head">{{ v.nowcast.headline }}</div><div class="mw-nowcast-detail">{{ v.nowcast.chance }}<span class="mw-dot mw-note-dot" aria-hidden="true"></span>{{ v.nowcast.amount }}</div></div>
+        </div>
+        {% elif v.mascot.line %}<div class="mw-bubble">{{ v.mascot.line }}</div>{% endif %}
         <div class="mw-tips">{% for tip in v.tip_marks %}<span class="mw-tip">{{ glyph(tip.icon) }}{{ tip.label }}</span>{% endfor %}</div>
       </div>
     </section>
@@ -96,7 +106,7 @@
           <div><div class="mw-big">{{ v.wind.speed }}<span class="mw-unit">{{ v.wind.unit }}</span></div>
           <div class="mw-small">{{ v.wind.name }}</div></div>
         </div>
-        <div class="mw-foot mw-wind-sign">{{ glyph("leaf") }}{{ v.wind.beaufort }}<span class="mw-dot" aria-hidden="true"></span>{{ v.wind.sign }}</div>
+        <div class="mw-foot mw-wind-sign">{{ glyph("leaf") }}{{ v.wind.beaufort }}<span class="mw-dot" aria-hidden="true"></span>{% if v.wind.gust %}阵风 {{ v.wind.gust }}{% else %}{{ v.wind.sign }}{% endif %}</div>
         {% endif %}
       </div>
 
@@ -109,7 +119,7 @@
           <line x1="50" y1="46" x2="{{ v.aqi.needle_x }}" y2="{{ v.aqi.needle_y }}" class="mw-gauge-needle"/>
           <circle cx="50" cy="46" r="4" class="mw-gauge-hub"/>
         </svg>
-        <div class="mw-gauge-value"><span class="mw-big">{{ v.aqi.value }}</span><span class="mw-chip" style="background: {{ v.aqi.colour }}; color: {{ v.aqi.ink }}">{{ v.aqi.label }}</span></div>
+        <div class="mw-gauge-value{{ ' mw-aqi-long' if v.aqi.long else '' }}"><span class="mw-big">{{ v.aqi.value }}</span>{% if v.aqi.main %}<span class="mw-aqi-main">{{ v.aqi.main }}</span>{% endif %}<span class="mw-chip" style="background: {{ v.aqi.colour }}; color: {{ v.aqi.ink }}">{{ v.aqi.label }}</span></div>
         {% endif %}
       </div>
 
@@ -117,8 +127,8 @@
         {{ doodle("uv", v.doodles.uv, v.doodle_tile) }}
         <div class="mw-tile-title">{% if v.icons.uv %}<img class="mw-tile-icon" src="{{ v.icons.uv }}" alt="">{% endif %}紫外线</div>
         {% if v.uv %}
-        <div class="mw-big">{{ v.uv.value }} <span class="mw-word">{{ v.uv.label }}</span></div>
-        <div class="mw-uv-bar"><span class="mw-uv-marker" style="left: {{ v.uv.marker }}%"></span></div>
+        <div class="mw-uv-now"><div class="mw-big">{{ v.uv.value }} <span class="mw-word">{{ v.uv.label }}</span></div>{% if v.uv.peak %}<span class="mw-uv-peak-label">最高 {{ v.uv.peak }}</span>{% endif %}</div>
+        <div class="mw-uv-bar">{% if v.uv.peak %}<span class="mw-uv-peak" style="left: {{ v.uv.peak_marker }}%"></span>{% endif %}<span class="mw-uv-marker" style="left: {{ v.uv.marker }}%"></span></div>
         <div class="mw-small mw-foot mw-uv-advice">{{ glyph("shield") }}{{ v.uv.advice }}</div>
         {% endif %}
       </div>
@@ -193,6 +203,7 @@
       <div class="mw-day">
         <span class="mw-day-name">{{ day.name }}</span>
         <img class="mw-day-icon" src="{{ day.icon }}" alt="">
+        {% if v.week_rain %}<span class="mw-day-rain">{% if day.rain_hours %}<svg class="mw-day-drop" viewBox="0 0 10 13" aria-hidden="true"><path d="M5 .8C7.2 4 9.2 6.4 9.2 8.6a4.2 4.2 0 0 1-8.4 0C.8 6.4 2.8 4 5 .8z"/></svg>{{ day.rain_hours }}{% endif %}</span>{% endif %}
         <span class="mw-day-low">{{ day.low }}{{ deg }}</span>
         <span class="mw-day-track"><span class="mw-day-bar" style="left: {{ day.bar_left }}%; width: {{ day.bar_width }}%"></span></span>
         <span class="mw-day-high">{{ day.high }}{{ deg }}</span>

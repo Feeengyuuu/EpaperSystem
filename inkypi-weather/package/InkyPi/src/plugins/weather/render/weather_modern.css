@@ -310,3 +310,38 @@ html, body { margin: 0 !important; padding: 0 !important; overflow: hidden; }
 .mw-index { gap: 6px; }
 .mw-index .mw-stars { width: 64px; height: 10.4px; }
 .mw-section-note .mw-g-rain-cloud { width: 15px; height: 15px; }
+
+/* Next two hours' rain (in the bubble's place) ------------------------------------------- */
+.mw-nowcast {
+  position: relative; align-self: flex-start; margin-top: 10px; max-width: 176px; padding: 4px 8px 4px 7px;
+  display: flex; align-items: flex-end; gap: 7px;
+  background: var(--bg); border: 2px solid var(--ink); border-radius: 12px;
+}
+.mw-nowcast-bars { flex: none; display: block; }
+.mw-nc-light { fill: color-mix(in srgb, var(--blue) 45%, var(--bg)); }
+.mw-nc-rain { fill: var(--blue); }
+.mw-nc-heavy { fill: #1e3a8a; }
+.theme-night .mw-nc-heavy { fill: #b9dcff; }
+.mw-nc-base { stroke: var(--ink); stroke-width: 1.5; }
+.mw-nowcast-text { line-height: 1.2; white-space: nowrap; }
+.mw-nowcast-head { font-size: 13px; font-weight: 700; }
+.mw-nowcast-detail { font-size: 11px; font-weight: 700; }
+
+/* US AQI: the pollutant behind the number; a long category takes its own line. */
+.mw-gauge-value { flex-wrap: wrap; row-gap: 1px; }
+.mw-aqi-main { font-size: 11px; font-weight: 700; margin-left: -4px; align-self: flex-end; padding-bottom: 3px; }
+.mw-aqi-long .mw-chip { flex-basis: auto; font-size: 12px; padding: 0 8px; }
+.mw-t-air .mw-gauge { margin-top: 2px; }
+.mw-t-air:has(.mw-aqi-long) .mw-gauge { width: 92px; height: 48px; margin-top: 0; }
+
+/* UV: today's peak as a dark tick on the bar and a small figure beside the reading. */
+.mw-uv-now { display: flex; align-items: baseline; justify-content: space-between; gap: 4px; }
+.mw-uv-peak-label { font-size: 11px; font-weight: 700; white-space: nowrap; }
+.mw-uv-peak {
+  position: absolute; top: -7px; width: 0; height: 0; margin-left: -5px;
+  border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 7px solid var(--ink);
+}
+
+/* Week: the day's hours of rain beside its icon. */
+.mw-day-rain { width: 24px; display: inline-flex; align-items: center; gap: 1px; font-size: 10px; font-family: Jost, "Microsoft YaHei", sans-serif; }
+.mw-day-drop { width: 8px; height: 10px; flex: none; fill: var(--blue); }

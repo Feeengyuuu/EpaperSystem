@@ -2,8 +2,9 @@
 
 Everything the page draws as a gauge or chart is worked out here in page pixels, so
 the browser only lays out text and inline SVG: the sun's place on today's arc, the
-wind's compass bearing and Beaufort force, the air-quality and UV scales, the
-24-hour curve with rain bars and night bands, and the week's temperature ranges.
+wind's compass bearing and Beaufort force, the US air-quality and UV scales, the
+next two hours' rain in 15-minute steps, the 24-hour curve with rain bars and night
+bands, and the week's temperature ranges.
 Labels are Chinese; values keep the provider's units.
 """
 
@@ -51,8 +52,16 @@ BEAUFORT_MS = (0.3, 1.6, 3.4, 5.5, 8.0, 10.8, 13.9, 17.2, 20.8, 24.5, 28.5, 32.7
 BEAUFORT_NAMES = ("无风", "软风", "轻风", "微风", "和风", "清风", "强风", "疾风", "大风", "烈风", "狂风", "暴风", "飓风")
 BEAUFORT_SIGNS = ("烟直上", "烟示风向", "树叶微响", "旗帜展开", "尘土飞扬", "小树摇摆", "电线有声", "步行困难",
                   "折断树枝", "屋瓦吹落", "拔起树木", "损毁严重", "摧毁极大")
-AQI_LABELS = ("优", "良", "中等", "差", "很差", "极差")
-AQI_COLOURS = ("#2e9e5b", "#9ccc3c", "#f2b705", "#e8701a", "#c62828", "#7b1fa2")
+# The US EPA categories and their colours (green, yellow, orange, red, purple, maroon, refined).
+AQI_LABELS = ("良好", "中等", "对敏感人群不健康", "不健康", "非常不健康", "危险")
+AQI_COLOURS = ("#2e9e5b", "#f2b705", "#e8701a", "#c62828", "#7b1fa2", "#7e0023")
+# Each category's AQI span, so the needle sits where the value falls within its band.
+AQI_BOUNDS = (0, 50, 100, 150, 200, 300, 500)
+POLLUTANTS = {"pm2_5": "PM2.5", "pm10": "PM10", "o3": "臭氧", "no2": "NO2", "so2": "SO2", "co": "CO"}
+# A 15-minute step counts as wet from this chance or this much rain (mm; inches x 25.4).
+NOWCAST_WET_CHANCE, NOWCAST_WET_MM = 40, 0.1
+NOWCAST_SHOW_CHANCE = 20
+NOWCAST_BAR_HEIGHT = 20
 UV_BANDS = ((3, "弱", "无需防晒"), (6, "中等", "注意防晒"), (8, "强", "需要防晒"), (11, "很强", "避免暴晒"),
             (math.inf, "极强", "避免外出"))
 MOON_NAMES = {"newmoon": "新月", "waxingcrescent": "蛾眉月", "firstquarter": "上弦月", "waxinggibbous": "盈凸月",
@@ -115,9 +124,10 @@ def build_view(params, now, *, art_dir=None):
                       bool(sun.get("night"))),
         "sun": sun,
         "moon": _moon(today),
-        "wind": _wind(points.get("Wind"), units),
+        "wind": _wind(points.get("Wind"), units, today),
         "aqi": _aqi(points.get("Air Quality")),
-        "uv": _uv(points.get("UV Index")),
+        "uv": _uv(points.get("UV Index"), today),
+        "nowcast": _nowcast(params.get("nowcast"), units),
         "humidity": _humidity(points.get("Humidity")),
         "pressure": _plain(points.get("Pressure")),
         "visibility": _visibility(points.get("Visibility")),
@@ -125,6 +135,7 @@ def build_view(params, now, *, art_dir=None):
         "week": _week(forecast[1:8]),
     }
     celsius = _celsius(feels, units)
+    view["week_rain"] = any(day["rain_hours"] for day in view["week"])
     view["tip_marks"] = _tip_marks(view["tips"])
     view["best"] = _best_window(hourly, units)
     view["indices"] = _life_indices(view, scene, celsius, forecast[1:3])
@@ -354,7 +365,11 @@ def _moon(today):
             "percent": (today or {}).get("moon_phase_pct")} if name else {}
 
 
-def _wind(point, units):
+def _speed_text(speed):
+    return f"{speed:.1f}".rstrip("0").rstrip(".") if speed < 10 else f"{speed:.0f}"
+
+
+def _wind(point, units, today=None):
     point = point or {}
     speed = _number(point.get("measurement"))
     if speed is None:
@@ -363,8 +378,11 @@ def _wind(point, units):
     metres = speed * 0.44704 if units == "imperial" else speed
     force = next((index for index, limit in enumerate(BEAUFORT_MS) if metres < limit), 12)
     direction = WIND_DIRECTIONS[int(((degrees % 360) + 22.5) // 45) % 8]
+    gust = _number((today or {}).get("gust_max"))
     return {
-        "speed": f"{speed:.1f}".rstrip("0").rstrip(".") if speed < 10 else f"{speed:.0f}",
+        "speed": _speed_text(speed),
+        # Today's strongest gust, in the same unit as the wind.
+        "gust": _speed_text(gust) if gust is not None and gust > 0 else "",
         "unit": point.get("unit") or "",
         # The arrow points where the wind blows to.
         "heading": round((degrees + 180) % 360),
@@ -376,21 +394,29 @@ def _wind(point, units):
 
 
 def _aqi(point):
+    """The US AQI on a six-band half dial (one band per EPA category), its Chinese category and
+    the pollutant behind it ("PM2.5", "臭氧") when the provider says."""
     point = point or {}
     level = point.get("level")
-    if level is None:
+    value = _number(point.get("measurement"))
+    if level is None or value is None:
         return {}
-    level = max(0, min(len(AQI_LABELS) - 1, int(level)))
-    # The needle sits in the middle of its band on a five-band half dial.
-    bands = 5
-    fraction = (min(level, bands - 1) + 0.5) / bands
-    angle = math.pi * (1 - fraction)
+    bands = len(AQI_LABELS)
+    level = max(0, min(bands - 1, int(level)))
+    low, high = AQI_BOUNDS[level], AQI_BOUNDS[level + 1]
+    within = max(0.0, min(1.0, (value - low) / (high - low)))
+    angle = math.pi * (1 - (level + within) / bands)
+    pollutants = point.get("pollutants") or {}
+    dominant = point.get("dominant") if len(pollutants) > 1 or level >= 1 else ""
     return {
-        "value": point.get("measurement"),
+        "value": int(value),
+        "level": level,
         "label": AQI_LABELS[level],
         "colour": AQI_COLOURS[level],
-        # Black on the light bands (good, fair, moderate), white on the dark ones.
+        # Black on the light bands (good, moderate, sensitive groups), white on the dark ones.
         "ink": "#111418" if level <= 2 else "#ffffff",
+        "long": len(AQI_LABELS[level]) > 3,
+        "main": POLLUTANTS.get(dominant, ""),
         "needle_x": round(50 + 30 * math.cos(angle), 1),
         "needle_y": round(46 - 30 * math.sin(angle), 1),
         "segments": [_arc_segment(50, 46, 38, index / bands, (index + 1) / bands, AQI_COLOURS[index])
@@ -406,13 +432,58 @@ def _arc_segment(cx, cy, radius, start, end, colour):
     return {"d": f"M{x0:.1f},{y0:.1f} A{radius},{radius} 0 0,1 {x1:.1f},{y1:.1f}", "colour": colour}
 
 
-def _uv(point):
+def _uv(point, today=None):
     value = _number((point or {}).get("measurement"))
     if value is None:
         return {}
     label, advice = next((label, advice) for limit, label, advice in UV_BANDS if value < limit)
+    peak = _number((today or {}).get("uv_max"))
     return {"value": f"{value:.0f}" if value >= 1 or value == 0 else f"{value:.1f}", "label": label,
-            "advice": advice, "marker": round(min(1.0, value / 11) * 100, 1)}
+            "advice": advice, "marker": round(min(1.0, value / 11) * 100, 1),
+            # Today's peak as a tick on the same bar, shown once it is above the reading now.
+            "peak": f"{peak:.0f}" if peak is not None and peak >= value + 0.5 else "",
+            "peak_marker": round(min(1.0, (peak or 0) / 11) * 100, 1)}
+
+
+def _nowcast(steps, units):
+    """The next two hours of rain in 15-minute bars, or {} when none is likely.
+
+    Each bar's height is the chance and its shade the amount; the words say when rain starts
+    or stops ("16:45 起有雨", "17:30 前后雨停") and the two hours' top chance and total.
+    """
+    scale = 25.4 if units == "imperial" else 1.0
+    rows = []
+    for step in steps or []:
+        amount = _number((step or {}).get("precipitation"))
+        if amount is None:
+            continue
+        chance = _number(step.get("chance"))
+        rows.append({"time": str(step.get("time") or ""), "mm": amount * scale,
+                     "chance": int(chance) if chance is not None else (100 if amount > 0 else 0)})
+    if len(rows) < 2:
+        return {}
+    top = max(row["chance"] for row in rows)
+    total = sum(row["mm"] for row in rows)
+    if top < NOWCAST_SHOW_CHANCE and total < NOWCAST_WET_MM:
+        return {}
+    wet = [row["chance"] >= NOWCAST_WET_CHANCE or row["mm"] >= NOWCAST_WET_MM for row in rows]
+    if wet[0]:
+        stop = next((row["time"] for row, is_wet in zip(rows, wet) if not is_wet), "")
+        headline = f"{stop} 前后雨停" if stop else "2 小时内持续有雨"
+    elif any(wet):
+        headline = f"{rows[wet.index(True)]['time']} 起有雨"
+    else:
+        headline = "2 小时内或有小雨"
+    amount = f"{total / 25.4:.2f} in" if units == "imperial" else f"{total:.1f} mm"
+    width, gap = 6, 3
+    bars = []
+    for index, row in enumerate(rows[:8]):
+        height = max(2.0, row["chance"] / 100 * NOWCAST_BAR_HEIGHT)
+        shade = "heavy" if row["mm"] >= 1.0 else "rain" if row["mm"] >= NOWCAST_WET_MM else "light"
+        bars.append({"x": index * (width + gap), "y": round(NOWCAST_BAR_HEIGHT - height, 1), "width": width,
+                     "height": round(height, 1), "shade": shade})
+    return {"headline": headline, "chance": f"{top}%", "amount": amount, "bars": bars,
+            "width": len(bars) * (width + gap) - gap, "height": NOWCAST_BAR_HEIGHT}
 
 
 def _humidity(point):
@@ -567,10 +638,13 @@ def _week(days):
     for index, day in enumerate(days):
         start = (_number(day["low"]) - low) / span * 100
         end = (_number(day["high"]) - low) / span * 100
+        hours = _number(day.get("rain_hours"))
         week.append({
             "name": "明天" if index == 0 else WEEKDAYS.get(str(day.get("day")), str(day.get("day") or "")),
             "icon": day.get("icon") or "", "high": day.get("high"), "low": day.get("low"),
             "bar_left": round(start, 1), "bar_width": round(max(4.0, end - start), 1),
+            # Hours of rain that day (Open-Meteo), "" for a dry day or without the figure.
+            "rain_hours": f"{hours:.0f}h" if hours is not None and hours >= 1 else "",
         })
     return week
 
@@ -614,7 +688,7 @@ def _life_indices(view, scene, celsius, next_days):
     points = (view.get("hourly") or {}).get("points") or []
     rain6 = max([point["rain_chance"] for point in points[:6]] or [0])
     rain24 = max([point["rain_chance"] for point in points] or [0])
-    aqi_level = AQI_LABELS.index(view["aqi"]["label"]) if view.get("aqi") else 0
+    aqi_level = (view.get("aqi") or {}).get("level") or 0
     force = (view.get("wind") or {}).get("force") or 0
     uv = _number((view.get("uv") or {}).get("value")) or 0
     night = bool((view.get("sun") or {}).get("night"))
@@ -626,17 +700,18 @@ def _life_indices(view, scene, celsius, next_days):
             return 0
         return 2 if celsius < 5 or celsius > 30 else 1 if celsius < 10 or celsius > 25 else 0
 
+    # US AQI: moderate costs a run a star, sensitive-groups and worse two.
     run = 5 - (3 if rain6 >= 50 else 1 if rain6 >= 20 else 0) - comfort_penalty() \
-        - (2 if aqi_level >= 3 else 1 if aqi_level == 2 else 0) - (1 if force >= 6 else 0)
+        - (2 if aqi_level >= 2 else 1 if aqi_level == 1 else 0) - (1 if force >= 6 else 0)
     dry = {"clear": 5, "cloudy": 3, "fog": 2}.get(base, 1) - (1 if humidity > 80 else 0)
     if rain24 >= 40:
         dry = 1
     if night:
         dry = min(dry, 2)
     rainy_days = any(_icon_code(day.get("icon")) in RAINY_ICON_CODES for day in next_days or [])
-    wash = (1 if rain24 >= 40 else 2 if rainy_days else 5) - (1 if aqi_level >= 3 else 0)
+    wash = (1 if rain24 >= 40 else 2 if rainy_days else 5) - (1 if aqi_level >= 2 else 0)
     outdoor = 5 - (3 if rain6 >= 50 else 1 if rain6 >= 20 else 0) - comfort_penalty() \
-        - (1 if uv >= 8 else 0) - (1 if aqi_level >= 3 else 0) - (1 if force >= 6 else 0) - (1 if night else 0)
+        - (1 if uv >= 8 else 0) - (1 if aqi_level >= 2 else 0) - (1 if force >= 6 else 0) - (1 if night else 0)
     return [{"name": name, "icon": icon, "stars": max(1, min(5, value))}
             for name, icon, value in (("跑步", "run", run), ("晾晒", "laundry", dry), ("洗车", "car", wash),
                                       ("户外", "outdoor", outdoor))]
@@ -655,7 +730,7 @@ def _mascot_line(view, scene, celsius):
     sun = view.get("sun") or {}
     best = view.get("best") or {}
     uv = _number((view.get("uv") or {}).get("value")) or 0
-    aqi_label = (view.get("aqi") or {}).get("label")
+    aqi_level = (view.get("aqi") or {}).get("level") or 0
     force = (view.get("wind") or {}).get("force") or 0
     if scene == "thunder":
         return "打雷啦！待在室内吧"
@@ -667,7 +742,7 @@ def _mascot_line(view, scene, celsius):
         return "下雪啦！小心路滑"
     if scene == "fog":
         return "雾大，开车慢一点"
-    if aqi_label in AQI_LABELS[3:]:
+    if aqi_level >= 2:
         return "空气不好，少开窗"
     if uv >= 6 and not sun.get("night"):
         return "紫外线强，记得防晒"

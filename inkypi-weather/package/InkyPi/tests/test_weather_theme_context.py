@@ -177,7 +177,7 @@ def _air_quality_openmeteo(date="2026-07-12"):
     return {
         "hourly": {
             "time": [f"{date}T12:00"],
-            "european_aqi": [18],
+            "us_aqi": [44],
             "uv_index": [4],
         }
     }

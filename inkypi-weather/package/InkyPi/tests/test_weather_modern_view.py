@@ -36,7 +36,8 @@ def _params(now, *, rain=0.0, icon="01d", aqi_level=1, feels="9"):
             {"label": "Pressure", "measurement": 1014, "unit": "hPa"},
             {"label": "UV Index", "measurement": 6.4, "unit": ""},
             {"label": "Visibility", "measurement": "≥10.0", "unit": "km"},
-            {"label": "Air Quality", "measurement": 2, "unit": "Fair", "level": aqi_level},
+            {"label": "Air Quality", "measurement": (25, 62, 128, 172, 240, 340)[aqi_level], "unit": "Moderate",
+             "level": aqi_level, "scale": "us", "pollutants": {"pm2_5": 62, "o3": 30}, "dominant": "pm2_5"},
         ],
     }
 
@@ -54,8 +55,10 @@ def test_view_reads_conditions_tips_and_gauges():
     assert [(mark["icon"], mark["label"]) for mark in view["tip_marks"]] == [
         ("coat", "厚外套"), ("umbrella-off", "不用伞"), ("shield", "防晒")]
     assert view["wind"]["name"] == "西南风 3 级" and view["wind"]["heading"] == 45
-    assert view["aqi"]["label"] == "良" and view["aqi"]["ink"] == "#111418"
-    assert len(view["aqi"]["segments"]) == 5
+    assert view["aqi"]["label"] == "中等" and view["aqi"]["ink"] == "#111418"
+    assert view["aqi"]["value"] == 62 and view["aqi"]["main"] == "PM2.5" and not view["aqi"]["long"]
+    # One band per US category.
+    assert len(view["aqi"]["segments"]) == 6
     assert view["uv"]["label"] == "强" and 0 < view["uv"]["marker"] < 100
     assert view["humidity"] == {"value": 55, "feel": "舒适", "fill": 55.0}
     assert 0.4 < view["sun"]["progress"] < 0.6 and not view["sun"]["night"]
@@ -364,3 +367,78 @@ def test_a_place_with_its_own_wordmark_shows_it_by_day_and_night():
         plugin_settings={}, style_sheets=[], font_faces=[])
     assert "mw-place-day" in html and "fremont-california-night.png" in html
     assert '<div class="mw-place">Fremont, California</div>' not in html
+
+
+def test_us_aqi_categories_set_the_dial_chip_and_advice():
+    now = LA.localize(datetime(2026, 10, 24, 12, 50))
+    labels = []
+    for level in range(6):
+        view = build_view(_params(now, aqi_level=level), now)
+        labels.append(view["aqi"]["label"])
+        assert view["aqi"]["level"] == level
+    assert labels == ["良好", "中等", "对敏感人群不健康", "不健康", "非常不健康", "危险"]
+
+    sensitive = build_view(_params(now, aqi_level=2), now)
+    assert sensitive["aqi"]["long"] and sensitive["aqi"]["ink"] == "#111418"
+    assert sensitive["mascot"]["line"] == "空气不好，少开窗"
+    assert build_view(_params(now, aqi_level=3), now)["aqi"]["ink"] == "#ffffff"
+    # The needle moves with the value inside its band: 128 sits right of 101.
+    low = dict(_params(now, aqi_level=2))
+    low["data_points"] = [dict(point, measurement=101) if point["label"] == "Air Quality" else point
+                          for point in low["data_points"]]
+    assert build_view(low, now)["aqi"]["needle_x"] < sensitive["aqi"]["needle_x"]
+    runs = {level: next(index["stars"] for index in build_view(_params(now, aqi_level=level), now)["indices"]
+                        if index["name"] == "跑步") for level in (0, 1, 2)}
+    assert runs[0] > runs[1] > runs[2]
+
+
+def test_nowcast_shows_only_when_rain_is_likely_within_two_hours():
+    now = LA.localize(datetime(2026, 10, 24, 12, 50))
+    dry = _params(now)
+    dry["nowcast"] = [{"time": f"13:{minute:02d}", "precipitation": 0.0, "chance": 5} for minute in (0, 15, 30, 45)]
+    assert build_view(dry, now)["nowcast"] == {}
+
+    times = ["12:45", "13:00", "13:15", "13:30", "13:45", "14:00", "14:15", "14:30"]
+    wet = _params(now)
+    wet["nowcast"] = [{"time": time, "precipitation": amount, "chance": chance} for time, amount, chance in
+                      zip(times, [0, 0, 0.1, 0.4, 1.2, 0.8, 0.3, 0.1], [10, 25, 45, 70, 85, 80, 60, 40])]
+    view = build_view(wet, now)
+    assert view["nowcast"]["headline"] == "13:15 起有雨"
+    assert view["nowcast"]["chance"] == "85%" and view["nowcast"]["amount"] == "2.9 mm"
+    assert [bar["shade"] for bar in view["nowcast"]["bars"]][:5] == ["light", "light", "rain", "rain", "heavy"]
+    assert all(0 < bar["height"] <= 20 for bar in view["nowcast"]["bars"])
+
+    raining = _params(now)
+    raining["nowcast"] = [{"time": time, "precipitation": amount, "chance": 90 if amount else 10}
+                          for time, amount in zip(times, [0.5, 0.5, 0.2, 0, 0, 0, 0, 0])]
+    assert build_view(raining, now)["nowcast"]["headline"] == "13:30 前后雨停"
+
+    html = Weather({"id": "weather"}).env.get_template("weather_modern.html").render(
+        **wet, view=view, width=800, height=480, theme={"mode": "day", "css": {}},
+        plugin_settings={}, style_sheets=[], font_faces=[])
+    # The bars take the mascot's bubble; separators stay drawn.
+    assert "mw-nowcast" in html and "mw-bubble" not in html and "·" not in html
+
+
+def test_daily_peaks_show_on_the_uv_wind_and_week_cards():
+    now = LA.localize(datetime(2026, 10, 24, 9, 0))
+    params = _params(now)
+    params["data_points"] = [dict(point, measurement=1.2) if point["label"] == "UV Index" else point
+                             for point in params["data_points"]]
+    params["forecast"][0].update(uv_max=4.6, gust_max=9.3)
+    params["forecast"][2].update(rain_hours=3.0)
+    view = build_view(params, now)
+
+    assert view["uv"]["peak"] == "5" and view["uv"]["peak_marker"] > view["uv"]["marker"]
+    assert view["wind"]["gust"] == "9.3"
+    assert [day["rain_hours"] for day in view["week"]][:3] == ["", "3h", ""]
+    assert view["week_rain"] is True
+    html = Weather({"id": "weather"}).env.get_template("weather_modern.html").render(
+        **params, view=view, width=800, height=480, theme={"mode": "day", "css": {}},
+        plugin_settings={}, style_sheets=[], font_faces=[])
+    for text in ("最高 5", "阵风 9.3", "3h", "mw-uv-peak"):
+        assert text in html, text
+
+    # Without the daily figures the cards look as before.
+    plain = build_view(_params(now), now)
+    assert plain["uv"]["peak"] == "" and plain["wind"]["gust"] == "" and plain["week_rain"] is False
