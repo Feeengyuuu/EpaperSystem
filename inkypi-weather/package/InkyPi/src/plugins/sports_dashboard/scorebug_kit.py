@@ -50,6 +50,10 @@ KIT_VENUE_ICON_HEIGHT, KIT_VENUE_ICON_WIDE, KIT_VENUE_ICON_GAP = 13, 1.6, 3
 # A game yet to start shows its stadium's logo at the row's right, at most this wide, when its team
 # names leave at least the minimum (past this gap after the longer name).
 KIT_ROW_VENUE_MAX_W, KIT_ROW_VENUE_MIN_W, KIT_ROW_VENUE_GAP = 72, 24, 8
+# On the live score wall a game under way shows its venue the same way, in the room between its
+# longer team name and the score column; a ground without a logo reads as its sport's venue icon.
+KIT_SPORT_VENUE_KINDS = {"NFL": "football", "NCAA": "football", "NBA": "arena", "WNBA": "arena", "NHL": "arena",
+                         "MLB": "ballpark"}
 # A live row's leading score sits in a solid ink box this far round its digits (the wall's
 # broadcast-scorebug mark); every row's scores keep the room, so all digits stay in one column.
 KIT_LEAD_PAD = 3
@@ -903,7 +907,7 @@ class ScorebugKitMixin:
             self._draw_kit_scoreboard_row(image, draw, (x1, top, x2, top + KIT_SCOREBOARD_ROW_HEIGHT - 1), event, now, spec,
                                           last=index == len(shown) - 1, slot=(previous, slots[index], following))
 
-    def _draw_kit_scoreboard_row(self, image, draw, box, event, now, spec, last=False, slot=None):
+    def _draw_kit_scoreboard_row(self, image, draw, box, event, now, spec, last=False, slot=None, venue=False):
         x1, y1, x2, y2 = [int(value) for value in box]
         state = SportsDashboard._hub_event_state(event)
         state_x2 = x1 + KIT_SCOREBOARD_STATE_WIDTH
@@ -928,6 +932,8 @@ class ScorebugKitMixin:
         team_x = state_x2 + 6
         if state == "scheduled":
             self._draw_kit_row_venue(image, draw, (team_x + 15, y1, score_right, y2), event, spec)
+        elif venue:
+            self._draw_kit_row_live_venue(draw, image, (team_x + 15, y1, score_right, y2), event, spec, leader, offense)
         for index, side in enumerate(("a", "b")):
             line_y1 = y1 + 1 + index * 12
             line_y2 = line_y1 + 12
@@ -970,6 +976,39 @@ class ScorebugKitMixin:
         logo = self._kit_venue_logo(event.get("venue"), (min(room, KIT_ROW_VENUE_MAX_W), y2 - y1 - 4))
         if logo is not None:
             image.paste(logo, (right - logo.width, y1 + (y2 - y1 - logo.height) // 2), logo)
+
+    def _draw_kit_row_live_venue(self, draw, image, box, event, spec, leader, offense):
+        """A game under way shows its venue's logo (else its sport's venue icon) centred in the room
+        left between its longer team name, as the row sets it, and its score column; nothing when
+        that room is narrower than KIT_ROW_VENUE_MIN_W, so no name is shortened for it."""
+        names_x, y1, score_right, y2 = [int(value) for value in box]
+        winner = spec.hook("winner_side", event, default="") if SportsDashboard._hub_event_state(event) == "final" else ""
+        score_w = names_w = 0
+        for side in ("a", "b"):
+            # Each line as the row sets it: its own score's width, then its name in what is left.
+            bold = not (winner and winner != side)
+            score = spec.hook("row_score", event, side, default=event.get(f"wins_{side}"))
+            text, font = self._fit_score(draw, "" if score is None else str(score), 34, 11, bold=bold, sport=spec.sport,
+                                         max_height=12)
+            width = self._text_width(draw, text, font) if text else 0
+            score_w = max(score_w, width)
+            budget = score_right - width - (KIT_LEAD_PAD if leader else 0) - 6 - names_x - (9 if offense == side else 0)
+            name, font = self._kit_team_name(draw, spec, event, side, budget, 11, bold)
+            names_w = max(names_w, self._text_width(draw, name, font) + (9 if offense == side else 0))
+        left = names_x + names_w + KIT_ROW_VENUE_GAP
+        right = score_right - score_w - (KIT_LEAD_PAD if leader else 0) - KIT_ROW_VENUE_GAP
+        if right - left < KIT_ROW_VENUE_MIN_W:
+            return None
+        height = y2 - y1 - 4
+        venue = str(event.get("venue") or "").strip()
+        logo = self._kit_venue_logo(venue, (min(right - left, KIT_ROW_VENUE_MAX_W), height)) if venue else None
+        if logo is None and venue:
+            logo = self._kit_venue_icon(KIT_SPORT_VENUE_KINDS.get(spec.sport), min(height, KIT_VENUE_ICON_HEIGHT + 4))
+        if logo is None or logo.width > right - left:
+            return None
+        x = left + (right - left - logo.width) // 2
+        image.paste(logo, (x, y1 + (y2 - y1 - logo.height) // 2), logo)
+        return x, logo.width
 
     def _draw_kit_day_slot(self, draw, box, previous, slot, following, spec):
         """An upcoming game on a later day as a timeline stop. The day's first

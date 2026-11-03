@@ -562,7 +562,8 @@ class LowerWallRenderMixin:
             if not last:
                 draw.line((x1, y2, x2, y2), fill=COLORS["line"], width=1)
             return
-        self._draw_kit_scoreboard_row(image, draw, (x1 + WALL_TAG_WIDTH, y1, x2, y2), event, now, spec, last=True)
+        # Each game's venue sits in the room between its team names and its scores.
+        self._draw_kit_scoreboard_row(image, draw, (x1 + WALL_TAG_WIDTH, y1, x2, y2), event, now, spec, last=True, venue=True)
         if not last:
             draw.line((x1, y2, x2, y2), fill=COLORS["line"], width=1)
 

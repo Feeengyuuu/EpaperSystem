@@ -1859,3 +1859,68 @@ def test_a_final_on_the_scoreboard_reads_its_winner_in_emerald_and_its_loser_in_
     # The row's lines run from y 44 (SEA, 14) and 56 (DEN, 17); no box is drawn behind either.
     assert rows(LOSS_INK) and max(rows(LOSS_INK)) < 56 and rows(WIN_INK) and min(rows(WIN_INK)) >= 56
     assert not rows(DAY_COLORS["green"])
+
+
+def _venue_row_games():
+    games, now = _wall_games(16)
+    venues = ["Chase Center", "Madison Square Garden", "Nowhere Field", "", "Crypto.com Arena", "TD Garden"]
+    return [{**game, "event": {**game["event"], "venue": venues[index % len(venues)]}}
+            for index, game in enumerate(games)], now
+
+
+@pytest.mark.parametrize("colors", [DAY_COLORS, DEEP_NIGHT_COLORS], ids=["day", "night"])
+def test_wall_rows_set_each_venue_between_the_names_and_the_scores(monkeypatch, colors):
+    games, now = _venue_row_games()
+    placed, names = [], {}
+    original = SportsDashboard._draw_kit_row_live_venue
+
+    def spy(self, draw, image, box, event, spec, leader, offense):
+        result = original(self, draw, image, box, event, spec, leader, offense)
+        placed.append((event.get("venue"), result, box))
+        return result
+
+    monkeypatch.setattr(SportsDashboard, "_draw_kit_row_live_venue", spy)
+
+    def render(venue_on):
+        recorded = []
+        original_row = SportsDashboard._draw_kit_scoreboard_row
+
+        def row(self, image, draw, box, event, now_arg, spec, last=False, slot=None, venue=False):
+            return original_row(self, image, draw, box, event, now_arg, spec, last=last, slot=slot, venue=venue and venue_on)
+
+        monkeypatch.setattr(SportsDashboard, "_draw_kit_scoreboard_row", row)
+        plugin = _plugin()
+        plugin._draw_team_logo = lambda *_args, **_kwargs: None
+        original_text = plugin._draw_text_in_box
+        plugin._draw_text_in_box = lambda draw, box, text, *args, **kwargs: (recorded.append(str(text)),
+                                                                            original_text(draw, box, text, *args, **kwargs))
+        token = _ACTIVE_COLORS.set(colors)
+        try:
+            image = Image.new("RGB", (556, 268), COLORS["paper"])
+            plugin._draw_lower_live_wall(image, ImageDraw.Draw(image), (0, 0, 555, 267), games, now)
+        finally:
+            _ACTIVE_COLORS.reset(token)
+        return recorded
+
+    names["with"] = render(True)
+    names["without"] = render(False)
+    # The logos take only the room the names leave: every name reads as it did without them.
+    assert names["with"] == names["without"]
+    drawn = [(venue, result) for venue, result, _box in placed if result]
+    assert {"Chase Center", "Madison Square Garden"} <= {venue for venue, _result in drawn}
+    assert "" not in {venue for venue, _result in drawn}
+    # A ground without a logo reads as the sport's venue icon.
+    assert "Nowhere Field" in {venue for venue, _result in drawn}
+    for venue, (x, width), box in ((venue, result, box) for venue, result, box in placed if result):
+        assert box[0] < x and x + width <= box[2]
+
+
+def test_a_row_too_full_for_its_venue_keeps_the_names(monkeypatch):
+    plugin = _plugin()
+    spec = plugin._wall_spec("NBA")
+    event = {"state": "in", "venue": "Chase Center", "team_a": "Golden State Warriors", "team_b": "Phoenix Suns",
+             "team_a_code": "GS", "team_b_code": "PHX", "wins_a": 101, "wins_b": 99, "period": 4, "clock": "2:31"}
+    image = Image.new("RGB", (200, 26), (255, 255, 255))
+    assert plugin._draw_kit_row_live_venue(ImageDraw.Draw(image), image, (20, 0, 90, 25), event, spec, "a", "") is None
+    wide = Image.new("RGB", (400, 26), (255, 255, 255))
+    assert plugin._draw_kit_row_live_venue(ImageDraw.Draw(wide), wide, (20, 0, 380, 25), event, spec, "a", "") is not None
