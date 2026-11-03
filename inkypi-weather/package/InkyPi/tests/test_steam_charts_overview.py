@@ -148,8 +148,9 @@ def test_overview_draws_both_boards_with_totals_and_store_facts(monkeypatch):
 
     assert image.size == (800, 480) and image.getpixel((5, 5)) == (0, 0, 0)
     assert {"3563万", "5,979 在线", "+320%", "1,146,659", "峰值 1,274,983", "Valve · 动作 / 免费开玩"} <= set(drawn)
-    # Steam's own discount block, then the price; the record and the month's average.
-    assert {"-20%", "$15.99", "月均 80.8万"} <= set(drawn)
+    # Steam's own discount block, then the price (its dollar sign drawn apart in green); the
+    # record and the month's average.
+    assert {"-20%", "$", "15.99", "月均 80.8万"} <= set(drawn)
     assert any(text.startswith("181.8万") for text in drawn)
 
 
@@ -429,7 +430,9 @@ def test_rows_wear_metacritic_on_the_art_a_weekly_move_and_the_achievement_count
 
     image = plugin._render_live_overview((800, 480), [trending, top], {}, {"mode": "day"}, "")
 
-    assert {"MC 81", "MC 90", "54 成就", "周", "12", "当前 / 24h 峰值 ‧ 周榜升降"} <= set(drawn)
+    assert {"MC 81", "MC 90", "周", "12", "当前 / 24h 峰值 ‧ 周榜升降"} <= set(drawn)
+    # Behind the large price a tight row keeps the achievement count's figure by its gold star.
+    assert "54 成就" in drawn or "54" in drawn
     # The score sits on the art's top right corner in Metacritic's green.
     colours = {image.getpixel((x, y)) for x in range(90, 128) for y in range(97, 108)}
     assert overview_page.ACCENTS["day"]["up"] in colours

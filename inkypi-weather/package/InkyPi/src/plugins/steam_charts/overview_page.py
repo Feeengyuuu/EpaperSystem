@@ -448,20 +448,29 @@ class LiveOverviewMixin:
         and 30-day average."""
         x, y, right = box
         font = self._font(10)
+        text_y = y + 1
         if trending:
             price = str(store.get("price") or "")
             discount = store.get("discount")
+            # The price leads the line, large, on one baseline with Steam's own discount block;
+            # its dollar sign in the page's green like the deals page's price tags.
+            baseline = y + 14
             if discount:
                 label = f"-{discount}%"
-                block_font = self._font(10, "bold")
+                block_font = self._font(11, "bold")
                 width = draw.textlength(label, font=block_font) + 8
-                draw.rectangle((x, y, x + width, y + 15), fill=colors["up"])
-                draw.text((x + 4, y + 1), label, font=block_font, fill=colors["paper"])
-                x += width + 5
+                draw.rectangle((x, y - 2, x + width, y + 17), fill=colors["up"])
+                draw.text((x + 4, baseline - 1), label, font=block_font, fill=colors["paper"], anchor="ls")
+                x += width + 6
             if price:
-                price_font = self._font(11, "bold")
-                draw.text((x, y), price, font=price_font, fill=colors["ink"])
-                x += draw.textlength(price, font=price_font) + 10
+                price_font = self._font(16, "bold")
+                sign, figures = ("$", price[1:]) if price.startswith("$") else ("", price)
+                if sign:
+                    draw.text((x, baseline), sign, font=price_font, fill=colors["up"], anchor="ls")
+                    x += draw.textlength(sign, font=price_font) + 1
+                draw.text((x, baseline), figures, font=price_font, fill=colors["ink"], anchor="ls")
+                x += draw.textlength(figures, font=price_font) + 9
+            text_y = y + 4
             reviews = store.get("recommendations")
             parts = [("reviews", "ok", f"{wan(reviews)} 评测", colors["ink"])] if isinstance(reviews, int) and reviews else []
             # A new game's achievement count says how much there is to it; it goes before the reviews.
@@ -486,12 +495,18 @@ class LiveOverviewMixin:
                 parts.append(("achievements", "star", f"{store['achievements']} 成就", colors["ink"]))
         for name, fallback, text, colour in parts:
             text_w = draw.textlength(text, font=font) + (15 if name else 0)
+            # Behind a large price the achievement count keeps its figure and drops its word.
+            if x + text_w > right and name == "achievements":
+                text = text.split()[0]
+                text_w = draw.textlength(text, font=font) + 15
             if x + text_w > right:
                 break
             if name:
-                self._overview_icon(image, draw, name, fallback, (x, y + 2), 12, colour, colors)
+                # The achievement star is gold like a Steam achievement; its count stays in ink.
+                icon_colour = colors["gold"] if name == "achievements" else colour
+                self._overview_icon(image, draw, name, fallback, (x, text_y + 1), 12, icon_colour, colors)
                 x += 15
-            draw.text((x, y + 1), text, font=font, fill=colour)
+            draw.text((x, text_y), text, font=font, fill=colour)
             x += text_w - (15 if name else 0) + 10
 
     def _overview_spark(self, draw, box, values, colour, colors, base=None, mark_peak=False):
