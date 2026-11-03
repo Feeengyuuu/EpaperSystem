@@ -1,8 +1,9 @@
 """万象速览: one calm page of twelve small public feeds. A line of poetry heads it; the live sun and
 the month's Webb or Hubble picture stand on the left, DW 中文, 纽约时报中文网 and 少数派 headlines in
 the middle, the US public debt, California's gasoline price, the crypto Fear & Greed Index and
-yesterday's Wordle answer on the right, and a NetEase chart (soaring, new, original or hot songs, by
-the hour), Douban's films now showing and its American series along the foot.
+yesterday's Wordle answer on the right, and along the foot a NetEase chart's top songs with their
+album covers (soaring, new, original or hot, by the hour), and Douban's films now showing and its
+American series with their posters and ratings.
 
 Each feed keeps its own cache and freshness (sources.py): one that fails or runs late only hides its
 own card, and the rest of the page draws from what is at hand.
@@ -30,7 +31,8 @@ from . import render, sources
 
 logger = logging.getLogger(__name__)
 PLUGIN_ID = "daily_digest"
-CACHE_SCHEMA = 1
+# 2: the Douban lists carry their posters and NetEase is read chart by chart.
+CACHE_SCHEMA = 2
 CACHE_BUDGET = CacheBudget(21 * 86400, 32, 2 * 1024 * 1024)
 DEFAULT_FONT = "Microsoft YaHei"
 TASK_SECONDS = 50
@@ -56,6 +58,11 @@ SUN_PIXELS = (320, 320)
 SUN_BUDGET = CacheBudget(2 * 86400, 6, 2 * 1024 * 1024)
 SPACE_PIXELS = (480, 360)
 SPACE_BUDGET = CacheBudget(70 * 86400, 6, 2 * 1024 * 1024)
+# The foot's album covers (four charts' top three) and posters (two collections' first three), small:
+# they print about 64 px wide.
+COVER_PIXELS = (160, 160)
+POSTER_PIXELS = (160, 240)
+ART_BUDGET = CacheBudget(7 * 86400, 48, 4 * 1024 * 1024)
 
 
 def _checkpoint(context):
@@ -105,8 +112,10 @@ class DailyDigest(BasePlugin):
             "news": {name: load(f"news-{name}", "news", {"feed": name},
                                 lambda ctx, name=name: sources.fetch_news(name, ctx), sources.valid_items)
                      for name in sources.NEWS_FEEDS},
-            "music": load("music", "music", {"charts": sorted(sources.NETEASE_CHARTS)}, sources.fetch_music,
-                          sources.valid_music, timeout=10),
+            "music": {chart_id: load(f"music-{chart_id}", "music", {"chart": chart_id},
+                                     lambda ctx, chart_id=chart_id: sources.fetch_chart(chart_id, ctx),
+                                     sources.valid_chart)
+                      for chart_id in sources.NETEASE_CHARTS},
             "showing": load("douban-showing", "douban", {"collection": "showing"},
                             lambda ctx: sources.fetch_douban("showing", ctx), sources.valid_items),
             "us_tv": load("douban-us-tv", "douban", {"collection": "us_tv"},
@@ -122,7 +131,8 @@ class DailyDigest(BasePlugin):
             "wordle": load("wordle", "wordle", {"day": wordle_day},
                            lambda ctx: sources.fetch_wordle(wordle_day, ctx), sources.valid_wordle, timeout=5),
         }
-        results = [result for key, result in payload.items() if key != "news"] + list(payload["news"].values())
+        results = [result for key, result in payload.items() if key not in ("news", "music")]
+        results += [*payload["news"].values(), *payload["music"].values()]
         payload["provenance"] = combined_provenance(results)
         return payload
 
@@ -140,8 +150,25 @@ class DailyDigest(BasePlugin):
                 return found[url], stamp
         return None, None
 
-    def _images(self, payload, today, now_epoch, *, allow_network, context):
+    def _art(self, payload, now, *, allow_network, options):
+        """The album covers and posters along the foot, the chart shown this hour first: {url: picture}.
+        One that does not load only leaves its song or title without a picture."""
+        shown = render.music_chart(payload["music"], now)
+        charts = [shown] + [data for data in render.music_charts(payload["music"]) if data is not shown]
+        covers = [track.get("cover") for data in charts if data for track in data["tracks"]]
+        posters = [item.get("poster") for key in ("showing", "us_tv")
+                   for item in ((payload[key].get("data") or {}).get("items") or [])[:render.MEDIA_ROWS]]
+        directory = self._cache_subdir("art")
+        art = load_thumbnails([url for url in covers if url], directory, cached_only=not allow_network,
+                              size=COVER_PIXELS, budget=ART_BUDGET, safe_url=sources.safe_music_image, **options)
+        art.update(load_thumbnails([url for url in posters if url], directory, cached_only=not allow_network,
+                                   size=POSTER_PIXELS, budget=ART_BUDGET, safe_url=sources.safe_douban_image,
+                                   headers={"Referer": sources.DOUBAN_REFERER}, **options))
+        return art
+
+    def _images(self, payload, now, now_epoch, *, allow_network, context):
         options = {"http": get_http_client(), "context": context, "user_agent": sources.USER_AGENT}
+        today = now.date()
         images = {}
         sun, stamp = self._sun(now_epoch, allow_network=allow_network, context=context, options=options)
         if sun is not None:
@@ -155,6 +182,7 @@ class DailyDigest(BasePlugin):
             if picture["image"] in found:
                 images["space"] = found[picture["image"]]
         payload["space"] = {"name": name, **(picture or {})} if picture else None
+        images.update(self._art(payload, now, allow_network=allow_network, options=options))
         return images
 
     def render_cached_display(self, settings, device_config, *, resolved_theme_context):
@@ -172,7 +200,7 @@ class DailyDigest(BasePlugin):
         now = sources.local_now(zone=self._zone(device_config))
         _checkpoint(context)
         payload = self._payload(settings, now, allow_network=not cache_only, context=context)
-        images = self._images(payload, now.date(), time.time(), allow_network=not cache_only, context=context)
+        images = self._images(payload, now, time.time(), allow_network=not cache_only, context=context)
         _checkpoint(context)
         try:
             image = render.render_page(self.get_dimensions(device_config), payload, settings, now, images)

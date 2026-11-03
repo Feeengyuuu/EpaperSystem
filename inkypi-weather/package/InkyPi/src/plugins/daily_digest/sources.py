@@ -1,11 +1,13 @@
 """万象速览's sources: twelve small keyless feeds, each fetched and cached on its own.
 
 - 一言 (v1.hitokoto.cn, category i): a line of classical poetry, its work and poet.
-- NetEase Cloud Music's chart summary (music.163.com/api/toplist/detail): the soaring, new, original
-  and hot charts with their top three songs. The full playlists run to 600 KB; the summary is 94 KB.
+- NetEase Cloud Music's soaring, new, original and hot charts: each chart's top three songs with their
+  album covers, from its playlist detail cut to three tracks (music.163.com/api/v6/playlist/detail,
+  n=3, 26 KB; the full playlists run to 600 KB and the chart summary, 94 KB, names the songs only).
+  The covers come from NetEase's image CDN at 200 px (?param=200y200, about 8 KB each).
 - Douban's mobile collections (m.douban.com/rexxar): films now showing in Chinese cinemas and the
-  American series people are watching, with their Douban ratings. Douban answers only with its own
-  mobile page as the Referer.
+  American series people are watching, with their Douban ratings and posters (the 270 px copies,
+  about 17 KB each). Douban and its image CDN answer only with its own mobile page as the Referer.
 - Headlines from DW 中文 (rss.dw.com), 纽约时报中文网 (cn.nytimes.com) and 少数派 (sspai.com).
 - EIA's weekly California retail prices (the dnav table page, 19 KB): regular gasoline's last six
   weeks. EIA's keyless download of the series is an Excel file; this page is the same series as HTML.
@@ -40,12 +42,18 @@ REQUEST_TIMEOUT = (3, 10)
 HITOKOTO = "https://v1.hitokoto.cn/"
 # A line longer than this does not fit the header beside the title.
 POEM_MAX_LENGTH = 24
-NETEASE_TOPLISTS = "https://music.163.com/api/toplist/detail"
+NETEASE_PLAYLIST = "https://music.163.com/api/v6/playlist/detail"
+NETEASE_REFERER = "https://music.163.com/"
 # The charts the page reads, by their ids: soaring, new, original, hot.
 NETEASE_CHARTS = {19723756: "飙升榜", 3779629: "新歌榜", 2884035: "原创榜", 3778678: "热歌榜"}
+MUSIC_IMAGE_HOST = re.compile(r"^p\d+\.music\.126\.net$")
+MUSIC_COVER_SIZE = "200y200"
 DOUBAN = "https://m.douban.com/rexxar/api/v2/subject_collection/{collection}/items"
 DOUBAN_REFERER = "https://m.douban.com/movie/"
 DOUBAN_COLLECTIONS = {"showing": "movie_showing", "us_tv": "tv_american"}
+DOUBAN_IMAGE_HOST = re.compile(r"^img\d+\.doubanio\.com$")
+# Douban's posters come in s_ (270 px wide), m_ and l_ copies.
+DOUBAN_POSTER_SIZE = "s_ratio_poster"
 NEWS_FEEDS = {"dw": "https://rss.dw.com/rdf/rss-chi-all", "nyt": "https://cn.nytimes.com/rss/",
               "sspai": "https://sspai.com/feed"}
 EIA_CALIFORNIA = "https://www.eia.gov/dnav/pet/pet_pri_gnd_dcus_sca_w.htm"
@@ -151,32 +159,68 @@ def valid_poem(data):
 
 # --- NetEase Cloud Music -------------------------------------------------------------------------
 
-def normalize_music(payload):
-    charts = []
-    lists = {item.get("id"): item for item in (payload or {}).get("list") or [] if isinstance(item, dict)}
-    for chart_id, name in NETEASE_CHARTS.items():
-        item = lists.get(chart_id)
-        if not item:
+def safe_music_image(value):
+    url = str(value or "").strip()
+    parts = urlsplit(url)
+    if parts.scheme != "https" or not MUSIC_IMAGE_HOST.match(parts.hostname or ""):
+        return None
+    return url
+
+
+def music_cover(value):
+    """An album cover's 200 px copy over https, or None for a picture off NetEase's image CDN."""
+    url = str(value or "").strip().split("?")[0]
+    if url.startswith("http://"):
+        url = "https://" + url[len("http://"):]
+    return safe_music_image(f"{url}?param={MUSIC_COVER_SIZE}" if url else "")
+
+
+def normalize_chart(payload, chart_id):
+    """One NetEase chart: its name, when it was last updated, its top songs with artists and covers."""
+    playlist = (payload or {}).get("playlist") if isinstance(payload, dict) else None
+    if not isinstance(playlist, dict):
+        raise ValueError("NetEase returned no playlist")
+    tracks = []
+    for raw in playlist.get("tracks") or []:
+        if not isinstance(raw, dict) or not raw.get("name"):
             continue
-        tracks = [{"title": _clean(track.get("first"), 60), "artist": _clean(track.get("second"), 60)}
-                  for track in item.get("tracks") or [] if isinstance(track, dict) and track.get("first")]
-        if tracks:
-            charts.append({"id": chart_id, "name": name, "update": _clean(item.get("updateFrequency"), 12),
-                           "tracks": tracks[:TRACKS]})
-    if not charts:
-        raise ValueError("NetEase returned no charts")
-    return {"charts": charts}
+        artists = "/".join(_clean(artist.get("name"), 30) for artist in raw.get("ar") or []
+                           if isinstance(artist, dict) and artist.get("name"))
+        tracks.append({"title": _clean(raw.get("name"), 60), "artist": artists[:60],
+                       "cover": music_cover((raw.get("al") or {}).get("picUrl"))})
+    if not tracks:
+        raise ValueError("NetEase chart lists no songs")
+    stamp = _number(playlist.get("updateTime"))
+    updated = datetime.fromtimestamp(stamp / 1000, timezone.utc).isoformat() if stamp else ""
+    return {"id": int(chart_id), "name": NETEASE_CHARTS.get(int(chart_id), _clean(playlist.get("name"), 12)),
+            "updated": updated, "tracks": tracks[:TRACKS]}
 
 
-def fetch_music(context):
-    return normalize_music(_get(NETEASE_TOPLISTS, context, headers={"Referer": "https://music.163.com/"}))
+def fetch_chart(chart_id, context):
+    payload = _get(NETEASE_PLAYLIST, context, params={"id": int(chart_id), "n": TRACKS, "s": 0},
+                   headers={"Referer": NETEASE_REFERER})
+    return normalize_chart(payload, chart_id)
 
 
-def valid_music(data):
-    return isinstance(data, dict) and bool(data.get("charts"))
+def valid_chart(data):
+    return isinstance(data, dict) and bool(data.get("tracks"))
 
 
 # --- Douban ----------------------------------------------------------------------------------------
+
+def safe_douban_image(value):
+    url = str(value or "").strip()
+    parts = urlsplit(url)
+    if parts.scheme != "https" or not DOUBAN_IMAGE_HOST.match(parts.hostname or ""):
+        return None
+    return url
+
+
+def douban_poster(value):
+    """A poster's 270 px copy (Douban's s_ratio_poster), or None for a picture off its image CDN."""
+    url = re.sub(r"/view/photo/[a-z]_ratio_poster/", f"/view/photo/{DOUBAN_POSTER_SIZE}/", str(value or "").strip())
+    return safe_douban_image(url)
+
 
 def normalize_douban(payload):
     items = []
@@ -186,9 +230,10 @@ def normalize_douban(payload):
         rating = _number((raw.get("rating") or {}).get("value"))
         # "2026 / 美国 / 剧情 惊悚 / director / cast": the year, countries and genres.
         parts = [part.strip() for part in simplified(raw.get("card_subtitle")).split("/")]
+        picture = (raw.get("cover") or {}).get("url") or (raw.get("pic") or {}).get("normal")
         items.append({"title": _clean(raw.get("title"), 40), "rating": rating if rating and rating > 0 else None,
                       "year": _clean(raw.get("year"), 4), "region": parts[1].split(" ")[0] if len(parts) > 1 else "",
-                      "genres": parts[2].split(" ")[:2] if len(parts) > 2 else []})
+                      "genres": parts[2].split(" ")[:2] if len(parts) > 2 else [], "poster": douban_poster(picture)})
     if not items:
         raise ValueError("Douban returned no titles")
     return {"items": items[:MEDIA_ITEMS]}

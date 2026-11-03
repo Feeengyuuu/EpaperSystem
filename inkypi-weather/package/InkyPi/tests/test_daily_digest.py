@@ -20,18 +20,21 @@ from utils.page_canvas import PageCanvas  # noqa: E402
 NOW = datetime(2026, 11, 2, 16, 30, tzinfo=sources.PACIFIC)
 LRM = chr(0x200E)
 
-TOPLISTS = {"code": 200, "list": [
-    {"id": 19723756, "name": "飙升榜", "updateFrequency": "每天更新",
-     "tracks": [{"first": "Hong Kong (feat. 王菲)", "second": "The Weeknd"}, {"first": "无 意", "second": "加木"},
-                {"first": "新生活", "second": "王齐铭"}, {"first": "第四首", "second": "不显示"}]},
-    {"id": 3779629, "name": "新歌榜", "updateFrequency": "每天更新", "tracks": [{"first": "一张相片", "second": "连麻"}]},
-    {"id": 71384707, "name": "古典榜", "tracks": [{"first": "不读", "second": "x"}]},
-    {"id": 3778678, "name": "热歌榜", "updateFrequency": "每天更新", "tracks": []},
-]}
+COVER = "http://p2.music.126.net/ucdEaYKU_dL0U2ae-wSRCQ==/109951174184824841.jpg"
+SOARING = {"code": 200, "playlist": {"id": 19723756, "name": "飙升榜", "updateTime": 1793666229302, "tracks": [
+    {"id": 306675, "name": "明年依然好时节", "ar": [{"name": "许飞"}], "al": {"picUrl": COVER}},
+    {"id": 3448738711, "name": "无 意", "ar": [{"name": "加木"}, {"name": "Demxntia"}],
+     "al": {"picUrl": "https://evil.example/cover.jpg"}},
+    {"id": 3451003254, "name": "宝船", "ar": [{"name": "DOUDOU"}], "al": {}},
+    {"id": 1, "name": "第四首", "ar": [], "al": {"picUrl": COVER}},
+]}}
+POSTER = "https://img9.doubanio.com/view/photo/m_ratio_poster/public/p2935834896.jpg"
 SHOWING = {"subject_collection_items": [
-    {"title": "生日快乐", "rating": {"value": 8.9}, "year": "2025", "card_subtitle": "2025 / 埃及 / 剧情 / 萨拉 / 朵哈"},
+    {"title": "生日快乐", "rating": {"value": 8.9}, "year": "2025", "card_subtitle": "2025 / 埃及 / 剧情 / 萨拉 / 朵哈",
+     "cover": {"url": POSTER}},
     {"title": f"神探之痕迹{LRM}", "rating": {"value": 6.7}, "year": "2026",
-     "card_subtitle": "2026 / 中国大陆 中国香港 / 犯罪 惊悚 悬疑 / 陈思诚 / 张译"},
+     "card_subtitle": "2026 / 中国大陆 中国香港 / 犯罪 惊悚 悬疑 / 陈思诚 / 张译",
+     "pic": {"normal": "https://evil.example/poster.jpg"}},
     {"title": "三星堆：未来往事", "rating": None, "year": "2026", "card_subtitle": "2026 / 中国大陆 / 科幻 动画 / 越明"},
 ]}
 RSS = """<?xml version="1.0" encoding="utf-8"?><rss version="2.0"><channel><title>纽约时报中文网</title>
@@ -94,24 +97,56 @@ def test_a_poem_reads_in_simplified_chinese_with_its_work_and_poet():
         sources.normalize_poem({"hitokoto": "  "})
 
 
-def test_netease_keeps_its_four_charts_top_three_each():
-    music = sources.normalize_music(TOPLISTS)
+def test_a_netease_chart_keeps_its_top_three_with_their_album_covers():
+    chart = sources.normalize_chart(SOARING, 19723756)
 
-    assert [chart["name"] for chart in music["charts"]] == ["飙升榜", "新歌榜"]  # 热歌榜 listed no tracks today
-    assert music["charts"][0]["tracks"] == [{"title": "Hong Kong (feat. 王菲)", "artist": "The Weeknd"},
-                                            {"title": "无 意", "artist": "加木"}, {"title": "新生活", "artist": "王齐铭"}]
-    # The charts take turns by the hour.
-    assert [render.music_chart(music, NOW.replace(hour=hour))["name"] for hour in (16, 17)] == ["飙升榜", "新歌榜"]
+    assert (chart["id"], chart["name"]) == (19723756, "飙升榜")
+    assert chart["updated"].startswith("2026-11-03T")
+    # Covers come over https at their 200 px size; one off NetEase's image CDN is dropped, the song kept.
+    assert chart["tracks"] == [
+        {"title": "明年依然好时节", "artist": "许飞",
+         "cover": "https://p2.music.126.net/ucdEaYKU_dL0U2ae-wSRCQ==/109951174184824841.jpg?param=200y200"},
+        {"title": "无 意", "artist": "加木/Demxntia", "cover": None},
+        {"title": "宝船", "artist": "DOUDOU", "cover": None}]
+    assert sources.safe_music_image("https://p1.music.126.net.evil.example/x.jpg") is None
     with pytest.raises(ValueError):
-        sources.normalize_music({"list": [{"id": 1, "tracks": [{"first": "x"}]}]})
+        sources.normalize_chart({"code": 200, "playlist": {"tracks": []}}, 19723756)
+
+
+def test_the_charts_take_turns_by_the_hour_and_a_failed_one_gives_way():
+    soaring = {"data": sources.normalize_chart(SOARING, 19723756)}
+    new = {"data": {**soaring["data"], "id": 3779629, "name": "新歌榜"}}
+    music = {19723756: soaring, 3779629: new, 2884035: {"data": {}}, 3778678: {"data": {}}}
+
+    assert [render.music_chart(music, NOW.replace(hour=hour))["name"] for hour in (16, 17, 18)] == [
+        "飙升榜", "新歌榜", "飙升榜"]
+    assert render.music_chart({}, NOW) is None
+
+
+def test_netease_reads_each_chart_cut_to_three_songs(monkeypatch):
+    seen = {}
+
+    class Client:
+        def request_json(self, method, url, **kwargs):
+            seen.update(url=url, **kwargs)
+            return SimpleNamespace(data=SOARING)
+
+    monkeypatch.setattr(sources, "get_http_client", Client)
+
+    assert len(sources.fetch_chart(19723756, _context())["tracks"]) == 3
+    assert seen["url"] == "https://music.163.com/api/v6/playlist/detail"
+    assert seen["params"] == {"id": 19723756, "n": 3, "s": 0}
 
 
 def test_douban_reads_ratings_regions_and_genres_without_format_marks():
     items = sources.normalize_douban(SHOWING)["items"]
 
-    assert items[0] == {"title": "生日快乐", "rating": 8.9, "year": "2025", "region": "埃及", "genres": ["剧情"]}
+    assert items[0] == {"title": "生日快乐", "rating": 8.9, "year": "2025", "region": "埃及", "genres": ["剧情"],
+                        "poster": "https://img9.doubanio.com/view/photo/s_ratio_poster/public/p2935834896.jpg"}
     assert items[1]["title"] == "神探之痕迹" and items[1]["region"] == "中国大陆" and items[1]["genres"] == ["犯罪", "惊悚"]
     assert items[2]["rating"] is None
+    # A poster off Douban's image CDN, or none at all, leaves the title without one.
+    assert items[1]["poster"] is None and items[2]["poster"] is None
     with pytest.raises(ValueError):
         sources.normalize_douban({"subject_collection_items": []})
 
@@ -232,7 +267,8 @@ def _fake_fetchers(monkeypatch, failing=()):
     news = {"items": [{"title": "头条", "time": "2026-11-02T22:00:00+00:00"}]}
     monkeypatch.setattr(sources, "fetch_poem", fake("poem", {"text": "水是眼波横，山是眉峰聚。", "work": "卜算子", "author": "王观"}))
     monkeypatch.setattr(sources, "fetch_news", fake("news", news))
-    monkeypatch.setattr(sources, "fetch_music", fake("music", sources.normalize_music(TOPLISTS)))
+    monkeypatch.setattr(sources, "fetch_chart", lambda chart_id, ctx: fake("chart", {
+        **sources.normalize_chart(SOARING, 19723756), "id": chart_id, "name": sources.NETEASE_CHARTS[chart_id]})())
     monkeypatch.setattr(sources, "fetch_douban", fake("douban", sources.normalize_douban(SHOWING)))
     monkeypatch.setattr(sources, "fetch_gas", fake("gas", sources.normalize_gas(EIA_PAGE)))
     monkeypatch.setattr(sources, "fetch_space", lambda name, ctx: fake("space", sources.normalize_space(
@@ -245,18 +281,19 @@ def _fake_fetchers(monkeypatch, failing=()):
 
 def test_a_failing_source_only_loses_its_own_card(monkeypatch, tmp_path):
     monkeypatch.setenv("DAILY_DIGEST_CACHE_DIR", str(tmp_path))
-    _fake_fetchers(monkeypatch, failing={"gas", "music"})
+    _fake_fetchers(monkeypatch, failing={"gas", "chart"})
 
     payload = DailyDigest({"id": "daily_digest"})._payload({}, NOW, allow_network=True, context=_context())
 
-    assert payload["gas"]["state"] == "unavailable" and payload["music"]["state"] == "unavailable"
+    assert payload["gas"]["state"] == "unavailable"
+    assert {result["state"] for result in payload["music"].values()} == {"unavailable"}
     assert payload["debt"]["state"] == "live" and payload["news"]["dw"]["state"] == "live"
     assert payload["wordle"]["data"]["solution"] == "VIPER"
     drawn = []
     monkeypatch.setattr(render, "TILE_DRAWERS", tuple((key, lambda *args, key=key: drawn.append(key))
                                                       for key, _draw in render.TILE_DRAWERS))
     monkeypatch.setattr(render, "_music_panel", lambda *args: drawn.append("music"))
-    monkeypatch.setattr(render, "_douban_panel", lambda canvas, night, box, items, title: drawn.append(title))
+    monkeypatch.setattr(render, "_douban_panel", lambda canvas, night, box, items, title, images: drawn.append(title))
     page = render.render_page((800, 480), payload, {}, NOW, {})
     assert page.size == (800, 480)
     # Gasoline's tile and NetEase's panel are left out; the rest close up.
@@ -308,6 +345,36 @@ def test_the_sun_is_fetched_once_a_slot_and_an_earlier_copy_stands_in(monkeypatc
     assert sources.safe_sun_image("https://example.com/latest_512_0193.jpg") is None
 
 
+class _HeaderClient(_PictureClient):
+    def __init__(self):
+        super().__init__()
+        self.headers = {}
+
+    def request_bytes(self, method, url, **kwargs):
+        self.headers[url] = kwargs.get("headers") or {}
+        return super().request_bytes(method, url, **kwargs)
+
+
+def test_the_foot_fetches_covers_and_posters_douban_with_its_referer(monkeypatch, tmp_path):
+    monkeypatch.setenv("DAILY_DIGEST_CACHE_DIR", str(tmp_path))
+    client = _HeaderClient()
+    plugin = DailyDigest({"id": "daily_digest"})
+    chart = sources.normalize_chart(SOARING, 19723756)
+    payload = {"music": {19723756: {"data": chart}}, "showing": {"data": sources.normalize_douban(SHOWING)},
+               "us_tv": {"data": {}}}
+    options = {"http": client, "context": _context(), "user_agent": sources.USER_AGENT}
+
+    art = plugin._art(payload, NOW, allow_network=True, options=options)
+
+    cover, poster = chart["tracks"][0]["cover"], sources.douban_poster(POSTER)
+    assert set(art) == {cover, poster} and client.urls == [cover, poster]
+    assert client.headers[poster]["Referer"] == "https://m.douban.com/movie/"
+    assert "Referer" not in client.headers[cover]
+    # A redraw without the network finds them cached.
+    assert set(plugin._art(payload, NOW, allow_network=False, options=options)) == {cover, poster}
+    assert len(client.urls) == 2
+
+
 def _full_payload():
     news = {name: {"data": {"items": [
         {"title": f"{label}的第{index}条新闻标题，写得相当长以便测试换行与省略号的处理是否越界", "time": "2026-11-02T22:00:00+00:00"}
@@ -318,7 +385,7 @@ def _full_payload():
         "poem": {"data": {"text": "对岸流莺闲不住，长歌戴月到江东，还要再长一点看看会不会越过日期", "work": "浪淘沙·飞云湖月夜·加长的出处名字",
                           "author": "徐清"}},
         "news": news,
-        "music": {"data": sources.normalize_music(TOPLISTS)},
+        "music": {19723756: {"data": sources.normalize_chart(SOARING, 19723756)}},
         "showing": {"data": long_douban},
         "us_tv": {"data": sources.normalize_douban(SHOWING)},
         "gas": {"data": sources.normalize_gas(EIA_PAGE)},
@@ -331,8 +398,13 @@ def _full_payload():
     }
 
 
+COVER_URL = "https://p2.music.126.net/ucdEaYKU_dL0U2ae-wSRCQ==/109951174184824841.jpg?param=200y200"
+POSTER_URL = "https://img9.doubanio.com/view/photo/s_ratio_poster/public/p2935834896.jpg"
+
+
 def _images():
-    return {"space": Image.new("RGB", (700, 500), (30, 40, 90)), "sun": Image.new("RGB", (320, 320), (200, 120, 30))}
+    return {"space": Image.new("RGB", (700, 500), (30, 40, 90)), "sun": Image.new("RGB", (320, 320), (200, 120, 30)),
+            COVER_URL: Image.new("RGB", (160, 160), (10, 200, 220)), POSTER_URL: Image.new("RGB", (160, 240), (240, 0, 160))}
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])
@@ -343,13 +415,35 @@ def test_the_page_draws_every_card_by_day_and_night(mode):
     paper = (0, 0, 0) if mode == "night" else (255, 255, 255)
     # Each kind's colour band runs along its card's top.
     colours = {kind: (night if mode == "night" else day) for kind, (day, night) in render.KINDS.items()}
-    for kind, (x, y) in {"天象": (100, 66), "世界": (360, 66), "数字": (580, 66), "游戏": (720, 66 + 149),
-                         "影音": (400, 364)}.items():
+    tile_height = (render.GRID_BOTTOM - render.BODY_TOP - render.TILE_GAP) // 2
+    for kind, (x, y) in {"天象": (100, 66), "世界": (360, 66), "数字": (580, 66),
+                         "游戏": (720, render.BODY_TOP + tile_height + render.TILE_GAP + 2),
+                         "影音": (400, render.MEDIA[1] + 2)}.items():
         assert page.getpixel((x, y)) == colours[kind], kind
     # The month's picture is feathered into the page: its centre is the picture, its corner the paper.
     assert page.getpixel((107, 125)) == (30, 40, 90)
     assert max(abs(a - b) for a, b in zip(page.getpixel((12, 70)), paper)) <= 2
+    # The foot shows the album cover and the poster big enough to make out, with no frame round them.
+    cover = sum(1 for pixel in page.crop(render.MEDIA).get_flattened_data() if pixel == (10, 200, 220))
+    poster = sum(1 for pixel in page.crop(render.MEDIA).get_flattened_data() if pixel == (240, 0, 160))
+    assert cover > 60 * 60 and poster > 55 * 85
     assert render.render_page((400, 240), _full_payload(), {"themeMode": mode}, NOW, _images()).size == (400, 240)
+
+
+def test_a_missing_picture_keeps_its_song_or_title(monkeypatch):
+    shown = []
+    original = PageCanvas.text
+
+    def text(self, xy, value, *args, **kwargs):
+        shown.append(value)
+        return original(self, xy, value, *args, **kwargs)
+
+    monkeypatch.setattr(PageCanvas, "text", text)
+    images = {key: picture for key, picture in _images().items() if key not in (COVER_URL, POSTER_URL)}
+
+    render.render_page((800, 480), _full_payload(), {}, NOW, images)
+
+    assert "明年依然好时节" in shown and "生日快乐" in shown and "8.9" in shown
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])

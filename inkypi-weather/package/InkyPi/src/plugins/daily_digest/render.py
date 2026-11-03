@@ -10,8 +10,9 @@ its top (titles and small text stay pure ink):
 - 数字 (emerald), right, a 2 x 2 of tiles: the US public debt with its day's change and who holds
   it; California's regular gasoline with its weekly change and six weeks' line; the crypto Fear &
   Greed Index on a half dial with its last seven days. 游戏 (violet): yesterday's Wordle answer.
-- 影音 (crimson), the foot: a NetEase chart's top three (soaring, new, original and hot songs take
-  turns by the hour), Douban's films now showing and its American series, with their ratings.
+- 影音 (crimson), the foot: a NetEase chart's top three with their album covers (soaring, new,
+  original and hot songs take turns by the hour), and the first three of Douban's films now showing
+  and of its American series, as posters with their ratings.
 
 Each card names its source by the official logo. A feed with nothing at hand leaves its card out
 and the cards beside it take the room.
@@ -62,8 +63,9 @@ NIGHT_LOGOS = {"dw": "invert"}
 
 HEADER_RULE = 56
 BODY_TOP = 64
-GRID_BOTTOM = 354
-MEDIA = (10, 362, 790, 472)
+GRID_BOTTOM = 314
+# The foot is tall enough for album covers and posters people can make out on the panel.
+MEDIA = (10, 322, 790, 474)
 # The 天象 and 数字 columns keep these widths; the headlines take the rest between them.
 SKY = (10, BODY_TOP, 204, GRID_BOTTOM)
 TILES = (518, BODY_TOP, 790, GRID_BOTTOM)
@@ -71,15 +73,22 @@ TILE_GAP = 8
 BAND = 5
 RADIUS = 6
 # The month's picture on the 天象 card, and the sun beneath it.
-SPACE_HEIGHT = 112
+SPACE_HEIGHT = 90
 SPACE_FEATHER = 10
-SUN_SIZE = 128
+SUN_SIZE = 106
 # SDO's disk reaches this share of its picture's half-width; past it the corona fades out, and past
 # SUN_CROP nothing is kept (the caption SDO prints along the bottom-left corner starts at 0.93).
 SUN_DISK = 0.78
 SUN_CROP = 0.9
 # By day the corona's colours are lifted this much (the disk keeps its own).
 CORONA_LIFT = 1.9
+# The foot's pictures: where they start below each panel's heading, the room between them, their
+# corners and the rank discs on them.
+ART_TOP = 24
+ART_GAP = 10
+ART_RADIUS = 5
+RANK_SIZE = 17
+NETEASE_ORDER = (19723756, 3779629, 2884035, 3778678)
 NEWS_SIZE = 13
 NEWS_LINE = 18
 NEWS_HEAD = 22
@@ -253,12 +262,12 @@ def _sky(canvas, night, box, payload, images):
         size = SUN_SIZE
         disc = sun_disc(sun, size, night=night)
         canvas.image.paste(disc, (left, bottom - size + 2), disc)
-        text_x = left + size - 2
-        canvas.text((text_x, bottom - 92), "太阳此刻", 13, anchor="lm")
-        canvas.text((text_x, bottom - 74), "SDO 193Å", 11, "muted", anchor="lm", bold=False)
+        text_x, middle = left + size - 2, bottom - size / 2 + 2
+        canvas.text((text_x, middle - 22), "太阳此刻", 13, anchor="lm")
+        canvas.text((text_x, middle - 4), "SDO 193Å", 11, "muted", anchor="lm", bold=False)
         if taken:
-            canvas.text((text_x, bottom - 58), taken, 11, "muted", anchor="lm", bold=False)
-        _paste_logo(canvas, night, "sdo", right - 6, bottom - 20, 26, right=True)
+            canvas.text((text_x, middle + 12), taken, 11, "muted", anchor="lm", bold=False)
+        _paste_logo(canvas, night, "sdo", right - 6, bottom - 18, 24, right=True)
         return
     size = min(right - left - 8, bottom - top - BAND - 56)
     disc = sun_disc(sun, size, night=night)
@@ -368,22 +377,22 @@ def _debt_tile(canvas, night, box, debt):
     left, top, right, bottom = box
     _tile_head(canvas, night, box, "数字", "treasury", "美国国债", note=short_date(debt.get("date")))
     total = debt["total"]
-    _figure(canvas, left + 8, top + 62, f"{total / 1e12:.2f}", "万亿", right - left - 56)
+    _figure(canvas, left + 8, top + 56, f"{total / 1e12:.2f}", "万亿", right - left - 56)
     previous = debt.get("previous_total")
     if previous:
         change = total - previous
         sign = "+" if change >= 0 else "−"
-        _change(canvas, left + 8, top + 82, change, f"{sign}{money_text(abs(change))[1:]}", rising_is_good=False)
-        canvas.text((right - 8, top + 82), "日变化", 10, "muted", anchor="rm", bold=False)
+        _change(canvas, left + 8, top + 74, change, f"{sign}{money_text(abs(change))[1:]}", rising_is_good=False)
+        canvas.text((right - 8, top + 74), "日变化", 10, "muted", anchor="rm", bold=False)
     public, intragov = debt.get("public"), debt.get("intragov")
     if public and intragov:
         # Who holds it: the public's share and the government's own accounts', as one split bar.
-        bar_top, bar_left, bar_right = top + 100, left + 8, right - 8
+        bar_top, bar_left, bar_right = top + 87, left + 8, right - 8
         split = bar_left + (bar_right - bar_left) * public / (public + intragov)
         canvas.draw.rounded_rectangle((bar_left, bar_top, bar_right, bar_top + 7), radius=3, fill=canvas.color("track"))
         canvas.draw.rounded_rectangle((bar_left, bar_top, split, bar_top + 7), radius=3, fill=canvas.color("数字"))
-        canvas.text((bar_left, bar_top + 20), f"公众 {public / 1e12:.1f}", 10, anchor="lm", bold=False)
-        canvas.text((bar_right, bar_top + 20), f"政府间 {intragov / 1e12:.1f}", 10, "muted", anchor="rm", bold=False)
+        canvas.text((bar_left, bar_top + 19), f"公众 {public / 1e12:.1f}", 10, anchor="lm", bold=False)
+        canvas.text((bar_right, bar_top + 19), f"政府间 {intragov / 1e12:.1f}", 10, "muted", anchor="rm", bold=False)
 
 
 def sparkline(canvas, box, values, tone):
@@ -405,13 +414,13 @@ def _gas_tile(canvas, night, box, gas):
     weeks = gas["weeks"]
     _tile_head(canvas, night, box, "数字", "eia", "加州汽油", note=short_date(weeks[-1]["week"]))
     price = weeks[-1]["price"]
-    _figure(canvas, left + 8, top + 62, f"{price:.3f}", "/加仑", right - left - 64)
+    _figure(canvas, left + 8, top + 56, f"{price:.3f}", "/加仑", right - left - 64)
     change = price - weeks[-2]["price"]
     tone = "flat" if abs(change) < 1e-9 else ("up" if change < 0 else "down")
-    _change(canvas, left + 8, top + 82, change, f"{abs(change):.3f}", rising_is_good=False)
-    canvas.text((right - 8, top + 82), "较上周", 10, "muted", anchor="rm", bold=False)
+    _change(canvas, left + 8, top + 74, change, f"{abs(change):.3f}", rising_is_good=False)
+    canvas.text((right - 8, top + 74), "较上周", 10, "muted", anchor="rm", bold=False)
     # The weeks EIA's page lists (six), the latest dot in its change's colour.
-    sparkline(canvas, (left + 12, top + 98, right - 14, bottom - 12), [week["price"] for week in weeks], tone)
+    sparkline(canvas, (left + 12, top + 88, right - 14, bottom - 10), [week["price"] for week in weeks], tone)
 
 
 def fear_greed_band(value):
@@ -433,7 +442,7 @@ def _fear_greed_tile(canvas, night, box, fear_greed):
     _tile_head(canvas, night, box, "数字", "alternative_me", "加密恐惧贪婪", 16)
     colours = [colour[1] if night else colour[0] for colour in FEAR_GREED_COLOURS]
     band = fear_greed_band(today["value"])
-    centre, radius = ((left + right) / 2, top + 84), 44
+    centre, radius = ((left + right) / 2, top + 76), 40
     arc = (centre[0] - radius, centre[1] - radius, centre[0] + radius, centre[1] + radius)
     for colour, start, end in zip(colours, FEAR_GREED_EDGES, FEAR_GREED_EDGES[1:]):
         canvas.draw.arc(arc, 180 + 180 * start / 100 + 1, 180 + 180 * end / 100 - 1, fill=colour, width=9)
@@ -445,13 +454,13 @@ def _fear_greed_tile(canvas, night, box, fear_greed):
     pill_w = canvas.width(name, 11) + 12
     row_w = canvas.width(value, 20) + 5 + pill_w
     x = centre[0] - row_w / 2
-    middle = centre[1] + 15
+    middle = centre[1] + 13
     x += canvas.text((x, middle), value, 20, anchor="lm") + 5
     canvas.draw.rounded_rectangle((x, middle - 8, x + pill_w, middle + 8), radius=8, fill=colours[band])
     canvas.text((x + pill_w / 2, middle), name, 11, (255, 255, 255) if not night else (0, 0, 0), anchor="mm")
     # The last seven days, oldest at the left, each dot in its band's colour.
     history = list(reversed(days[:7]))
-    dots_y = bottom - 12
+    dots_y = bottom - 10
     span = right - left - 54
     canvas.text((left + 8, dots_y), "7日", 10, "muted", anchor="lm", bold=False)
     for index, day in enumerate(history):
@@ -468,16 +477,16 @@ def _wordle_tile(canvas, night, box, wordle):
     gap = 3
     side = min(24, (right - left - 12 - gap * 4) // 5)
     x = left + (right - left - (side * 5 + gap * 4)) / 2
-    y = top + 48
+    y = top + 40
     font = canvas.font(round(side * 0.62), True)
     for letter in letters:
         canvas.draw.rectangle((x, y, x + side, y + side), fill=WORDLE_GREEN)
         canvas.draw.text((x + side / 2, y + side / 2 + 1), letter, font=font, fill=(255, 255, 255), anchor="mm")
         x += side + gap
     number = f"第 {wordle['number']} 题 · " if wordle.get("number") else ""
-    canvas.text(((left + right) / 2, y + side + 16), f"{number}{short_date(wordle.get('day'))}", 11, anchor="mm",
+    canvas.text(((left + right) / 2, y + side + 15), f"{number}{short_date(wordle.get('day'))}", 11, anchor="mm",
                 bold=False)
-    canvas.text(((left + right) / 2, bottom - 14), "今天的题不剧透", 10, "muted", anchor="mm", bold=False)
+    canvas.text(((left + right) / 2, bottom - 12), "今天的题不剧透", 10, "muted", anchor="mm", bold=False)
 
 
 TILE_DRAWERS = (("debt", _debt_tile), ("gas", _gas_tile), ("fear_greed", _fear_greed_tile), ("wordle", _wordle_tile))
@@ -508,64 +517,116 @@ def _tile_ready(key, data):
 
 # --- 影音: songs, films, series -------------------------------------------------------------------
 
-def _rating(canvas, right, middle, rating):
-    if not rating:
-        canvas.text((right, middle), "暂无评分", 10, "muted", anchor="rm", bold=False)
-        return
-    width = canvas.text((right, middle), f"{rating:.1f}", 13, anchor="rm")
-    draw_icon(canvas.draw, "star", (right - width - 14, middle - 6), 12, canvas.color("天象"), canvas.color("paper"))
+def music_charts(music):
+    """The NetEase charts at hand (each one's data), in the page's order."""
+    music = music or {}
+    return [((music.get(chart_id) or {}).get("data") or {}) for chart_id in NETEASE_ORDER
+            if ((music.get(chart_id) or {}).get("data") or {}).get("tracks")]
 
 
 def music_chart(music, now):
     """The NetEase chart the page shows this hour: the soaring, new, original and hot charts take
-    turns hour by hour, so each is up a few times a day."""
-    charts = music["charts"]
-    return charts[now.hour % len(charts)]
+    turns hour by hour, so each is up a few times a day; one that failed gives its hours to the rest."""
+    charts = music_charts(music)
+    return charts[now.hour % len(charts)] if charts else None
 
 
-def _music_panel(canvas, night, box, music, now):
+def _artwork(canvas, picture, box):
+    """A cover or poster filling ``box`` with softly rounded corners and no frame; without its picture
+    the slot keeps a quiet tile, so the title below still reads as one of the row."""
+    left, top, right, bottom = (round(value) for value in box)
+    size = (right - left, bottom - top)
+    if picture is None:
+        canvas.draw.rounded_rectangle((left, top, right - 1, bottom - 1), radius=ART_RADIUS, fill=canvas.color("track"))
+        return
+    tile = ImageOps.fit(picture.convert("RGB"), size, Image.Resampling.LANCZOS)
+    mask = Image.new("L", size, 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, size[0] - 1, size[1] - 1), radius=ART_RADIUS, fill=255)
+    canvas.image.paste(tile, (left, top), mask)
+
+
+def _rank(canvas, x, y, rank):
+    """The item's place: a solid 影音 disc with its number, over the picture's top-left corner."""
+    canvas.draw.ellipse((x, y, x + RANK_SIZE, y + RANK_SIZE), fill=canvas.color("影音"), outline=canvas.color("paper"),
+                        width=1)
+    canvas.draw.text((x + RANK_SIZE / 2, y + RANK_SIZE / 2 + 1), str(rank), font=canvas.font(11, True),
+                     fill=(255, 255, 255), anchor="mm")
+
+
+def _rating_chip(canvas, right, bottom, rating):
+    """A rating on a solid ink chip at the poster's foot: the amber star and the score."""
+    text = f"{rating:.1f}"
+    width = 13 + canvas.width(text, 11) + 6
+    left, top = right - width, bottom - 16
+    canvas.draw.rounded_rectangle((left, top, right, bottom), radius=4, fill=canvas.color("ink"))
+    draw_icon(canvas.draw, "star", (left + 3, top + 2), 11, canvas.color("天象"), canvas.color("ink"))
+    canvas.text((left + 14, top + 8), text, 11, "paper", anchor="lm")
+
+
+def _panel_head(canvas, night, box, mark, height, title, note=""):
     left, top, right, _bottom = box
-    chart = music_chart(music, now)
-    middle = top + 14
-    x = left + _paste_logo(canvas, night, "netease_music", left, middle, 18) + 6
-    x += canvas.text((x, middle), f"网易云{chart['name']}", 13, anchor="lm") + 6
-    if chart.get("update"):
-        canvas.text((right, middle), chart["update"], 10, "muted", anchor="rm", bold=False)
-    for index, track in enumerate(chart["tracks"][:MEDIA_ROWS]):
-        row = top + 38 + index * 23
-        canvas.text((left + 6, row), str(index + 1), 14, "影音", anchor="mm")
-        title_w = canvas.text((left + 18, row), track["title"], 12, anchor="lm", width=(right - left - 18) * 0.62)
-        canvas.text((left + 18 + title_w + 6, row), track["artist"], 11, "muted", anchor="lm", bold=False,
-                    width=right - (left + 18 + title_w + 6))
+    middle = top + 11
+    x = left + _paste_logo(canvas, night, mark, left, middle, height) + 6
+    note_w = canvas.text((right, middle), note, 10, "muted", anchor="rm", bold=False) + 6 if note else 0
+    canvas.text((x, middle), title, 13, anchor="lm", width=right - x - note_w)
 
 
-def _douban_panel(canvas, night, box, items, title):
-    left, top, right, _bottom = box
-    middle = top + 14
-    x = left + _paste_logo(canvas, night, "douban", left, middle, 15) + 6
-    canvas.text((x, middle), title, 13, anchor="lm")
-    for index, item in enumerate(items[:MEDIA_ROWS]):
-        row = top + 38 + index * 23
-        canvas.text((left + 6, row), str(index + 1), 14, "影音", anchor="mm")
-        rating_w = 50
-        name_w = canvas.text((left + 18, row), item["title"], 12, anchor="lm", width=right - rating_w - left - 18)
-        detail = " ".join(part for part in [item.get("region"), *(item.get("genres") or [])[:1]] if part)
-        room = right - rating_w - (left + 18 + name_w + 6)
-        if detail and room > 24:
-            canvas.text((left + 18 + name_w + 6, row), detail, 10, "muted", anchor="lm", bold=False, width=room)
-        _rating(canvas, right, row, item.get("rating"))
+def _slots(box):
+    left, _top, right, _bottom = box
+    width = (right - left) / MEDIA_ROWS
+    return [(left + index * width, left + (index + 1) * width) for index in range(MEDIA_ROWS)]
 
 
-def _media(canvas, night, box, payload):
+def _music_panel(canvas, night, box, chart, images, zone):
+    left, top, right, bottom = box
+    updated = ""
+    if chart.get("updated"):
+        try:
+            updated = f"{datetime.fromisoformat(chart['updated']).astimezone(zone):%m.%d} 更新"
+        except ValueError:
+            updated = ""
+    _panel_head(canvas, night, box, "netease_music", 18, f"网易云{chart['name']}", updated)
+    art_top = top + ART_TOP
+    side = min(bottom - art_top - 32, round((right - left) / MEDIA_ROWS) - ART_GAP)
+    for index, ((slot_left, slot_right), track) in enumerate(zip(_slots(box), chart["tracks"][:MEDIA_ROWS])):
+        centre = (slot_left + slot_right) / 2
+        cover = (centre - side / 2, art_top, centre + side / 2, art_top + side)
+        _artwork(canvas, images.get(track.get("cover") or ""), cover)
+        _rank(canvas, cover[0] - 3, cover[1] - 3, index + 1)
+        width = slot_right - slot_left - 4
+        canvas.text((centre, art_top + side + 10), track["title"], 12, anchor="mm", width=width)
+        canvas.text((centre, art_top + side + 25), track["artist"], 10, "muted", anchor="mm", width=width, bold=False)
+
+
+def _douban_panel(canvas, night, box, items, title, images):
+    left, top, right, bottom = box
+    _panel_head(canvas, night, box, "douban", 15, title)
+    art_top = top + ART_TOP
+    height = bottom - art_top - 17
+    width = min(round(height * 2 / 3), round((right - left) / MEDIA_ROWS) - ART_GAP)
+    for index, ((slot_left, slot_right), item) in enumerate(zip(_slots(box), items[:MEDIA_ROWS])):
+        centre = (slot_left + slot_right) / 2
+        poster = (centre - width / 2, art_top, centre + width / 2, art_top + height)
+        _artwork(canvas, images.get(item.get("poster") or ""), poster)
+        _rank(canvas, poster[0] - 3, poster[1] - 3, index + 1)
+        if item.get("rating"):
+            _rating_chip(canvas, poster[2] - 2, poster[3] - 2, item["rating"])
+        else:
+            canvas.text((centre, poster[3] - 9), "暂无评分", 10, "muted", anchor="mm", bold=False)
+        canvas.text((centre, bottom - 7), item["title"], 12, anchor="mm", width=slot_right - slot_left - 4)
+
+
+def _media(canvas, night, box, payload, images):
     left, top, right, bottom = box
     panels = []
-    music = (payload.get("music") or {}).get("data") or {}
-    if music.get("charts"):
-        panels.append(lambda inner: _music_panel(canvas, night, inner, music, payload["_now"]))
+    chart = music_chart(payload.get("music"), payload["_now"])
+    if chart:
+        panels.append(lambda inner: _music_panel(canvas, night, inner, chart, images, payload.get("_zone")))
     for key, title in (("showing", "正在热映"), ("us_tv", "热门美剧")):
         items = ((payload.get(key) or {}).get("data") or {}).get("items")
         if items:
-            panels.append(lambda inner, items=items, title=title: _douban_panel(canvas, night, inner, items, title))
+            panels.append(lambda inner, items=items, title=title: _douban_panel(canvas, night, inner, items, title,
+                                                                                images))
     if not panels:
         return False
     _card(canvas, box, "影音")
@@ -589,7 +650,7 @@ def render_page(dimensions, payload, settings, now, images):
     has_news = any(((payload.get("news") or {}).get(name) or {}).get("data", {}).get("items")
                    for name, _label in NEWS_SOURCES)
     has_tiles = any(_tile_ready(key, (payload.get(key) or {}).get("data")) for key, _draw in TILE_DRAWERS)
-    has_media = bool(((payload.get("music") or {}).get("data") or {}).get("charts")) or any(
+    has_media = bool(music_charts(payload.get("music"))) or any(
         ((payload.get(key) or {}).get("data") or {}).get("items") for key in ("showing", "us_tv"))
     grid_bottom = GRID_BOTTOM if has_media else MEDIA[3]
     # The columns present share the width: a missing one gives its room to the middle.
@@ -616,7 +677,7 @@ def render_page(dimensions, payload, settings, now, images):
             _tiles(canvas, night, box, payload)
         x += width + TILE_GAP
     if has_media:
-        _media(canvas, night, MEDIA, payload)
+        _media(canvas, night, MEDIA, payload, images)
     if not (sky_ready or has_news or has_tiles or has_media):
         canvas.text((400, 260), "暂时取不到今日速览", 18, "muted", anchor="mm")
     result = canvas.image

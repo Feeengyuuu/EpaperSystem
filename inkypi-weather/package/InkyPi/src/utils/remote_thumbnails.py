@@ -29,10 +29,11 @@ def _key(url, keep_alpha=False):
 
 
 def load_thumbnails(urls, cache_dir, *, http, context, cached_only, safe_url, user_agent,
-                    size=(480, 270), budget=BUDGET, keep_alpha=False, max_bytes=LIMITS.max_bytes):
+                    size=(480, 270), budget=BUDGET, keep_alpha=False, max_bytes=LIMITS.max_bytes, headers=None):
     """Return {url: RGB thumbnail} for URLs that are cached or could be fetched in time; RGBA
     with ``keep_alpha``, so a transparent seal or logo keeps its transparency. A download may run
-    to ``max_bytes`` (a large but poorly compressed figure); its pixels stay within ``LIMITS``."""
+    to ``max_bytes`` (a large but poorly compressed figure); its pixels stay within ``LIMITS``.
+    ``headers`` go with each download beside the User-Agent (a CDN that wants its site as Referer)."""
     directory = Path(cache_dir)
     download_limits = replace(LIMITS, max_bytes=max_bytes)
     mode = "RGBA" if keep_alpha else "RGB"
@@ -52,7 +53,8 @@ def load_thumbnails(urls, cache_dir, *, http, context, cached_only, safe_url, us
             if cached_only or context.remaining_seconds() < MIN_SECONDS_PER_IMAGE:
                 continue
             response = http.request_bytes("GET", url, timeout=7, max_bytes=max_bytes, context=context,
-                                          headers={"User-Agent": user_agent}, allow_redirects=False)
+                                          headers={**(headers or {}), "User-Agent": user_agent},
+                                          allow_redirects=False)
             with safe_open_image(response.data, limits=download_limits) as original:
                 original.thumbnail(size, Image.Resampling.LANCZOS)
                 thumb = original.convert(mode)
