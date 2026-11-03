@@ -66,6 +66,14 @@ from plugins.orbital_signal.sources import (  # noqa: E402
 NOW = datetime(2026, 7, 17, 21, 20, tzinfo=timezone.utc)
 
 
+@pytest.fixture(autouse=True)
+def _no_launch_library_garnish(monkeypatch):
+    """Launch Library allows 15 anonymous requests an hour: no test reaches it for the events or
+    the latest results unless it hands in its own fetcher."""
+    monkeypatch.setattr("plugins.orbital_signal.orbital_signal.fetch_space_events", lambda now=None: [])
+    monkeypatch.setattr("plugins.orbital_signal.orbital_signal.fetch_previous_launches", lambda now=None: [])
+
+
 class FakeDeviceConfig:
     def __init__(self, resolution=(800, 480), timezone_name="America/Los_Angeles"):
         self.resolution = resolution
@@ -322,6 +330,7 @@ def test_normalize_launches_keeps_displayable_global_fields_and_order():
         "provider": "Skyroot Aerospace",
         "rocket": "Vikram-I",
         "mission": "Demo Flight",
+        "description": "",
         "orbit": "LEO",
         "pad": "First Launch Pad",
         "location": "Satish Dhawan Space Centre, India",
@@ -1561,3 +1570,125 @@ def test_the_markets_lie_on_their_own_doodles_each_market_on_a_card(monkeypatch)
     # Each market's card is edged with the panel's rule down its left side, under its art.
     edge = round(left + 12) + module.MARKET_CARD_INSET
     assert plain.getpixel((edge, top + module.QUESTION_TOP + 60)) == module.market_palette(DAY_PALETTE)["rule"]
+
+
+def _ll2_events():
+    return {"results": [
+        {"id": 1567, "name": "US EVA-101", "type": {"id": 3, "name": "EVA"}, "date": "2026-07-19T12:00:00Z",
+         "date_precision": {"name": "Day"}, "location": "International Space Station", "webcast_live": False},
+        {"id": 1, "name": "Mission briefing", "type": {"name": "Press Event"}, "date": "2026-07-18T12:00:00Z",
+         "date_precision": {"name": "Hour"}, "location": "Houston"},
+        {"id": 2, "name": "BepiColombo Mercury Orbit Insertion", "type": {"name": "Orbital Insertion"},
+         "date": "2026-07-30T00:00:00Z", "date_precision": {"name": "Month"}, "location": "Mercury"},
+        {"id": 3, "name": "Crew Dragon Docking", "type": {"name": "Docking"}, "date": "2026-07-18T08:30:00Z",
+         "date_precision": {"name": "Minute"}, "location": "International Space Station"},
+        {"id": 4, "name": "Far flyby", "type": {"name": "Flyby"}, "date": "2026-09-30T00:00:00Z",
+         "date_precision": {"name": "Day"}, "location": "Venus"},
+    ]}
+
+
+def _ll2_previous():
+    return {"results": [
+        {"id": "a", "name": "Kinetica 2 | SpaceSail", "status": {"id": 1, "abbrev": "Go"}, "net": "2026-07-17T21:00:00Z"},
+        {"id": "b", "name": "Electron | iQPS Launch 9", "status": {"id": 3, "abbrev": "Success"},
+         "net": "2026-07-17T09:20:00Z"},
+        {"id": "c", "name": "Falcon 9 Block 5 | Starlink Group 15-18", "status": {"id": 4, "abbrev": "Failure"},
+         "net": "2026-07-14T04:04:34Z"},
+    ]}
+
+
+SPACEWALK = {"id": "1", "name": "US EVA-101", "label": "SPACEWALK", "date": "2026-07-19T12:00:00+00:00",
+             "precision": "day", "location": "International Space Station"}
+RESULTS = [
+    {"id": "b", "rocket": "Electron", "mission": "iQPS", "net": "2026-07-17T09:20:00+00:00", "result": "success"},
+    {"id": "c", "rocket": "Falcon 9 Block 5", "mission": "Starlink", "net": "2026-07-14T04:04:34+00:00",
+     "result": "failure"},
+]
+
+
+def test_events_keep_dated_spaceflight_events_and_drop_briefings():
+    from plugins.orbital_signal.sources import normalize_events
+
+    rows = normalize_events(_ll2_events(), now=NOW)
+
+    assert [(row["name"], row["label"], row["precision"]) for row in rows] == [
+        ("Crew Dragon Docking", "DOCKING", "minute"), ("US EVA-101", "SPACEWALK", "day")]
+    assert rows[1]["location"] == "International Space Station"
+
+
+def test_latest_results_keep_final_states_newest_first():
+    from plugins.orbital_signal.sources import normalize_previous
+
+    rows = normalize_previous(_ll2_previous(), now=NOW)
+
+    assert [(row["rocket"], row["mission"], row["result"]) for row in rows] == [
+        ("Electron", "iQPS Launch 9", "success"), ("Falcon 9 Block 5", "Starlink Group 15-18", "failure")]
+
+
+def test_launches_carry_the_mission_description():
+    payload = launch_payload()
+    payload["results"][0]["mission"]["description"] = "  First orbital flight of\n Skyroot Aerospace's   Vikram-I.  "
+
+    rows = normalize_launches(payload, now=NOW)
+
+    assert rows[0]["description"] == "First orbital flight of Skyroot Aerospace's Vikram-I."
+    assert rows[1]["description"] == ""
+
+
+def test_events_and_results_are_fetched_on_slower_schedules(tmp_path, monkeypatch):
+    from plugins.orbital_signal import orbital_signal as module
+    from plugins.orbital_signal.sources import EVENTS_URL, PREVIOUS_URL, fetch_previous_launches, fetch_space_events
+
+    events_session, previous_session = RecordingSession(_ll2_events()), RecordingSession(_ll2_previous())
+    assert fetch_space_events(session=events_session, now=NOW)[0]["label"] == "DOCKING"
+    assert fetch_previous_launches(session=previous_session, now=NOW)[0]["rocket"] == "Electron"
+    assert events_session.calls[0][0] == EVENTS_URL and events_session.calls[0][1]["params"]["mode"] == "list"
+    assert previous_session.calls[0][0] == PREVIOUS_URL and previous_session.calls[0][1]["params"]["limit"] == 4
+
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    plugin._cache_dir = lambda create=True: tmp_path / "cache"
+    calls = []
+    monkeypatch.setattr(module, "fetch_launches", lambda now=None: normalize_launches(launch_payload(), now=NOW))
+    monkeypatch.setattr(module, "fetch_market_events",
+                        lambda now=None: normalize_market_events(market_payload(), now=NOW))
+    monkeypatch.setattr(module, "fetch_space_news", lambda now=None: [])
+    monkeypatch.setattr(module, "fetch_space_events", lambda now=None: calls.append("events") or [SPACEWALK])
+    monkeypatch.setattr(module, "fetch_previous_launches", lambda now=None: calls.append("previous") or RESULTS[:1])
+
+    payload = plugin._payload({}, FakeDeviceConfig(), NOW)
+    assert payload["events"][0]["label"] == "SPACEWALK" and payload["previous"][0]["result"] == "success"
+    # An hour later the launches refresh, but the events (4 h) and results (2 h) stay cached.
+    plugin._payload({}, FakeDeviceConfig(), NOW + timedelta(minutes=61))
+    assert calls == ["events", "previous"]
+    plugin._payload({}, FakeDeviceConfig(), NOW + timedelta(minutes=125))
+    assert calls == ["events", "previous", "previous"]
+    # The garnish never changes the page's data state.
+    assert set(payload["status"]["sources"]) == {"launches", "markets"}
+
+
+def test_page_shows_the_description_event_stop_and_latest_results(monkeypatch):
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    launches = normalize_launches(launch_payload(), now=NOW)
+    launches[0]["description"] = "First orbital flight of the Vikram-I small launcher from Sriharikota."
+    payload = {**plugin._fixture_payload(NOW), "launches": launches, "events": [SPACEWALK], "previous": RESULTS}
+    drawn = []
+    original = ImageDraw.ImageDraw.text
+
+    def capture(draw, xy, text, *args, **kwargs):
+        drawn.append(str(text))
+        return original(draw, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture)
+    image = plugin._render_page((800, 480), payload, {"themeMode": "night"}, NOW)
+
+    assert image.size == (800, 480)
+    text = " ".join(drawn)
+    # The launch panel sets its digits in their own face, so "US EVA-101" is drawn in two runs.
+    for expected in ("SPACEWALK", "US EVA-", "ISS", "LAST", "ELECTRON 12H", "FALCON 9 3D", "First orbital"):
+        assert expected in text, expected
+    assert "GLOBAL LAUNCHES / CROWD ODDS" not in drawn
+
+    plain = {**payload, "events": [], "previous": [], "launches": [dict(row, description="") for row in launches]}
+    drawn.clear()
+    plugin._render_page((800, 480), plain, {"themeMode": "day"}, NOW)
+    assert "GLOBAL LAUNCHES / CROWD ODDS" in drawn and "SPACEWALK" not in drawn

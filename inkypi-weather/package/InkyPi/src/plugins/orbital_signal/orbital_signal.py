@@ -35,7 +35,10 @@ from utils.app_utils import (
 
 from . import launch_photo
 from .market_style import BRAND_FADE_HEIGHT, market_background_color, market_header_palette, market_palette
-from .sources import _parse_time, _upload_url, _utc, fetch_launches, fetch_market_events, fetch_space_news
+from .sources import (
+    _parse_time, _upload_url, _utc, fetch_launches, fetch_market_events, fetch_previous_launches, fetch_space_events,
+    fetch_space_news,
+)
 from .source_footer import draw_footer
 
 
@@ -90,6 +93,12 @@ MARKET_CARD_ALPHA, MARKET_CARD_RADIUS, MARKET_CARD_INSET = 214, 8, 3
 # A wordmark stands TIMELINE_LOGO_HEIGHT tall; a badge (narrower than 3.5:1) TIMELINE_BADGE_HEIGHT,
 # with the provider's short name after it, since a badge says little alone at this size.
 TIMELINE_LOGO_HEIGHT, TIMELINE_BADGE_HEIGHT = 11, 13
+# Launch Library 2 allows 15 anonymous requests an hour: the coming events are asked every four
+# hours and the latest results every two, beside the launches' own hourly refresh.
+EVENTS_TTL_MINUTES, PREVIOUS_TTL_MINUTES = 240, 120
+# Where an event happens, in the few letters a timeline stop has room for.
+EVENT_PLACES = {"international space station": "ISS", "tiangong space station": "TIANGONG"}
+RESULT_COLORS = {"success": "green", "failure": "red", "partial": "orange"}
 FLIP_CARD = (34, 58)
 # A market column from top to bottom, in px below the market panel's top: the event art, the
 # question (QUESTION_LINES lines at most), the league tag, the dial's centre, the leader, the
@@ -548,9 +557,20 @@ class OrbitalSignal(BasePlugin):
         return (isinstance(row, dict) and bool(str(row.get("title") or "").strip())
                 and bool(str(row.get("site") or "").strip()) and _parse_time(row.get("published_at")) is not None)
 
+    @staticmethod
+    def _valid_event(row):
+        return (isinstance(row, dict) and bool(str(row.get("name") or "").strip())
+                and bool(str(row.get("label") or "").strip()) and _parse_time(row.get("date")) is not None)
+
+    @staticmethod
+    def _valid_result(row):
+        return (isinstance(row, dict) and bool(str(row.get("rocket") or "").strip())
+                and row.get("result") in RESULT_COLORS and _parse_time(row.get("net")) is not None)
+
     @classmethod
     def _valid_items(cls, name, items):
-        validator = {"launches": cls._valid_launch, "news": cls._valid_news}.get(name, cls._valid_market)
+        validator = {"launches": cls._valid_launch, "news": cls._valid_news, "events": cls._valid_event,
+                     "previous": cls._valid_result}.get(name, cls._valid_market)
         if not isinstance(items, list):
             return []
         return [dict(row) for row in items if validator(row)]
@@ -758,6 +778,13 @@ class OrbitalSignal(BasePlugin):
         # The footer's headline is a garnish: it never counts toward the page's data state.
         news, _news_state, _news_error = self._resolve_source(
             "news", now, force, lambda: fetch_space_news(now=now), [], ttl_minutes)
+        # Spacewalks, dockings and flybys, and how the latest launches went: garnish too, each on
+        # its own slower schedule, hidden when Launch Library has none or is out of requests.
+        events, _events_state, _events_error = self._resolve_source(
+            "events", now, force, lambda: fetch_space_events(now=now), [], max(ttl_minutes, EVENTS_TTL_MINUTES))
+        previous, _previous_state, _previous_error = self._resolve_source(
+            "previous", now, force, lambda: fetch_previous_launches(now=now), [],
+            max(ttl_minutes, PREVIOUS_TTL_MINUTES))
         launches = [dict(row) for row in launches[:4]]
         if launches:
             launches[0] = self._hydrate_primary_launch_photo(launches[0])
@@ -767,6 +794,8 @@ class OrbitalSignal(BasePlugin):
             "launches": launches,
             "markets": [self._hydrate_market_marks(row) for row in markets[:3]],
             "news": [dict(row) for row in news[:3]],
+            "events": [dict(row) for row in events[:3]],
+            "previous": [dict(row) for row in previous[:3]],
             "status": {
                 "aggregate": self._aggregate_status(states),
                 "sources": states,
@@ -823,6 +852,8 @@ class OrbitalSignal(BasePlugin):
 
         palette = self._palette(settings)
         family = str((settings or {}).get("fontFamily") or "").strip() or DEFAULT_FONT
+        self._events = self._valid_items("events", payload.get("events"))
+        self._results = self._valid_items("previous", payload.get("previous"))
         image = Image.new("RGB", (800, 480), palette["paper"])
         draw = ImageDraw.Draw(image)
         boxes = self._panel_boxes(800, 480)
@@ -853,7 +884,9 @@ class OrbitalSignal(BasePlugin):
         except (OSError, ValueError):
             title_font = self._font(29, bold=True, family=family)
             draw.text((16, 10), "ORBITAL SIGNAL", font=title_font, fill=palette["ink"])
-        draw.text((279, 22), "GLOBAL LAUNCHES / CROWD ODDS", font=subtitle_font, fill=palette["ink"])
+        results = getattr(self, "_results", ())
+        if not (results and self._draw_results(draw, results, now, 279, 528, 21, palette, family)):
+            draw.text((279, 22), "GLOBAL LAUNCHES / CROWD ODDS", font=subtitle_font, fill=palette["ink"])
 
         aggregate = str((payload.get("status") or {}).get("aggregate") or "fixture").upper()
         chip_text = "LIVE DATA" if aggregate == "LIVE" else "CACHED" if aggregate == "CACHED" else aggregate
@@ -1213,9 +1246,20 @@ class OrbitalSignal(BasePlugin):
         draw.line((16, grid_top, right - 18, grid_top), fill=palette["rule"], width=2)
         label_font = self._font(9, True, family)
         cell_w = (right - 18 - 16) / 3
-        for index, (label, value) in enumerate(self._launch_facts(primary)):
+        facts = self._launch_facts(primary)
+        # With Launch Library's mission description, the mission takes the last two cells and says
+        # what the flight is for; the forecast, when there is one, joins its label.
+        described = bool(str(primary.get("description") or "").strip())
+        for index, (label, value) in enumerate(facts):
             cell_x = 16 + (index % 3) * cell_w + (0 if index % 3 == 0 else 8)
             cell_y = grid_top + 6 + (index // 3) * 34
+            if described and index == 5:
+                continue
+            if described and label == "MISSION":
+                weather = facts[5][1] if facts[5][0] == "WEATHER" and facts[5][1] != "NO FORECAST" else ""
+                self._draw_description_cell(image, draw, primary, value, weather,
+                                            (cell_x, cell_y, 2 * cell_w - 12), label_font, palette, family)
+                continue
             if label == "PROVIDER" and self._draw_provider_cell(image, draw, primary, (cell_x, cell_y, cell_w - 12),
                                                                 label_font, palette, family):
                 continue
@@ -1239,9 +1283,25 @@ class OrbitalSignal(BasePlugin):
                 self._paste_flag(image, draw, flag, flag_x, cell_y + 14, palette)
         for column in (1, 2):
             divider = 16 + column * cell_w
-            draw.line((divider, grid_top + 8, divider, grid_top + 68), fill=palette["rule"], width=1)
+            draw.line((divider, grid_top + 8, divider, grid_top + (34 if described and column == 2 else 68)),
+                      fill=palette["rule"], width=1)
         self._draw_timeline(draw, (16, grid_top + 76, right - 18, bottom - 6), launches, now, palette, family,
-                            image=image)
+                            image=image, events=getattr(self, "_events", ()))
+
+    def _draw_description_cell(self, image, draw, launch, mission, weather, cell, label_font, palette, family):
+        """MISSION and its type (and the weather forecast) over two lines of the mission's description."""
+        x, y, width = cell
+        icon = self._fact_icon("MISSION", launch)
+        text_x = x + (FACT_ICON + 6 if icon else 0)
+        if icon:
+            self._paste_icon(image, icon, x, y + 1, FACT_ICON, palette)
+        label = "  /  ".join(part for part in ("MISSION", str(mission or "").upper() if mission != "TBD" else "",
+                                               f"WEATHER {weather}" if weather else "") if part)
+        draw.text((text_x, y), self._fit_text(draw, label, label_font, x + width - text_x), font=label_font,
+                  fill=palette["orange"])
+        font = self._font(10, True, family)
+        for row, line in enumerate(self._wrap_lines(draw, launch.get("description"), font, x + width - text_x)):
+            draw.text((text_x, y + 11 + row * 12), line, font=font, fill=palette["ink"])
 
     @staticmethod
     def _gap_label(earlier, later):
@@ -1255,19 +1315,64 @@ class OrbitalSignal(BasePlugin):
             return f"+{hours}H {mins:02d}M"
         return f"+{mins}M"
 
-    def _draw_timeline(self, draw, box, launches, now, palette, family, image=None):
+    @staticmethod
+    def _event_stop(event):
+        """An event as a timeline stop: its label (SPACEWALK) and name where a launch has rocket and
+        mission, the place in a few letters where a launch has its provider's logo."""
+        place = str(event.get("location") or "").strip()
+        return {"event": True, "rocket": event.get("label"), "mission": event.get("name"),
+                "place": EVENT_PLACES.get(place.casefold(), place), "precision": event.get("precision")}
+
+    def _draw_results(self, draw, results, now, left, right, y, palette, family):
+        """The latest launch results in the header, in the subtitle's place: LAST, then for each a dot
+        in its result's colour (green success, red failure, orange partial) before the rocket and how
+        long ago. False when none fits."""
+        font, label_font = self._font(12, True, family), self._font(10, True, family)
+        parts = []
+        for result in results[:3]:
+            when = _parse_time(result.get("net"))
+            rocket = re.sub(r"\s+Block\s+\d+.*$", "", str(result.get("rocket") or ""), flags=re.I).strip().upper()
+            if when is None or not rocket:
+                continue
+            hours = max(0, int((_utc(now) - when).total_seconds() // 3600))
+            parts.append((rocket, f"{hours}H" if hours < 48 else f"{hours // 24}D", RESULT_COLORS[result["result"]]))
+        while parts:
+            widths = [draw.textbbox((0, 0), f"{rocket} {age}", font=font)[2] + 13 for rocket, age, _c in parts]
+            label_w = draw.textbbox((0, 0), "LAST", font=label_font)[2] + 6
+            if right - left >= label_w + sum(widths) + 6 * (len(parts) - 1):
+                break
+            parts.pop()
+        if not parts:
+            return False
+        x = left
+        draw.text((x, y + 3), "LAST", font=label_font, fill=palette["muted"])
+        x += label_w
+        for (rocket, age, color), width in zip(parts, widths):
+            draw.ellipse((x, y + 4, x + 9, y + 13), fill=palette[color], outline=palette["ink"])
+            draw.text((x + 13, y), f"{rocket} {age}", font=font, fill=palette["ink"])
+            x += width + 6
+        return True
+
+    def _draw_timeline(self, draw, box, launches, now, palette, family, image=None, events=()):
         """The coming launches as evenly spaced stops on a line, so close and
         far launches read alike: each stop's local time above it, rocket and
         mission below, the provider's official logo under those (on ``image``),
-        and the time to the next stop on the line between."""
+        the time to the next stop on the line between. The next spaceflight
+        event (a spacewalk, docking or flyby) joins them as a diamond."""
         left, top, right, bottom = box
         draw.line((left, top, right, top), fill=palette["rule"], width=2)
         title_font = self._font(10, True, family)
-        draw.text((left + 2, top + 5), "NEXT LAUNCHES", font=title_font, fill=palette["ink"])
-        zone = f"LOCAL TIME {now.tzname() or 'UTC'}".upper()
-        draw.text((left + 10 + draw.textbbox((0, 0), "NEXT LAUNCHES", font=title_font)[2], top + 6), zone,
-                  font=self._font(9, True, family), fill=palette["muted"])
         stops = [(launch, when) for launch in launches[:4] if (when := _parse_time(launch.get("net"))) is not None]
+        event = next(((self._event_stop(row), when) for row in events
+                      if (when := _parse_time(row.get("date"))) is not None and when >= _utc(now)), None)
+        if event is not None and stops:
+            stops = sorted([*stops[:3], event], key=lambda stop: stop[1])
+        # The event's diamond and label say what it is; the title keeps its width.
+        title = "NEXT LAUNCHES"
+        draw.text((left + 2, top + 5), title, font=title_font, fill=palette["ink"])
+        title_right = left + 10 + draw.textbbox((0, 0), title, font=title_font)[2]
+        zone = f"LOCAL TIME {now.tzname() or 'UTC'}".upper()
+        draw.text((title_right, top + 6), zone, font=self._font(9, True, family), fill=palette["muted"])
         if not stops:
             return
         line_y, inset = top + 38, 50
@@ -1279,6 +1384,8 @@ class OrbitalSignal(BasePlugin):
         slot = min(150, (right - left) / len(stops) - 6)
         gap_font = self._font(8, True, family)
         for index in range(len(stops) - 1):
+            if any(stop[0].get("precision") == "day" for stop in stops[index:index + 2]):
+                continue  # an event dated only to the day has no exact gap to its neighbours
             gap = self._gap_label(stops[index][1], stops[index + 1][1])
             gap_w = draw.textbbox((0, 0), gap, font=gap_font)[2]
             middle = (xs[index] + xs[index + 1]) / 2
@@ -1294,6 +1401,24 @@ class OrbitalSignal(BasePlugin):
             color = palette["orange"] if index == 0 else palette["green"] if status == "GO" else palette["blue"]
             local = when.astimezone(now.tzinfo) if now.tzinfo else when
             stamp = f"{local:%H:%M}" if local.date() == now.date() else f"{local:%a %H:%M}".upper()
+            if launch.get("event"):
+                color = palette["blue"]
+                if launch.get("precision") == "day":  # dated to the day: no clock time to give
+                    stamp = "TODAY" if local.date() == now.date() else f"{local:%a}".upper()
+                centered(stamp, x, line_y - 22, self._font(11, True, family), color)
+                draw.polygon(((x, line_y - 7), (x + 7, line_y), (x, line_y + 7), (x - 7, line_y)), fill=color,
+                             outline=palette["ink"])
+                for row, (text, size) in enumerate(((launch.get("rocket"), 10), (launch.get("mission"), 9))):
+                    text = str(text or "").strip().upper()
+                    if text:
+                        font = self._fit_font(draw, text, slot, size, 8, family)
+                        centered(self._fit_text(draw, text, font, slot), x, line_y + 9 + row * 13, font,
+                                 color if row == 0 else palette["muted"])
+                place = str(launch.get("place") or "").strip().upper()
+                if place and bottom - (line_y + 35) >= TIMELINE_BADGE_HEIGHT:
+                    font = self._font(9, True, family)
+                    centered(self._fit_text(draw, place, font, slot - 10), x, line_y + 36, font, palette["ink"])
+                continue
             centered(stamp, x, line_y - 22, self._font(11, True, family), color)
             draw.ellipse((x - 6, line_y - 6, x + 6, line_y + 6), fill=color, outline=palette["ink"], width=1)
             for row, (text, size) in enumerate(((launch.get("rocket"), 10), (launch.get("mission"), 9))):

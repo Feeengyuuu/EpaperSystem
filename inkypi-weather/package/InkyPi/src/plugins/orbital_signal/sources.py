@@ -9,6 +9,21 @@ from utils.http_client import get_http_session
 
 
 LAUNCHES_URL = "https://ll.thespacedevs.com/2.3.0/launches/upcoming/"
+# Launch Library 2's coming spaceflight events (spacewalks, dockings, flybys) and the latest launch
+# results. Its anonymous limit is 15 requests an hour, so these two are fetched every few hours.
+EVENTS_URL = "https://ll.thespacedevs.com/2.3.0/events/upcoming/"
+PREVIOUS_URL = "https://ll.thespacedevs.com/2.3.0/launches/previous/"
+EVENT_LABELS = {
+    "eva": "SPACEWALK", "docking": "DOCKING", "undocking": "UNDOCKING", "berthing": "BERTHING",
+    "unberthing": "UNBERTHING", "flyby": "FLYBY", "orbital insertion": "ORBIT INSERTION",
+    "spacecraft landing": "LANDING", "moon landing": "MOON LANDING", "spacecraft capture": "CAPTURE",
+    "spacecraft release": "RELEASE", "static fire": "STATIC FIRE", "celestial event": "SKY EVENT",
+}
+# Events dated only to the month or year cannot stand at a time on the timeline.
+EVENT_PRECISIONS = {"second", "minute", "hour", "day"}
+EVENT_HORIZON = timedelta(days=21)
+# Launch Library's final launch states and how the page marks them.
+LAUNCH_RESULTS = {3: "success", 4: "failure", 7: "partial"}
 MARKETS_URL = "https://gamma-api.polymarket.com/events"
 # The Spaceflight News API: recent spaceflight stories from NASA, ESA, SpaceNews, NASASpaceflight and
 # others. NASA's daily APOD posts are pictures, not news, and a story older than NEWS_MAX_AGE is stale.
@@ -165,6 +180,7 @@ def normalize_launches(payload, now=None, limit=4):
                     _text(configuration.get("name"), name.split("|", 1)[0].strip()),
                 ),
                 "mission": mission_name or name,
+                "description": " ".join(_text(mission.get("description")).split())[:420],
                 "orbit": _text(orbit.get("abbrev"), _text(orbit.get("name"), "—")),
                 "pad": _text(pad.get("name"), "Pad TBD"),
                 "location": _text(location.get("name"), "Location TBD"),
@@ -193,6 +209,75 @@ def normalize_launches(payload, now=None, limit=4):
 
     rows.sort(key=lambda row: row["net"])
     return rows[: max(0, int(limit))]
+
+
+def normalize_events(payload, now=None, limit=3):
+    """The coming spaceflight events dated to the day or finer within EVENT_HORIZON, soonest first:
+    {"id", "name", "type", "label", "date", "precision", "location", "webcast_live"}."""
+    now_utc = _utc(now or datetime.now(timezone.utc))
+    rows = []
+    for raw in _mapping(payload).get("results") or []:
+        raw = _mapping(raw)
+        name, kind = _text(raw.get("name")), _text(_mapping(raw.get("type")).get("name"))
+        when = _parse_time(raw.get("date"))
+        precision = _text(_mapping(raw.get("date_precision")).get("name"), "Day").casefold()
+        if not name or when is None or precision not in EVENT_PRECISIONS:
+            continue
+        if not now_utc - timedelta(hours=6) <= when <= now_utc + EVENT_HORIZON:
+            continue
+        if any(word in kind.casefold() for word in ("press", "conference", "briefing")):
+            continue
+        rows.append({
+            "id": str(raw.get("id") or name)[:80], "name": " ".join(name.split())[:120], "type": kind[:40],
+            "label": EVENT_LABELS.get(kind.casefold(), kind.upper()[:18] or "EVENT"), "date": when.isoformat(),
+            "precision": precision, "location": " ".join(_text(raw.get("location")).split())[:80],
+            "webcast_live": bool(raw.get("webcast_live", False)),
+        })
+    rows.sort(key=lambda row: row["date"])
+    return rows[: max(0, int(limit))]
+
+
+def normalize_previous(payload, now=None, limit=3):
+    """The latest launches that reached a final state, newest first:
+    {"id", "rocket", "mission", "net", "result" ("success", "failure" or "partial")}."""
+    now_utc = _utc(now or datetime.now(timezone.utc))
+    rows = []
+    for raw in _mapping(payload).get("results") or []:
+        raw = _mapping(raw)
+        name, net = _text(raw.get("name")), _parse_time(raw.get("net"))
+        status_id = _mapping(raw.get("status")).get("id")
+        result = LAUNCH_RESULTS.get(status_id) if type(status_id) is int else None
+        if not name or net is None or result is None or net > now_utc + timedelta(minutes=5):
+            continue
+        rocket, _bar, mission = name.partition("|")
+        rows.append({"id": _text(raw.get("id"), name)[:80], "rocket": " ".join(rocket.split())[:60],
+                     "mission": " ".join(mission.split())[:80], "net": net.isoformat(), "result": result})
+    rows.sort(key=lambda row: row["net"], reverse=True)
+    return rows[: max(0, int(limit))]
+
+
+def fetch_space_events(session=None, now=None):
+    session = session or get_http_session()
+    response = session.get(
+        EVENTS_URL,
+        params={"limit": 6, "mode": "list"},
+        timeout=REQUEST_TIMEOUT,
+        headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+    )
+    response.raise_for_status()
+    return normalize_events(response.json(), now=now, limit=3)
+
+
+def fetch_previous_launches(session=None, now=None):
+    session = session or get_http_session()
+    response = session.get(
+        PREVIOUS_URL,
+        params={"limit": 4, "mode": "list"},
+        timeout=REQUEST_TIMEOUT,
+        headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+    )
+    response.raise_for_status()
+    return normalize_previous(response.json(), now=now, limit=3)
 
 
 def heat_score(volume_24h, change_24h):
