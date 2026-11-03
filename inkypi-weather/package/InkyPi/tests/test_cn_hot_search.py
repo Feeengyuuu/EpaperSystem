@@ -219,3 +219,67 @@ def test_a_row_without_a_sentence_keeps_its_heat_and_tags_first():
     pairs = [(heat, note) for note in drawn if note[0].startswith("7个视频")
              for heat in drawn if heat[0] == "1215万" and abs(heat[2] - note[2]) < 1 and (heat[1] < 400) == (note[1] < 400)]
     assert pairs and all(heat[1] < note[1] for heat, note in pairs)
+
+
+def _board(*rows):
+    return {"data": {"cards": [{"content": list(rows)}]}}
+
+
+def test_baidus_other_boards_give_each_entry_the_fact_that_names_it():
+    teleplay = sources.normalize_baidu_board(_board(
+        {"word": "九门", "hotScore": "95471", "show": ["类型：民国、传奇", "演员：陈伟霆\xa0、曾舜晞\xa0、陈瑶"]},
+        {"word": "非份之罪", "hotScore": "93247", "hotChange": "up", "show": ["类型：剧情、悬疑"]}), "teleplay")
+    car = sources.normalize_baidu_board(_board(
+        {"word": "捷达VS8", "hotScore": "6121997", "hotChange": "up", "show": ["价格：11.99-13.79万", "级别：中型SUV"]}), "car")
+    novel = sources.normalize_baidu_board(_board({"word": "绍宋", "show": ["作者：榴弹怕水", "类型：历史"]}), "novel")
+
+    assert teleplay[0]["facts"] == {"类型": "民国、传奇", "演员": "陈伟霆、曾舜晞、陈瑶"}
+    # A drama by its lead actor (its genre when no actor is given), a car by its starting price.
+    assert [row["detail"] for row in teleplay] == ["陈伟霆", "剧情"]
+    assert (teleplay[1]["change"], car[0]["detail"], novel[0]["detail"]) == ("up", "11.99万起", "榴弹怕水")
+    with pytest.raises(ValueError):
+        sources.normalize_baidu_board(_board(), "movie")
+
+
+def test_a_board_that_fails_leaves_only_itself_out(monkeypatch):
+    asked = []
+
+    def fake_get(url, context, *, max_bytes, params=None, headers=None):
+        asked.append(params["tab"])
+        if params["tab"] == "novel":
+            raise RuntimeError("refused")
+        return _board({"word": f"{params['tab']} 第一", "show": []})
+
+    monkeypatch.setattr(sources, "_get", fake_get)
+    boards = sources.fetch_baidu_boards(None)["boards"]
+
+    assert asked == list(sources.BAIDU_BOARDS)
+    assert set(boards) == {"teleplay", "movie", "game", "car"} and sources.valid_boards({"boards": boards})
+    monkeypatch.setattr(sources, "_get", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
+    with pytest.raises(ValueError):
+        sources.fetch_baidu_boards(None)
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_the_boards_strip_sits_under_the_lead_and_the_grid_moves_down(mode, monkeypatch):
+    from PIL import ImageDraw
+
+    from plugins.cn_hot_search import render
+
+    lists = {platform: [{"rank": 1, "title": f"{platform}话题", "heat": 1000, "image": None}] for platform in sources.PLATFORMS}
+    boards = {"teleplay": [{"title": "九门", "detail": "陈伟霆", "change": None}],
+              "car": [{"title": "捷达VS8", "detail": "11.99万起", "change": "up"}]}
+    drawn, boxes = [], []
+    original = ImageDraw.ImageDraw.text
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text",
+                        lambda self, xy, text, *a, **k: drawn.append(str(text)) or original(self, xy, text, *a, **k))
+    real_boxes = render._card_boxes
+    monkeypatch.setattr(render, "_card_boxes", lambda count, top=render.GRID_TOP: boxes.append(top) or real_boxes(count, top))
+
+    payload = {"lists": lists, "topics": [], "history": {}}
+    render_page((800, 480), {**payload, "boards": boards}, {"_inkypi_theme": {"mode": mode}}, NOW, {})
+    assert {"分榜", "剧", "九门", "陈伟霆", "车", "捷达VS8", "11.99万起"} <= set(drawn)
+    assert "影" not in drawn and boxes == [render.STRIP_GRID_TOP]
+    # Without boards the page keeps its old grid.
+    render_page((800, 480), payload, {"_inkypi_theme": {"mode": mode}}, NOW, {})
+    assert boxes[-1] == render.GRID_TOP

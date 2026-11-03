@@ -137,6 +137,87 @@ def fetch_baidu(context):
                                 params={"platform": "pc", "tab": "realtime"}))
 
 
+# --- Baidu's other boards: 电视剧 / 电影 / 小说 / 游戏 / 汽车 (分榜) ----------------------------------------
+
+# Each board's tab, and which of its "类型：…" facts names the entry best (a drama's lead actor, a
+# novel's author, a car's price), the next one when it lacks that.
+BAIDU_BOARDS = {
+    "teleplay": ("演员", "类型"),
+    "movie": ("演员", "类型"),
+    "novel": ("作者", "类型"),
+    "game": ("类型",),
+    "car": ("价格", "级别"),
+}
+BOARD_ROWS = 3
+
+
+def board_facts(show):
+    """Baidu's ["类型：民国、传奇", "演员：陈伟霆 、曾舜晞"] as {"类型": "民国、传奇", "演员": "陈伟霆、曾舜晞"}."""
+    facts = {}
+    for item in show if isinstance(show, list) else []:
+        label, sep, value = str(item).replace("\xa0", " ").partition("：")
+        value = re.sub(r"\s*、\s*", "、", " ".join(value.split()))
+        if sep and label.strip() and value:
+            facts[label.strip()[:6]] = value[:40]
+    return facts
+
+
+def board_detail(tab, facts):
+    """The one fact the 分榜 shows for an entry: the first of its board's preferred facts, its
+    first item only ("陈伟霆、曾舜晞" -> "陈伟霆", "单机游戏"), "" without one."""
+    for label in BAIDU_BOARDS.get(tab, ()):
+        value = facts.get(label)
+        if value and label == "价格":
+            # "11.99-13.79万" -> "11.99万起": the strip has room for a car's starting price.
+            low = re.match(r"([\d.]+)\s*-\s*[\d.]+\s*万", value)
+            return f"{low.group(1)}万起" if low else value
+        if value:
+            return value.split("、")[0].strip()
+    return ""
+
+
+def normalize_baidu_board(payload, tab):
+    """A board's first BOARD_ROWS entries: title, heat, move and its facts (type, actors, price…)."""
+    cards = (((payload or {}).get("data") or {}).get("cards")) or []
+    content = (cards[0] or {}).get("content") if cards and isinstance(cards[0], dict) else []
+    rows = []
+    for row in content or []:
+        if not isinstance(row, dict) or row.get("isTop"):
+            continue
+        title = _clean(row.get("word") or row.get("query"), 24)
+        if not title:
+            continue
+        change = str(row.get("hotChange") or "")
+        facts = board_facts(row.get("show"))
+        rows.append({"title": title, "heat": _count(row.get("hotScore")), "facts": facts,
+                     "detail": board_detail(tab, facts), "change": change if change in ("up", "down", "same") else None})
+        if len(rows) == BOARD_ROWS:
+            break
+    if not rows:
+        raise ValueError(f"Baidu {tab} board returned no entries")
+    return rows
+
+
+def fetch_baidu_boards(context):
+    """The 分榜: each board's leading entries ({tab: rows}); a board that fails is left out."""
+    boards = {}
+    for tab in BAIDU_BOARDS:
+        try:
+            boards[tab] = normalize_baidu_board(_get(BAIDU_URL, context, max_bytes=256 * 1024,
+                                                     params={"platform": "pc", "tab": tab}), tab)
+        except TaskCancelled:
+            raise
+        except Exception:  # noqa: BLE001 - one board's failure leaves only that board out.
+            continue
+    if not boards:
+        raise ValueError("Baidu returned none of its boards")
+    return {"boards": boards}
+
+
+def valid_boards(data):
+    return bool((data or {}).get("boards"))
+
+
 # --- Toutiao: 今日头条 热榜 -----------------------------------------------------------------------
 
 def normalize_toutiao(payload):

@@ -2,7 +2,8 @@
 in a card under its official logo and colour.
 
 The lead story names its place on every list (its picture fading into the page, a platform's
-summary under its title). Each card shows a list's first three entries, each with its picture,
+summary under its title); under it a strip of Baidu's 分榜 gives the first drama, film, novel,
+game and car on its other boards. Each card shows a list's first three entries, each with its picture,
 its heat, the platform's own label (新 / 热 / 辟谣 …), whether it is on other lists too, a line of
 what the platform says about it, and its move since the previous refresh. Baidu, Toutiao, Zhihu
 and Douyin fill a 2 x 2 grid; with the owner's Weibo login it leads a 3 x 2 grid whose last card
@@ -51,6 +52,17 @@ LEAD = (12, 58, 788, 156)
 LEAD_PICTURE_W = 178
 LEAD_FADE = 0.5
 GRID_TOP, GRID_BOTTOM, GRID_GAP = 164, 470, 8
+# Baidu's 分榜 strip between the lead and the cards (when its boards are at hand): each board's
+# first entry behind a chip of its own colour (day, night), the grid starting under it.
+STRIP = (12, 160, 788, 181)
+STRIP_GRID_TOP = 186
+BOARD_STYLES = {
+    "teleplay": ("剧", (200, 30, 50), (240, 86, 102)),
+    "movie": ("影", (37, 84, 199), (96, 140, 245)),
+    "novel": ("书", (5, 150, 105), (52, 211, 153)),
+    "game": ("游", (124, 58, 237), (167, 139, 250)),
+    "car": ("车", (217, 119, 6), (251, 176, 59)),
+}
 # A card row: its picture fills the row's height at 3:2, the rank on its corner; the title on the
 # first line, the heat, labels and the platform's own words on the second.
 THUMB_RATIO = 1.3
@@ -370,13 +382,52 @@ def _slots(payload):
     return slots + ["shared"] if len(slots) % 2 else slots
 
 
-def _card_boxes(count):
+def _card_boxes(count, grid_top=GRID_TOP):
     columns = 2 if count <= 4 else 3
     width = (LEAD[2] - LEAD[0] - (columns - 1) * GRID_GAP) / columns
-    height = (GRID_BOTTOM - GRID_TOP - GRID_GAP) / 2
-    return [(round(LEAD[0] + (index % columns) * (width + GRID_GAP)), round(GRID_TOP + (index // columns) * (height + GRID_GAP)),
+    height = (GRID_BOTTOM - grid_top - GRID_GAP) / 2
+    return [(round(LEAD[0] + (index % columns) * (width + GRID_GAP)), round(grid_top + (index // columns) * (height + GRID_GAP)),
              round(LEAD[0] + (index % columns) * (width + GRID_GAP) + width),
-             round(GRID_TOP + (index // columns) * (height + GRID_GAP) + height)) for index in range(count)]
+             round(grid_top + (index // columns) * (height + GRID_GAP) + height)) for index in range(count)]
+
+
+def _arrow(canvas, x, middle, change):
+    """A small up or down triangle from ``x`` for a board entry that rose or fell; its width."""
+    if change not in ("up", "down"):
+        return 0
+    tone = "up" if change == "up" else "down"
+    points = ((x, middle + 3), (x + 7, middle + 3), (x + 3.5, middle - 4)) if change == "up" else         ((x, middle - 3), (x + 7, middle - 3), (x + 3.5, middle + 4))
+    canvas.draw.polygon(points, fill=canvas.color(tone))
+    return 7
+
+
+def _boards_strip(canvas, boards, box):
+    """百度分榜: each board's first entry in a cell of the strip -- its board's chip, its title, how
+    it moved and the fact that names it (a drama's lead actor, a novel's author, a car's price)."""
+    left, top, right, bottom = box
+    middle = (top + bottom) / 2
+    night = _night(canvas)
+    _glass(canvas, box, BRANDS["baidu"], fill_alpha=0.16 if night else 0.07, edge_alpha=0.55)
+    x = left + 8
+    x += _paste_logo(canvas, "baidu", x, middle, 14) + 4
+    x += canvas.text((x, middle), "分榜", 11, anchor="lm") + 8
+    tabs = [tab for tab in sources.BAIDU_BOARDS if boards.get(tab)]
+    cell_w = (right - 4 - x) / max(1, len(tabs))
+    for index, tab in enumerate(tabs):
+        row = boards[tab][0]
+        cx, end = x + index * cell_w, x + (index + 1) * cell_w - 6
+        if index:
+            canvas.rule((cx - 4, top + 5, cx - 4, bottom - 5))
+        label, day_fill, night_fill = BOARD_STYLES[tab]
+        canvas.draw.rounded_rectangle((cx, middle - 7, cx + 15, middle + 7), radius=3,
+                                      fill=night_fill if night else day_fill)
+        canvas.text((cx + 7.5, middle), label, 10, (255, 255, 255), anchor="mm")
+        tx = cx + 20
+        tx += canvas.text((tx, middle), row["title"], 12, anchor="lm", width=end - tx) + 3
+        tx += _arrow(canvas, tx, middle, row.get("change"))
+        detail = row.get("detail") or ""
+        if detail and end - tx - 4 >= canvas.width(detail[:2], 10, False):
+            canvas.text((tx + 4, middle + 1), detail, 10, "muted", anchor="lm", bold=False, width=end - tx - 4)
 
 
 def _shared_marks(payload):
@@ -549,8 +600,13 @@ def render_page(dimensions, payload, settings, now, images):
     _key(canvas, platforms, title_right + 16, stamp_left - 14)
     canvas.rule((12, 52, 788, 52), "ink", 2)
     _lead(canvas, payload, images, platforms, now)
+    boards = payload.get("boards") or {}
+    grid_top = GRID_TOP
+    if any(boards.get(tab) for tab in sources.BAIDU_BOARDS):
+        _boards_strip(canvas, boards, STRIP)
+        grid_top = STRIP_GRID_TOP
     marks = _shared_marks(payload)
-    for slot, box in zip(slots, _card_boxes(len(slots))):
+    for slot, box in zip(slots, _card_boxes(len(slots), grid_top)):
         if slot == "shared":
             _shared_card(canvas, box, payload, images)
         else:

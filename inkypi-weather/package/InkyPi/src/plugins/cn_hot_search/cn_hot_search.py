@@ -37,6 +37,10 @@ HISTORY_FILE = "history.json"
 # The lists turn over within the hour; a cached one still reads as today's news for a day.
 FRESH_SECONDS = 20 * 60
 USABLE_SECONDS = 86400
+# Baidu's 分榜 (dramas, films, novels, games, cars) move over hours: five small boards (8-38 KB)
+# fetched every few hours, a day-old reading still shown.
+BOARDS_FRESH_SECONDS = 3 * 3600
+BOARDS_USABLE_SECONDS = 2 * 86400
 # Each card shows a list's first ROWS_SHOWN rows, every one with its picture at THUMB_PIXELS at most.
 ROWS_SHOWN = 3
 THUMB_PIXELS = (320, 200)
@@ -136,7 +140,14 @@ class CnHotSearch(BasePlugin):
             except OSError as exc:
                 logger.warning("全网热搜 history not saved: %s", exc)
         lists = {platform: (result.get("data") or {}).get("rows") or [] for platform, result in results.items()}
+        # The 分榜 strip is extra: a board reading that fails or is missing only hides the strip, and
+        # does not mark the page's provenance.
+        boards = book.load(Source("baidu_boards", {"tabs": ",".join(sources.BAIDU_BOARDS)}, sources.fetch_baidu_boards,
+                                  fresh_seconds=BOARDS_FRESH_SECONDS, usable_seconds=BOARDS_USABLE_SECONDS,
+                                  validate=sources.valid_boards, timeout_seconds=15),
+                           now, allow_network=allow_network, context=context, force=force)
         return {**results, "lists": lists, "topics": sources.cross_topics(lists), "history": history,
+                "boards": (boards.get("data") or {}).get("boards") or {},
                 "provenance": combined_provenance(results.values())}
 
     def _images(self, payload, *, allow_network, context):
