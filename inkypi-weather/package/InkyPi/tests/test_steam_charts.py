@@ -230,6 +230,7 @@ def test_generate_image_combined_mode_renders_two_top_five_live_groups(tmp_path,
     plugin._apply_store_metadata = fake_apply
     plugin.render_image = fail_render
     plugin._steam_totals = lambda: {"online": 35_700_000, "online_peak": 40_100_000, "spark": [1, 3, 2]}
+    plugin._steam_weekly_ranks = lambda: {}
 
     result = plugin.generate_image(
         {"mode": "live_overview", "itemsCount": "4", "showImages": "false", "themeMode": "day"},

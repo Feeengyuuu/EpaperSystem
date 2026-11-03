@@ -74,6 +74,11 @@ STEAMCHARTS_HOME_URL = "https://steamcharts.com"
 STEAMCHARTS_CHART_URL = "https://steamcharts.com/app/{appid}/chart-data.json"
 STEAM_STORE_APPDETAILS = "https://store.steampowered.com/api/appdetails"
 STEAM_USER_STATS_URL = "https://store.steampowered.com/stats/userdata.json"
+# Steam's own most-played chart (keyless, about 7 KB): each of its top 100 apps' rank, last
+# week's rank and its day's peak in game. Asked for at most once an hour.
+STEAM_MOST_PLAYED_URL = "https://api.steampowered.com/ISteamChartsService/GetMostPlayedGames/v1/"
+STEAM_MOST_PLAYED_TTL = 3600
+STEAM_MOST_PLAYED_BYTES = 128 * 1024
 STEAM_CAPSULE_URL = "https://cdn.akamai.steamstatic.com/steam/apps/{appid}/capsule_sm_120.jpg"
 # A game the store hides from this country (appdetails fails, its page errors) still has its
 # 460x215 header on the image CDN, where newer apps have no small capsule.
@@ -330,7 +335,57 @@ class SteamCharts(LiveOverviewMixin, BasePlugin):
             })
         SteamCharts._align_compact_metric_font_scales(groups)
         self._mark_rank_moves(groups)
+        self._mark_weekly_moves(groups)
         return groups
+
+    def _mark_weekly_moves(self, groups):
+        """On the most-played board, a game on Steam's own chart shows its move there since last
+        week (or NEW to it) instead of the board's local move, and its day's peak in game stands
+        in for a missing 24-hour peak."""
+        board = next((group for group in groups if group.get("table_variant") == "top_games"), None)
+        if not board or not board.get("games"):
+            return
+        ranks = self._steam_weekly_ranks()
+        for game in board["games"]:
+            entry = ranks.get(str(game.get("app_id")))
+            if not entry:
+                continue
+            game["steam_rank"] = entry["rank"]
+            game["rank_move"] = "new" if entry["last_week_rank"] <= 0 else entry["last_week_rank"] - entry["rank"]
+            game["rank_move_weekly"] = True
+            peak = game.get("peak_24h")
+            if not (isinstance(peak, (int, float)) and peak > 0) and entry["peak"]:
+                game["peak_24h"] = entry["peak"]
+
+    @staticmethod
+    def _steam_weekly_ranks():
+        """{app id: {"rank", "last_week_rank", "peak"}} from Steam's most-played chart; {} on failure."""
+        try:
+            return SteamCharts._steam_weekly_ranks_cached(int(time.time() // STEAM_MOST_PLAYED_TTL))
+        except TaskCancelled:
+            raise
+        except Exception as error:
+            logger.warning("Steam most-played chart unavailable: %s", type(error).__name__)
+            return {}
+
+    @staticmethod
+    @lru_cache(maxsize=2)
+    def _steam_weekly_ranks_cached(epoch):
+        payload = get_http_client().request_json(
+            "GET", STEAM_MOST_PLAYED_URL, timeout=STEAM_STORE_TIMEOUT, max_bytes=STEAM_MOST_PLAYED_BYTES,
+        ).data
+        rows = ((payload or {}).get("response") or {}).get("ranks") if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            raise ValueError("Steam most-played chart has no ranks")
+        ranks = {}
+        for row in rows[:100]:
+            if not isinstance(row, dict):
+                continue
+            appid, rank, last, peak = (row.get(key) for key in ("appid", "rank", "last_week_rank", "peak_in_game"))
+            if all(isinstance(value, int) and not isinstance(value, bool) for value in (appid, rank, last)) and rank > 0:
+                ranks[str(appid)] = {"rank": rank, "last_week_rank": last,
+                                     "peak": peak if isinstance(peak, int) and peak > 0 else 0}
+        return ranks
 
     def _mark_rank_moves(self, groups):
         """Each row's move since its board's previous, different order: places up or down, or new.
@@ -1419,9 +1474,14 @@ class SteamCharts(LiveOverviewMixin, BasePlugin):
 
     @staticmethod
     def _store_facts(details):
-        """Genres, developer, price, release date and review count from a store appdetails entry."""
+        """Genres, developer, price, release date, review count, Metacritic score and achievement
+        count from a store appdetails entry (0 where the store has none)."""
         details = details if isinstance(details, dict) else {}
         price = details.get("price_overview") or {}
+
+        def whole(value, high):
+            return value if isinstance(value, int) and not isinstance(value, bool) and 0 < value <= high else 0
+
         if details.get("is_free"):
             price_text = "免费"
         else:
@@ -1434,6 +1494,8 @@ class SteamCharts(LiveOverviewMixin, BasePlugin):
             "discount": int(price.get("discount_percent") or 0),
             "release": str((details.get("release_date") or {}).get("date") or ""),
             "recommendations": (details.get("recommendations") or {}).get("total"),
+            "metacritic": whole((details.get("metacritic") or {}).get("score"), 100),
+            "achievements": whole((details.get("achievements") or {}).get("total"), 100_000),
         }
 
     def _steam_totals(self):

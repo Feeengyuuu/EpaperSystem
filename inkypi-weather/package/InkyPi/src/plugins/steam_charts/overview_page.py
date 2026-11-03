@@ -42,6 +42,8 @@ NAME_SIZES = (17, 16, 15, 14, 13, 12, 11)
 MEDALS = ((240, 185, 40), (196, 204, 216), (205, 127, 60))
 RANK_DISC = 20
 FIRST_WEEK_DAYS, NEW_RELEASE_DAYS = 7, 30
+# Metacritic's score on the art's top right corner, in its own bands: green from 75, gold from 50.
+METACRITIC_GREEN, METACRITIC_GOLD = 75, 50
 # The Steam logo (x, y, size), then the wordmark from WORDMARK_LEFT to WORDMARK_RIGHT: its lettering
 # drawn larger than its own pixels and its skyline grown into what is left, both standing on the
 # header rule so their underline and the rule are one line.
@@ -233,7 +235,8 @@ class LiveOverviewMixin:
         icon, fallback, colour = ("trending", "fire", colors["up"]) if trending else ("live", "pulse", colors["blue"])
         self._overview_icon(image, draw, icon, fallback, (left, SECTION_TOP + 2), 20, colour, colors)
         draw.text((left + 26, SECTION_TOP), title, font=self._font(16, "bold"), fill=colors["ink"])
-        note = "24 小时涨幅" if trending else "当前 / 24h 峰值"
+        weekly = any(game.get("rank_move_weekly") for game in group.get("games") or [])
+        note = "24 小时涨幅" if trending else ("当前 / 24h 峰值 ‧ 周榜升降" if weekly else "当前 / 24h 峰值")
         draw.text((right - draw.textlength(note, font=self._font(10)), SECTION_TOP + 5), note,
                   font=self._font(10), fill=colors["muted"])
         games = (group.get("games") or [])[:5]
@@ -336,17 +339,33 @@ class LiveOverviewMixin:
             draw.text(((disc[0] + disc[2] - draw.textlength(label, font=font)) / 2, disc[1] + 3), label, font=font,
                       fill=ink)
         foot = y + COVER[1] - 3
+        score = int(((game.get("store") or {}).get("metacritic")) or 0)
+        if score:
+            font = self._font(9, "bold")
+            label = f"MC {score}"
+            width = draw.textlength(label, font=font) + 10
+            right = x + COVER[0] - 3
+            fill = colors["up"] if score >= METACRITIC_GREEN else (
+                colors["gold"] if score >= METACRITIC_GOLD else colors["down"])
+            draw.rounded_rectangle((right - width, y + 3, right, y + 16), radius=4, fill=fill)
+            draw.text((right - width + 5, y + 3), label, font=font, fill=colors["paper"])
         move = game.get("rank_move")
         chip_x = x + 3
         if move == "new" or (isinstance(move, int) and move):
             font = self._font(9, "bold")
+            # A move on Steam's own weekly chart says so.
+            prefix = "周" if game.get("rank_move_weekly") else ""
             if move == "new":
                 label, fill, arrow = "NEW", colors["gold"], None
             else:
                 label, fill, arrow = str(abs(move)), colors["up"] if move > 0 else colors["down"], move > 0
-            width = draw.textlength(label, font=font) + (17 if arrow is not None else 10)
+            prefix_w = draw.textlength(prefix, font=font) + 2 if prefix else 0
+            width = prefix_w + draw.textlength(label, font=font) + (17 if arrow is not None else 10)
             draw.rounded_rectangle((chip_x, foot - 13, chip_x + width, foot), radius=4, fill=fill)
             text_x = chip_x + 5
+            if prefix:
+                draw.text((text_x, foot - 13), prefix, font=font, fill=colors["paper"])
+                text_x += prefix_w
             if arrow is not None:
                 tip, base = (foot - 11, foot - 3) if arrow else (foot - 3, foot - 11)
                 draw.polygon(((text_x, base), (text_x + 7, base), (text_x + 3.5, tip)), fill=colors["paper"])
@@ -445,6 +464,9 @@ class LiveOverviewMixin:
                 x += draw.textlength(price, font=price_font) + 10
             reviews = store.get("recommendations")
             parts = [("reviews", "ok", f"{wan(reviews)} 评测", colors["ink"])] if isinstance(reviews, int) and reviews else []
+            # A new game's achievement count says how much there is to it; it goes before the reviews.
+            if store.get("achievements"):
+                parts.insert(0, ("achievements", "star", f"{store['achievements']} 成就", colors["ink"]))
         else:
             parts = []
             peak = game.get("peak_all")
@@ -460,6 +482,8 @@ class LiveOverviewMixin:
                 parts.append(("peak", "trophy", record, colors["gold"]))
             if isinstance(average, (int, float)):
                 parts.append((None, None, f"月均 {wan(average)}", colors["ink"]))
+            if store.get("achievements"):
+                parts.append(("achievements", "star", f"{store['achievements']} 成就", colors["ink"]))
         for name, fallback, text, colour in parts:
             text_w = draw.textlength(text, font=font) + (15 if name else 0)
             if x + text_w > right:

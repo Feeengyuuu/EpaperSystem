@@ -45,12 +45,18 @@ def test_store_facts_pick_genres_developer_price_release_and_reviews():
         "price_overview": {"final_formatted": "$15.99", "discount_percent": 20},
         "release_date": {"date": "2026 年 10 月 16 日"},
         "recommendations": {"total": 12_345},
+        "metacritic": {"score": 94, "url": "https://www.metacritic.com/game/pc/x"},
+        "achievements": {"total": 42, "highlighted": []},
     })
 
     assert facts == {"genres": ["动作", "冒险"], "developer": "Valve", "price": "$15.99", "discount": 20,
-                     "release": "2026 年 10 月 16 日", "recommendations": 12_345}
+                     "release": "2026 年 10 月 16 日", "recommendations": 12_345, "metacritic": 94,
+                     "achievements": 42}
     assert SteamCharts._store_facts({"is_free": True})["price"] == "免费"
     assert SteamCharts._store_facts(None)["genres"] == []
+    # A missing or odd score or count is none at all, never a zero on the page.
+    odd = SteamCharts._store_facts({"metacritic": {"score": "94"}, "achievements": {"total": True}})
+    assert (odd["metacritic"], odd["achievements"]) == (0, 0)
 
 
 def test_steam_totals_read_the_logged_in_series(monkeypatch):
@@ -200,6 +206,7 @@ def test_the_top_board_ranks_by_the_count_it_shows(monkeypatch):
     monkeypatch.setattr(plugin, "_fetch_games", lambda source, count: [dict(game) for game in games[source]])
     monkeypatch.setattr(plugin, "_apply_store_metadata", lambda games, include_images=True: None)
     monkeypatch.setattr(plugin, "_mark_rank_moves", lambda groups: None)
+    monkeypatch.setattr(plugin, "_steam_weekly_ranks", lambda: {})
 
     top = plugin._fetch_combined_chart_groups(5, show_images=False)[1]["games"]
 
@@ -350,3 +357,79 @@ def test_a_studio_mark_that_melts_into_the_page_takes_its_ink_and_one_that_reads
     mark.putpixel((9, 4), (230, 120, 20, 255))
     night = overview_page._on_page(mark, (0, 0, 0), (240, 240, 240))
     assert night.getpixel((1, 1))[:3] == (240, 240, 240) and night.getpixel((9, 4))[:3] == (230, 120, 20)
+
+
+def test_steams_weekly_chart_moves_the_most_played_board_and_fills_a_missing_peak(monkeypatch):
+    payload = {"response": {"rollup_date": 1793491200, "ranks": [
+        {"rank": 1, "appid": 730, "last_week_rank": 1, "peak_in_game": 1_288_020},
+        {"rank": 5, "appid": 4115450, "last_week_rank": -1, "peak_in_game": 833_921},
+        {"rank": 9, "appid": 1091500, "last_week_rank": 7, "peak_in_game": 168_742},
+        {"rank": "x", "appid": 1, "last_week_rank": 1}]}}
+    requests = []
+
+    class Client:
+        def request_json(self, method, url, **kwargs):
+            requests.append((url, kwargs))
+            return type("R", (), {"data": payload})()
+
+    monkeypatch.setattr("plugins.steam_charts.steam_charts.get_http_client", lambda: Client())
+    SteamCharts._steam_weekly_ranks_cached.cache_clear()
+    plugin = _plugin()
+    groups = [{"key": "trending", "table_variant": "trending", "games": [{"app_id": 1091500, "rank_move": 2}]},
+              {"key": "player_count", "table_variant": "top_games", "games": [
+                  {"app_id": 730, "rank_move": 3, "peak_24h": 1_300_000},
+                  {"app_id": 4115450, "peak_24h": None},
+                  {"app_id": 1091500},
+                  {"app_id": 999, "rank_move": -1}]}]
+
+    plugin._mark_weekly_moves(groups)
+    plugin._mark_weekly_moves(groups)
+
+    cs2, new, cyberpunk, unlisted = groups[1]["games"]
+    assert (cs2["rank_move"], cs2["steam_rank"], cs2["peak_24h"]) == (0, 1, 1_300_000)
+    assert (new["rank_move"], new["peak_24h"]) == ("new", 833_921)
+    assert cyberpunk["rank_move"] == -2 and cyberpunk["rank_move_weekly"] is True
+    # A game off Steam's top 100 keeps the board's own move; the trending board is untouched.
+    assert unlisted == {"app_id": 999, "rank_move": -1}
+    assert groups[0]["games"] == [{"app_id": 1091500, "rank_move": 2}]
+    # One small request an hour, with a byte limit.
+    assert len(requests) == 1 and requests[0][1]["max_bytes"] == 128 * 1024
+    SteamCharts._steam_weekly_ranks_cached.cache_clear()
+
+
+def test_a_failed_weekly_chart_leaves_the_boards_own_moves(monkeypatch):
+    class Client:
+        def request_json(self, *args, **kwargs):
+            raise RuntimeError("offline")
+
+    monkeypatch.setattr("plugins.steam_charts.steam_charts.get_http_client", lambda: Client())
+    SteamCharts._steam_weekly_ranks_cached.cache_clear()
+    groups = [{"key": "player_count", "table_variant": "top_games", "games": [{"app_id": 730, "rank_move": 2}]}]
+    _plugin()._mark_weekly_moves(groups)
+    assert groups[0]["games"] == [{"app_id": 730, "rank_move": 2}]
+    SteamCharts._steam_weekly_ranks_cached.cache_clear()
+
+
+def test_rows_wear_metacritic_on_the_art_a_weekly_move_and_the_achievement_count(monkeypatch):
+    plugin = _plugin()
+    drawn = []
+    original = ImageDraw.ImageDraw.text
+
+    def capture(self, xy, text, *args, **kwargs):
+        drawn.append(str(text))
+        return original(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture)
+    trending = {"table_variant": "trending", "games": [
+        {"rank": 1, "name": "Leaf it Alone", "current_players": 5002, "change_24h_fmt": "+164%", "spark": [1, 2, 5],
+         "store": {"developer": "Eternity", "price": "$2.99", "discount": 50, "achievements": 54, "metacritic": 81}}]}
+    top = {"table_variant": "top_games", "games": [
+        {"rank": 1, "name": "Dota 2", "current_players": 423_683, "peak_24h": 697_106, "spark": [3, 2, 4],
+         "rank_move": -12, "rank_move_weekly": True, "store": {"developer": "Valve", "metacritic": 90}}]}
+
+    image = plugin._render_live_overview((800, 480), [trending, top], {}, {"mode": "day"}, "")
+
+    assert {"MC 81", "MC 90", "54 成就", "周", "12", "当前 / 24h 峰值 ‧ 周榜升降"} <= set(drawn)
+    # The score sits on the art's top right corner in Metacritic's green.
+    colours = {image.getpixel((x, y)) for x in range(90, 128) for y in range(97, 108)}
+    assert overview_page.ACCENTS["day"]["up"] in colours
