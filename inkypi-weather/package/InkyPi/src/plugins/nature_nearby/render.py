@@ -412,12 +412,18 @@ def _groups(canvas, payload, now):
 
 
 def threatened_data(payload):
-    """This week's threatened species around home ({total, items}), or None without any."""
+    """This week's species around home at vulnerable or worse ({total, partial, items}, perhaps
+    none of them), or None when the reading is unavailable."""
     source = payload.get("threatened") or {}
     data = source.get("data") or {}
-    if source.get("state") in (None, "unavailable", "disabled") or not data.get("total") or not data.get("items"):
+    if source.get("state") in (None, "unavailable", "disabled") or not isinstance(data.get("total"), int):
         return None
     return data
+
+
+def threatened_count(threatened):
+    """"35 种", or "200+ 种" when there were more threatened species than one page held."""
+    return f"{threatened['total']}{'+' if threatened.get('partial') else ''} 种"
 
 
 def _thin_groups(canvas, groups, total):
@@ -442,15 +448,19 @@ def _thin_groups(canvas, groups, total):
 
 
 def _groups_with_threatened(canvas, groups, total, threatened):
-    """The life groups as a thin bar and their top three, then this week's threatened species:
-    how many, and the most observed with their Red List category (as their local status stands
-    for one) and how often they were seen."""
+    """The life groups as a thin bar and their top three, then this week's species at vulnerable
+    or worse: how many, and the most observed with their Red List category (as their local status
+    stands for one) and how often they were seen; one quiet line in a week without any."""
     left, right = GROUP_CARD[0] + 10, GROUP_CARD[2] - 10
     y = _thin_groups(canvas, groups, total)
     canvas.rule((left, y, right, y))
     draw_icon(canvas.draw, "alert", (left, y + 4), 14, canvas.color("red"), canvas.color("paper"))
     canvas.text((left + 18, y + 11), "受威胁物种", 11, anchor="lm")
-    canvas.text((right, y + 11), f"本周 {threatened['total']} 种 · 当地评级", 10, "muted", anchor="rm", bold=False)
+    if not threatened["items"]:
+        canvas.text((left, y + 28), "本周无易危及以上物种", 11, "muted", anchor="lm", bold=False)
+        return
+    canvas.text((right, y + 11), f"本周 {threatened_count(threatened)} · 易危及以上", 10, "muted", anchor="rm",
+                bold=False)
     for index, item in enumerate(threatened["items"][:2]):
         row = y + 28 + index * 17
         count_w = canvas.text((right, row), f"{item['count']} 次", 11, anchor="rm")
@@ -507,11 +517,11 @@ def _recent(canvas, payload, images, now):
                           if part)
         canvas.text((x, top + 89), meta, 10, "muted", anchor="lm", bold=False, width=width)
     threatened = threatened_data(payload)
-    if threatened and ((payload.get("birds") or {}).get("data") or {}).get("items"):
-        # With eBird's birds in the groups card, the week's threatened species take this line.
+    if threatened and threatened["items"] and ((payload.get("birds") or {}).get("data") or {}).get("items"):
+        # With eBird's birds in the groups card, the week's vulnerable-or-worse species take this line.
         names = " · ".join(f"{_display_name(item)} {item['count']} 次" for item in threatened["items"][:3])
-        canvas.text((left, RECENT_CARD[3] - 11), f"受威胁物种 本周 {threatened['total']} 种：{names}", 11, "muted",
-                    anchor="lm", bold=False, width=right - left)
+        canvas.text((left, RECENT_CARD[3] - 11), f"易危及以上 本周 {threatened_count(threatened)}：{names}", 11,
+                    "muted", anchor="lm", bold=False, width=right - left)
     elif stats.get("top_observer"):
         canvas.text((left, RECENT_CARD[3] - 11),
                     f"本周最活跃：@{stats['top_observer']} · {stats.get('top_observations', 0)} 条观察 · "

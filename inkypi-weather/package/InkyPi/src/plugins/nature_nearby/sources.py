@@ -53,7 +53,13 @@ TRADITIONAL_MARKERS = frozenset("們這個為於與種屬華國區長東學說�
                                 "亞灣島陸葉樹後鳴飛雲紀蘭並臺裡邊間無數條雜帶從當兩態環護瀕級記錄獵")
 # iNaturalist's IUCN-equivalent codes for a conservation status.
 IUCN_LEVELS = {5: "DD", 10: "LC", 20: "NT", 30: "VU", 40: "EN", 50: "CR", 60: "EW", 70: "EX"}
+# The threatened species card counts and lists only vulnerable or worse (VU, EN, CR, EW, EX).
+VULNERABLE = 30
 MAX_THREATENED = 3
+THREATENED_PAGE = 200
+V2_SPECIES_COUNTS_URL = "https://api.inaturalist.org/v2/observations/species_counts"
+THREATENED_FIELDS = ("count,taxon.name,taxon.preferred_common_name,taxon.iconic_taxon_name,"
+                     "taxon.conservation_status.iucn,taxon.conservation_status.authority")
 EBIRD_NOTABLE_URL = "https://api.ebird.org/v2/data/obs/geo/recent/notable"
 EBIRD_DAYS = 7
 EBIRD_MAX_KM = 50  # eBird's largest search radius
@@ -439,9 +445,10 @@ def valid_season(data):
 
 
 def normalize_threatened(payload):
-    """This week's threatened species around home (iNaturalist's own test: a conservation status
-    worse than least concern where it was seen): how many, and the most observed with the IUCN
-    category their status stands for."""
+    """This week's threatened species around home at vulnerable or worse: how many, and the most
+    observed with the IUCN category their status stands for. iNaturalist's own test (any status
+    worse than least concern where it was seen) also counts near-threatened ones; they are left
+    out, locally rated ones included."""
     results = (payload or {}).get("results")
     if not isinstance(results, list):
         raise ValueError("iNaturalist returned no threatened species")
@@ -449,23 +456,30 @@ def normalize_threatened(payload):
     for row in results:
         taxon = (row or {}).get("taxon") or {}
         count = row.get("count")
-        if not taxon.get("name") or not isinstance(count, int):
-            continue
         status = taxon.get("conservation_status") or {}
+        level = status.get("iucn")
+        if not taxon.get("name") or not isinstance(count, int) or not isinstance(level, int) or level < VULNERABLE:
+            continue
         items.append({"count": count, "name": str(taxon.get("preferred_common_name") or "")[:24],
                       "scientific": str(taxon["name"])[:48], "group": str(taxon.get("iconic_taxon_name") or ""),
-                      "iucn": IUCN_LEVELS.get(status.get("iucn"), ""),
-                      "authority": str(status.get("authority") or "")[:30]})
-    return {"total": int((payload or {}).get("total_results") or len(items)), "items": items[:MAX_THREATENED]}
+                      "iucn": IUCN_LEVELS.get(level, ""), "authority": str(status.get("authority") or "")[:30]})
+    items.sort(key=lambda item: -item["count"])
+    reported = int((payload or {}).get("total_results") or 0)
+    # More species than one page holds: the count is at least this many.
+    return {"level": "VU", "total": len(items), "partial": reported > len(results), "items": items[:MAX_THREATENED]}
 
 
 def fetch_threatened(home, radius, now, context):
+    """Every threatened species seen around home this week, only the fields the card reads (about
+    12 KB for 60 species), to count those at vulnerable or worse."""
     params = _common({"d1": week_start(now), "quality_grade": "research", "threatened": "true",
-                      "per_page": MAX_THREATENED}, home, radius)
-    return normalize_threatened(_get_json(f"{V1_URL}/observations/species_counts", params, context))
+                      "per_page": THREATENED_PAGE, "fields": THREATENED_FIELDS}, home, radius)
+    return normalize_threatened(_get_json(V2_SPECIES_COUNTS_URL, params, context))
 
 
 def valid_threatened(data):
+    # A reading from before the vulnerable-or-worse filter counts as stale.
     items = (data or {}).get("items")
-    return (isinstance(data, dict) and isinstance(data.get("total"), int) and isinstance(items, list)
+    return (isinstance(data, dict) and data.get("level") == "VU" and isinstance(data.get("total"), int)
+            and isinstance(items, list)
             and all(isinstance(item, dict) and isinstance(item.get("count"), int) for item in items))

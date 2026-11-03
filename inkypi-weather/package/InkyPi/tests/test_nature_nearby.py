@@ -18,7 +18,7 @@ NOW = datetime(2026, 10, 21, 14, 0, tzinfo=sources.PACIFIC)
 PHOTO = "https://inaturalist-open-data.s3.amazonaws.com/photos/753861248/square.jpg"
 
 
-THREATENED = {"total": 56, "items": [
+THREATENED = {"level": "VU", "total": 35, "partial": False, "items": [
     {"count": 71, "name": "君主斑蝶", "scientific": "Danaus plexippus", "group": "Insecta", "iucn": "VU",
      "authority": "NatureServe"},
     {"count": 24, "name": "美洲鹈鹕", "scientific": "Pelecanus erythrorhynchos", "group": "Aves", "iucn": "CR",
@@ -339,20 +339,34 @@ def test_the_species_wikipedia_lead_becomes_a_simplified_blurb(monkeypatch):
         sources.fetch_blurb("君主斑蝶", "君主斑蝶", None)
 
 
-def test_months_and_threatened_species_normalize():
+def test_months_and_threatened_species_normalize(monkeypatch):
     assert sources.normalize_season({"results": {"month_of_year": {str(month): month for month in range(1, 13)}}}) == {
         "months": list(range(1, 13))}
     with pytest.raises(ValueError):
         sources.normalize_season({"results": {}})
-    data = sources.normalize_threatened({"total_results": 56, "results": [
-        {"count": 71, "taxon": {"name": "Danaus plexippus", "preferred_common_name": "君主斑蝶",
-                                "iconic_taxon_name": "Insecta",
-                                "conservation_status": {"authority": "NatureServe", "status": "n5b", "iucn": 30}}},
-        {"count": 37, "taxon": {"name": "Ardea alba", "preferred_common_name": "大白鹭",
-                                "conservation_status": {"iucn": 99}}}]})
-    assert data["total"] == 56 and [(item["name"], item["iucn"]) for item in data["items"]] == [
-        ("君主斑蝶", "VU"), ("大白鹭", "")]
-    assert sources.valid_threatened(data) and not sources.valid_threatened({"items": []})
+    def row(count, name, chinese, iucn):
+        return {"count": count, "taxon": {"name": name, "preferred_common_name": chinese, "iconic_taxon_name": "Aves",
+                                          "conservation_status": {"authority": "NatureServe", "iucn": iucn}}}
+
+    data = sources.normalize_threatened({"total_results": 300, "results": [
+        row(71, "Danaus plexippus", "君主斑蝶", 30), row(37, "Ardea alba", "大白鹭", 20),
+        row(25, "Pelecanus erythrorhynchos", "美洲鹈鹕", 50), row(11, "Sequoia sempervirens", "北美红杉", 40),
+        row(3, "Calidris canutus", "红腹滨鹬", 10), row(2, "Rallus obsoletus", "加州长嘴秧鸡", 70)]})
+    # Near threatened (a locally rated S4 egret) and least concern drop out; VU, EN, CR, EX stay.
+    assert data["total"] == 4 and data["level"] == "VU"
+    assert [(item["name"], item["iucn"]) for item in data["items"]] == [
+        ("君主斑蝶", "VU"), ("美洲鹈鹕", "CR"), ("北美红杉", "EN")]
+    assert data["partial"] is True  # 300 reported, six received: more than one page, so "at least"
+    assert sources.valid_threatened(data) and not sources.valid_threatened({"total": 56, "items": []})
+    none = sources.normalize_threatened({"total_results": 1, "results": [row(37, "Ardea alba", "大白鹭", 20)]})
+    assert (none["total"], none["items"], none["partial"]) == (0, [], False)
+    calls = []
+    monkeypatch.undo()  # the real fetch, not the autouse sample
+    monkeypatch.setattr(sources, "_get_json", lambda url, params, ctx, **_k: calls.append((url, params)) or {
+        "total_results": 0, "results": []})
+    sources.fetch_threatened(sources.DEFAULT_HOME, 40, NOW, None)
+    assert calls[0][0].startswith("https://api.inaturalist.org/v2/") and calls[0][1]["per_page"] == 200
+    assert "taxon.conservation_status.iucn" in calls[0][1]["fields"] and calls[0][1]["threatened"] == "true"
 
 
 def _rich_payload():
@@ -389,7 +403,7 @@ def test_the_hero_gives_the_blurb_and_months_and_the_groups_card_the_threatened(
 
     assert image.size == (800, 480)
     assert any(text.startswith("君主斑蝶是一种斑蝶。它们") for text in drawn) and "高峰 3 月" in drawn
-    assert {"受威胁物种", "本周 56 种 · 当地评级", "VU 易危", "CR 极危", "71 次"} <= set(drawn)
+    assert {"受威胁物种", "本周 35 种 · 易危及以上", "VU 易危", "CR 极危", "71 次"} <= set(drawn)
     # This month's bar in the card's green.
     green = render._palette({"_inkypi_theme": {"mode": mode}})["green"]
     assert green in set(image.crop((200, 300, 292, 325)).get_flattened_data())
@@ -408,7 +422,7 @@ def test_with_ebirds_birds_the_threatened_species_take_the_filmstrips_foot(monke
          "time": NOW.isoformat(), "count": 1, "distance_km": 9.0, "confirmed": True}]}}
     render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, {})
 
-    assert "受威胁物种 本周 56 种：君主斑蝶 71 次 · 美洲鹈鹕 24 次" in drawn
+    assert "易危及以上 本周 35 种：君主斑蝶 71 次 · 美洲鹈鹕 24 次" in drawn
     assert not any(text.startswith("本周最活跃") for text in drawn) and "受威胁物种" not in drawn
 
 
@@ -438,3 +452,23 @@ def test_the_extras_load_with_the_species_and_never_decide_provenance(monkeypatc
     assert failed["threatened"]["state"] == "unavailable" and failed["season"]["state"] == "unavailable"
     assert failed["provenance"] is SourceProvenance.LIVE
     assert render_page((800, 480), failed, {"_inkypi_theme": {"mode": "day"}}, NOW, images).size == (800, 480)
+
+
+def test_a_week_without_vulnerable_species_says_so_quietly(monkeypatch):
+    drawn = _recorded(monkeypatch)
+    payload = _rich_payload()
+    payload["threatened"] = {"state": "live", "data": {"level": "VU", "total": 0, "partial": False, "items": []}}
+    render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, {})
+    assert {"受威胁物种", "本周无易危及以上物种"} <= set(drawn) and not any("次" == text[-1:] and "斑蝶" in text
+                                                                    for text in drawn)
+    # With eBird's birds, the filmstrip's foot keeps the week's most active observer instead.
+    payload["birds"] = {"state": "live", "data": {"species": 1, "items": [
+        {"name": "白头海雕", "scientific": "Haliaeetus leucocephalus", "place": "Coyote Hills RP",
+         "time": NOW.isoformat(), "count": 1, "distance_km": 9.0, "confirmed": True}]}}
+    drawn.clear()
+    render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, {})
+    assert any(text.startswith("本周最活跃") for text in drawn)
+    payload["threatened"] = {"state": "live", "data": {**THREATENED, "partial": True}}
+    drawn.clear()
+    render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, {})
+    assert any(text.startswith("易危及以上 本周 35+ 种") for text in drawn)
