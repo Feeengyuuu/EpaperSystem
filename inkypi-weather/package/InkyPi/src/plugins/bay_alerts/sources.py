@@ -1,5 +1,6 @@
-"""Bounded public feeds for the Bay Alerts page: USGS quakes, NWS alerts, NASA EONET events,
-CAL FIRE's active incidents and, with a FIRMS map key, NASA's satellite fire hotspots."""
+"""Bounded public feeds for the Bay Alerts page: USGS quakes (with how they were felt), NWS alerts
+and the forecasters' key messages, NASA EONET events, CAL FIRE's active incidents, the Air
+District's Spare the Air status and, with a FIRMS map key, NASA's satellite fire hotspots."""
 
 from __future__ import annotations
 
@@ -8,6 +9,7 @@ import io
 import math
 import re
 from datetime import datetime, timedelta, timezone
+from xml.etree import ElementTree
 from zoneinfo import ZoneInfo
 
 from runtime.refresh_contracts import TaskCancelled
@@ -70,6 +72,17 @@ EONET_KINDS = {
     "earthquakes": "quake", "landslides": "landslide", "snow": "snow", "seaLakeIce": "snow",
     "dustHaze": "haze", "drought": "heat", "tempExtremes": "heat",
 }
+# USGS PAGER's alert levels, in Chinese, mildest first.
+PAGER_LEVELS = {"green": "绿色", "yellow": "黄色", "orange": "橙色", "red": "红色"}
+ROMAN = ("", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII")
+# The San Francisco Bay Area forecast office's latest Area Forecast Discussion (about 7 KB), for
+# the forecasters' key messages; it is issued a few times a day.
+AFD_URL = "https://api.weather.gov/products/types/AFD/locations/MTR/latest"
+MAX_KEY_MESSAGES = 5
+# The Bay Area Air District's Spare the Air status (about 0.5 KB).
+SPARE_THE_AIR_URL = "https://www.baaqmd.gov/Feeds/AlertRSS.aspx"
+WEEKDAY_SHORT = {"Monday": "Mon", "Tuesday": "Tue", "Wednesday": "Wed", "Thursday": "Thu", "Friday": "Fri",
+                 "Saturday": "Sat", "Sunday": "Sun"}
 
 
 def parse_time(value):
@@ -185,6 +198,10 @@ def normalize_quakes(payload, home, now):
             continue
         depth = _finite(coords[2]) if len(coords) > 2 else None
         felt = props.get("felt")
+        # How it was felt: "Did You Feel It?" reports and their highest intensity, ShakeMap's
+        # intensity, the PAGER alert level, the tsunami flag and USGS's significance.
+        cdi, mmi, sig = _finite(props.get("cdi")), _finite(props.get("mmi")), _finite(props.get("sig"))
+        alert = str(props.get("alert") or "").lower()
         items.append({
             "id": str(feature.get("id") or props.get("code") or "")[:40],
             "mag": round(mag, 1), "time": stamp.isoformat(),
@@ -192,6 +209,11 @@ def normalize_quakes(payload, home, now):
             "depth_km": round(depth, 1) if depth is not None else None,
             "place": chinese_place(props.get("place")),
             "felt": int(felt) if isinstance(felt, int) and felt >= 0 else None,
+            "cdi": round(cdi, 1) if cdi is not None and 0 < cdi <= 12 else None,
+            "mmi": round(mmi, 1) if mmi is not None and 0 < mmi <= 12 else None,
+            "alert": alert if alert in PAGER_LEVELS else None,
+            "tsunami": props.get("tsunami") == 1,
+            "sig": int(sig) if sig is not None and 0 <= sig <= 3000 else None,
             "distance_km": round(distance_km(home[0], home[1], lat, lon), 1),
         })
         if len(items) >= MAX_QUAKES:
@@ -440,3 +462,106 @@ def valid_events(data):
     return isinstance(items, list) and len(items) <= MAX_EVENTS and all(
         isinstance(item, dict) and parse_time(item.get("date")) and valid_coordinates(item.get("lat"), item.get("lon"))
         for item in items)
+
+
+def intensity_roman(value):
+    """An intensity (CDI or MMI, 1-12) as USGS writes it, rounded: 3.8 -> 'IV'."""
+    number = _finite(value)
+    return ROMAN[max(1, min(12, int(number + 0.5)))] if number is not None and number > 0 else ""
+
+
+def compact_message(text):
+    """A forecaster's key message a little shorter for a narrow card: weekdays abbreviated,
+    'through' as 'thru', 'temperatures' as 'temps'."""
+    text = " ".join(str(text or "").split())
+    for day, short in WEEKDAY_SHORT.items():
+        text = re.sub(rf"\b{day}\b", short, text)
+    text = re.sub(r"\bthrough\b", "thru", text)
+    return re.sub(r"\btemperatures\b", "temps", text)
+
+
+def parse_key_messages(text):
+    """The '.KEY MESSAGES...' block of an Area Forecast Discussion as its bullets (each joined onto
+    one line), with the time it says it was updated; ValueError when the product has none."""
+    match = re.search(r"^\.KEY MESSAGES\.\.\.\s*$(.*?)^&&", str(text or ""), re.MULTILINE | re.DOTALL)
+    if not match:
+        raise ValueError("The discussion has no key messages")
+    block = match.group(1)
+    updated = re.search(r"Updated at\s+(\d{3,4}\s+[AP]M\s+[A-Z]{3})", block)
+    messages, current = [], None
+    for line in block.splitlines():
+        bullet = re.match(r"^\s*[-*]\s+(.*)$", line)
+        if bullet:
+            current = [bullet.group(1).strip()]
+            messages.append(current)
+        elif current is not None and line.strip():
+            current.append(line.strip())
+        elif not line.strip():
+            current = None
+    messages = [" ".join(parts)[:240] for parts in messages if parts and parts[0]]
+    if not messages:
+        raise ValueError("The key messages are empty")
+    return {"messages": messages[:MAX_KEY_MESSAGES], "updated": updated.group(1) if updated else ""}
+
+
+def fetch_key_messages(context):
+    product = _get_json(AFD_URL, None, context, 256 * 1024)
+    if not isinstance(product, dict) or product.get("productCode") not in (None, "AFD"):
+        raise ValueError("NWS returned no forecast discussion")
+    issued = parse_time(product.get("issuanceTime"))
+    return {**parse_key_messages(product.get("productText")), "issued": issued.isoformat() if issued else None,
+            "office": str(product.get("issuingOffice") or "KMTR")[:6]}
+
+
+def valid_key_messages(data):
+    messages = data.get("messages") if isinstance(data, dict) else None
+    return (isinstance(messages, list) and 0 < len(messages) <= MAX_KEY_MESSAGES
+            and all(isinstance(message, str) and message for message in messages))
+
+
+def parse_spare_the_air(text):
+    """The Air District's feed as [{date, alert, status}]: one item a day (today, and tomorrow once
+    it is forecast), each an alert or not."""
+    try:
+        root = ElementTree.fromstring(str(text or "").strip())
+    except ElementTree.ParseError:
+        raise ValueError("The Spare the Air feed is not XML") from None
+    days = []
+    for item in root.iter("item"):
+        status = " ".join(str(item.findtext("description") or "").split())[:120]
+        raw_date = " ".join(str(item.findtext("date") or "").split())
+        try:
+            date = datetime.strptime(raw_date, "%A, %B %d, %Y").date().isoformat()
+        except ValueError:
+            continue
+        if status:
+            days.append({"date": date, "status": status,
+                         "alert": not re.search(r"\bno alert\b", status, re.IGNORECASE),
+                         "winter": bool(re.search(r"\bwinter\b|\bwood\b|\bburn", status, re.IGNORECASE))})
+    if not days:
+        raise ValueError("The Spare the Air feed has no day")
+    return {"days": days[:3]}
+
+
+def fetch_spare_the_air(context):
+    context.raise_if_cancelled()
+    response = get_http_client().request_text("GET", SPARE_THE_AIR_URL, context=context, timeout=REQUEST_TIMEOUT,
+                                              max_bytes=64 * 1024, headers={"User-Agent": USER_AGENT})
+    context.raise_if_cancelled()
+    return parse_spare_the_air(response.data)
+
+
+def valid_spare_the_air(data):
+    days = data.get("days") if isinstance(data, dict) else None
+    return isinstance(days, list) and 0 < len(days) <= 3 and all(
+        isinstance(day, dict) and day.get("date") and isinstance(day.get("alert"), bool) for day in days)
+
+
+def air_today(data, now):
+    """Today's Spare the Air day from the feed, with tomorrow's when it is an alert; None without today."""
+    days = {day["date"]: day for day in (data or {}).get("days") or [] if isinstance(day, dict)}
+    today = days.get(now.date().isoformat())
+    if today is None:
+        return None
+    tomorrow = days.get((now + timedelta(days=1)).date().isoformat())
+    return {**today, "tomorrow_alert": bool(tomorrow and tomorrow.get("alert"))}

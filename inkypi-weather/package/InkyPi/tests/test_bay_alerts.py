@@ -17,6 +17,53 @@ NOW = datetime(2026, 10, 21, 13, 0, tzinfo=sources.PACIFIC)
 HOME = sources.DEFAULT_HOME
 
 
+AFD_TEXT = """
+000
+FXUS66 KMTR 022239
+AFDMTR
+
+Area Forecast Discussion
+National Weather Service San Francisco CA
+239 PM PST Mon Nov 2 2026
+
+.KEY MESSAGES...
+Updated at 228 PM PST Mon Nov 2 2026
+
+ - Hazardous beach conditions through Tuesday evening and again
+   Thursday through Saturday
+
+ - Light to moderate rain across North Bay tonight through
+   Tuesday; light rain across rest of Bay Area
+
+ - Seasonal to slightly below normal temps through midweek;
+   warming trend and above normal temps late week into weekend
+
+&&
+
+.SHORT TERM...
+Issued at 228 PM PST Mon Nov 2 2026
+ - Not a key message
+&&
+"""
+AIR_RSS = """<?xml version="1.0" encoding="utf-8" ?>
+<rss version="2.0"><channel><title>Air Alerts for the San Francisco Bay Area</title>
+<item><title>Spare the Air Status for Wednesday, October 21, 2026</title>
+<date>Wednesday, October 21, 2026</date><description>{today}</description></item>
+<item><title>Spare the Air Status for Thursday, October 22, 2026</title>
+<date>Thursday, October 22, 2026</date><description>{tomorrow}</description></item>
+</channel></rss>"""
+
+
+@pytest.fixture(autouse=True)
+def quiet_extras(monkeypatch):
+    """No test reaches the NWS discussion or the Air District: they read the samples above."""
+    monkeypatch.setattr(sources, "fetch_key_messages",
+                        lambda _ctx: {**sources.parse_key_messages(AFD_TEXT), "issued": NOW.isoformat(),
+                                      "office": "KMTR"})
+    monkeypatch.setattr(sources, "fetch_spare_the_air",
+                        lambda _ctx: sources.parse_spare_the_air(AIR_RSS.format(today="No Alert", tomorrow="No Alert")))
+
+
 class Device:
     def get_resolution(self):
         return (800, 480)
@@ -136,7 +183,7 @@ def test_column_cards_always_fill_the_column_and_never_list_more_than_they_have(
 
     assert sum(heights.values()) == render.COLUMN_SPACE
     for name, shown in rows.items():
-        assert 0 <= shown <= counts[name]
+        assert 0 <= shown <= counts.get(name, 0)
 
 
 def test_an_all_clear_alert_card_shrinks_so_quakes_and_events_show_more():
@@ -548,3 +595,160 @@ def test_each_card_names_its_sources_by_their_logos(mode):
     assert not any("NWS" in text or "CAL FIRE" in text for text in drawn)
     header = [canvas.image.getpixel((x, y)) for x in range(640, 760) for y in range(68, 86)]
     assert any(abs(red - blue) > 60 for red, _green, blue in header)  # NWS' blue and red
+
+
+def _felt(id_, mag, hours_ago, felt, cdi=None, **extra):
+    quake = _quake(id_, mag, hours_ago, place="2 km NE of Pacifica, CA")
+    quake["properties"].update({"felt": felt, "cdi": cdi, "sig": 313, **extra})
+    return quake
+
+
+def test_quakes_keep_how_they_were_felt():
+    items = sources.normalize_quakes({"features": [
+        _felt("p", 2.7, 30, 522, 3.8, mmi=None, alert="yellow", tsunami=1),
+        _felt("q", 2.1, 2, None, None, alert="purple", tsunami=0)]}, HOME, NOW)["items"]
+    felt, quiet = sorted(items, key=lambda item: item["id"])
+
+    assert (felt["felt"], felt["cdi"], felt["alert"], felt["tsunami"], felt["sig"]) == (522, 3.8, "yellow", True, 313)
+    assert (quiet["felt"], quiet["cdi"], quiet["alert"], quiet["tsunami"]) == (None, None, None, False)
+    assert render.felt_text(felt) == "522 人有感 · 烈度 IV · PAGER 黄色 · 海啸信息"
+    assert render.felt_text(quiet) == ""
+    assert [sources.intensity_roman(value) for value in (3.4, 3.5, 1.0, 12.7, None, 0)] == [
+        "III", "IV", "I", "XII", "", ""]
+
+
+def test_the_callout_and_the_list_carry_the_felt_reports():
+    quakes = sources.normalize_quakes({"features": [
+        _felt("big", 4.1, 5, 1200, 5.2), _quake("new", 2.2, 1), _quake("newer", 2.3, 0.5),
+        _felt("felt", 2.7, 30, 522, 3.8)]}, HOME, NOW)["items"]
+
+    assert render.focus_quake(quakes, NOW)["lines"][-1] == "1,200 人有感 · 烈度 V"
+    # The week's most widely felt quake is listed even when newer ones would fill the rows.
+    by_id = {item["id"]: item for item in quakes}
+    big_gone = [item for item in quakes if item["id"] != "big"]
+    assert [item["id"] for item in listed_quakes(big_gone, 2)] == ["newer", "felt"]
+    assert [item["id"] for item in listed_quakes([by_id["new"], by_id["newer"]], 2)] == ["new", "newer"]
+    drawn = []
+    original = render.PageCanvas.text
+
+    def record(self, xy, text, *args, **kwargs):
+        drawn.append(text)
+        return original(self, xy, text, *args, **kwargs)
+
+    render.PageCanvas.text = record
+    try:
+        render_page((800, 480), _payload(quakes=big_gone), {"_inkypi_theme": {"mode": "day"}}, NOW)
+    finally:
+        render.PageCanvas.text = original
+    assert "522人" in drawn
+
+
+def test_key_messages_come_from_the_discussions_key_block():
+    data = sources.parse_key_messages(AFD_TEXT)
+
+    assert data["updated"] == "228 PM PST"
+    assert data["messages"] == [
+        "Hazardous beach conditions through Tuesday evening and again Thursday through Saturday",
+        "Light to moderate rain across North Bay tonight through Tuesday; light rain across rest of Bay Area",
+        "Seasonal to slightly below normal temps through midweek; warming trend and above normal temps late week "
+        "into weekend"]
+    assert sources.compact_message(data["messages"][0]) == (
+        "Hazardous beach conditions thru Tue evening and again Thu thru Sat")
+    assert render.key_clock(data, NOW) == "14:28"
+    assert render.key_clock({"issued": "2026-11-03T00:23:00+00:00"}, NOW) == "16:23"
+    assert sources.valid_key_messages(data) and not sources.valid_key_messages({"messages": []})
+    for text in ("", AFD_TEXT.replace(".KEY MESSAGES...", ".SYNOPSIS..."), ".KEY MESSAGES...\n\n&&\n"):
+        with pytest.raises(ValueError):
+            sources.parse_key_messages(text)
+
+
+def test_key_messages_take_room_once_quakes_have_two_rows_and_split_it_fairly():
+    rows, heights = plan_column({"alerts": 1, "quakes": 27, "events": 8, "key_lines": 6})
+
+    assert sum(heights.values()) == render.COLUMN_SPACE
+    assert rows["quakes"] >= 2 and render.KEY_LINES_MIN <= rows["key_lines"] <= 6
+    assert heights["alerts"] == 79 + render.key_height(rows["key_lines"])
+    # A busy warning day leaves the messages out rather than squeezing them in.
+    busy, _ = plan_column({"alerts": 5, "quakes": 27, "events": 8, "key_lines": 6})
+    assert busy["key_lines"] == 0
+    # Without messages (or with too few lines to show) the plan is the one the page always had.
+    assert plan_column({"alerts": 1, "quakes": 27, "events": 8}) == plan_column(
+        {"alerts": 1, "quakes": 27, "events": 8, "key_lines": 1})
+    # One line each first, then the rest in order.
+    assert render.allot_key_lines([["a", "b"], ["c", "d"], ["e"]], 4) == [2, 1, 1]
+    assert render.allot_key_lines([["a", "b"], ["c", "d"], ["e"]], 2) == [1, 1, 0]
+
+
+def test_spare_the_air_reads_today_and_tomorrow():
+    quiet = sources.parse_spare_the_air(AIR_RSS.format(today="No Alert", tomorrow="No Alert"))
+    alert = sources.parse_spare_the_air(AIR_RSS.format(today="No Alert",
+                                                       tomorrow="Winter Spare the Air Alert in Effect"))
+
+    assert quiet["days"][0] == {"date": "2026-10-21", "status": "No Alert", "alert": False, "winter": False}
+    assert sources.air_today(quiet, NOW) == {**quiet["days"][0], "tomorrow_alert": False}
+    assert sources.air_today(alert, NOW)["tomorrow_alert"] is True and alert["days"][1]["winter"] is True
+    assert sources.air_today(quiet, NOW + timedelta(days=3)) is None
+    for text in ("not xml", "<rss><channel></channel></rss>"):
+        with pytest.raises(ValueError):
+            sources.parse_spare_the_air(text)
+
+
+def _extras(air_today="No Alert"):
+    return {"key_messages": {"state": "live", "data": {**sources.parse_key_messages(AFD_TEXT),
+                                                       "issued": NOW.isoformat()}},
+            "air": {"state": "live", "data": sources.parse_spare_the_air(
+                AIR_RSS.format(today=air_today, tomorrow="No Alert"))}}
+
+
+def test_the_header_gives_spare_the_air_and_the_weather_card_the_key_messages():
+    drawn = []
+    original = render.PageCanvas.text
+
+    def record(self, xy, text, *args, **kwargs):
+        drawn.append(text)
+        return original(self, xy, text, *args, **kwargs)
+
+    render.PageCanvas.text = record
+    try:
+        image = render_page((800, 480), {**_payload(), **_extras()}, {"_inkypi_theme": {"mode": "day"}}, NOW)
+        assert "Spare the Air · 今日无警报" in drawn and "预报员要点" in drawn
+        assert any(str(text).startswith("Hazardous beach conditions thru Tue") for text in drawn)
+        assert image.info["column_cards"]["quakes"]["rows"] >= 2
+        drawn.clear()
+        render_page((800, 480), {**_payload(), **_extras("Spare the Air Alert in Effect")},
+                    {"_inkypi_theme": {"mode": "night"}}, NOW)
+        assert "Spare the Air 警报 · 今日空气不佳" in drawn
+        drawn.clear()
+        render_page((800, 480), _payload(), {"_inkypi_theme": {"mode": "day"}}, NOW)
+        assert "地震 · 气象预警 · 自然事件" in drawn and "预报员要点" not in drawn
+    finally:
+        render.PageCanvas.text = original
+    assert attention_items({**_payload(quakes=[]), **_extras("Spare the Air Alert in Effect")}, NOW) == 1
+    assert attention_items({**_payload(quakes=[]), **_extras()}, NOW) == 0
+
+
+def test_the_extras_load_beside_the_feeds_and_never_decide_provenance(monkeypatch, tmp_path):
+    import time
+
+    from runtime.refresh_contracts import TaskContext
+
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr(sources, "fetch_quakes", lambda *_args: _payload()["quakes"]["data"])
+    monkeypatch.setattr(sources, "fetch_alerts", lambda *_args: {"items": [], "counties": ["006001"]})
+    monkeypatch.setattr(sources, "fetch_events", lambda *_args: {"items": []})
+    monkeypatch.setattr(sources, "fetch_fires", lambda *_args: {"items": []})
+    plugin = BayAlerts({"id": "bay_alerts"})
+    task = TaskContext.never_cancelled(deadline_monotonic=time.monotonic() + 30)
+    payload = plugin._payload({}, NOW, allow_network=True, context=task)
+    assert payload["key_messages"]["state"] == "live" and payload["air"]["state"] == "live"
+
+    def offline(_ctx):
+        raise OSError("offline")
+
+    monkeypatch.setattr(sources, "fetch_key_messages", offline)
+    monkeypatch.setattr(sources, "fetch_spare_the_air", offline)
+    later = plugin._payload({"forceRefresh": True}, NOW + timedelta(days=1), allow_network=True, context=task)
+    assert later["key_messages"]["state"] == "unavailable" and later["air"]["state"] == "unavailable"
+    assert later["provenance"] is SourceProvenance.LIVE
+    image = render_page((800, 480), later, {"_inkypi_theme": {"mode": "day"}}, NOW + timedelta(days=1))
+    assert image.info["column_cards"]["alerts"]["rows"] == 0

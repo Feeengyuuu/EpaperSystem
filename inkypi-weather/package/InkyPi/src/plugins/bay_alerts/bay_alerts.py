@@ -1,5 +1,6 @@
 """Bay Area alerts page: USGS quakes, NWS warnings, NASA EONET events and CAL FIRE incidents on
-one hazard map, with NASA FIRMS fire hotspots when a FIRMS_MAP_KEY is configured."""
+one hazard map, with NASA FIRMS fire hotspots when a FIRMS_MAP_KEY is configured; the NWS
+forecasters' key messages and the Air District's Spare the Air status beside them."""
 
 from __future__ import annotations
 
@@ -21,7 +22,7 @@ from . import sources
 logger = logging.getLogger(__name__)
 PLUGIN_ID = "bay_alerts"
 CACHE_SCHEMA = 1
-CACHE_BUDGET = CacheBudget(7 * 86400, 12, 4 * 1024 * 1024)
+CACHE_BUDGET = CacheBudget(7 * 86400, 16, 4 * 1024 * 1024)
 DEFAULT_FONT = "Microsoft YaHei"
 TASK_SECONDS = 40
 
@@ -89,9 +90,21 @@ class BayAlerts(BasePlugin):
                                     fresh_seconds=1800, usable_seconds=6 * 3600, validate=sources.valid_hotspots,
                                     timeout_seconds=12),
                              now, allow_network=allow_network, context=context, force=force) if firms_key else None
+        # The forecasters' key messages and the Spare the Air status are extras too: each card or
+        # chip they fill is left out when they fail.
+        extras = {
+            "key_messages": book.load(Source("key_messages", {"office": "MTR"}, sources.fetch_key_messages,
+                                             fresh_seconds=3600, usable_seconds=18 * 3600,
+                                             validate=sources.valid_key_messages, timeout_seconds=10),
+                                      now, allow_network=allow_network, context=context, force=force),
+            "air": book.load(Source("air", {"feed": "spare_the_air"}, sources.fetch_spare_the_air,
+                                    fresh_seconds=1800, usable_seconds=12 * 3600,
+                                    validate=sources.valid_spare_the_air, timeout_seconds=8),
+                             now, allow_network=allow_network, context=context, force=force),
+        }
         label = " ".join(str(settings.get("homeLabel") or "家").split())[:8]
-        return {**results, "hotspots": hotspots, "home": list(home), "home_label": label, "radius_km": radius,
-                "counties": list(counties), "provenance": combined_provenance(results.values())}
+        return {**results, **extras, "hotspots": hotspots, "home": list(home), "home_label": label,
+                "radius_km": radius, "counties": list(counties), "provenance": combined_provenance(results.values())}
 
     def render_cached_display(self, settings, device_config, *, resolved_theme_context):
         return self.render_themed_image(settings, device_config, theme_render_only=True,

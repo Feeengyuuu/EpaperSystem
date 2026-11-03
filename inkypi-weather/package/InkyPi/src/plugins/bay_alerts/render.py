@@ -6,6 +6,7 @@ mark the Bay map."""
 
 from __future__ import annotations
 
+import re
 from datetime import timedelta
 from pathlib import Path
 
@@ -20,7 +21,9 @@ from .map_view import (
     alert_tag_size, california_map_size, draw_alert_tag, nearest_fault, paste_logos, quake_age_class,
     quake_chip_colors, render_bay_map, render_california_map, rgb, tone_ink,
 )
-from .sources import PACIFIC, distance_km, local_now, parse_time
+from .sources import (
+    PACIFIC, PAGER_LEVELS, air_today, compact_message, distance_km, intensity_roman, local_now, parse_time,
+)
 
 
 # Pure white or black paper and neutral grey rules: an off-white or tinted ground, or a tinted
@@ -56,6 +59,8 @@ RIGHT = 788
 NOTABLE_QUAKE = 3.5
 NEARBY_EVENT_KM = 120
 NEAR_HOME_KM = 50
+# A quake this many people reported feeling is listed even when newer ones would fill the rows.
+FELT_NOTABLE = 100
 # The cards' source logos, this tall before each header's detail.
 CARD_LOGO_HEIGHT = 18
 SAME_FIRE_KM = 15
@@ -115,7 +120,38 @@ def attention_items(payload, now):
               and quake_age_class(quake, now) == "day"]
     nearby_fires = [event for event in events if event.get("kind") == "fire"
                     and distance_km(home[0], home[1], event["lat"], event["lon"]) <= NEARBY_EVENT_KM]
-    return len(alerts) + len(strong) + len(nearby_fires)
+    air = spare_the_air(payload, now)
+    return len(alerts) + len(strong) + len(nearby_fires) + (1 if air and air["alert"] else 0)
+
+
+def spare_the_air(payload, now):
+    source = payload.get("air") or {}
+    if source.get("state") in (None, "unavailable", "disabled"):
+        return None
+    return air_today(source.get("data"), now)
+
+
+def _air_chip(canvas, air, left, right):
+    """The Air District's Spare the Air status for today as a chip from ``left``: an emerald outline
+    and ink text on a day without an alert, solid crimson on an alert day (a winter one bans
+    burning wood), with tomorrow's alert named when one is called."""
+    if air["alert"]:
+        text = "Spare the Air 警报 · " + ("今日禁止烧柴" if air.get("winter") else "今日空气不佳")
+    else:
+        text = "Spare the Air · 今日无警报" + (" · 明日警报" if air.get("tomorrow_alert") else "")
+    width = min(right - left, canvas.width(text, 12) + 36)
+    if width < 120:
+        return False
+    box = (left, 15, left + width, 39)
+    if air["alert"]:
+        canvas.draw.rounded_rectangle(box, radius=12, fill=canvas.color("alert"))
+        draw_icon(canvas.draw, "haze", (left + 8, 19), 16, canvas.color("badge_ink"), canvas.color("alert"))
+        canvas.text((left + 28, 27), text, 12, "badge_ink", anchor="lm", width=width - 34)
+    else:
+        canvas.draw.rounded_rectangle(box, radius=12, fill=canvas.color("paper"), outline=canvas.color("ok"), width=2)
+        draw_icon(canvas.draw, "haze", (left + 8, 19), 16, canvas.color("ok"), canvas.color("paper"))
+        canvas.text((left + 28, 27), text, 12, anchor="lm", width=width - 34)
+    return True
 
 
 def _header(canvas, payload, now):
@@ -124,7 +160,6 @@ def _header(canvas, payload, now):
         title_right = pasted[2]
     else:
         title_right = 16 + canvas.text((16, 27), "湾区要紧事", 30, anchor="lm")
-    canvas.text((title_right + 14, 30), "地震 · 气象预警 · 自然事件", 14, "muted", anchor="lm", bold=False)
     stamp = f"{now:%m.%d} 周{WEEKDAYS[now.weekday()]} {now:%H:%M}"
     date_width = canvas.text((RIGHT, 27), stamp, 16, anchor="rm")
     count = attention_items(payload, now)
@@ -142,6 +177,11 @@ def _header(canvas, payload, now):
         canvas.draw.rounded_rectangle((left, 13, left + pill_width, 41), radius=14, fill=canvas.color(fill))
         draw_icon(canvas.draw, "alert", (left + 9, 18), 18, canvas.color("badge_ink"), canvas.color(fill))
         canvas.text((left + 33, 27), text, 15, "badge_ink", anchor="lm")
+    # Between the title and the pill: the Air District's Spare the Air status for today, or the
+    # page's subject when the feed has nothing for today.
+    air = spare_the_air(payload, now)
+    if not air or not _air_chip(canvas, air, title_right + 14, left - 12):
+        canvas.text((title_right + 14, 30), "地震 · 气象预警 · 自然事件", 14, "muted", anchor="lm", bold=False)
     canvas.rule((12, 52, RIGHT, 52), "ink", 2)
 
 
@@ -160,6 +200,16 @@ EVENT_MAP_MAX_WIDTH = 88
 MORE_LINE = 14
 MAX_ROWS = {"alerts": 6, "quakes": 10, "events": 6}
 CARD_ORDER = ("alerts", "quakes", "events")
+# The forecasters' key messages under the alerts, in the weather card: a label row, then each
+# message's lines (wrapped, at most KEY_MESSAGE_WRAP each), shown only with KEY_LINES_MIN lines
+# to spare once the quakes have two rows.
+KEY_HEAD, KEY_LINE = 24, 13
+KEY_LINES_MIN, KEY_LINES_MAX, KEY_MESSAGE_WRAP = 2, 6, 2
+KEY_TEXT_SIZE = 11
+
+
+def key_height(lines):
+    return KEY_HEAD + KEY_LINE * lines + 2 if lines else 0
 
 
 def _card_height(name, rows, total):
@@ -181,26 +231,37 @@ def plan_column(counts, space=COLUMN_SPACE):
 
     Every card starts at its smallest useful size. Alerts come first: each live alert
     gets a row while the cards below keep their smallest size, so a busy warning day
-    squeezes quakes and events. The space left goes to quakes and events one row at a
-    time, in turn, and whatever is still left pads those two.
+    squeezes quakes and events. With key messages to show (``counts["key_lines"]``, the lines
+    they wrap to), the quakes then get a second row and the messages as many lines as fit
+    (none below KEY_LINES_MIN), drawn in the alerts card. The space left goes to quakes and
+    events one row at a time, in turn, and whatever is still left pads those two.
     """
     caps = {name: min(counts.get(name, 0), MAX_ROWS[name]) for name in CARD_ORDER}
-    rows = {"alerts": min(caps["alerts"], 1), "quakes": min(caps["quakes"], 1), "events": min(caps["events"], 2)}
+    caps["key_lines"] = min(counts.get("key_lines", 0), KEY_LINES_MAX)
+    rows = {"alerts": min(caps["alerts"], 1), "quakes": min(caps["quakes"], 1), "events": min(caps["events"], 2),
+            "key_lines": 0}
 
     def heights():
-        return {name: _card_height(name, rows[name], counts.get(name, 0)) for name in CARD_ORDER}
+        planned = {name: _card_height(name, rows[name], counts.get(name, 0)) for name in CARD_ORDER}
+        planned["alerts"] += key_height(rows["key_lines"])
+        return planned
 
-    def grow(name):
-        if rows[name] >= caps[name]:
+    def grow(name, step=1):
+        if rows[name] + step > caps[name]:
             return False
-        rows[name] += 1
+        rows[name] += step
         if sum(heights().values()) <= space:
             return True
-        rows[name] -= 1
+        rows[name] -= step
         return False
 
     while grow("alerts"):
         pass
+    if caps["key_lines"] >= KEY_LINES_MIN:
+        grow("quakes")
+        if grow("key_lines", KEY_LINES_MIN):
+            while grow("key_lines"):
+                pass
     growing = ["quakes", "events"]
     while growing:
         growing = [name for name in growing if grow(name)]
@@ -211,12 +272,13 @@ def plan_column(counts, space=COLUMN_SPACE):
     return rows, planned
 
 
-def _column_boxes(payload):
+def _column_boxes(payload, key_lines=0):
     """Card boxes and row counts for this payload's right column."""
     counts = {
         name: 0 if payload[name]["state"] == "unavailable" else len(payload[name]["data"].get("items", []))
         for name in CARD_ORDER
     }
+    counts["key_lines"] = key_lines
     rows, heights = plan_column(counts)
     boxes, top = {}, COLUMN_TOP
     for name in CARD_ORDER:
@@ -255,11 +317,12 @@ def _card(canvas, box, bar, icon, title, detail, source, logos=()):
     canvas.rule((left + 8, top + 28, right - 8, top + 28), colour)
 
 
-def _alerts_card(canvas, payload, now, box, rows):
+def _alerts_card(canvas, payload, now, box, rows, key_lines=0):
     source = payload["alerts"]
     items = source["data"].get("items", [])
     counties = source["data"].get("counties") or payload["counties"]
     _card(canvas, box, "alert", "alert", "气象预警", f"{len(items)} 条", source, ("NWS", ("nws",)))
+    _key_messages(canvas, payload, box, key_lines, now)
     top = box[1]
     left, right = box[0] + 10, box[2] - 10
     if source["state"] == "unavailable":
@@ -288,7 +351,70 @@ def _alerts_card(canvas, payload, now, box, rows):
         detail = (until(ends, now) + " · " if ends else "") + "、".join(alert.get("counties", []))
         canvas.text((text_left, y + 29), detail, 12, "muted", anchor="lm", bold=False, width=right - text_left)
     if len(items) > rows:
-        canvas.text((right, box[3] - 4), f"另有 {len(items) - rows} 条", 11, "muted", anchor="rb", bold=False)
+        canvas.text((right, box[3] - 4 - key_height(key_lines)), f"另有 {len(items) - rows} 条", 11, "muted",
+                    anchor="rb", bold=False)
+
+
+def key_message_wraps(canvas, payload):
+    """Each of the forecasters' key messages, shortened and wrapped to the card's width (at most
+    KEY_MESSAGE_WRAP lines each); [] without them."""
+    source = payload.get("key_messages") or {}
+    if source.get("state") in (None, "unavailable", "disabled"):
+        return []
+    width = RIGHT - 10 - (COLUMN + 10) - 10
+    return [canvas.wrap(compact_message(message), KEY_TEXT_SIZE, width, KEY_MESSAGE_WRAP, bold=False)
+            for message in (source.get("data") or {}).get("messages") or []]
+
+
+def allot_key_lines(wraps, lines):
+    """How many lines each message gets of ``lines``: one each in order while they last, then the
+    rest in order up to each message's own length."""
+    allot, left = [0] * len(wraps), lines
+    for index in range(len(wraps)):
+        if left <= 0:
+            break
+        allot[index], left = 1, left - 1
+    for index, wrapped in enumerate(wraps):
+        extra = max(0, min(len(wrapped) - allot[index], left)) if allot[index] else 0
+        allot[index], left = allot[index] + extra, left - extra
+    return allot
+
+
+def key_clock(data, now):
+    """When the key messages were last updated, as a local clock ("14:28"), from their "Updated at
+    228 PM PST" line, else the discussion's issue time."""
+    match = re.fullmatch(r"(\d{1,2})(\d{2})\s+([AP])M\s+\w+", str(data.get("updated") or ""))
+    if match:
+        hour = int(match.group(1)) % 12 + (12 if match.group(3) == "P" else 0)
+        return f"{hour:02d}:{match.group(2)}"
+    issued = parse_time(data.get("issued"))
+    return issued.astimezone(PACIFIC).strftime("%H:%M") if issued else ""
+
+
+def _key_messages(canvas, payload, box, lines, now):
+    """The forecasters' key messages at the foot of the weather card: a label row with the office
+    and when they were updated (they are the forecasters' own English), then a bullet per message."""
+    if not lines:
+        return
+    data = (payload.get("key_messages") or {}).get("data") or {}
+    left, right = box[0] + 10, box[2] - 10
+    top = box[3] - key_height(lines)
+    for x in range(left, right, 4):
+        canvas.draw.point((x, top + 2), fill=canvas.color("rule"))
+    draw_icon(canvas.draw, "comment", (left, top + 7), 14, canvas.color("alert"), canvas.color("paper"))
+    canvas.text((left + 19, top + 14), "预报员要点", 12, anchor="lm")
+    clock = key_clock(data, now)
+    canvas.text((right, top + 14), " · ".join(part for part in ("旧金山湾区预报台", clock and clock + " 更新", "英文原文")
+                                              if part), 10, "muted", anchor="rm", bold=False, width=200)
+    width = right - left - 10
+    y = top + KEY_HEAD
+    for message, count in zip(data.get("messages") or [], allot_key_lines(key_message_wraps(canvas, payload), lines)):
+        if not count:
+            continue
+        canvas.draw.ellipse((left + 1, y + 4, left + 5, y + 8), fill=canvas.color("alert"))
+        for line in canvas.wrap(compact_message(message), KEY_TEXT_SIZE, width, count, bold=False):
+            canvas.text((left + 10, y + 6), line, KEY_TEXT_SIZE, anchor="lm", bold=False)
+            y += KEY_LINE
 
 
 def quake_tone(magnitude):
@@ -308,8 +434,28 @@ def focus_quake(items, now):
     if fault:
         name, km = fault
         lines.append(f"{name}旁" if km < 1.5 else f"距{name} {km:.0f} km")
+    felt = felt_text(strongest)
+    if felt:
+        lines.append(felt)
     return {"id": strongest.get("id"), "title": "7 天最大", "lines": lines,
             "tone": quake_tone(strongest.get("mag", 0))}
+
+
+def felt_text(quake):
+    """How a quake was felt, from USGS's own reports: "522 人有感 · 烈度 IV" ("Did You Feel It?"
+    reports and their highest intensity, else ShakeMap's), with its PAGER alert and a tsunami
+    flag when it has them; "" for one nobody reported."""
+    parts = []
+    if quake.get("felt"):
+        parts.append(f"{quake['felt']:,} 人有感")
+    intensity = intensity_roman(quake.get("cdi") or quake.get("mmi"))
+    if intensity and (quake.get("felt") or quake.get("mmi")):
+        parts.append(f"烈度 {intensity}")
+    if quake.get("alert") in PAGER_LEVELS:
+        parts.append(f"PAGER {PAGER_LEVELS[quake['alert']]}")
+    if quake.get("tsunami"):
+        parts.append("海啸信息")
+    return " · ".join(parts)
 
 
 def near_home_summary(items, now):
@@ -323,9 +469,13 @@ def near_home_summary(items, now):
 
 
 def listed_quakes(items, rows):
-    """The quakes to list, newest first: M2.0 and up before smaller ones fill the rest."""
+    """The quakes to list, newest first: M2.0 and up before smaller ones fill the rest, and the
+    week's most widely felt quake (FELT_NOTABLE reports or more) always among them."""
     notable = [item for item in items if item.get("mag", 0) >= 2.0][:rows]
     chosen = notable + [item for item in items if item.get("mag", 0) < 2.0][:rows - len(notable)]
+    felt = max(items, key=lambda item: item.get("felt") or 0, default=None)
+    if rows and felt and (felt.get("felt") or 0) >= FELT_NOTABLE and not any(felt is pick for pick in chosen):
+        chosen = chosen[:rows - 1] + [felt]
     return [item for item in items if any(item is pick for pick in chosen)]
 
 
@@ -372,8 +522,14 @@ def _quakes_card(canvas, payload, now, box, rows):
         canvas.text((left + 20, y), f"M{quake['mag']:.1f}", 12, label_color, anchor="mm")
         meta = f"{ago(parse_time(quake['time']), now)} · {quake.get('distance_km', 0):.0f} km"
         meta_width = canvas.text((right, y), meta, 11, "muted", anchor="rm", bold=False)
-        canvas.text((left + 48, y), quake.get("place"), 12, anchor="lm",
-                    width=right - left - 56 - meta_width)
+        place_left = left + 48
+        if quake.get("felt"):
+            # People who felt it, as USGS's "Did You Feel It?" counts them: a small people icon
+            # and the count.
+            draw_icon(canvas.draw, "users", (place_left, y - 6), 12, canvas.color("ink"), canvas.color("paper"))
+            place_left += 14 + canvas.text((place_left + 14, y), f"{quake['felt']:,}人", 11, anchor="lm") + 6
+        canvas.text((place_left, y), quake.get("place"), 12, anchor="lm",
+                    width=right - place_left - 8 - meta_width)
 
 
 def _events_card(canvas, payload, now, box, rows):
@@ -424,7 +580,7 @@ def render_page(dimensions, payload, settings, now):
     payload = with_fires(payload)
     canvas = PageCanvas(_palette(settings), family=settings.get("fontFamily") or "Microsoft YaHei")
     _header(canvas, payload, now)
-    boxes, rows = _column_boxes(payload)
+    boxes, rows = _column_boxes(payload, sum(len(lines) for lines in key_message_wraps(canvas, payload)))
     quakes = payload["quakes"]["data"].get("items", []) if payload["quakes"]["state"] != "unavailable" else []
     alerts = []
     for index, alert in enumerate(payload["alerts"]["data"].get("items", [])):
@@ -442,7 +598,7 @@ def render_page(dimensions, payload, settings, now):
     for key in ("map_markers", "alert_tags", "map_callout", "map_summary", "home_rings", "fire_marks"):
         canvas.image.info[key] = map_image.info.get(key)
     canvas.draw.rectangle((12, 60, 451, 467), outline=canvas.color("ink"), width=1)
-    _alerts_card(canvas, payload, now, boxes["alerts"], rows["alerts"])
+    _alerts_card(canvas, payload, now, boxes["alerts"], rows["alerts"], rows["key_lines"])
     _quakes_card(canvas, payload, now, boxes["quakes"], rows["quakes"])
     _events_card(canvas, payload, now, boxes["events"], rows["events"])
     canvas.image.info["column_cards"] = {name: {"box": boxes[name], "rows": rows[name]} for name in CARD_ORDER}
