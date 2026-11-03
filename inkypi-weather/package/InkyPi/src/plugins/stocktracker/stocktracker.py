@@ -203,7 +203,7 @@ PORTFOLIO_HISTORY_FILE_ENV = "INKYPI_STOCKTRACKER_HISTORY_FILE"
 PORTFOLIO_HISTORY_MAX_DAYS = 180
 SOURCE_CACHE_SCHEMA_VERSION = "stocktracker-source-v2"
 SOURCE_CACHE_LEAF = "source"
-# Per-symbol 52-week range, earnings, ex-dividend and analyst fields for rows that bring none (fundamentals.py).
+# Per-symbol 52-week range, ex-dividend and analyst fields for rows that bring none (fundamentals.py).
 FUNDAMENTALS_CACHE_LEAF = "fundamentals"
 WINDOW_SHORT_LABELS = {
 	"1d": "1D",
@@ -324,10 +324,11 @@ WEIGHT_DRIFT_MIN = 0.3
 # and the analysts' mean target a triangle above it in its rating's colour (key of the palette).
 RATING_COLOURS = {"strong_buy": "malachite", "buy": "malachite", "hold": "accent_gold", "underperform": "cinnabar",
 	"sell": "cinnabar"}
-# The HOLDINGS title row lists the holdings' coming earnings (财报) and ex-dividend dates (除息) within
-# EVENT_DAYS, each kind behind a solid pill in its colour.
+# The HOLDINGS title row lists the holdings' ex-dividend dates (除息) within EVENT_DAYS behind a solid
+# pill, each holding by its logo and symbol (coming earnings are Money Radar's to show).
 EVENT_DAYS = 30
-EVENT_KINDS = (("earnings_date", "财报", "accent_blue"), ("ex_dividend_date", "除息", "malachite"))
+EVENT_KINDS = (("ex_dividend_date", "除息", "malachite"),)
+EVENT_LOGO_SIZE = 14
 # A row's trend ends on a gold star at the window's high and a ring at its low (within
 # EXTREME_SLACK percent).
 EXTREME_SLACK = 0.3
@@ -604,7 +605,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		return image
 
 	def _attach_fundamentals(self, stock_data):
-		"""Each holding's 52-week range, next earnings, ex-dividend date and analyst view: Yahoo's
+		"""Each holding's 52-week range, ex-dividend date and analyst view: Yahoo's
 		info already carries them; other rows get them from fundamentals.py's per-symbol cache. A
 		failure only leaves those marks off the table."""
 		try:
@@ -2585,7 +2586,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			canvas=img,
 		)
 		status_left = self._draw_holdings_status(draw, (right - 14, top + 22), metrics, tracking_window_label)
-		self._draw_holding_events(draw, (left + 142, status_left - 18), top + 22, metrics, today)
+		self._draw_holding_events(img, draw, (left + 142, status_left - 18), top + 22, metrics, today)
 		doodles = (left + 3, top + 30, right - 3, bottom - 3)
 		paint_doodles(img, doodles, HOLDINGS_DOODLES_PATH, colors["malachite"], strength=HOLDINGS_DOODLES_STRENGTH,
 					  radius=4, offset=doodles[:2])
@@ -2894,8 +2895,8 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		draw.ellipse((x - 3, track_y - 3, x + 3, track_y + 3), fill=colors["ink"], outline=colors["panel"])
 
 	def _holding_events(self, metrics, today):
-		"""[(day, kind label, colour key, symbol)] of the holdings' earnings and ex-dividend dates from
-		today to EVENT_DAYS ahead, soonest first."""
+		"""[(day, kind label, colour key, symbol)] of the holdings' ex-dividend dates from today to
+		EVENT_DAYS ahead, soonest first."""
 		events = []
 		for item in metrics:
 			data = item["data"]
@@ -2907,11 +2908,12 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 					continue
 				if not item["is_cash"] and 0 <= (day - today).days <= EVENT_DAYS:
 					events.append((day, label, colour, symbol))
-		return sorted(set(events), key=lambda event: (event[0], event[1] != "财报", event[3]))
+		return sorted(set(events), key=lambda event: (event[0], event[3]))
 
-	def _draw_holding_events(self, draw, span, center_y, metrics, today):
-		"""The title row's coming events: for each kind a solid pill (财报, 除息) in its colour, then its
-		holdings' symbols and dates, as many as fit between ``span``'s ends."""
+	def _draw_holding_events(self, img, draw, span, center_y, metrics, today):
+		"""The title row's coming ex-dividend dates: a solid 除息 pill, then each holding by the
+		table's logo, its symbol (the Vanguard funds share one mark) and the date, as many as fit
+		between ``span``'s ends."""
 		colors = _active_stock_colors()
 		left, right = span
 		events = self._holding_events(metrics, today)
@@ -2931,11 +2933,15 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 					  font=pill_font)
 			x += pill_w + 5
 			for day, _label, _colour, symbol in rows:
-				# By symbol, not logo: the Vanguard funds share one mark.
 				when = "TODAY" if day == today else day.strftime("%m/%d")
+				logo = self._holding_logo_image(symbol, EVENT_LOGO_SIZE, width=EVENT_LOGO_SIZE + 4)
+				logo_w = logo.width + 2 if logo else 0
 				mark_w = self._text_width(draw, symbol, symbol_font)
-				if x + mark_w + 3 + self._text_width(draw, when, date_font) > right:
+				if x + logo_w + mark_w + 3 + self._text_width(draw, when, date_font) > right:
 					return
+				if logo:
+					img.paste(logo, (round(x), round(center_y - logo.height / 2)), logo)
+					x += logo_w
 				draw.text((x, self._centered_text_y(draw, symbol, symbol_font, center_y)), symbol, fill=colors["ink"],
 						  font=symbol_font)
 				x += mark_w + 3

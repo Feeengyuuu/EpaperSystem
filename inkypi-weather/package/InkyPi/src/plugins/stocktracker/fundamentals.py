@@ -1,8 +1,9 @@
-"""Each holding's 52-week range, next earnings, ex-dividend date and analyst view.
+"""Each holding's 52-week range, ex-dividend date and analyst view (coming earnings are Money
+Radar's to show).
 
 On the Yahoo (yfinance) path these come from the ``info`` the tracker already fetches. Rows from
 Robinhood's MCP or Massive carry no such fields, so they are filled from Nasdaq's keyless quote
-pages (three small JSON replies per symbol, about 4 KB in all), kept a day per symbol on disk and
+pages (two small JSON replies per symbol, about 3 KB in all), kept a day per symbol on disk and
 fetched for a few symbols per refresh. A missing field just leaves its mark off the table.
 """
 
@@ -12,23 +13,20 @@ import json
 import logging
 import math
 import re
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from runtime.refresh_contracts import TaskContext
 from utils.http_client import HttpClientError, get_http_client
 
 
 logger = logging.getLogger(__name__)
-PACIFIC = ZoneInfo("America/Los_Angeles")
-FIELDS = ("high_52w", "low_52w", "earnings_date", "ex_dividend_date", "target_price", "rating", "analysts")
+FIELDS = ("high_52w", "low_52w", "ex_dividend_date", "target_price", "rating", "analysts")
 RATINGS = ("strong_buy", "buy", "hold", "underperform", "sell")
 NASDAQ_RATINGS = {"strong buy": "strong_buy", "buy": "buy", "hold": "hold", "sell": "underperform",
                   "strong sell": "sell"}
 NASDAQ_SUMMARY_URL = "https://api.nasdaq.com/api/quote/{symbol}/summary"
 NASDAQ_TARGET_URL = "https://api.nasdaq.com/api/analyst/{symbol}/targetprice"
-NASDAQ_EARNINGS_URL = "https://api.nasdaq.com/api/analyst/{symbol}/earnings-date"
 USER_AGENT = "InkyPi StockTracker/1.0 (personal e-paper display)"
 REQUEST_TIMEOUT = (3, 8)
 MAX_BYTES = 64 * 1024
@@ -48,7 +46,7 @@ def _finite(value):
     return number if math.isfinite(number) else None
 
 
-def _day_from_epoch(value, zone=PACIFIC):
+def _day_from_epoch(value, zone=timezone.utc):
     seconds = _finite(value)
     if seconds is None or seconds <= 0:
         return None
@@ -68,12 +66,10 @@ def from_yfinance_info(info):
     if not isinstance(info, dict):
         return {}
     fields = _range(info.get("fiftyTwoWeekLow"), info.get("fiftyTwoWeekHigh"))
-    # The report is a moment (its Pacific day); the ex-dividend date is a day at UTC midnight.
-    for key, source, zone in (("earnings_date", "earningsTimestamp", PACIFIC),
-                              ("ex_dividend_date", "exDividendDate", timezone.utc)):
-        day = _day_from_epoch(info.get(source), zone)
-        if day:
-            fields[key] = day
+    # The ex-dividend date is a day, given as its UTC midnight.
+    ex_dividend = _day_from_epoch(info.get("exDividendDate"))
+    if ex_dividend:
+        fields["ex_dividend_date"] = ex_dividend
     target = _finite(info.get("targetMeanPrice"))
     if target and target > 0:
         fields["target_price"] = round(target, 2)
@@ -99,8 +95,8 @@ def _nasdaq_day(text):
         return None
 
 
-def from_nasdaq(summary, target=None, earnings=None):
-    """The fields from Nasdaq's quote summary, analyst target and earnings-date replies."""
+def from_nasdaq(summary, target=None):
+    """The fields from Nasdaq's quote summary and analyst target replies."""
     fields = {}
     high_low = str(_summary_value(summary, "FiftTwoWeekHighLow") or "")
     if "/" in high_low:
@@ -125,13 +121,6 @@ def from_nasdaq(summary, target=None, earnings=None):
         consensus = str((latest or {}).get("consensus") or "").strip().lower() if isinstance(latest, dict) else ""
         if consensus in NASDAQ_RATINGS:
             fields["rating"] = NASDAQ_RATINGS[consensus]
-    report = str((((earnings or {}).get("data") or {}).get("reportText")) or "") if isinstance(earnings, dict) else ""
-    found = re.search(r"\bon\s+(\d{1,2})/(\d{1,2})/(\d{4})", report)
-    if found:
-        try:
-            fields["earnings_date"] = date(int(found.group(3)), int(found.group(1)), int(found.group(2))).isoformat()
-        except ValueError:
-            pass
     return fields
 
 
@@ -146,13 +135,11 @@ def _get(url, context, params=None):
 
 def fetch_nasdaq(symbol, context):
     """One symbol's fields from Nasdaq: the summary as a stock, else as an ETF (which has no
-    analyst target or earnings). A share class is spelt with a dot there (BRK.B, not BRK-B)."""
+    analyst target). A share class is spelt with a dot there (BRK.B, not BRK-B)."""
     symbol = re.sub(r"[-/ ]", ".", symbol)
     summary = _get(NASDAQ_SUMMARY_URL.format(symbol=symbol), context, {"assetclass": "stocks"})
     if summary.get("data"):
-        target = _get(NASDAQ_TARGET_URL.format(symbol=symbol), context)
-        earnings = _get(NASDAQ_EARNINGS_URL.format(symbol=symbol), context)
-        return from_nasdaq(summary, target, earnings)
+        return from_nasdaq(summary, _get(NASDAQ_TARGET_URL.format(symbol=symbol), context))
     return from_nasdaq(_get(NASDAQ_SUMMARY_URL.format(symbol=symbol), context, {"assetclass": "etf"}))
 
 
