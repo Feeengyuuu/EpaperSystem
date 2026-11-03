@@ -35,7 +35,7 @@ MAX_BYTES = 64 * 1024
 FRESH_SECONDS = 86400
 USABLE_SECONDS = 7 * 86400
 FETCH_PER_REFRESH = 3
-SYMBOL = re.compile(r"[A-Z][A-Z0-9.\-]{0,9}")
+SYMBOL = re.compile(r"[A-Z][A-Z0-9./\-]{0,9}")
 
 
 def _finite(value):
@@ -146,7 +146,8 @@ def _get(url, context, params=None):
 
 def fetch_nasdaq(symbol, context):
     """One symbol's fields from Nasdaq: the summary as a stock, else as an ETF (which has no
-    analyst target or earnings)."""
+    analyst target or earnings). A share class is spelt with a dot there (BRK.B, not BRK-B)."""
+    symbol = re.sub(r"[-/ ]", ".", symbol)
     summary = _get(NASDAQ_SUMMARY_URL.format(symbol=symbol), context, {"assetclass": "stocks"})
     if summary.get("data"):
         target = _get(NASDAQ_TARGET_URL.format(symbol=symbol), context)
@@ -186,7 +187,7 @@ def attach(stock_data, directory, *, context: TaskContext, now=None, fetch=None,
         symbol = str(row.get("symbol") or "").strip().upper()
         if not SYMBOL.fullmatch(symbol) or symbol == "CASH" or any(row.get(key) is not None for key in FIELDS):
             continue
-        path = directory / f"{symbol}.json"
+        path = directory / f"{re.sub(r'[^A-Z0-9.-]', '.', symbol)}.json"
         cached = _read(path)
         age = (now - cached[0]).total_seconds() if cached else None
         data = cached[1] if cached else None

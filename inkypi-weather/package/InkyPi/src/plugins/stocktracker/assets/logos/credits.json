@@ -103,6 +103,12 @@
       "owner": "generated wallet badge (project asset)",
       "source_sha256": "8f05e8dbbdb780cada3b9cf483b664c91fab8102c42307eab20a9affd1d5ab0d",
       "sha256": "e23e64fb4636b5ae1aa6cc902f9c1517f94dcabfdb9d8b02c3035330e22d7eb8"
+    },
+    "brk.png": {
+      "source": "https://commons.wikimedia.org/wiki/File:Berkshire-Hathaway-Logo.svg (1280 px render; its large B and H capitals set side by side as a monogram)",
+      "owner": "Berkshire Hathaway Inc. (trademark); the wordmark (Wikidata Q217583 P154) is public domain on Wikimedia Commons; drawn in its own navy, inked at night",
+      "source_sha256": "5993891f53e9b31c4d766a7414e4c850c746c1473a67fac01f25a889d870e4ef",
+      "sha256": "1c53a1c58965b4338686c71170d999a3633b05a218af00a780d38024c6766117"
     }
   }
 }

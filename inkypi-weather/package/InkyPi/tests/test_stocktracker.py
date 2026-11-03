@@ -1904,3 +1904,33 @@ def test_the_dashboard_shows_the_events_and_the_52_week_column(monkeypatch):
 
     assert image.size == (800, 480)
     assert {"52W", "TGT", "财报", "NVDA", "11/17"} <= set(texts) and "SHARES" not in texts
+
+
+@pytest.mark.parametrize("symbol", ["BRK.B", "brk-b", "BRK/B", "BRK B", "BRK.A"])
+def test_berkshire_shares_wear_its_monogram_however_they_are_spelt(symbol):
+    assert StockTracker._holding_logo_asset(symbol) == "brk.png"
+
+
+def test_berkshires_mark_is_recorded_and_takes_the_night_ink_whole():
+    import hashlib
+
+    logos = Path(stocktracker_module.__file__).resolve().parent / "assets" / "logos"
+    credits = json.loads((logos / "credits.json").read_text(encoding="utf-8"))["marks"]["brk.png"]
+    assert credits["sha256"] == hashlib.sha256((logos / "brk.png").read_bytes()).hexdigest()
+    assert "Berkshire-Hathaway-Logo.svg" in credits["source"]
+
+    plugin = StockTracker({"id": "stocktracker"})
+    for theme, expected in ((None, "navy"), ({"mode": "night", "palette": {"background": (0, 0, 0),
+                                                                            "ink": (245, 246, 248)}}, "ink")):
+        colors = stocktracker_module._stock_render_colors(theme)
+        token = stocktracker_module._ACTIVE_STOCK_COLORS.set(colors)
+        try:
+            logo = plugin._holding_logo_image("BRK.B", 16, width=stocktracker_module.HOLDING_LOGO_SLOT_W)
+        finally:
+            stocktracker_module._ACTIVE_STOCK_COLORS.reset(token)
+        solid = {pixel[:3] for pixel in logo.get_flattened_data() if pixel[3] == 255}
+        assert logo.size == (stocktracker_module.HOLDING_LOGO_SLOT_W, 16) and solid
+        if expected == "navy":
+            assert all(blue > 2 * red for red, _green, blue in solid)  # Berkshire's own navy by day
+        else:
+            assert solid == {colors["ink"][:3]}

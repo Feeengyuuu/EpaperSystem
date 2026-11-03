@@ -78,10 +78,13 @@ def ticker_colors(symbol):
 def chip(canvas,x,y,symbol,width=64):
     symbol=str(symbol or '').upper()
     night=canvas.color('paper')==render._rgb(render.NIGHT['paper'])
-    path=render.HOLDING_LOGOS/f'{symbol.lower()}.png'
+    name=render.holding_logo_name(symbol)
+    path=render.HOLDING_LOGOS/f'{name}.png'
     # Paste onto the page without a backing or enclosing frame. Only near-black
-    # marks take the night ink; the source alpha and brand colors are retained.
-    logo=load_source_logo(path,12 if night else 14,ink=canvas.color('ink') if night else None)
+    # marks (and a mark wholly in a deep brand ink) take the night ink; the source
+    # alpha and brand colors are retained.
+    logo=load_source_logo(path,12 if night else 14,ink=canvas.color('ink') if night else None,
+                          dark_parts=night and name in render.NIGHT_INKED_HOLDING_LOGOS)
     if logo is not None:
         if logo.width>17:
             logo.thumbnail((17,12 if night else 14),Image.Resampling.LANCZOS)

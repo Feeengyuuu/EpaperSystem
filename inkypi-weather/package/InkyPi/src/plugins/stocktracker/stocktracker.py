@@ -157,11 +157,16 @@ TICKER_PALETTES = {
 }
 # The holdings' marks: each scaled to the same visual area (LOGO_AREA_SHARE of the slot's
 # height, squared) in a slot LOGO_SLOT_RATIO times as wide as tall (the holdings rows' slot is
-# HOLDING_LOGO_SLOT_W); at night, parts darker than LOGO_NIGHT_INK_BELOW turn to the ink.
+# HOLDING_LOGO_SLOT_W); at night, parts darker than LOGO_NIGHT_INK_BELOW turn to the ink, and a
+# mark printed wholly in a deep brand ink (NIGHT_INKED_LOGOS: Berkshire's navy) takes the ink whole.
 LOGO_AREA_SHARE, LOGO_SLOT_RATIO, HOLDING_LOGO_SLOT_W, LOGO_NIGHT_INK_BELOW = 0.86, 1.2, 22, 56
+NIGHT_INKED_LOGOS = {"brk.png"}
 LOGO_ASSET_BY_SYMBOL = {
 	"AAPL": "aapl.png",
 	"AMZN": "amzn.png",
+	# Berkshire Hathaway's class A and B shares, as brokers, Yahoo and Nasdaq spell them.
+	"BRK.A": "brk.png", "BRK-A": "brk.png", "BRK/A": "brk.png",
+	"BRK.B": "brk.png", "BRK-B": "brk.png", "BRK/B": "brk.png", "BRK B": "brk.png",
 	"CASH": "cash.png",
 	"FIG": "fig.png",
 	"GOOG": "goog.png",
@@ -2244,7 +2249,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 
 	@staticmethod
 	def _holding_logo_asset(symbol):
-		return LOGO_ASSET_BY_SYMBOL.get(str(symbol or "").strip().upper())
+		return LOGO_ASSET_BY_SYMBOL.get(" ".join(str(symbol or "").strip().upper().split()))
 
 	@staticmethod
 	def _trim_transparent_border(image):
@@ -2336,7 +2341,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				for y in range(logo.height):
 					for x in range(logo.width):
 						r, g, b, a = pixels[x, y]
-						if a and max(r, g, b) < LOGO_NIGHT_INK_BELOW:
+						if a and (max(r, g, b) < LOGO_NIGHT_INK_BELOW or asset_name in NIGHT_INKED_LOGOS):
 							pixels[x, y] = (*ink[:3], a)
 			canvas = Image.new("RGBA", (width, size), (0, 0, 0, 0))
 			canvas.alpha_composite(logo, ((width - logo.width) // 2, (size - logo.height) // 2))

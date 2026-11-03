@@ -426,7 +426,7 @@ def fetch_news(symbols, context):
     for symbol in symbols[:8]:
         try:
             text = _get("GET", YAHOO_RSS_URL, context, max_bytes=512 * 1024, as_text=True,
-                        params={"s": symbol, "region": "US", "lang": "en-US"})
+                        params={"s": yahoo_symbol(symbol), "region": "US", "lang": "en-US"})
             feeds.append(normalize_news(text, symbol)["items"][:4])
         except (HttpClientError, ValueError):
             continue
@@ -485,16 +485,27 @@ def _eps(text):
     return None if number is None else round(-number if negative else number, 4)
 
 
+def share_class_key(symbol):
+    """BRK.B, BRK-B, BRK/B and BRK B as one key."""
+    return re.sub(r"[-/ ]", ".", str(symbol or "").strip().upper())
+
+
+def yahoo_symbol(symbol):
+    """Yahoo spells a share class with a hyphen: BRK.B -> BRK-B."""
+    return share_class_key(symbol).replace(".", "-")
+
+
 def normalize_nasdaq_earnings(payload, day, symbols):
     """One day of Nasdaq's calendar cut down to the holdings that report on it."""
     data = (payload or {}).get("data") if isinstance(payload, dict) else None
     if not isinstance(data, dict):
         raise ValueError("Nasdaq returned no calendar")
-    wanted = set(symbols)
+    # Share classes match however they are spelt (Nasdaq writes BRK/B, brokers BRK.B, Yahoo BRK-B).
+    wanted = {share_class_key(symbol): symbol for symbol in symbols}
     items = []
     for row in data.get("rows") or []:  # null on weekends and market holidays
-        symbol = str((row or {}).get("symbol") or "").strip().upper() if isinstance(row, dict) else ""
-        if symbol in wanted and all(item["symbol"] != symbol for item in items):
+        symbol = wanted.get(share_class_key((row or {}).get("symbol"))) if isinstance(row, dict) else None
+        if symbol and all(item["symbol"] != symbol for item in items):
             items.append({"symbol": symbol, "date": day, "hour": NASDAQ_HOURS.get(str(row.get("time") or ""), ""),
                           "eps_estimate": _eps(row.get("epsForecast"))})
     return {"items": items, "date": day}

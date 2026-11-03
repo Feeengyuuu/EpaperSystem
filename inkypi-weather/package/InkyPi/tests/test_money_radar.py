@@ -658,3 +658,33 @@ def test_the_gauge_card_lists_the_indicators_as_mini_bars_beside_the_dial(monkey
     # The dial, score and history stay in the card's left part.
     assert {"23", "极度恐惧", "周前 30 · 月前 38"} <= {text for *_xy, text in drawn}
     assert all(x < left + money_render.FEAR_GREED_DIAL_WIDTH for x, _y, text in drawn if text == "周前 30 · 月前 38")
+
+
+@pytest.mark.parametrize("symbol", ["BRK.B", "brk-b", "BRK/B", "BRK.A"])
+def test_berkshire_shares_find_the_stock_pages_monogram(symbol):
+    assert money_render.holding_logo_name(symbol) == "brk"
+    assert money_render.holding_logo_name("NVDA") == "nvda"
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_berkshires_navy_mark_reads_on_both_grounds(mode):
+    canvas = PageCanvas(money_render._palette({"_inkypi_theme": {"mode": mode}}))
+
+    logo = money_render._holding_logo(canvas, "BRK.B", money_render.HOLDING_LOGO_SIZE)
+
+    solid = {pixel[:3] for pixel in logo.get_flattened_data() if pixel[3] == 255}
+    assert solid
+    if mode == "night":
+        assert solid == {canvas.color("ink")}
+    else:
+        assert all(blue > 2 * red for red, _green, blue in solid)
+
+
+def test_share_classes_match_nasdaqs_and_yahoos_spelling():
+    payload = {"data": {"rows": [{"symbol": "BRK/B", "time": "time-pre-market", "epsForecast": "$4.81"}]}}
+
+    items = sources.normalize_nasdaq_earnings(payload, "2026-11-06", ("BRK.B", "AAPL"))["items"]
+
+    assert items == [{"symbol": "BRK.B", "date": "2026-11-06", "hour": "bmo", "eps_estimate": 4.81}]
+    assert (sources.yahoo_symbol("BRK.B"), sources.yahoo_symbol("BRK/B"), sources.yahoo_symbol("AAPL")) == (
+        "BRK-B", "BRK-B", "AAPL")

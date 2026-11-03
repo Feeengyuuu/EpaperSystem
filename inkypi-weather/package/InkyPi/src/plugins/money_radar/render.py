@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from datetime import date
 from pathlib import Path
 
@@ -61,6 +62,10 @@ EARNINGS_COLUMNS, EARNINGS_COLUMN_GAP, CALENDAR_ICON_HEIGHT = 2, 10, 14
 # Each earnings row leads with the company's mark: the same files the stock tracker's Robinhood
 # holdings list shows (stocktracker/assets/logos/<symbol>.png), in a HOLDING_LOGO_SLOT-wide slot.
 HOLDING_LOGOS = Path(__file__).resolve().parents[1] / "stocktracker" / "assets" / "logos"
+# Share classes whose mark is the company's (Berkshire's A and B shares however they are spelt), and
+# the marks printed wholly in a deep brand ink that takes the night ink whole (Berkshire's navy).
+HOLDING_LOGO_ALIASES = {"BRK.A": "brk", "BRK.B": "brk"}
+NIGHT_INKED_HOLDING_LOGOS = {"brk"}
 HOLDING_LOGO_SIZE, HOLDING_LOGO_SLOT = 14, 20
 # The holdings header lists each holding by its logo, this tall and at most this wide (a wordmark
 # such as Nintendo's needs the width to read), this far apart.
@@ -732,14 +737,22 @@ def _calendar_icon():
                         Image.Resampling.LANCZOS)
 
 
+def holding_logo_name(symbol):
+    """The stock tracker's logo file stem for a ticker: BRK.B, BRK-B and BRK/B all name Berkshire."""
+    symbol = re.sub(r"[-/ ]", ".", str(symbol or "").strip().upper())
+    return HOLDING_LOGO_ALIASES.get(symbol, symbol.lower())
+
+
 def _holding_logo(canvas, symbol, size, width=HOLDING_LOGO_SLOT):
     """The company's mark as the Robinhood holdings page shows it, at most ``size`` tall and
     ``width`` wide, its black parts in the night ink; None without one."""
-    path = HOLDING_LOGOS / f"{str(symbol or '').strip().lower()}.png"
+    name = holding_logo_name(symbol)
+    path = HOLDING_LOGOS / f"{name}.png"
     ink = canvas.color("ink") if canvas.color("paper") == _rgb(NIGHT["paper"]) else None
-    logo = load_source_logo(path, size, ink)
+    dark_parts = ink is not None and name in NIGHT_INKED_HOLDING_LOGOS
+    logo = load_source_logo(path, size, ink, dark_parts=dark_parts)
     if logo is not None and logo.width > width:
-        logo = load_source_logo(path, max(1, round(size * width / logo.width)), ink)
+        logo = load_source_logo(path, max(1, round(size * width / logo.width)), ink, dark_parts=dark_parts)
     return logo
 
 
