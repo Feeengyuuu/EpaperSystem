@@ -1999,10 +1999,6 @@ class EsportsRenderMixin:
 
         msi_next_filler_event = self._lpl_msi_next_filler_event(now, featured_event)
         self._draw_lpl_focus_card(image, draw, right_x, right_w, 78, main_event, now, bool(live), league_key=league_key)
-        if config["key"] == "WORLDS" and selected.get("bracket"):
-            # The knockout stage: its bracket and the title odds replace the upcoming and recent rows.
-            self._draw_worlds_knockouts(image, draw, right_x, right_w, 244, height - 1, selected, now)
-            return
         self._draw_lpl_next_rows(
             image,
             draw,
