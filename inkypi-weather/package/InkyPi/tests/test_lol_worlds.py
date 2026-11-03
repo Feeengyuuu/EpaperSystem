@@ -24,10 +24,17 @@ from plugins.sports_dashboard.sports_dashboard import (
     WORLDS_LIVE_STATE_VERSION,
     SportsDashboard,
 )
+from plugins.sports_dashboard import lol_worlds as lol_worlds_module
 from tests.test_sports_dashboard import FakeDeviceConfig, _plugin
 
 
 NOW = datetime(2026, 10, 16, 23, 30, tzinfo=timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def _offline_title_odds(monkeypatch):
+    """The title odds never reach the network here; their own tests call the mixin directly."""
+    monkeypatch.setattr(SportsDashboard, "_worlds_title_odds", lambda *_args: [])
 TOURNAMENT = {
     "id": "115660540725177488",
     "slug": "worlds_2026",
@@ -736,3 +743,109 @@ def test_settings_expose_the_worlds_toggle():
     assert 'id="worldsEnabled"' in html
     assert '<input type="hidden" name="worldsEnabled" value="false">' in html
     assert "pluginSettings.worldsEnabled" in html
+
+
+# Title odds -------------------------------------------------------------------------------------
+
+TITLE_EVENT = [{"slug": "worlds-2026-winner", "markets": [
+    {"groupItemTitle": "Gen.G", "outcomePrices": "[\"0.475\", \"0.525\"]", "active": True, "closed": False},
+    {"groupItemTitle": "T1", "outcomePrices": "[\"0.205\", \"0.795\"]", "active": True, "closed": False},
+    {"groupItemTitle": "Karmine Corp", "outcomePrices": ["0.0155", "0.9845"], "active": True, "closed": False},
+    {"groupItemTitle": "Bilibili Gaming", "outcomePrices": "[\"0.1525\", \"0.8475\"]", "active": True, "closed": False},
+    {"groupItemTitle": "Unknown Squad", "outcomePrices": "[\"0.05\", \"0.95\"]", "active": True, "closed": False},
+    {"groupItemTitle": "G2 Esports", "outcomePrices": "[\"0\", \"1\"]", "active": True, "closed": True},
+    {"groupItemTitle": "Team I", "outcomePrices": "[\"0.5\", \"0.5\"]", "active": False, "closed": False},
+    {"groupItemTitle": "Other", "outcomePrices": "[\"0.5\", \"0.5\"]", "active": False, "closed": False},
+]}]
+
+
+def _odds_events():
+    events = [_match("q1", NOW, "unstarted", "T1", "KC", block="Quarterfinals"),
+              _match("q2", NOW, "unstarted", "GEN", "BLG", block="Quarterfinals")]
+    for event in events:
+        event["team_a_logo"] = f"https://static.lolesports.com/{event['team_a']}.png"
+    return events
+
+
+def test_title_odds_parse_only_open_markets_best_first():
+    teams = SportsDashboard._parse_worlds_title_odds(TITLE_EVENT)
+    assert [team["name"] for team in teams] == ["Gen.G", "T1", "Bilibili Gaming", "Unknown Squad", "Karmine Corp"]
+
+
+def test_title_odds_take_the_schedules_codes_and_logos(monkeypatch):
+    plugin = _plugin()
+    monkeypatch.setattr(plugin, "_worlds_title_odds", lambda *_args: SportsDashboard._parse_worlds_title_odds(TITLE_EVENT))
+    selected = plugin._attach_worlds_title_odds({"live": []}, _odds_events(), {}, NOW)
+    # Four at most, each a team the schedule names; a market for a team it does not know is left out.
+    assert [(team["code"], round(team["share"], 4)) for team in selected["title_odds"]] == [
+        ("GEN", 0.475), ("T1", 0.205), ("BLG", 0.1525), ("KC", 0.0155)]
+    assert selected["title_odds"][1]["logo"].endswith("/T1.png")
+    monkeypatch.setattr(plugin, "_worlds_title_odds", lambda *_args: [])
+    assert plugin._attach_worlds_title_odds({"live": []}, _odds_events(), {}, NOW) == {"live": []}
+    monkeypatch.setattr(plugin, "_worlds_title_odds", lambda *_args: (_ for _ in ()).throw(TimeoutError("down")))
+    assert plugin._attach_worlds_title_odds({"live": []}, _odds_events(), {}, NOW) == {"live": []}
+
+
+class _OddsSession:
+    def __init__(self, payload):
+        self.payload, self.calls = payload, []
+
+    def get(self, url, **kwargs):
+        self.calls.append((url, kwargs.get("params")))
+        if isinstance(self.payload, Exception):
+            raise self.payload
+
+        class Response:
+            payload = self.payload
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return self.payload
+
+        return Response()
+
+
+def test_title_odds_are_cached_and_survive_an_outage(monkeypatch, tmp_path):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    session = _OddsSession(TITLE_EVENT)
+    monkeypatch.setattr(lol_worlds_module, "get_http_session", lambda: session)
+    load = lol_worlds_module.LolWorldsMixin._worlds_title_odds
+    odds = load(plugin, {}, NOW)
+    assert odds[0]["name"] == "Gen.G" and session.calls[0][1] == {"slug": "worlds-2026-winner"}
+    assert load(plugin, {}, NOW) == odds and len(session.calls) == 1
+    cache = json.loads((tmp_path / "polymarket_worlds_winner.json").read_text(encoding="utf-8"))
+    cache["fetched_at"] = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    (tmp_path / "polymarket_worlds_winner.json").write_text(json.dumps(cache), encoding="utf-8")
+    session.payload = TimeoutError("down")
+    assert load(plugin, {}, NOW) == odds
+    assert load(plugin, {"_inkypi_ewc_cache_only": True}, datetime(2027, 10, 1, tzinfo=timezone.utc)) == []
+
+
+@pytest.mark.parametrize("colors", [DAY_COLORS, DEEP_NIGHT_COLORS], ids=["day", "night"])
+def test_the_title_strip_sits_between_upcoming_and_one_result(colors):
+    plugin = _plugin()
+    plugin._load_team_logo_for_render = lambda *_args: None
+    texts, headers = [], []
+    original = plugin._draw_text_in_box
+    plugin._draw_text_in_box = lambda draw, box, text, *args, **kwargs: (texts.append((str(text), box[1])),
+                                                                        original(draw, box, text, *args, **kwargs))
+    plugin._draw_section_header = lambda draw, right_x, right_w, y, title, accent=None: headers.append((title, y))
+    rows = []
+    original_row = plugin._draw_lpl_recent_result_row
+    plugin._draw_lpl_recent_result_row = lambda *args, **kwargs: (rows.append(args[5]), original_row(*args, **kwargs))
+    selected = {**SportsDashboard._select_worlds_events(_worlds_events(), NOW), "title_odds": [
+        {"code": "GEN", "name": "Gen.G", "share": 0.475, "logo": ""}, {"code": "T1", "name": "T1", "share": 0.004, "logo": ""}]}
+    token = _ACTIVE_COLORS.set(colors)
+    try:
+        plugin._draw_lpl_sidebar(Image.new("RGB", (800, 480), (255, 255, 255)), 552, selected, "WORLDS LIVE DATA", NOW,
+                                 league_key="WORLDS")
+    finally:
+        _ACTIVE_COLORS.reset(token)
+    assert dict(headers) == {"UPCOMING": 244, "RECENT": lol_worlds_module.WORLDS_TITLE_RECENT_TOP}
+    strip = {text: top for text, top in texts if text in {"夺冠概率", "48%", "<1%"}}
+    assert set(strip) == {"夺冠概率", "48%", "<1%"}
+    assert all(lol_worlds_module.WORLDS_TITLE_STRIP_TOP <= top < lol_worlds_module.WORLDS_TITLE_RECENT_TOP for top in strip.values())
+    assert len(rows) <= 1

@@ -9,6 +9,7 @@ from .card_backdrops import (LOL_BACKDROP_KIND, VALVE_BACKDROP_KINDS, card_backd
                              paint_list_backdrop)
 from .esports_fonts import esports_role, esports_sidebar
 from .scorebug_kit import KIT_RESULT_EXTRA
+from .lol_worlds import WORLDS_TITLE_RECENT_TOP, WORLDS_TITLE_STRIP_HEIGHT, WORLDS_TITLE_STRIP_TOP
 
 # The CS2 / Valve focus card's face-off: each team's logo stands this tall over its name.
 VALVE_FACEOFF_LOGO = 40
@@ -2012,7 +2013,15 @@ class EsportsRenderMixin:
             msi_next_start=(msi_next_filler_event or {}).get("start"),
             league_key=league_key,
         )
-        self._draw_lpl_recent_rows(image, draw, right_x, right_w, 374, recent[:2], league_key=league_key)
+        title_odds = selected.get("title_odds") if config["key"] == "WORLDS" else None
+        if title_odds:
+            # Polymarket's title favourites between the upcoming matches and the latest result.
+            self._draw_worlds_title_odds(image, draw, (right_x + 14, WORLDS_TITLE_STRIP_TOP, right_x + right_w - 14,
+                                                       WORLDS_TITLE_STRIP_TOP + WORLDS_TITLE_STRIP_HEIGHT),
+                                         title_odds, COLORS[config["accent"]])
+            self._draw_lpl_recent_rows(image, draw, right_x, right_w, WORLDS_TITLE_RECENT_TOP, recent[:1], league_key=league_key)
+        else:
+            self._draw_lpl_recent_rows(image, draw, right_x, right_w, 374, recent[:2], league_key=league_key)
         paint_list_backdrop(image, (right_x + 2, 240, width - 2, height - 2), "esports", COLORS["panel"], (COLORS["paper"], COLORS["panel"]))
 
     @staticmethod

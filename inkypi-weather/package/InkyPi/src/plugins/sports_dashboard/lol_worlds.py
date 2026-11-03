@@ -14,6 +14,11 @@ Polymarket prices them at: one keyless request for its LoL moneyline markets
 (about 50 KB), cached for half an hour, gives each priced match its decimal
 odds, win shares, best-of and traded volume. Bookmaker odds already on a match
 are kept.
+
+During the tournament Polymarket's "Worlds <year>: Winner" event (about 80 KB,
+cached for half an hour) adds the favourites' chances of the title: a one-row
+strip of the four likeliest teams still in it, between the upcoming matches and
+the latest result. Without it the card keeps its usual two results.
 """
 
 import json
@@ -35,6 +40,13 @@ POLYMARKET_MARKETS_URL = "https://gamma-api.polymarket.com/markets"
 POLYMARKET_LOL_TAG_ID = 65
 POLYMARKET_CACHE_SECONDS = 30 * 60
 POLYMARKET_MARKETS_LIMIT = 40
+POLYMARKET_EVENTS_URL = "https://gamma-api.polymarket.com/events"
+WORLDS_TITLE_EVENT_SLUG = "worlds-{year}-winner"
+WORLDS_TITLE_ODDS_LIMIT = 4
+# The title-odds strip on the card: its height (a caption, then each favourite's logo and chance over
+# a thin bar), the logos' size, and where it and the one result left under it start.
+WORLDS_TITLE_STRIP_HEIGHT, WORLDS_TITLE_LOGO = 40, 15
+WORLDS_TITLE_STRIP_TOP, WORLDS_TITLE_RECENT_TOP = 370, 414
 # lolesports team codes and the names Polymarket gives those teams, where neither the code nor
 # the initials of the name already match.
 POLYMARKET_TEAM_NAMES = {
@@ -63,6 +75,8 @@ class LolWorldsMixin:
             self._worlds_window_contains(window_start, window_end, now)
             and self._lol_selected_has_displayable_event(selected)
         )
+        if (in_window or force) and events:
+            selected = self._attach_worlds_title_odds(selected, events, settings, now)
         pinned_until = (
             SportsDashboard._worlds_match_day_pin_until(selected, now, window_end)
             if in_window
@@ -134,6 +148,107 @@ class LolWorldsMixin:
         except Exception as exc:
             logger.warning("Worlds schedule fetch failed: %s", _safe_exception_text(exc))
         return [], "WORLDS NO DATA", tournament
+
+    # Title odds ------------------------------------------------------------------------------
+
+    def _attach_worlds_title_odds(self, selected, events, settings, now):
+        """``selected`` with ``title_odds``: the favourites Polymarket prices for the title, each
+        matched to a team the tournament's schedule names (for its code and logo)."""
+        try:
+            offers = self._worlds_title_odds(settings, now)
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("Worlds title odds unavailable: %s", _safe_exception_text(exc))
+            return selected
+        teams = {}
+        for event in events or []:
+            for side in ("a", "b"):
+                code = str(event.get(f"team_{side}") or "").strip()
+                if code and code.upper() != "TBD":
+                    teams.setdefault(code, str(event.get(f"team_{side}_logo") or ""))
+        priced = []
+        for offer in offers:
+            code = next((code for code in teams if SportsDashboard._polymarket_team_is(code, offer["name"])), None)
+            if code and all(item["code"] != code for item in priced):
+                priced.append({**offer, "code": code, "logo": teams[code]})
+        if not priced:
+            return selected
+        return {**selected, "title_odds": priced[:WORLDS_TITLE_ODDS_LIMIT]}
+
+    def _worlds_title_odds(self, settings, now):
+        """[{"name", "share", "week"}] of Polymarket's title market for the edition, best first: only
+        the open markets of teams still in it (its "Team I" / "Other" placeholders are inactive)."""
+        year = getattr(now, "year", None) or datetime.now(timezone.utc).year
+        slug = WORLDS_TITLE_EVENT_SLUG.format(year=year)
+        path = self._sports_dashboard_cache_dir() / "polymarket_worlds_winner.json"
+        cache = self._read_json_file(path)
+        now_utc = datetime.now(timezone.utc)
+        cached = cache.get("teams") if cache.get("slug") == slug else None
+        if isinstance(cached, list) and (self._provider_cache_only(settings)
+                                         or self._cache_is_fresh_seconds(cache, POLYMARKET_CACHE_SECONDS, now_utc)):
+            return cached
+        if self._provider_cache_only(settings):
+            return []
+        try:
+            response = get_http_session().get(
+                POLYMARKET_EVENTS_URL, params={"slug": slug},
+                headers={"Accept": "application/json", "User-Agent": "InkyPi/1.0"}, timeout=10,
+            )
+            response.raise_for_status()
+            teams = SportsDashboard._parse_worlds_title_odds(response.json())
+        except TaskCancelled:
+            raise
+        except Exception:
+            if isinstance(cached, list):
+                return cached
+            raise
+        self._write_json_file(path, {"slug": slug, "fetched_at": now_utc.isoformat(), "teams": teams})
+        return teams
+
+    @staticmethod
+    def _parse_worlds_title_odds(payload):
+        events = payload if isinstance(payload, list) else [payload]
+        teams = []
+        for event in events:
+            for market in (event or {}).get("markets") or [] if isinstance(event, Mapping) else []:
+                if not isinstance(market, Mapping) or not market.get("active") or market.get("closed"):
+                    continue
+                prices = LolWorldsMixin._polymarket_compact({"outcomePrices": market.get("outcomePrices")})["prices"]
+                try:
+                    share = float(prices[0])
+                    week = float(market.get("oneWeekPriceChange") or 0)
+                except (IndexError, TypeError, ValueError):
+                    continue
+                name = str(market.get("groupItemTitle") or "").strip()[:60]
+                if name and 0.0 < share < 1.0:
+                    teams.append({"name": name, "share": share, "week": week})
+        return sorted(teams, key=lambda team: -team["share"])[:12]
+
+    def _draw_worlds_title_odds(self, image, draw, box, odds, accent):
+        """A rule, '夺冠概率' and Polymarket's mark, then the favourites in one row: logo, title
+        chance (the favourite's in bold) and a thin bar for it."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        draw.line((x1, y1, x2, y1), fill=COLORS["line"], width=1)
+        self._draw_text_in_box(draw, (x1, y1 + 2, x2, y1 + 13), "夺冠概率", self._font(9, True), COLORS["text"])
+        logo = self._load_local_logo(os.path.join(LOCAL_TEAM_LOGO_DIR, "polymarket.png"), (80, 9), alpha_threshold=8)
+        if logo is not None:
+            tinted = Image.new("RGBA", logo.size, (*COLORS["text"][:3], 255))
+            tinted.putalpha(logo.getchannel("A"))
+            image.paste(tinted, (x2 - tinted.width, y1 + 3 + (10 - tinted.height) // 2), tinted)
+        width = (x2 - x1) / max(1, len(odds))
+        top = y1 + 16
+        for index, team in enumerate(odds):
+            left = round(x1 + index * width)
+            right = round(x1 + (index + 1) * width) - 6
+            self._draw_team_logo(image, draw, team.get("logo"), left, top, WORLDS_TITLE_LOGO, team.get("code"))
+            share = max(0.0, min(1.0, float(team.get("share") or 0)))
+            label = f"{share * 100:.0f}%" if share >= 0.01 else "<1%"
+            self._draw_text_in_box(draw, (left + WORLDS_TITLE_LOGO + 3, top, right, top + WORLDS_TITLE_LOGO), label,
+                                   self._font(11, index == 0), COLORS["text"])
+            bar_top = top + WORLDS_TITLE_LOGO + 3
+            draw.rectangle((left, bar_top, right, bar_top + 3), fill=COLORS["line"])
+            draw.rectangle((left, bar_top, left + max(1, round((right - left) * share)), bar_top + 3), fill=accent)
 
     def _polymarket_lol_offers(self, settings, timezone_info):
         """Polymarket's priced LoL matches as odds offers, from a half-hour cache or one request;
