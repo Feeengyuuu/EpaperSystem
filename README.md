@@ -6,7 +6,7 @@
 
 **把天气、日程、赛事、新闻和你在意的一切，装进一块会自己换页的彩色墨水屏。**
 
-Raspberry Pi + 六色墨水屏 · 72 个插件自动轮播 · 局域网网页管理 · **一行命令安装** · 可选字体 DLC
+Raspberry Pi + 六色墨水屏 · 73 个插件自动轮播 · 局域网网页管理 · **一行命令安装** · 可选字体 DLC
 
 </div>
 
@@ -20,7 +20,7 @@ Raspberry Pi + 六色墨水屏 · 72 个插件自动轮播 · 局域网网页管
 |---|---|
 | 🌤 **天气与日历** | 现代天气页：插画随天气和昼夜变化，夜里换成星空，每张卡片有自己的底纹，“明天”的时间直接写明天；节假日、个人日程与发布会日历 |
 | ⚽ **体育与电竞** | 足球、NFL、MLB、NBA / WNBA、NHL、F1、PGA 各有专属版式和球场插画，直播优先、多场同时进行时变成比分墙；比赛场馆用官方 logo（200 余座），季后赛和总决赛有系列赛进度；LoL / CS2 / Dota 赛事与赔率，LoL / CS2 职业选手轮播 |
-| 📰 **资讯与科技** | 整点新闻（AI 摘要，国内 / 国际双栏）、全网热搜（百度 / 头条 / 知乎 / 抖音，可加微博）、Hacker News 与 AI 榜单（含 OpenRouter 新模型）、AI 论文日报（Hugging Face 每日论文）、Telegram 精选、科技与游戏、今日热榜（B 站 / 新番 / 维基 / 热歌 / 棋题 / NASA 地球） |
+| 📰 **资讯与科技** | 整点新闻（AI 摘要，国内 / 国际双栏）、全网热搜（百度 / 头条 / 知乎 / 抖音，可加微博）、Hacker News 与 AI 榜单（含 OpenRouter 新模型）、AI 论文日报（Hugging Face 每日论文）、Telegram 精选、科技与游戏、今日热榜（B 站 / 新番 / 维基 / 热歌 / 棋题 / NASA 地球）、万象速览（一言诗词、DW / 纽约时报中文网 / 少数派、网易云与豆瓣榜、实时太阳与韦布 / 哈勃本月图、国债 / 加州油价 / 恐惧贪婪、Wordle 昨日答案） |
 | 🎮 **游戏与影视** | Steam 资料与好友（好友在玩的游戏截图）、Steam 排行与每日美图、游戏优惠（Steam 简体中文名）、直播雷达、全球票房双城榜 |
 | 🚀 **太空与天空** | NASA 每日天文图、空间天气与近地小行星（JPL）、今夜可见行星、火箭发射倒计时、预测市场与航天新闻、环球此刻（卫星云图、加州电网、火星照片、空间站与在轨航天员、JPL 火流星）、机场航班雷达 |
 | 🎨 **艺术与知识** | 每日名画、历史海报、杂志与漫画封面、今日报纸头版、维基每日、每日一词 |
@@ -216,4 +216,4 @@ sudo bash install.sh --lang zh-CN
 
 基于开源项目 [InkyPi](https://github.com/fatihak/InkyPi) 构建，感谢原作者与社区。InkyPi 部分以 **GPL-3.0** 发布，见 [LICENSE](inkypi-weather/package/InkyPi/LICENSE)。字体 DLC 中的字体版权归各自所有者，开源字体按各自许可（SIL OFL 1.1）使用。
 
-<sub>An open-source Raspberry Pi colour e-paper dashboard: 72 plugins for weather, calendars, sports, news, games, space and local life, auto-rotating with a web UI. Install with the one command above (`--lang en` for English). Optional fonts install as a font DLC: `sudo inkypi fonts list`.</sub>
+<sub>An open-source Raspberry Pi colour e-paper dashboard: 73 plugins for weather, calendars, sports, news, games, space and local life, auto-rotating with a web UI. Install with the one command above (`--lang en` for English). Optional fonts install as a font DLC: `sudo inkypi fonts list`.</sub>
