@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -12,6 +12,7 @@ import re
 from types import MappingProxyType
 from typing import Any, Literal, Mapping, Sequence
 
+from plugins.apod import solar_flares
 from plugins.base_plugin.render_provenance import SourceProvenance
 from runtime.refresh_contracts import (
     TaskCancelled,
@@ -50,7 +51,7 @@ _FRESH_FETCH_AGE = timedelta(minutes=30)
 
 SourceState = Literal["live", "fresh_cache", "stale_cache", "unavailable"]
 AlertState = Literal["active", "confirmed_empty", "unavailable"]
-FreshnessKind = Literal["scales", "kp", "wind", "alerts", "donki"]
+FreshnessKind = Literal["scales", "kp", "wind", "alerts", "donki", "xray", "flare_probabilities"]
 _ABORT_EXCEPTIONS = (TaskDeadlineExceeded, TaskCancelled)
 
 
@@ -103,6 +104,9 @@ class SpaceWeatherSnapshot:
     sources: Mapping[str, SourceResult]
     errors: Sequence[str]
     aggregate_state: SourceProvenance
+    # GOES X-ray class now and the strongest flare of 24 hours; SWPC's 1-3 day C/M/X chances.
+    xray: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
+    flare_probabilities: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
 
 
 def normalize_scales(
@@ -984,6 +988,80 @@ class SpaceWeatherRepository:
                 return result, selected
             return result, None
 
+    def refresh_flares(
+        self, *, now_utc: datetime, context: TaskContext | None
+    ) -> tuple[SourceResult, SourceResult]:
+        """The X-ray flare products and the flare probabilities, each with its own cache."""
+        _task_checkpoint(context)
+        now = _as_utc(now_utc)
+
+        def xray_fetch():
+            latest = self._fetch_json(solar_flares.XRAY_FLARES_ENDPOINT, context)
+            try:
+                week = self._fetch_json(solar_flares.XRAY_FLARES_WEEK_ENDPOINT, context)
+            except (TaskDeadlineExceeded, TaskCancelled):
+                raise
+            except Exception:
+                week = (None, b"")  # the latest flare alone still gives the class and peak
+            payload = solar_flares.normalize_xray(latest[0], week[0], now_utc=now)
+            return payload, latest[1] + b"\0" + week[1]
+
+        def probabilities_fetch():
+            raw, raw_bytes = self._fetch_json(solar_flares.SOLAR_PROBABILITIES_ENDPOINT, context)
+            return solar_flares.normalize_flare_probabilities(raw, now_utc=now), raw_bytes
+
+        xray = self._refresh_optional(
+            name="xray", endpoint=solar_flares.XRAY_CACHE_ENDPOINT, filename="xray.json",
+            fetch=xray_fetch, freshness_kind="xray", now_utc=now, context=context,
+        )
+        _task_checkpoint(context)
+        probabilities = self._refresh_optional(
+            name="flare_probabilities", endpoint=solar_flares.SOLAR_PROBABILITIES_ENDPOINT,
+            filename="flare_probabilities.json", fetch=probabilities_fetch,
+            freshness_kind="flare_probabilities", now_utc=now, context=context,
+        )
+        _task_checkpoint(context)
+        return xray, probabilities
+
+    def _fetch_json(self, endpoint: str, context: TaskContext | None) -> tuple[Any, bytes]:
+        response = self.http.request_bytes(
+            "GET", endpoint, context=context, timeout=NOAA_TIMEOUT_SECONDS,
+            max_bytes=MAX_PROVIDER_JSON_BYTES,
+        )
+        _task_checkpoint(context)
+        raw_bytes = response.data
+        if not isinstance(raw_bytes, bytes):
+            raise ValueError("HTTP client returned a non-bytes response")
+        return json.loads(raw_bytes), raw_bytes
+
+    def _refresh_optional(
+        self, *, name: str, endpoint: str, filename: str, fetch, freshness_kind: FreshnessKind,
+        now_utc: datetime, context: TaskContext | None,
+    ) -> SourceResult:
+        """One optional product: fetch, normalise and cache it, or fall back to its cache."""
+        path = self.cache_dir / filename
+        try:
+            payload, raw_bytes = fetch()
+            _task_checkpoint(context)
+            envelope = _build_optional_envelope(
+                endpoint=endpoint, fetched_at_utc=now_utc, payload=payload,
+                raw_digest=hashlib.sha256(raw_bytes).hexdigest(),
+            )
+            _validate_cached_payload(envelope, freshness_kind=freshness_kind)
+            _task_checkpoint(context)
+            atomic_write_json(path, _serialize_envelope(envelope))
+            _task_checkpoint(context)
+            return SourceResult(name=name, state="live", envelope=envelope)
+        except (TaskDeadlineExceeded, TaskCancelled):
+            raise
+        except Exception as error:
+            _task_checkpoint(context)
+            cached = _read_envelope(path, expected_endpoint=endpoint, freshness_kind=freshness_kind)
+            _task_checkpoint(context)
+            return self._cached_optional_result(
+                name=name, cached=cached, error=error, now_utc=now_utc, freshness_kind=freshness_kind,
+            )
+
     def _cached_optional_result(
         self,
         *,
@@ -1146,10 +1224,19 @@ def refresh_space_weather(
         nasa_api_key=nasa_api_key, now_utc=now, context=context
     )
     _task_checkpoint(context)
+    refresh_flares = getattr(repository, "refresh_flares", None)
+    if callable(refresh_flares):
+        xray_source, flare_source = refresh_flares(now_utc=now, context=context)
+    else:  # repositories without the flare products simply leave them off the page
+        xray_source = SourceResult(name="xray", state="unavailable", envelope=None)
+        flare_source = SourceResult(name="flare_probabilities", state="unavailable", envelope=None)
+    _task_checkpoint(context)
     sources = {
         result.name: result
-        for result in (scales, kp, wind_speed, wind_magnetic, alerts, donki)
+        for result in (scales, kp, wind_speed, wind_magnetic, alerts, donki, xray_source, flare_source)
     }
+    xray = solar_flares.project_xray(_renderable_optional_payload(xray_source), now_utc=now)
+    flare_probabilities = solar_flares.project_flare_probabilities(_renderable_optional_payload(flare_source))
 
     (
         current_scales,
@@ -1175,6 +1262,8 @@ def refresh_space_weather(
         (scales, probabilities),
         (alerts, alert),
         (donki, donki_event),
+        (xray_source, xray),
+        (flare_source, flare_probabilities),
     ):
         if value:
             displayed.append(result.state)
@@ -1214,6 +1303,8 @@ def refresh_space_weather(
         sources=_freeze(sources),
         errors=tuple(errors),
         aggregate_state=aggregate_state,
+        xray=_freeze(xray),
+        flare_probabilities=_freeze(flare_probabilities),
     )
     cache_dir = getattr(repository, "cache_dir", None)
     core_admitted = all(
@@ -1427,6 +1518,15 @@ def _classify_freshness(
         if fetch_age <= timedelta(minutes=60):
             return "live" if live else "fresh_cache"
         return "stale_cache" if fetch_age <= timedelta(hours=24) else "unavailable"
+    if freshness_kind == "xray":
+        if fetch_age <= timedelta(minutes=30):
+            return "live" if live else "fresh_cache"
+        return "stale_cache" if fetch_age <= timedelta(hours=2) else "unavailable"
+    if freshness_kind == "flare_probabilities":
+        # SWPC issues the chances once a day.
+        if fetch_age <= timedelta(hours=6):
+            return "live" if live else "fresh_cache"
+        return "stale_cache" if fetch_age <= timedelta(hours=24) else "unavailable"
 
     provider_time = envelope.observed_at_utc or envelope.issued_at_utc
     if provider_time is None or provider_time > now + _FUTURE_CLOCK_SKEW:
@@ -1551,6 +1651,12 @@ def _validate_cached_payload(
         cme = _required_sequence(payload, "cme")
         if not all(isinstance(row, Mapping) for row in (*flr, *cme)):
             raise ValueError("cached DONKI row must be an object")
+        return
+    if freshness_kind == "xray":
+        solar_flares.validate_xray(payload)
+        return
+    if freshness_kind == "flare_probabilities":
+        solar_flares.validate_flare_probabilities(payload)
         return
 
     observed = _parse_utc(payload["observed_at_utc"])

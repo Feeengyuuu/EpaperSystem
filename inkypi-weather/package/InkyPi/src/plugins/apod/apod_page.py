@@ -745,6 +745,24 @@ def _draw_metrics_panel(canvas, draw, snapshot, fonts) -> None:
     mid_x = (x1 + x2) // 2
     mid_y = (y1 + y2) // 2
     gap = METRIC_GAP // 2
+    xray = snapshot.xray if isinstance(getattr(snapshot, "xray", None), Mapping) else {}
+    chances = (snapshot.flare_probabilities
+               if isinstance(getattr(snapshot, "flare_probabilities", None), Mapping) else {})
+    if xray or chances:
+        # The flares take the whole lower row; Bt and Bz share a cell (the Kp tile already
+        # carries the 48-hour peak the forecast cell repeated).
+        field_value = "—"
+        if bt_value != "—" or bz_value != "—":
+            bz_number = _format_number(magnetic.get("bz_nt"), decimals=2)
+            field_value = f"{_format_number(magnetic.get('bt_nt'), decimals=1)}{TEXT_SEPARATOR}{bz_number} nT"
+        cells = (
+            ((x1, y1, mid_x - gap, mid_y - gap), "solar_wind", f"太阳风{TEXT_SEPARATOR}WIND", wind_value),
+            ((mid_x + gap, y1, x2, mid_y - gap), "magnet", f"磁场 Bt{TEXT_SEPARATOR}Bz", field_value),
+        )
+        for rect, icon, label, value in cells:
+            _draw_metric_cell(canvas, draw, rect, icon, label, value, fonts)
+        _draw_flare_cell(canvas, draw, (x1, mid_y + gap, x2, y2), xray, chances, fonts)
+        return
     cells = (
         ((x1, y1, mid_x - gap, mid_y - gap), "solar_wind", f"太阳风{TEXT_SEPARATOR}WIND", wind_value),
         ((mid_x + gap, y1, x2, mid_y - gap), "magnet", "磁场 Bz", bz_value),
@@ -753,6 +771,75 @@ def _draw_metrics_panel(canvas, draw, snapshot, fonts) -> None:
     )
     for rect, icon, label, value in cells:
         _draw_metric_cell(canvas, draw, rect, icon, label, value, fonts)
+
+
+def _flare_colour(flare_class) -> tuple[int, int, int]:
+    """A class by its letter: A/B quiet, C amber, M orange (R1-R2), X red (R3+)."""
+    letter = str(flare_class or "")[:1].upper()
+    return {"C": AMBER_COLOR, "M": ORANGE_COLOR, "X": RED_COLOR}.get(letter, GREEN_COLOR if letter else MUTED_COLOR)
+
+
+@lru_cache(maxsize=4)
+def _flare_icon(size: int) -> Image.Image:
+    """A small sun with a flare loop, in the page's white line work."""
+    scale = 4
+    big = size * scale
+    icon = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+    pen = ImageDraw.Draw(icon)
+    line = max(2, round(big * 0.075))
+    cx, cy, radius = big * 0.42, big * 0.58, big * 0.27
+    pen.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), outline=TEXT_COLOR + (255,), width=line)
+    for angle in (150, 195, 240, 285):
+        rad = math.radians(angle)
+        inner, outer = radius + big * 0.08, radius + big * 0.17
+        pen.line((cx + math.cos(rad) * inner, cy + math.sin(rad) * inner,
+                  cx + math.cos(rad) * outer, cy + math.sin(rad) * outer), fill=TEXT_COLOR + (255,), width=line)
+    # The flare: a loop leaping off the upper right limb.
+    loop = (cx + radius * 0.15, big * 0.06, big * 0.97, cy + radius * 0.35)
+    pen.arc(loop, start=200, end=20, fill=TEXT_COLOR + (255,), width=line)
+    return icon.resize((size, size), Image.Resampling.LANCZOS)
+
+
+def _draw_flare_cell(canvas, draw, rect, xray, chances, fonts) -> None:
+    """The X-ray class now and the strongest flare of 24 hours on the left; SWPC's C/M/X chances
+    for the next three days on the right, each class a trio of day bars with day one's figure."""
+    x1, y1, x2, y2 = rect
+    _tile(draw, rect)
+    icon = _flare_icon(24)
+    canvas.paste(icon, (x1 + 8, y1 + (y2 - y1 - 24) // 2), icon)
+    text_x = x1 + 40
+    _draw_text(draw, (text_x, y1 + 4), f"X射线耀斑{TEXT_SEPARATOR}X-RAY", font=fonts["metric_label"], fill=LABEL_COLOR)
+    current = str(xray.get("current_class") or "—")
+    value_font = fonts["metric_value"]
+    _draw_text(draw, (text_x, y1 + 18), current, font=value_font, fill=_flare_colour(xray.get("current_class")))
+    peak = xray.get("peak_class")
+    if peak:
+        peak_x = text_x + _text_width(draw, current, value_font) + 8
+        _draw_text(draw, (peak_x, y1 + 23), "24H", font=fonts["probability_label"], fill=LABEL_COLOR)
+        peak_x += _text_width(draw, "24H", fonts["probability_label"]) + 3
+        _draw_text(draw, (peak_x, y1 + 20), str(peak), font=fonts["probability_value"], fill=_flare_colour(peak))
+
+    rows = [(letter, chances.get(letter.lower())) for letter in ("C", "M", "X")]
+    rows = [(letter, values) for letter, values in rows if isinstance(values, (list, tuple)) and len(values) == 3]
+    if not rows:
+        return
+    group_width, right = 58, x2 - 8
+    left = right - group_width * len(rows)
+    _draw_text(draw, (left, y1 + 4), f"1-3日{TEXT_SEPARATOR}FLARE ODDS", font=fonts["metric_label"], fill=LABEL_COLOR)
+    bar_bottom, bar_height = y2 - 7, 14
+    for index, (letter, values) in enumerate(rows):
+        gx = left + index * group_width
+        _draw_text(draw, (gx, bar_bottom - 13), letter, font=fonts["probability_value"], fill=TEXT_COLOR)
+        bars_x = gx + 11
+        for day, value in enumerate(values):
+            bx = bars_x + day * 6
+            draw.rectangle((bx, bar_bottom - bar_height, bx + 3, bar_bottom), fill=BAR_TRACK_COLOR)
+            share = max(0.0, min(1.0, float(value) / 100))
+            if share > 0:
+                top = bar_bottom - max(2, round(bar_height * share))
+                draw.rectangle((bx, top, bx + 3, bar_bottom), fill=_probability_color(value))
+        _draw_text(draw, (bars_x + 20, bar_bottom - 11), f"{int(values[0])}%", font=fonts["header_meta"],
+                   fill=TEXT_COLOR)
 
 
 def _probability_color(value) -> tuple[int, int, int]:
