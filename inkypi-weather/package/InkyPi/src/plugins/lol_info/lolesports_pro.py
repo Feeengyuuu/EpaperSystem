@@ -121,9 +121,10 @@ def _is_player(row, player):
 
 
 def parse_game(payload):
-    """One game's newest frame: {state, at, sides: {"blue"|"red": {team_id, kills, gold, towers,
-    inhibitors, barons, dragons, players: [{name, champion, role, participant, kills, deaths,
-    assists, cs, gold, level}]}}} (None before the feed has a frame)."""
+    """One game's newest frame: {state, at, patch, sides: {"blue"|"red": {team_id, kills, gold,
+    towers, inhibitors, barons, dragons, players: [{name, champion, role, participant, kills, deaths,
+    assists, cs, gold, level}]}}} (None before the feed has a frame). ``patch`` is the game's
+    version as players name it ("16.20" for 16.20.826.3891), "" when the feed gives none."""
     meta = (payload or {}).get("gameMetadata") or {}
     frames = (payload or {}).get("frames") or []
     if not frames:
@@ -145,18 +146,29 @@ def parse_game(payload):
                        "gold": int(stats.get("totalGold") or 0), "towers": int(stats.get("towers") or 0),
                        "inhibitors": int(stats.get("inhibitors") or 0), "barons": int(stats.get("barons") or 0),
                        "dragons": [str(name) for name in stats.get("dragons") or []], "players": players}
-    return {"state": frame.get("gameState") or "", "at": _timestamp(frame.get("rfc460Timestamp")), "sides": sides}
+    return {"state": frame.get("gameState") or "", "at": _timestamp(frame.get("rfc460Timestamp")),
+            "patch": patch_name(meta.get("patchVersion")), "sides": sides}
+
+
+def patch_name(version):
+    """"16.20.826.3891" -> "16.20"; "" for anything else."""
+    parts = str(version or "").split(".")
+    return ".".join(parts[:2]) if len(parts) >= 2 and all(part.isdigit() for part in parts[:2]) else ""
 
 
 def parse_shares(payload):
-    """Each participant's share of the fights in a game's newest frame:
-    {participant id (str): {kp, damage_share, wards, items}}."""
+    """Each participant's share of the fights in a game's newest frame, their vision and their
+    keystone rune: {participant id (str): {kp, damage_share, wards, wards_killed, items, keystone}}
+    (``keystone`` the rune's id, None when the feed names none)."""
     frames = (payload or {}).get("frames") or []
     shares = {}
     for line in (frames[-1].get("participants") if frames else []) or []:
+        perks = (line.get("perkMetadata") or {}).get("perks") or []
+        keystone = perks[0] if perks and isinstance(perks[0], int) and perks[0] > 0 else None
         shares[str(line.get("participantId"))] = {
             "kp": float(line.get("killParticipation") or 0), "damage_share": float(line.get("championDamageShare") or 0),
-            "wards": int(line.get("wardsPlaced") or 0), "items": [int(item) for item in line.get("items") or []]}
+            "wards": int(line.get("wardsPlaced") or 0), "wards_killed": int(line.get("wardsDestroyed") or 0),
+            "items": [int(item) for item in line.get("items") or []], "keystone": keystone}
     return shares
 
 
@@ -186,7 +198,8 @@ def player_line(parsed, player):
             theirs = parsed["sides"].get(other) or {}
             team = {key: value for key, value in ours.items() if key != "players"}
             return {**found, **((parsed.get("shares") or {}).get(str(found.get("participant"))) or {}),
-                    "side": side, "state": parsed.get("state"), "at": parsed.get("at"), "ours": team,
+                    "side": side, "state": parsed.get("state"), "at": parsed.get("at"),
+                    "patch": parsed.get("patch") or "", "ours": team,
                     "theirs": {key: value for key, value in theirs.items() if key != "players"}}
     return None
 

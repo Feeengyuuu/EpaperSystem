@@ -27,6 +27,7 @@ from __future__ import annotations
 from datetime import datetime
 import logging
 import random
+import re
 import time
 import urllib.parse
 
@@ -68,6 +69,11 @@ CS2_EVENT_HOURS = 12
 CS2_EVENT_PAGES = 1
 CS2_EVENT_KEEP_DAYS = 14
 LOL_ESPORTS_STATE = "pro_lol_esports.json"
+# The keystone runes' Chinese names and icons, from Data Dragon for the current version.
+RUNES_STATE = "ddragon_keystones_zh.json"
+DDRAGON_CDN = "https://ddragon.leagueoflegends.com/cdn"
+RUNE_VERSION = re.compile(r"\d+\.\d+\.\d+")
+RUNE_ICON = re.compile(r"perk-images/[A-Za-z0-9_/]+\.png")
 LOL_SCHEDULE_MINUTES = 60
 # A series older than this no longer heads the LoL page's pro corner.
 LOL_SERIES_DAYS = 21
@@ -364,7 +370,42 @@ class ProTrackerMixin:
             changed = changed or touched
         if changed:
             self._write_json(path, self._pruned_esports(state))
+        if series and any(game.get("keystone") for game in series.get("games") or []):
+            runes = self._dragon_runes(refresh=refresh)
+            series["games"] = [{**game, "keystone_rune": runes.get(str(game.get("keystone")))}
+                               if game.get("keystone") else game for game in series["games"]]
         return {"team": code, "next": upcoming, "results": results, "series": series, "live": live}
+
+    def _dragon_runes(self, refresh=True):
+        """The keystone runes by id in Chinese, {id (str): {"name", "icon_url"}}, from Data Dragon's
+        runesReforged (36 KB) for the champions' version, kept until that version changes; the cached
+        map (or {}) when not refreshing or when Data Dragon fails."""
+        path = self._cache_dir() / RUNES_STATE
+        cache = self._read_json(path, {})
+        keystones = cache.get("keystones") if isinstance(cache.get("keystones"), dict) else {}
+        if not refresh:
+            return keystones
+        version = str((self._dragon_champions() or {}).get("version") or "")
+        if not RUNE_VERSION.fullmatch(version) or (keystones and cache.get("version") == version):
+            return keystones
+        try:
+            response = get_http_session().get(f"{DDRAGON_CDN}/{version}/data/zh_CN/runesReforged.json", timeout=25)
+            response.raise_for_status()
+            found = {}
+            for style in response.json() or []:
+                for rune in ((style.get("slots") or [{}])[0].get("runes") or []) if isinstance(style, dict) else []:
+                    icon = str(rune.get("icon") or "")
+                    if rune.get("id") and rune.get("name") and RUNE_ICON.fullmatch(icon):
+                        found[str(rune["id"])] = {"name": str(rune["name"]), "icon_url": f"{DDRAGON_CDN}/img/{icon}"}
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("Data Dragon runes unavailable: %s", exc)
+            return keystones
+        if found:
+            self._write_json(path, {"version": version, "keystones": found})
+            return found
+        return keystones
 
     def _lol_series(self, state, session, target, player, now):
         """(the series with the pro's line in each game played, whether the cache changed). A finished
@@ -385,7 +426,10 @@ class ProTrackerMixin:
         for index, game in enumerate(games):
             known = games_seen.get(game["id"]) or {}
             last = index == len(games) - 1
-            if not session or (known.get("state") == "finished" and (known.get("shares") or not last)):
+            # The last game is read with its details (and its patch, which a reading kept from
+            # before the page showed it lacks: that one is read again once).
+            if not session or (known.get("state") == "finished" and (not last or (known.get("shares")
+                                                                                 and "patch" in known))):
                 continue
             try:
                 parsed = lolesports_pro.game(session, game["id"], now, details=last)
@@ -396,6 +440,10 @@ class ProTrackerMixin:
                 continue
             if parsed:
                 games_seen[game["id"]] = parsed
+                changed = True
+            elif known.get("state") == "finished":
+                # The feed no longer serves that game: keep the old reading and stop asking.
+                games_seen[game["id"]] = {**known, "patch": known.get("patch", "")}
                 changed = True
         entries[target["id"]] = entry
         lines = [lolesports_pro.player_line(games_seen.get(game["id"]), player) for game in games]
@@ -612,7 +660,10 @@ class ProTrackerMixin:
                 if stamp == "map_pool_ts":
                     entry.update(map_pool=bo3_stats.map_stats(session, slug), career=bo3_stats.career(session, slug))
                 else:
+                    # The record (world rank, six months' rating, prize money, team since) heads the
+                    # page; the win slot reads the team's latest win.
                     record = bo3_stats.player_record(session, slug)
+                    entry["bo3_record"] = record
                     entry["last_win"] = bo3_stats.latest_win(session, record, now, entry.get("last_win"))
                 entry[stamp] = now
             except TaskCancelled:

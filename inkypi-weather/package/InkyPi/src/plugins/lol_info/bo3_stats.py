@@ -2,9 +2,9 @@
 
 HLTV's per-map stats and match pages sit behind its challenge pages, so these come from
 bo3.gg: one lookup resolves the player's bo3 slug (kept in the tracker state), one call
-reads their last six months per map, one their career totals, and their team's latest won
-match is read with its maps and the player's line on each. Parsers are plain functions
-over the decoded JSON.
+reads their last six months per map, one their career totals, one their record (world rank,
+six months' rating, prize money, team since), and their team's latest won match is read with
+its maps and the player's line on each. Parsers are plain functions over the decoded JSON.
 """
 
 from __future__ import annotations
@@ -103,16 +103,43 @@ def map_stats(session, slug, today=None):
     return parse_map_stats(payload)
 
 
-def player_record(session, slug):
-    """The player's bo3 id and current team id (None when bo3 has no such player)."""
-    payload = _get_json(session, f"/players/{urllib.parse.quote(slug)}")
+def parse_record(payload):
+    """The player's bo3 record: {id, team_id, rank, rating, prize, joined} (None when bo3 has no such
+    player). ``rank`` is bo3's world ranking, ``rating`` their 0-10 score over the last six months,
+    ``prize`` their career prize money in dollars and ``joined`` the day they joined their team
+    ("2023-07-05"); each is None when bo3 gives none."""
     if not isinstance(payload, dict) or not payload.get("id"):
         return None
-    return {"id": payload["id"], "team_id": payload.get("team_id")}
+
+    def number(key, kind):
+        try:
+            value = kind(payload.get(key))
+        except (TypeError, ValueError):
+            return None
+        return value if value > 0 else None
+
+    joined = str(payload.get("joined_team_at") or "")[:10]
+    try:
+        joined = date.fromisoformat(joined).isoformat()
+    except ValueError:
+        joined = None
+    return {"id": payload["id"], "team_id": payload.get("team_id"), "rank": number("rank", int),
+            "rating": number("six_month_avg_rating", float), "prize": number("total_prize", float), "joined": joined}
+
+
+def player_record(session, slug):
+    """The player's bo3 record (parse_record), None when bo3 has no such player. It is read from
+    the players listing narrowed to the slug (3 KB), which carries the world rank the player's own
+    page (50 KB) leaves out."""
+    payload = _get_json(session, "/players", {"filter[slug][eq]": slug, "page[limit]": 1})
+    rows = [row for row in (payload or {}).get("results") or [] if isinstance(row, dict) and row.get("slug") == slug]
+    return parse_record(rows[0]) if rows else None
 
 
 def parse_career(payload):
-    """{maps, win_rate, kd, adr, titles} over the player's whole bo3 record (None without a map)."""
+    """{maps, win_rate, kd, adr, titles, matches, matches_won, matches_lost, events} over the
+    player's whole bo3 record (None without a map): maps and series (matches) played and won, and
+    the events played (``titles`` of them won)."""
     try:
         maps = int(payload.get("games_count") or 0)
         if maps <= 0:
@@ -121,7 +148,11 @@ def parse_career(payload):
         return {"maps": maps, "win_rate": int(payload.get("games_won_count") or 0) / maps,
                 "kd": int(payload.get("kills_sum") or 0) / deaths if deaths else None,
                 "adr": float(payload.get("damage_sum") or 0) / rounds if rounds else None,
-                "titles": int(payload.get("events_won_count") or 0)}
+                "titles": int(payload.get("events_won_count") or 0),
+                "matches": int(payload.get("matches_count") or 0),
+                "matches_won": int(payload.get("matches_won_count") or 0),
+                "matches_lost": int(payload.get("matches_lost_count") or 0),
+                "events": int(payload.get("events_count") or 0)}
     except (AttributeError, TypeError, ValueError):
         return None
 

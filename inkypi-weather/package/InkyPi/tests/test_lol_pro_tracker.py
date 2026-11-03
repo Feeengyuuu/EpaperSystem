@@ -477,9 +477,12 @@ def test_the_shown_cs2_players_bo3_numbers_refresh_on_their_own_schedules(plugin
         def get(self, url, timeout=None, headers=None, stream=None):
             path = urllib.parse.urlsplit(url).path.removeprefix("/api/v1")
             calls.append(path)
-            answers = {"/players": {"results": [{"slug": "donk", "nickname": "donk", "last_name": "Kryshkovets"}]},
+            # One players listing answers both the nickname lookup and the slug's record.
+            answers = {"/players": {"results": [{"slug": "donk", "nickname": "donk", "last_name": "Kryshkovets",
+                                                 "id": 21, "team_id": 654, "rank": 2, "six_month_avg_rating": 7.29,
+                                                 "total_prize": 899759.0,
+                                                 "joined_team_at": "2023-07-05T00:00:00.000+00:00"}]},
                        "/players/donk/map_stats": MAP_STATS, "/players/donk/general_stats": CAREER,
-                       "/players/donk": {"id": 21, "team_id": 654},
                        "/matches": {"results": [{**WON_MATCH, "status": "finished", "winner_team_id": 654,
                                                  "start_date": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())}]},
                        "/matches/spirit-vs-mouz": WON_MATCH}
@@ -494,11 +497,13 @@ def test_the_shown_cs2_players_bo3_numbers_refresh_on_their_own_schedules(plugin
 
     player = plugin._cs2_data(pick)["player"]
 
-    assert calls == ["/players", "/players/donk/map_stats", "/players/donk/general_stats", "/players/donk", "/matches",
+    assert calls == ["/players", "/players/donk/map_stats", "/players/donk/general_stats", "/players", "/matches",
                      "/matches/spirit-vs-mouz", "/games/13/players_stats", "/games/11/players_stats",
                      "/games/12/players_stats"]
     assert player["map_pool"][0]["map"] == "de_ancient" and player["bo3_slug"] == "donk"
     assert player["career"]["titles"] == 9 and player["last_win"]["opponent"] == "MOUZ"
+    assert player["bo3_record"] == {"id": 21, "team_id": 654, "rank": 2, "rating": 7.29, "prize": 899759.0,
+                                    "joined": "2023-07-05"}
     assert [row["kills"] for row in player["last_win"]["maps"]] == [20, 20, 20]
     calls.clear()
     assert plugin._cs2_data(pick)["player"]["map_pool"][0]["map"] == "de_ancient" and calls == []
@@ -507,7 +512,7 @@ def test_the_shown_cs2_players_bo3_numbers_refresh_on_their_own_schedules(plugin
     state["players"]["donk"]["win_ts"] -= pro_tracker.CS2_WIN_HOURS * 3600
     (tmp_path / pro_tracker.CS2_STATE).write_text(json.dumps(state), encoding="utf-8")
     assert plugin._cs2_data(pick)["player"]["last_win"]["score"] == "2 : 1"
-    assert calls == ["/players/donk", "/matches"]
+    assert calls == ["/players", "/matches"]
     calls.clear()
     plugin._cs2_data(pick, refresh=False)
     assert calls == []
@@ -766,6 +771,51 @@ def test_the_role_card_is_a_tactical_screen_with_the_career_in_chips(plugin):
     # The chart is drawn larger and scaled down, so its lines come out with smooth, blended edges.
     cx, cy = x0 + 103, y0 + pro_render.RADAR_TOP
     assert len(image.crop((cx - 60, cy - 60, cx + 60, cy + 60)).getcolors(maxcolors=100_000)) > 300
+
+
+def test_bo3_record_and_career_name_the_rank_rating_prize_team_and_series():
+    record = bo3_stats.parse_record({"id": 21, "team_id": 654, "rank": 2, "six_month_avg_rating": 7.29,
+                                     "total_prize": 899759.0, "joined_team_at": "2023-07-05T00:00:00.000+00:00"})
+    bare = bo3_stats.parse_record({"id": 22, "rank": 0, "six_month_avg_rating": "n/a", "joined_team_at": "soon"})
+    career = bo3_stats.parse_career({**CAREER, "matches_count": 402, "matches_won_count": 281,
+                                     "matches_lost_count": 112, "events_count": 98})
+
+    assert record == {"id": 21, "team_id": 654, "rank": 2, "rating": 7.29, "prize": 899759.0, "joined": "2023-07-05"}
+    assert bare == {"id": 22, "team_id": None, "rank": None, "rating": None, "prize": None, "joined": None}
+    assert bo3_stats.parse_record({"slug": "nobody"}) is None
+    assert (career["matches"], career["matches_won"], career["matches_lost"], career["events"]) == (402, 281, 112, 98)
+    assert (LoLInfo._joined_text("2023-07-05"), LoLInfo._joined_text(None)) == ("2023.07 入队", "")
+    assert [LoLInfo._prize_text(value) for value in (899759, 2310000, 8000)] == ["$90.0万", "$231万", "$8,000"]
+
+
+def test_the_cs2_hero_shows_bo3s_record_and_the_career_its_series(plugin):
+    texts = []
+    for name in ("_text", "_single"):
+        original = getattr(plugin, name)
+
+        def record(draw, xy, text, *args, _original=original, **kwargs):
+            texts.append(str(text))
+            return _original(draw, xy, text, *args, **kwargs)
+
+        setattr(plugin, name, record)
+    pick = next(item for item in plugin._tracked_pool({}) if item["kind"] == "cs2" and item["player"]["nick"] == "donk")
+    career = bo3_stats.parse_career({**CAREER, "matches_count": 402, "matches_won_count": 281,
+                                     "matches_lost_count": 112, "events_count": 98})
+    roles = {name: 50 for name in hltv_players.ROLE_NAMES}
+    board = [{"nick": str(index), "roles": dict(roles)} for index in range(5)]
+    player = {**pick["player"], "rating": 1.38, "age": "19 years", "roles": roles, "career": career,
+              "bo3_record": {"rank": 2, "rating": 7.29, "prize": 899759.0, "joined": "2023-07-05"}}
+
+    plugin._render_cs2_pro({"player": player, "board": board, "top20_year": 2025}, (800, 480), {"mode": "night"},
+                           {**pick, "position": 1, "size": 40})
+
+    assert "Danil Kryshkovets · 19 岁 · 2023.07 入队" in texts
+    assert {"bo3 排名", "#2", "bo3 半年评分 7.29 · 奖金 $90.0万", "大场 281-112", "9/98"} <= set(texts)
+    texts.clear()
+    # Without bo3's record the hero is as before.
+    plugin._render_cs2_pro({"player": {**player, "bo3_record": None}, "board": board, "top20_year": 2025}, (800, 480),
+                           {"mode": "night"}, {**pick, "position": 1, "size": 40})
+    assert "Danil Kryshkovets · 19 岁" in texts and not any(text.startswith("bo3") for text in texts)
 
 
 def test_cs2_matches_set_scores_and_names_in_one_scoreboard_family(plugin, monkeypatch):

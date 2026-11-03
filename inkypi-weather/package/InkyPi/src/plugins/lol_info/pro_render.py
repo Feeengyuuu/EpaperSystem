@@ -753,19 +753,22 @@ class ProRenderMixin:
 
     def _draw_lol_series_card(self, image, draw, series, champions, box, colors, fonts):
         """The pro's newest pro game over their champion's splash: a tag (直播中 / 最近胜利 / 最近一局)
-        and the date, then the opponent and the series score, the champion with the pro's KDA, their
-        farm and share of the fights, both teams' towers, barons and dragons, and the series' games.
-        False when there is no room."""
+        and the game's patch and date, the pro's keystone rune at the picture's foot, then the
+        opponent and the series score, the champion with the pro's KDA, their farm and share of the
+        fights, the wards they placed and cleared, both teams' towers, barons and dragons, and the
+        series' games. False when there is no room."""
         x0, y0, x1, y1 = [int(value) for value in box]
         width, height = x1 - x0, y1 - y0
         games = series.get("games") or []
         game = games[-1]
-        rows = [20, 20, 14, 15] + ([16] if len(games) > 1 else [])
+        rows = [20, 20, 14] + ([14] if "wards_killed" in game else []) + [15] + ([16] if len(games) > 1 else [])
+        names = ["vs", "champion", "facts"] + (["vision"] if "wards_killed" in game else []) + ["objectives", "strip"]
         while rows and height - 6 - sum(rows) < WIN_TAG_H + 10:
             rows.pop()
         if len(rows) < 3:
             return False
-        text_top = height - 6 - sum(rows)
+        rows = dict(zip(names, rows))
+        text_top = height - 6 - sum(rows.values())
         image.paste(self._top_picture(self._champion_splash(game.get("champion")), (width, height), text_top, colors),
                     (x0, y0))
         draw.rectangle((x0, y0, x1, y1), outline=colors["gold"], width=1)
@@ -773,8 +776,13 @@ class ProRenderMixin:
         tag, fill = (("直播中", colors["red"]) if live else ("最近胜利", colors["gold"]) if game.get("won")
                      else ("最近一局", colors["cyan"]))
         start = series.get("start")
-        self._draw_card_tag(draw, (x0, y0, x1, y1), tag, fill,
-                            f"{datetime.fromtimestamp(float(start)):%m/%d}" if start else "", colors, fonts)
+        corner = [f"{game['patch']} 版本" if game.get("patch") else "",
+                  f"{datetime.fromtimestamp(float(start)):%m/%d}" if start else ""]
+        self._draw_card_tag(draw, (x0, y0, x1, y1), tag, fill, " · ".join(part for part in corner if part), colors,
+                            fonts)
+        if text_top >= WIN_TAG_H + 24:
+            self._draw_keystone_chip(image, draw, game.get("keystone_rune"), (x0 + 5, y0 + text_top - 21), x1 - 5,
+                                     colors, fonts)
         y = y0 + text_top
         theirs = series.get("theirs") or {}
         self._text(draw, (x0 + 6, y), "vs", fonts["small_bold"], colors["ink"])
@@ -794,7 +802,7 @@ class ProRenderMixin:
                                               colors, fonts["body"])
         self._single(draw, (name_x, y), theirs.get("code") or "-", fonts["small_bold"], colors["ink"],
                      x1 - 12 - score_w - name_x, 8)
-        y += rows[0]
+        y += rows["vs"]
         champion = (champions.get("by_id") or {}).get(str(game.get("champion") or "").lower()) or {}
         icon = self._icon_from_url(champion.get("icon_url"), 18, champion.get("name") or game.get("champion"))
         image.paste(icon, (x0 + 6, y), icon)
@@ -803,20 +811,40 @@ class ProRenderMixin:
         self._single(draw, (x0 + 28, y + 1), champion.get("name") or game.get("champion") or "-", fonts["small_bold"],
                      colors["ink"], x1 - 12 - kda_w - (x0 + 28), 8)
         self._text(draw, (x1 - 6 - kda_w, y), kda, fonts["body"], colors["ink"])
-        y += rows[1]
+        y += rows["champion"]
         facts = [f"补刀 {game.get('cs', 0)}"]
         if game.get("kp") is not None and "damage_share" in game:
             facts += [f"参团 {float(game['kp']) * 100:.0f}%", f"伤害 {float(game['damage_share']) * 100:.0f}%"]
         else:
             facts += [f"经济 {float(game.get('gold') or 0) / 1000:.1f}k", f"{game.get('level', 0)} 级"]
         self._single(draw, (x0 + 6, y), " · ".join(facts), fonts["tiny"], colors["ink"], width - 12, 7)
-        y += rows[2]
-        if len(rows) > 3:
+        y += rows["facts"]
+        if "vision" in rows:
+            self._single(draw, (x0 + 6, y), f"插眼 {game.get('wards', 0)} · 排眼 {game.get('wards_killed', 0)}",
+                         fonts["tiny"], colors["ink"], width - 12, 7)
+            y += rows["vision"]
+        if "objectives" in rows:
             self._draw_lol_objectives(draw, ours_team, theirs_team, (x0 + 6, y, x1 - 6), colors, fonts)
-            y += rows[3]
-        if len(rows) > 4:
+            y += rows["objectives"]
+        if "strip" in rows:
             self._draw_lol_series_strip(image, draw, games, champions, (x0 + 6, y, x1 - 6), colors, fonts)
         return True
+
+    def _draw_keystone_chip(self, image, draw, rune, origin, right, colors, fonts):
+        """The pro's keystone rune on a dark chip at the picture's foot: its icon (Data Dragon's) and
+        its Chinese name; nothing when the feed named none."""
+        if not rune or not rune.get("name"):
+            return
+        x, y = origin
+        icon = self._image_from_url(rune.get("icon_url"), rune["name"])
+        icon = (ImageOps.contain(self._trim_alpha(icon.convert("RGBA")), (16, 16), method=Image.Resampling.LANCZOS)
+                if icon is not None and icon.width > 1 else None)
+        lead = icon.width + 3 if icon is not None else 0
+        name_w = min(self._text_width(draw, rune["name"], fonts["tiny"]), right - x - lead - 8)
+        draw.rounded_rectangle((x, y, x + lead + name_w + 8, y + 17), radius=8, fill=colors["background"])
+        if icon is not None:
+            image.paste(icon, (x + 3, y + 1 + (16 - icon.height) // 2), icon)
+        self._single(draw, (x + 4 + lead, y + 2), rune["name"], fonts["tiny"], colors["ink"], name_w + 2, 7)
 
     def _draw_lol_objectives(self, draw, ours, theirs, line, colors, fonts):
         """Both teams' towers and barons (ours first), then a dot per dragon the pro's team took."""
@@ -944,8 +972,11 @@ class ProRenderMixin:
             image.paste(flag, (x, 103), flag)
             name_x += flag.width + 6
         age = str(player.get("age") or "").replace(" years", " 岁")
-        self._single(draw, (name_x, 99), " · ".join(part for part in (player.get("name"), age) if part), fonts["text"],
-                     colors["ink"], 300, 9)
+        record = player.get("bo3_record") or {}
+        # The real name and age, then since when they play for their team (bo3.gg's record).
+        details = " · ".join(part for part in (player.get("name"), age, self._joined_text(record.get("joined")))
+                             if part)
+        self._single(draw, (name_x, 99), details, fonts["text"], colors["ink"], 300, 9)
         team_logo = self._cs2_team_logo(player.get("team_logo_night") or player.get("team_logo"), player.get("team"), 22)
         team_x = x
         if team_logo is not None:
@@ -964,18 +995,18 @@ class ProRenderMixin:
         team_line_right = rank_x + self._text_width(draw, rank_text, fonts["small_bold"])
         # The guns of the recent loadout fill the band between the name block and the rating
         # (the generated shooter props when HLTV saw none).
-        text_right = max(name_right, team_line_right,
-                         name_x + self._text_width(draw, " · ".join(part for part in (player.get("name"), age) if part),
-                                                   fonts["text"]))
+        text_right = max(name_right, team_line_right, name_x + min(300, self._text_width(draw, details, fonts["text"])))
         guns_box = (int(text_right) + 20, 12, 600, 146)
         if guns_box[2] - guns_box[0] >= 90 and not self._draw_cs2_loadout(image, draw, self._cs2_guns(player),
                                                                           guns_box, colors, fonts):
             self._paste_asset_logo(image, "art-cs2-hero.png", (guns_box[0], 18, 600, 132))
         self._text(draw, (620, 22), "RATING 3.0", fonts["small_bold"], colors["muted"])
         rating = player.get("rating")
-        draw.text(CS2_RATING_AT, f"{rating:.2f}" if isinstance(rating, (int, float)) else "-",
-                  font=self._cs2_rating_face(CS2_RATING_DIGITS), fill=colors["gold"], anchor="ls")
+        digits = f"{rating:.2f}" if isinstance(rating, (int, float)) else "-"
+        face = self._cs2_rating_face(CS2_RATING_DIGITS)
+        draw.text(CS2_RATING_AT, digits, font=face, fill=colors["gold"], anchor="ls")
         self._single(draw, (620, 98), self._cs2_window(player), fonts["small"], colors["muted"], 166, 8)
+        self._draw_bo3_record(draw, record, CS2_RATING_AT[0] + face.getlength(digits), colors, fonts)
         self._tracker_badge(draw, pick, colors, fonts)
 
         x0, y0, x1, y1 = LEFT
@@ -986,6 +1017,42 @@ class ProRenderMixin:
                                                    player.get("team"), 150), RIGHT)
         self._draw_cs2_board(image, draw, data.get("board") or [], RIGHT, player, data, colors, fonts)
         return image if tuple(dimensions) == (800, 480) else image.resize(tuple(dimensions), Image.Resampling.LANCZOS)
+
+    @staticmethod
+    def _joined_text(day):
+        """"2023-07-05" -> "2023.07 入队"; "" without a day."""
+        try:
+            joined = datetime.strptime(str(day or "")[:10], "%Y-%m-%d")
+        except ValueError:
+            return ""
+        return f"{joined:%Y.%m} 入队"
+
+    @staticmethod
+    def _prize_text(dollars):
+        """899759 -> "$90.0万", 2310000 -> "$231万", 8000 -> "$8,000"."""
+        dollars = float(dollars or 0)
+        if dollars >= 1e6:
+            return f"${dollars / 1e4:.0f}万"
+        if dollars >= 1e4:
+            return f"${dollars / 1e4:.1f}万"
+        return f"${dollars:,.0f}"
+
+    def _draw_bo3_record(self, draw, record, digits_right, colors, fonts):
+        """bo3.gg's record beside HLTV's rating: its world rank after the digits, and under the
+        window line the player's six months' bo3 rating and career prize money (each left out when
+        bo3 gives none, or when it does not fit)."""
+        rank = record.get("rank")
+        if rank:
+            x = max(round(digits_right) + 14, 704)
+            self._text(draw, (x, 47), "bo3 排名", fonts["tiny"], colors["muted"])
+            self._text(draw, (x, 60), f"#{rank}", fonts["section"], colors["gold"])
+        parts = [f"bo3 半年评分 {record['rating']:.2f}" if record.get("rating") else "",
+                 f"奖金 {self._prize_text(record['prize'])}" if record.get("prize") else ""]
+        parts = [part for part in parts if part]
+        while parts and self._text_width(draw, " · ".join(parts), fonts["small"]) > 166:
+            parts.pop()
+        if parts:
+            self._text(draw, (620, 114), " · ".join(parts), fonts["small"], colors["ink"])
 
     @staticmethod
     def _cs2_rating_face(digits):
@@ -1196,7 +1263,13 @@ class ProRenderMixin:
             self._text(draw, (x0 + 71, caption_y), "前 20 平均", fonts["tiny"], colors["muted"])
         career = player.get("career") or {}
         if career.get("maps"):
-            note = f"生涯 {career['maps']} 图"
+            # The maps played and, when bo3 counts them, the series won and lost, as room allows
+            # after the legend.
+            room = x0 + 204 - (x0 + 71 + self._text_width(draw, "前 20 平均", fonts["tiny"]) + 8 if average else x0 + 12)
+            series = f"大场 {career['matches_won']}-{career['matches_lost']}" if career.get("matches") else ""
+            notes = [f"{series} · {career['maps']} 图" if series else "", series, f"生涯 {career['maps']} 图"]
+            note = next((text for text in notes if text and self._text_width(draw, text, fonts["tiny"]) <= room),
+                        f"生涯 {career['maps']} 图")
             self._text(draw, (x0 + 204 - self._text_width(draw, note, fonts["tiny"]), caption_y), note, fonts["tiny"],
                        colors["muted"])
             self._draw_career_chips(draw, career, (x0 + 8, caption_y + 15, x0 + 204, y1 - 8), colors, fonts)
@@ -1347,12 +1420,15 @@ class ProRenderMixin:
                        fonts["tiny"], colors["ink"])
 
     def _draw_career_chips(self, draw, career, box, colors, fonts):
-        """The player's bo3 career in four chips: K/D, damage per round, the share of maps won and titles."""
+        """The player's bo3 career in four chips: K/D, damage per round, the share of maps won and
+        titles (out of the events played, when bo3 counts them)."""
         kd, adr, rate = career.get("kd"), career.get("adr"), career.get("win_rate")
+        titles = str(career.get("titles") if career.get("titles") is not None else "-")
+        title_chip = ("冠军/赛事", f"{titles}/{career['events']}") if career.get("events") else ("冠军", titles)
         self._draw_stat_chips(draw, (("K/D", f"{kd:.2f}" if isinstance(kd, (int, float)) else "-"),
                                      ("ADR", f"{adr:.0f}" if isinstance(adr, (int, float)) else "-"),
                                      ("地图胜率", f"{rate * 100:.0f}%" if isinstance(rate, (int, float)) else "-"),
-                                     ("冠军", str(career.get("titles") if career.get("titles") is not None else "-"))),
+                                     title_chip),
                               box, colors, fonts)
 
     def _draw_stat_chips(self, draw, chips, box, colors, fonts, image=None):

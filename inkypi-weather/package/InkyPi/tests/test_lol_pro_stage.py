@@ -161,6 +161,120 @@ def test_the_pro_stage_reads_each_finished_game_once_for_every_pro_of_the_team(p
     assert plugin._lol_esports({"label": "Nobody", "team": ""}) == {}
 
 
+RUNES = [{"id": 8000, "key": "Precision", "name": "精密", "icon": "perk-images/Styles/7201_Precision.png",
+          "slots": [{"runes": [{"id": 8008, "key": "LethalTempo", "name": "致命节奏",
+                                "icon": "perk-images/Styles/Precision/LethalTempo/LethalTempoTemp.png"},
+                               {"id": 9999, "name": "Bad", "icon": "../../etc/passwd"}]},
+                    {"runes": [{"id": 9111, "name": "凯旋", "icon": "perk-images/Styles/Precision/Triumph.png"}]}]}]
+KEYSTONE_DETAILS = {"frames": [{"participants": [
+    {"participantId": 3, "killParticipation": 0.75, "championDamageShare": 0.31, "wardsPlaced": 12,
+     "wardsDestroyed": 14, "items": [3089], "perkMetadata": {"styleId": 8000, "subStyleId": 8400,
+                                                             "perks": [8008, 9101, 9104, 8017, 8473, 8451]}}]}]}
+
+
+class KeystoneFeed(Feed):
+    """The feed with the newest game's details naming a keystone, its window a patch, and Data
+    Dragon's runes."""
+
+    def get(self, url, params=None, headers=None, timeout=None, stream=None):
+        path = urllib.parse.urlsplit(url).path
+        if path.endswith("runesReforged.json"):
+            self.calls.append("runes")
+            return Response(RUNES)
+        if "/details/" in path:
+            self.calls.append("details/" + path.rsplit("/", 1)[-1])
+            return JsonBody(KEYSTONE_DETAILS)
+        if "/window/" in path:
+            self.calls.append("window/" + path.rsplit("/", 1)[-1])
+            window = json.loads(json.dumps(WINDOWS[path.rsplit("/", 1)[-1]]))
+            window["gameMetadata"]["patchVersion"] = "16.20.826.3891"
+            return JsonBody(window)
+        return super().get(url, params, headers, timeout, stream)
+
+
+class Response:
+    def __init__(self, payload):
+        self.payload, self.status_code = payload, 200
+
+    def json(self):
+        return self.payload
+
+    def raise_for_status(self):
+        return None
+
+
+def test_the_newest_game_names_the_pros_keystone_vision_and_patch():
+    game = lolesports_pro.parse_game({**_window((3, 1, 9, 310), (8, 4)),
+                                      "gameMetadata": {**_window((3, 1, 9, 310), (8, 4))["gameMetadata"],
+                                                       "patchVersion": "16.20.826.3891"}})
+    game["shares"] = lolesports_pro.parse_shares(KEYSTONE_DETAILS)
+    line = lolesports_pro.player_line(game, "Faker")
+
+    assert (line["keystone"], line["wards"], line["wards_killed"], line["patch"]) == (8008, 12, 14, "16.20")
+    assert lolesports_pro.parse_shares(DETAILS)["3"]["keystone"] is None
+    assert [lolesports_pro.patch_name(value) for value in ("16.20.826.3891", "16.20", "", None, "x.y.z")] == [
+        "16.20", "16.20", "", "", ""]
+
+
+def test_the_keystone_is_named_from_data_dragon_and_a_kept_last_game_is_read_again_once(plugin, monkeypatch):
+    feed = KeystoneFeed()
+    monkeypatch.setattr(pro_tracker, "get_http_session", lambda: feed)
+    monkeypatch.setattr(plugin, "_dragon_champions", lambda: {"version": "16.21.1"})
+    # A series kept from before the page showed the patch: its last game has no patch yet.
+    plugin._lol_esports({"label": "Faker", "team": "T1"})
+    state_path = plugin._cache_dir() / pro_tracker.LOL_ESPORTS_STATE
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    for game in state["games"].values():
+        game.pop("patch", None)
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    feed.calls.clear()
+
+    stage = plugin._lol_esports({"label": "Faker", "team": "T1"})
+
+    assert feed.calls == ["window/g3", "details/g3"]
+    last = stage["series"]["games"][-1]
+    assert last["keystone_rune"] == {"name": "致命节奏", "icon_url": "https://ddragon.leagueoflegends.com/cdn/img/"
+                                     "perk-images/Styles/Precision/LethalTempo/LethalTempoTemp.png"}
+    assert (last["wards_killed"], last["patch"]) == (14, "16.20")
+    feed.calls.clear()
+    # Read once: the next render asks for nothing, and Data Dragon's runes are kept for the version.
+    again = plugin._lol_esports({"label": "Faker", "team": "T1"}, refresh=False)
+    assert feed.calls == [] and again["series"]["games"][-1]["keystone_rune"]["name"] == "致命节奏"
+    assert set(json.loads((plugin._cache_dir() / pro_tracker.RUNES_STATE).read_text(encoding="utf-8"))["keystones"]) == {
+        "8008"}
+
+
+def test_the_series_card_shows_the_keystone_vision_and_patch(plugin):
+    texts = []
+    for name in ("_text", "_single"):
+        original = getattr(plugin, name)
+
+        def record(draw, xy, text, *args, _original=original, **kwargs):
+            texts.append(str(text))
+            return _original(draw, xy, text, *args, **kwargs)
+
+        setattr(plugin, name, record)
+    colors = plugin._render_colors({"mode": "night"})
+    image = Image.new("RGB", (800, 480), colors["background"])
+    game = {"number": 1, "champion": "Orianna", "kills": 5, "deaths": 2, "assists": 10, "cs": 254, "kp": 0.68,
+            "damage_share": 0.24, "wards": 13, "wards_killed": 10, "patch": "16.20", "state": "finished", "won": True,
+            "keystone_rune": {"name": "召唤：艾黎", "icon_url": "https://ddragon.leagueoflegends.com/cdn/img/aery.png"},
+            "ours": {"towers": 9, "barons": 0, "dragons": ["ocean"]}, "theirs": {"towers": 0, "barons": 0}}
+    series = {"start": time.time() - 86400, "ours": {"wins": 2}, "theirs": {"code": "MKOI", "wins": 0},
+              "games": [dict(game, number=1), game]}
+
+    assert plugin._draw_lol_series_card(image, ImageDraw.Draw(image), series, {}, (228, 290, 388, 462), colors,
+                                        plugin._pro_fonts())
+    assert {"召唤：艾黎", "插眼 13 · 排眼 10"} <= set(texts)
+    assert any(text.startswith("16.20 版本 · ") for text in texts)
+    texts.clear()
+    # A game read before the page showed these keeps its old card.
+    old = {key: value for key, value in game.items() if key not in ("wards_killed", "patch", "keystone_rune")}
+    plugin._draw_lol_series_card(image, ImageDraw.Draw(image), {**series, "games": [old]}, {}, (228, 290, 388, 462),
+                                 colors, plugin._pro_fonts())
+    assert not any("排眼" in text or "版本" in text for text in texts)
+
+
 def test_ranked_form_scores_each_axis_against_the_role_mark(plugin):
     match = {"lane": "MIDDLE", "duration": 1800, "kills": 11, "deaths": 0, "assists": 5, "cs": 240, "kp": 55,
              "vision": 24, "damage_share": 0.27}
