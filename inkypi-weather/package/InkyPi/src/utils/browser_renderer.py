@@ -70,6 +70,41 @@ def _is_posix_platform():
     return os.name == "posix"
 
 
+class _MemoryEnvelope:
+    """Lowest available memory and highest swap seen while Chromium ran.
+
+    Weather's browser start margins are tuned from these numbers; the device
+    otherwise logs memory only before and after a render.
+    """
+
+    def __init__(self):
+        self.min_available_mb = None
+        self.max_swap_percent = None
+        self.samples = 0
+
+    def observe(self, sample):
+        try:
+            available_mb = float(sample.available_mb)
+            swap_percent = float(sample.swap_percent)
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            return sample
+        if math.isfinite(available_mb) and math.isfinite(swap_percent):
+            self.samples += 1
+            if self.samples == 1:
+                self.min_available_mb, self.max_swap_percent = available_mb, swap_percent
+            self.min_available_mb = min(self.min_available_mb, available_mb)
+            self.max_swap_percent = max(self.max_swap_percent, swap_percent)
+        return sample
+
+    def log(self, failure_domain):
+        if self.samples:
+            logger.info(
+                "Chromium render memory envelope. | failure_domain: %s | min_available_mb: %.1f | "
+                "max_swap_percent: %.1f | samples: %d",
+                failure_domain, self.min_available_mb, self.max_swap_percent, self.samples,
+            )
+
+
 def _browser_process_owns_session():
     """Return whether Chromium must own the group BrowserRenderer signals."""
 
@@ -854,7 +889,16 @@ class BrowserRenderer:
         if not abort_on_hard_pressure:
             process.wait(timeout=wait_timeout)
             return None
+        envelope = _MemoryEnvelope()
+        try:
+            return self._wait_with_pressure_abort(
+                process, wait_timeout=wait_timeout, context=context, envelope=envelope,
+                failure_domain=failure_domain,
+            )
+        finally:
+            envelope.log(failure_domain)
 
+    def _wait_with_pressure_abort(self, process, *, wait_timeout, context, envelope, failure_domain):
         remaining_budget = max(0.0, float(wait_timeout))
         pressure_stop_started = False
         pressure_sample = None
@@ -890,7 +934,7 @@ class BrowserRenderer:
                     return pressure_sample
                 if pressure_stop_started:
                     continue
-                resource_sample = self._resource_sample()
+                resource_sample = envelope.observe(self._resource_sample())
                 resource_tier = classify_resource_tier(
                     resource_sample,
                     self._resource_thresholds,

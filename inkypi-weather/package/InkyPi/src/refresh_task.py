@@ -141,7 +141,7 @@ from runtime.sports_isolated_renderer import (
     SportsIsolatedResourcePressure,
     render_sports_dashboard_isolated,
 )
-from runtime.weather_admission import WeatherPressureRecovery, weather_start_margin
+from runtime.weather_admission import WeatherDisplayStarvation, WeatherPressureRecovery, weather_start_margin
 from runtime.weather_liveness import WeatherQuietWindow
 from runtime.liveness_window import LivenessOutcome, LivenessSettings, StarvationLiveness
 from runtime.runtime_state import (
@@ -188,6 +188,7 @@ DEFAULT_WEATHER_BACKGROUND_START_MAX_SWAP_PERCENT = 70
 DEFAULT_WEATHER_LIVENESS_WINDOW_SECONDS = 90
 DEFAULT_WEATHER_LIVENESS_COOLDOWN_SECONDS = 5 * 60
 DEFAULT_WEATHER_LIVENESS_CONCESSION_MIN_AVAILABLE_MB = 140
+DEFAULT_WEATHER_STARVED_DISPLAY_MIN_AVAILABLE_MB = 120
 MIN_WEATHER_RESOURCE_PRESSURE_DEFERRAL_SECONDS = 5 * 60
 DEFAULT_BURST_LIVENESS_ORDINARY_YIELD_SECONDS = 30
 # Preserve a measured safety margin above earlyoom's default 10% line; burst
@@ -709,6 +710,7 @@ class RefreshTask:
             on_finish=self._after_weather_window_finished,
         )
         self._weather_pressure_recovery = WeatherPressureRecovery()
+        self._weather_display_starvation = WeatherDisplayStarvation()
         self._burst_liveness_yield_ordinary_pending = False
         self._burst_liveness_yield_deadline_monotonic = 0.0
         self._sports_isolated_renderer = (
@@ -4311,6 +4313,9 @@ class RefreshTask:
         concession = bool(
             command.payload.get("weather_liveness_concession")
         )
+        starved_since = self._weather_display_starvation.deferred_since(
+            command.instance_uuid
+        ) if command.payload.get("fresh_display") is True else None
         if concession:
             margin_available, required_available_mb = (
                 self._weather_concession_margin(resource_sample)
@@ -4321,7 +4326,9 @@ class RefreshTask:
                 margin_available,
                 required_available_mb,
                 max_swap_percent,
-            ) = self._weather_background_start_margin(resource_sample)
+            ) = self._weather_background_start_margin(
+                resource_sample, starved=starved_since is not None,
+            )
         if not margin_available:
             next_retry_at = self._record_resource_pressure_deferral(command)
             logger.warning(
@@ -4329,7 +4336,8 @@ class RefreshTask:
                 "browser start margin is available. | plugin_id: %s | "
                 "source: %s | intent: %s | concession: %s | "
                 "available_mb: %s | required_available_mb: %s | "
-                "swap_percent: %s | max_swap_percent: %s | next_retry_at: %s",
+                "swap_percent: %s | max_swap_percent: %s | next_retry_at: %s | "
+                "starved_since: %s",
                 command.plugin_id,
                 command.source.value,
                 command.intent.value,
@@ -4339,6 +4347,7 @@ class RefreshTask:
                 resource_sample.swap_percent,
                 max_swap_percent,
                 next_retry_at,
+                starved_since,
             )
             finished = self.refresh_queue.finish(
                 entry.job.id,
@@ -4351,6 +4360,12 @@ class RefreshTask:
             )
             self._signal_completion(finished.id)
             return True
+        if starved_since is not None:
+            logger.warning(
+                "Admitting memory-deferred Weather display at its starved start margin. | "
+                "available_mb: %s | required_available_mb: %s | swap_percent: %s | starved_since: %s",
+                resource_sample.available_mb, required_available_mb, resource_sample.swap_percent, starved_since,
+            )
         return False
 
     def _reject_heavyweight_admission(self, entry, command):
@@ -4831,6 +4846,7 @@ class RefreshTask:
             minimum_seconds=minimum_seconds,
         )
         if fresh_display:
+            self._weather_display_starvation.remember(command.instance_uuid, self._runtime_now_iso())
             self._release_failed_rotation_reservation(command, defer=True)
         return retry_at
 
@@ -4947,12 +4963,17 @@ class RefreshTask:
             and bool(command.payload.get("playlist_name"))
         )
 
-    def _weather_background_start_margin(self, sample):
+    def _weather_background_start_margin(self, sample, *, starved=False):
+        min_available_mb = self._config_float(
+            "weather_background_start_min_available_mb", DEFAULT_WEATHER_BACKGROUND_START_MIN_AVAILABLE_MB,
+        )
+        if starved:
+            min_available_mb = min(min_available_mb, self._config_float(
+                "weather_starved_display_min_available_mb", DEFAULT_WEATHER_STARVED_DISPLAY_MIN_AVAILABLE_MB,
+            ))
         return weather_start_margin(
             sample,
-            min_available_mb=self._config_float(
-                "weather_background_start_min_available_mb", DEFAULT_WEATHER_BACKGROUND_START_MIN_AVAILABLE_MB,
-            ),
+            min_available_mb=min_available_mb,
             max_swap_percent=self._config_float(
                 "weather_background_start_max_swap_percent", DEFAULT_WEATHER_BACKGROUND_START_MAX_SWAP_PERCENT,
             ),
@@ -5566,6 +5587,7 @@ class RefreshTask:
                 InstanceRuntimeState(),
             )
             self._degraded_data_episodes.record_success(command, previous.data)
+            self._weather_display_starvation.discard(command.instance_uuid)
         self.runtime_state.record_success(
             command.instance_uuid,
             promoted_at,

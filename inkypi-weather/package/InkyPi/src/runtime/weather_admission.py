@@ -37,6 +37,30 @@ class WeatherPressureRecovery:
         ), None)
 
 
+class WeatherDisplayStarvation:
+    """Remember fresh Weather displays deferred for memory until one succeeds.
+
+    A first display attempt keeps the normal browser start margin. In steady
+    state the device rarely regains that margin (11-03/04: 110-147 MiB at every
+    Weather turn for 23 hours), so once a display has been deferred for memory,
+    later attempts may start at the lower starved-display margin. The in-flight
+    Chromium abort and the worker's OOM preference still protect the service.
+    """
+
+    def __init__(self):
+        self._deferred_since = {}
+
+    def remember(self, instance_uuid, deferred_at):
+        if instance_uuid:
+            self._deferred_since.setdefault(instance_uuid, deferred_at)
+
+    def deferred_since(self, instance_uuid):
+        return self._deferred_since.get(instance_uuid)
+
+    def discard(self, instance_uuid):
+        self._deferred_since.pop(instance_uuid, None)
+
+
 def weather_start_margin(sample, *, min_available_mb=150, max_swap_percent=70):
     if not math.isfinite(min_available_mb) or min_available_mb < 0:
         min_available_mb = 150

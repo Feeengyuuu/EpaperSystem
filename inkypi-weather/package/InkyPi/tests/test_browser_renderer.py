@@ -1,3 +1,4 @@
+import logging
 import os
 from pathlib import Path
 import subprocess
@@ -1612,6 +1613,71 @@ def test_html_render_does_not_abort_running_chromium_under_soft_pressure(tmp_pat
     assert renderer.negative_cache_size == 0
     assert renderer.html_circuit_size == 0
     assert list(tmp_path.iterdir()) == []
+
+
+def test_html_render_logs_its_memory_envelope(tmp_path, caplog):
+    class SlowProcess:
+        returncode = None
+        pid = 2470
+
+        def __init__(self, command):
+            self.output = next(
+                item.split("=", 1)[1] for item in command if item.startswith("--screenshot=")
+            )
+            self.wait_calls = 0
+
+        def wait(self, timeout=None):
+            self.wait_calls += 1
+            if self.wait_calls <= 2:
+                raise subprocess.TimeoutExpired("chromium", timeout)
+            Image.new("RGB", (80, 48), "white").save(self.output)
+            self.returncode = 0
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.returncode = -15
+
+        def kill(self):
+            self.returncode = -9
+
+    processes = []
+
+    def popen(command, **_kwargs):
+        processes.append(SlowProcess(command))
+        return processes[-1]
+
+    def sampler():
+        # Chromium's own growth is visible only while its process runs; the
+        # lowest sample is not the last one.
+        idle = ResourceSample(available_mb=150, swap_percent=30)
+        if not processes or processes[-1].returncode is not None:
+            return idle
+        return {
+            1: ResourceSample(available_mb=96, swap_percent=47),
+            2: ResourceSample(available_mb=118, swap_percent=52),
+        }.get(processes[-1].wait_calls, idle)
+
+    renderer = BrowserRenderer(binary="chromium", temp_root=tmp_path, popen=popen, resource_sampler=sampler)
+    with caplog.at_level(logging.INFO, logger="utils.browser_renderer"):
+        result = renderer.render_html(
+            "<p>weather</p>",
+            viewport=(80, 48),
+            context=_context(10),
+            timeout_seconds=10,
+            failure_domain="weather:weather.html",
+            abort_on_hard_pressure=True,
+        )
+
+    assert result is not None
+    envelopes =[record.getMessage() for record in caplog.records
+                 if record.getMessage().startswith("Chromium render memory envelope.")]
+    assert envelopes == [
+        "Chromium render memory envelope. | failure_domain: weather:weather.html | "
+        "min_available_mb: 96.0 | max_swap_percent: 52.0 | samples: 2"
+    ]
 
 
 def test_html_render_continues_with_high_swap_when_memory_headroom_remains(

@@ -1,7 +1,7 @@
 """A memory-deferred fresh Weather turn must not hold the whole rotation."""
 
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 from PIL import Image
@@ -12,7 +12,10 @@ from runtime.refresh_policy import ResourceSample
 from tests.test_refresh_task import _runtime_plugin_data, _theme_manifest, _write_runtime_theme_cache
 from tests.test_weather_display_schedule import weather_runtime
 
-LOW = ResourceSample(available_mb=147, swap_percent=22)
+# Below both the normal browser start margin and the starved-display margin.
+LOW = ResourceSample(available_mb=110, swap_percent=22)
+# The device's steady state on 11-04: under the normal margin, over the starved one.
+STEADY = ResourceSample(available_mb=130, swap_percent=28)
 HEALTHY = ResourceSample(available_mb=180, swap_percent=22)
 
 
@@ -121,3 +124,36 @@ def test_deferred_weather_moves_behind_the_next_round_member(tmp_path, monkeypat
     assert playlist.plugin_rotation_queue == [other, weather.instance_uuid]
     following = task._select_cached_display_command(start)
     assert following.instance_uuid == other
+
+
+def _weather_outcomes(outcomes):
+    return [(status, code) for _now, plugin_id, status, code in outcomes if plugin_id == "weather"]
+
+
+def test_memory_deferred_weather_retries_at_the_starved_display_margin(tmp_path, monkeypatch):
+    # 11-03 16:26 -> 11-04 15:33: steady-state memory stayed at 110-147 MB, so
+    # every Weather turn missed the 150 MB margin and Weather left the panel.
+    task, device, weather, members, start = _rotation_runtime(tmp_path, monkeypatch, pending_members=0)
+    clock = task._clock.__self__
+
+    outcomes = _weather_outcomes(_drive(task, clock, monkeypatch, start, 20 * 60, sample=STEADY))
+
+    # Each display first tries the normal margin; its retry may start at the
+    # starved-display margin and writes the panel. The success restores the
+    # normal margin, so the next display is deferred once again.
+    deferred = (JobStatus.CANCELED, "weather_browser_start_margin")
+    assert outcomes == [deferred, (JobStatus.SUCCEEDED, None), deferred]
+    succeeded_at = task.runtime_state.snapshot().instances[weather.instance_uuid].data.last_success_at
+    starved_since = task._weather_display_starvation.deferred_since(weather.instance_uuid)
+    assert datetime.fromisoformat(starved_since) > datetime.fromisoformat(succeeded_at)
+
+
+def test_starved_weather_display_still_respects_its_floor_and_swap_limit(tmp_path, monkeypatch):
+    task, device, weather, members, start = _rotation_runtime(tmp_path, monkeypatch, pending_members=0)
+    clock = task._clock.__self__
+    task._weather_display_starvation.remember(weather.instance_uuid, start.isoformat())
+
+    for sample in (LOW, ResourceSample(available_mb=130, swap_percent=70)):
+        outcomes = _weather_outcomes(_drive(task, clock, monkeypatch, start, 20 * 60, sample=sample))
+        assert outcomes and all(item == (JobStatus.CANCELED, "weather_browser_start_margin") for item in outcomes)
+    assert task._weather_display_starvation.deferred_since(weather.instance_uuid) == start.isoformat()
