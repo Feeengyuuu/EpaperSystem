@@ -537,11 +537,14 @@ class FootballRenderMixin:
 
     @staticmethod
     def _football_weather_label(event):
-        """'47°F 晴间多云' for an outdoor game's forecast, else ''."""
+        """'8°C 晴间多云' for an outdoor game's forecast, else ''.
+
+        ESPN's forecast (and the cached event) stays in Fahrenheit; the card shows Celsius."""
         weather = (event or {}).get("weather") or {}
-        if not isinstance(weather.get("temp"), int):
+        if not isinstance(weather.get("temp"), int) or isinstance(weather.get("temp"), bool):
             return ""
-        return f"{weather['temp']}°F {weather.get('condition') or ''}".strip()
+        celsius = round((weather["temp"] - 32) * 5 / 9)
+        return f"{celsius}°C {weather.get('condition') or ''}".strip()
 
     # Labels and geometry -----------------------------------------------------
 

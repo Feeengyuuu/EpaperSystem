@@ -180,6 +180,11 @@ def test_nfl_forecast_only_for_open_air_games(payload, expected):
     assert event["weather"] == expected and event["recap"] == ""
 
 
+@pytest.mark.parametrize("fahrenheit, label", [(66, "19°C 多云"), (32, "0°C 多云"), (14, "-10°C 多云")])
+def test_nfl_forecast_shows_celsius(fahrenheit, label):
+    assert SportsDashboard._football_weather_label({"weather": {"temp": fahrenheit, "condition": "多云"}}) == label
+
+
 def test_nfl_card_footer_names_the_forecast_and_a_final_its_recap(monkeypatch):
     plugin = SportsDashboard({"id": "sports_dashboard"})
     drawn = recording(plugin, monkeypatch)
@@ -191,5 +196,5 @@ def test_nfl_card_footer_names_the_forecast_and_a_final_its_recap(monkeypatch):
     now = datetime(2026, 11, 2, 16, tzinfo=LA)
     render(lambda image, draw: plugin._draw_nfl_pregame_details(image, draw, (12, 150, 330, 252), pregame, now))
     render(lambda image, draw: plugin._draw_nfl_final_details(image, draw, (12, 150, 330, 252), final))
-    assert footers[0].endswith("47°F 晴间多云")
+    assert footers[0].endswith("8°C 晴间多云")
     assert "Seahawks edge Bears" in drawn and "战报" in drawn
