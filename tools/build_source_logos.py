@@ -55,7 +55,11 @@
   ground cleared.
 - The sports page's NHL panel: the league's shield from Commons (public domain).
 - Tech Pulse: OpenRouter's logo and icon from Commons (public domain), for the newest models, and
-  their makers' marks: Commons where it has one, else the maker's own site icon.
+  their makers' marks: Commons where it has one (a lockup cut to the mark before its name: Tencent's
+  Hy, ByteDance's, Microsoft's, Cohere's, StepFun's, Liquid AI's, Meituan's, MiniMax's and NVIDIA's),
+  else the maker's own site icon (Inception's, Ricursive Intelligence's, Recursive's, Particle's) or
+  its verified Hugging Face organisation's avatar (Baidu's paw). Perplexity's mark is drawn in hairlines
+  that dither away 16 px tall, so its models keep the name chip.
 - LiveRadar's footer, the platforms it follows: bilibili直播's logo (the PNG its live site's navbar
   script carries), Douyu's (the SVG symbol its site header script carries), Douyin's, YouTube's, Twitch's
   and Kick's wordmarks from Commons (public domain), Picarto's mark (its header's year-round one, not the
@@ -244,9 +248,11 @@ LOGOS = {
     "jpl": ((COMMONS.format(path="c/c6/Jet_Propulsion_Laboratory_logo.svg", name="Jet_Propulsion_Laboratory_logo.svg"),
              COMMONS_FILE.format(name="Jet_Propulsion_Laboratory_logo.svg"), PUBLIC_DOMAIN),
             [PLUGINS / "apod" / "assets" / "logos", PLUGINS / "planet_now" / "assets" / "logos"], 0.56),
-    # The makers of the models on Tech Pulse's OpenRouter strip, one mark beside each card.
-    "provider-openai": (("https://status.openai.com/favicon.ico", "https://status.openai.com/",
-                         "OpenAI's site icon, shown to name the model's maker"), [TECH_LOGOS], 1.0),
+    # The makers of the models on Tech Pulse's OpenRouter strip, one mark beside each card (the
+    # strip shows it 16 px tall: a square mark, not a long wordmark).
+    "provider-openai": ((COMMONS.format(path="6/66/OpenAI_logo_2025_%28symbol%29.svg",
+                                        name="OpenAI_logo_2025_%28symbol%29.svg"),
+                         COMMONS_FILE.format(name="OpenAI_logo_2025_(symbol).svg"), PUBLIC_DOMAIN), [TECH_LOGOS], 1.0),
     "provider-anthropic": (("https://www.anthropic.com/images/icons/apple-touch-icon.png", "https://www.anthropic.com/",
                             "Anthropic's site icon, shown to name the model's maker"), [TECH_LOGOS], 1.0),
     "provider-moonshotai": (("https://statics.moonshot.cn/kimi-chat/favicon.ico", "https://www.kimi.com/",
@@ -266,10 +272,55 @@ LOGOS = {
                        COMMONS_FILE.format(name="Qwen_logo.svg"), "CC0 (Wikimedia Commons)"), [TECH_LOGOS], 1.0),
     "provider-x-ai": ((COMMONS.format(path="9/93/XAI_Logo.svg", name="XAI_Logo.svg"),
                        COMMONS_FILE.format(name="XAI_Logo.svg"), "CC BY-SA 4.0 (Wikimedia Commons)"), [TECH_LOGOS], 1.0),
-    "provider-minimax": ((COMMONS.format(path="0/08/Minimax_Logo.svg", name="Minimax_Logo.svg"),
-                          COMMONS_FILE.format(name="Minimax_Logo.svg"), PUBLIC_DOMAIN), [TECH_LOGOS], 1.0),
-    "provider-z-ai": (("https://upload.wikimedia.org/wikipedia/commons/6/62/Zhipu_AI.png",
-                       COMMONS_FILE.format(name="Zhipu_AI.png"), PUBLIC_DOMAIN), [TECH_LOGOS], "white_ground"),
+    "provider-minimax": (("https://upload.wikimedia.org/wikipedia/commons/3/3c/MiniMax.png",
+                          COMMONS_FILE.format(name="MiniMax.png"), PUBLIC_DOMAIN), [TECH_LOGOS], "top_mark"),
+    "provider-z-ai": ((COMMONS.format(path="f/f4/Z.ai_%28company_logo%29.svg", name="Z.ai_%28company_logo%29.svg"),
+                       COMMONS_FILE.format(name="Z.ai_(company_logo).svg"), PUBLIC_DOMAIN), [TECH_LOGOS], 1.0),
+    "provider-tencent": (("https://upload.wikimedia.org/wikipedia/commons/thumb/b/b3/Tencent_Hy.png/500px-Tencent_Hy.png",
+                          COMMONS_FILE.format(name="Tencent_Hy.png"), "Apache License 2.0 (Wikimedia Commons)"),
+                         [TECH_LOGOS], "left_mark"),
+    "provider-baidu": (("https://cdn-avatars.huggingface.co/v1/production/uploads/64f187a2cc1c03340ac30498/"
+                        "TYYUxK8xD1AxExFMWqbZD.png", "https://huggingface.co/baidu",
+                        "Baidu's paw, its verified Hugging Face organisation's avatar, shown to name the model's maker"),
+                       [TECH_LOGOS], 1.0),
+    "provider-bytedance": ((COMMONS.format(path="0/07/ByteDance_logo_English.svg", name="ByteDance_logo_English.svg"),
+                            COMMONS_FILE.format(name="ByteDance_logo_English.svg"), PUBLIC_DOMAIN), [TECH_LOGOS],
+                           "left_mark"),
+    "provider-amazon": ((COMMONS.format(path="4/4a/Amazon_icon.svg", name="Amazon_icon.svg"),
+                         COMMONS_FILE.format(name="Amazon_icon.svg"), PUBLIC_DOMAIN), [TECH_LOGOS], 1.0),
+    "provider-nvidia": ((COMMONS.format(path="4/48/Nvidia_Logo.svg", name="Nvidia_Logo.svg"),
+                         COMMONS_FILE.format(name="Nvidia_Logo.svg"), "Apache License 2.0 (Wikimedia Commons)"),
+                        [TECH_LOGOS], "top_mark"),
+    "provider-microsoft": ((COMMONS.format(path="9/96/Microsoft_logo_%282012%29.svg", name="Microsoft_logo_%282012%29.svg"),
+                            COMMONS_FILE.format(name="Microsoft_logo_(2012).svg"), PUBLIC_DOMAIN), [TECH_LOGOS],
+                           "left_mark"),
+    "provider-cohere": (("https://upload.wikimedia.org/wikipedia/commons/thumb/1/1d/Cohere-Logo.png/960px-Cohere-Logo.png",
+                         COMMONS_FILE.format(name="Cohere-Logo.png"), "CC0 (Wikimedia Commons)"), [TECH_LOGOS],
+                        "left_mark"),
+    "provider-inception": (("https://framerusercontent.com/images/u3lyX8mBY8mLYJQ0zOr4Y0ucwe4.png",
+                            "https://www.inceptionlabs.ai/",
+                            "Inception's site icon (its light-scheme one), shown to name the model's maker"),
+                           [TECH_LOGOS], 1.0),
+    "provider-ricursiveai": (("https://framerusercontent.com/images/regqe5tMvYkFUcTE25DkVQgkBk4.png",
+                              "https://www.ricursive.com/",
+                              "Ricursive Intelligence's site icon (its light-scheme one), shown to name the model's maker"),
+                             [TECH_LOGOS], 1.0),
+    "provider-recursive": (("https://framerusercontent.com/images/bYF8NqVlBBdIoQc0PwLZFokYcmc.png",
+                            "https://recursive.com/",
+                            "Recursive's site icon (its light-scheme one), shown to name the model's maker"),
+                           [TECH_LOGOS], 1.0),
+    "provider-particle-ai": (("https://cdn.prod.website-files.com/6abeb71ee3cbe1c6f573b5f3/"
+                              "6abfe33b11aec509e253790f_FaviconLight.png", "https://particle.ai/",
+                              "Particle's site icon (its light-scheme one), shown to name the model's maker"),
+                             [TECH_LOGOS], 1.0),
+    "provider-xiaomi": ((COMMONS.format(path="a/ae/Xiaomi_logo_%282021-%29.svg", name="Xiaomi_logo_%282021-%29.svg"),
+                         COMMONS_FILE.format(name="Xiaomi_logo_(2021-).svg"), PUBLIC_DOMAIN), [TECH_LOGOS], 1.0),
+    "provider-stepfun": (("https://upload.wikimedia.org/wikipedia/commons/6/6c/StepFun.png",
+                          COMMONS_FILE.format(name="StepFun.png"), PUBLIC_DOMAIN), [TECH_LOGOS], "left_mark"),
+    "provider-liquid": ((COMMONS.format(path="6/6f/Liquid-ai-logo-2026.svg", name="Liquid-ai-logo-2026.svg"),
+                         COMMONS_FILE.format(name="Liquid-ai-logo-2026.svg"), PUBLIC_DOMAIN), [TECH_LOGOS], "left_mark"),
+    "provider-meituan": (("https://upload.wikimedia.org/wikipedia/commons/9/9b/Meituan_Logo.png",
+                          COMMONS_FILE.format(name="Meituan_Logo.png"), PUBLIC_DOMAIN), [TECH_LOGOS], "left_mark"),
     "openrouter_icon": ((COMMONS.format(path="f/f8/OpenRouter_icon.svg", name="OpenRouter_icon.svg"),
                          COMMONS_FILE.format(name="OpenRouter_icon.svg"), PUBLIC_DOMAIN),
                         [PLUGINS / "tech_pulse" / "assets" / "logos"], 1.0),
@@ -508,10 +559,33 @@ def _white_mark(image):
     return image
 
 
+def _lead_mark(image, across):
+    """A lockup's mark without its name: the part before the widest clear gap between its drawn
+    columns (``across`` "x", a mark left of its name) or rows ("y", a mark above it)."""
+    alpha = image.getchannel("A").point(lambda value: 255 if value > 16 else 0)
+    if across == "y":
+        alpha = alpha.transpose(Image.Transpose.TRANSPOSE)
+    drawn = [alpha.crop((x, 0, x + 1, alpha.height)).getbbox() is not None for x in range(alpha.width)]
+    gaps, start = [], None
+    for x, on in enumerate(drawn):
+        if not on and start is None:
+            start = x
+        elif on and start is not None:
+            gaps.append((x - start, start))
+            start = None
+    if not gaps:
+        return image
+    # The first of the widest gaps: a name's own word space can be as wide as the gap before it.
+    cut = max(gaps, key=lambda gap: (gap[0], -gap[1]))[1]
+    return _visible(image.crop((0, 0, cut, image.height) if across == "x" else (0, 0, image.width, cut)))
+
+
 PROCESSING = {"knockout": (_knockout, "white artwork kept as a black mask the page tints"),
               "white_lettering": (_white_lettering, "white lettering (for a dark header) set near-black"),
               "white_ground": (_white_ground, "the white ground cleared"),
-              "white_mark": (_white_mark, "its black drawn white for a dark page")}
+              "white_mark": (_white_mark, "its black drawn white for a dark page"),
+              "left_mark": (lambda image: _lead_mark(image, "x"), "cut to the mark left of its name"),
+              "top_mark": (lambda image: _lead_mark(image, "y"), "cut to the mark above its name")}
 
 
 def _visible(image):

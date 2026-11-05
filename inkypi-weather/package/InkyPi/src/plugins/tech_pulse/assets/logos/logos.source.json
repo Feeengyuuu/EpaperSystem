@@ -23,15 +23,15 @@
       "sha256": "76c440ed53d5b9abae68913f7020a34c2b5de354d2603324069b45275243c53f"
     },
     "provider-openai": {
-      "source": "https://status.openai.com/favicon.ico",
-      "page": "https://status.openai.com/",
-      "licence": "OpenAI's site icon, shown to name the model's maker",
-      "source_sha256": "9dafb1f3475ee40a3e4b8b38c5aa4f67c4289de006617c523dc65c28153f4f86",
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/OpenAI_logo_2025_%28symbol%29.svg/500px-OpenAI_logo_2025_%28symbol%29.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:OpenAI_logo_2025_(symbol).svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "16c67884e6ccca1a5d04235611923937acf0be3fb3297e86d5e146102fc144f8",
       "size": [
-        64,
+        65,
         64
       ],
-      "sha256": "f228deade96c30df7eaac611e3fa14c61448091562337b8985d0a124f73dc734"
+      "sha256": "45af6f5fc2aeb72a41fd2593a33acf162370fd78ef7f0a338c29224f296a3e91"
     },
     "provider-anthropic": {
       "source": "https://www.anthropic.com/images/icons/apple-touch-icon.png",
@@ -122,27 +122,200 @@
       "sha256": "7f46aa4ac80cf071aa2263db6157d97c776d4c302ebc743ab492a9872175823e"
     },
     "provider-minimax": {
-      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/08/Minimax_Logo.svg/500px-Minimax_Logo.svg.png",
-      "page": "https://commons.wikimedia.org/wiki/File:Minimax_Logo.svg",
+      "source": "https://upload.wikimedia.org/wikipedia/commons/3/3c/MiniMax.png",
+      "page": "https://commons.wikimedia.org/wiki/File:MiniMax.png",
       "licence": "Public domain (Wikimedia Commons)",
-      "source_sha256": "0557ec95eda10336bc0a3360b79934692b873e6874cd7b9c15237795e0577360",
+      "source_sha256": "73d242a14bdf7b1272d1fb8361d20c1e181ae9990f2c0eb68572531131990b64",
+      "processing": "cut to the mark above its name",
       "size": [
-        271,
+        76,
         64
       ],
-      "sha256": "3f2b6d09b3101a57d9bd63cd774e13e4e41e7cefb297bb760fb29677fa671b72"
+      "sha256": "18e872b022b05d0ccd00f18e9031dffc97ff938514845b229a9dd66c4750fd3f"
     },
     "provider-z-ai": {
-      "source": "https://upload.wikimedia.org/wikipedia/commons/6/62/Zhipu_AI.png",
-      "page": "https://commons.wikimedia.org/wiki/File:Zhipu_AI.png",
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f4/Z.ai_%28company_logo%29.svg/500px-Z.ai_%28company_logo%29.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Z.ai_(company_logo).svg",
       "licence": "Public domain (Wikimedia Commons)",
-      "source_sha256": "4decf48627da0847d08232184120affcef7893f52002dced8c24b5a6f3bee294",
-      "processing": "the white ground cleared",
+      "source_sha256": "cc008ba2543ef95ed8dbb2727206057007257f664f46840aed7783b9ea8534ce",
       "size": [
-        180,
+        64,
         64
       ],
-      "sha256": "464f6f1f1c4c3ea0d6dedccf7a012329e414d4201d7c51aaf74246055d171fb3"
+      "sha256": "b4e6ac4ce4c93339add9a483001d1ffeacdffeec05959c3c8a663fd32534e7ef"
+    },
+    "provider-tencent": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b3/Tencent_Hy.png/500px-Tencent_Hy.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Tencent_Hy.png",
+      "licence": "Apache License 2.0 (Wikimedia Commons)",
+      "source_sha256": "c3e05f4c996b25dcc3654f4269a3a5137b26fd7f575bbf2dad73023c259bd982",
+      "processing": "cut to the mark left of its name",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "c11b126e1e4208d10a9ae022772ca587deb05730eab693281596ff2ddc058f63"
+    },
+    "provider-baidu": {
+      "source": "https://cdn-avatars.huggingface.co/v1/production/uploads/64f187a2cc1c03340ac30498/TYYUxK8xD1AxExFMWqbZD.png",
+      "page": "https://huggingface.co/baidu",
+      "licence": "Baidu's paw, its verified Hugging Face organisation's avatar, shown to name the model's maker",
+      "source_sha256": "5c257f64573362b5ee6d5f38fe9ab8b4aa27437d3cea08a8c17ad8324e5efbd4",
+      "size": [
+        61,
+        64
+      ],
+      "sha256": "2b2a089f1f2705a0d1cc41d401f43ff310243597001fe12f0a8e5c6a3c210f5e"
+    },
+    "provider-bytedance": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/07/ByteDance_logo_English.svg/500px-ByteDance_logo_English.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:ByteDance_logo_English.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "f60fd0c64e095af59ab07acfffaf1e760e48c5a68ce063fad3e74984f1e823e8",
+      "processing": "cut to the mark left of its name",
+      "size": [
+        73,
+        64
+      ],
+      "sha256": "0aa8a91ef2fa9ea746b95e7f1c768e2934ea22578655d3600caf58552341fc3f"
+    },
+    "provider-amazon": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4a/Amazon_icon.svg/500px-Amazon_icon.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Amazon_icon.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "546138e2191f7baf02b74742fcb07779aa8eb1d50b5e75346613c0d9a63dd09f",
+      "size": [
+        62,
+        64
+      ],
+      "sha256": "d4e45af2c542522aa339754fe899ba9c95a9851f4bfd54c70bc942174250e3f2"
+    },
+    "provider-nvidia": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/48/Nvidia_Logo.svg/500px-Nvidia_Logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Nvidia_Logo.svg",
+      "licence": "Apache License 2.0 (Wikimedia Commons)",
+      "source_sha256": "f65436e24cf53779cfb7f1b4e99ed542dc42542a7bc38684e6b03c8346798130",
+      "processing": "cut to the mark above its name",
+      "size": [
+        96,
+        64
+      ],
+      "sha256": "60b25ea4cf09cf35adfd9708e30cc608f277cbbbee8a253e16e42ec945fab005"
+    },
+    "provider-microsoft": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/9/96/Microsoft_logo_%282012%29.svg/500px-Microsoft_logo_%282012%29.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Microsoft_logo_(2012).svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "bedc30a55ff18873141511c447822a2e4ff0a3e7023fcfcaaa43fa18e17998d1",
+      "processing": "cut to the mark left of its name",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "a77bb8942e0bee3abd21b461bf96fe59f8a53f7d8bed22d1a6f9ccd853705986"
+    },
+    "provider-cohere": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1d/Cohere-Logo.png/960px-Cohere-Logo.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Cohere-Logo.png",
+      "licence": "CC0 (Wikimedia Commons)",
+      "source_sha256": "53159994eed2149cd0358d7d93890adc1a064c77d8070a1d2fd58f9ef990848a",
+      "processing": "cut to the mark left of its name",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "242360ad33e959b289f1a17fd2566b461f8199164250680fd381b51cf31adfe5"
+    },
+    "provider-inception": {
+      "source": "https://framerusercontent.com/images/u3lyX8mBY8mLYJQ0zOr4Y0ucwe4.png",
+      "page": "https://www.inceptionlabs.ai/",
+      "licence": "Inception's site icon (its light-scheme one), shown to name the model's maker",
+      "source_sha256": "eb576fbfc4d4a8b3c93c8269ec52ec8ec70872d8c51558c085db04074dcc255d",
+      "size": [
+        58,
+        59
+      ],
+      "sha256": "d0685c99aa6696d7656a9d6180c74f812befce8bbf11541453c4663702c02e79"
+    },
+    "provider-ricursiveai": {
+      "source": "https://framerusercontent.com/images/regqe5tMvYkFUcTE25DkVQgkBk4.png",
+      "page": "https://www.ricursive.com/",
+      "licence": "Ricursive Intelligence's site icon (its light-scheme one), shown to name the model's maker",
+      "source_sha256": "c7c9efee42026f1a00096ea9ad897a173cf0570e0f5a1cf6fe390895143501d3",
+      "size": [
+        48,
+        46
+      ],
+      "sha256": "f0ae5342bbd8f50342e3e81c0afd80913adde2dfbb69b650ada267c972af56d8"
+    },
+    "provider-recursive": {
+      "source": "https://framerusercontent.com/images/bYF8NqVlBBdIoQc0PwLZFokYcmc.png",
+      "page": "https://recursive.com/",
+      "licence": "Recursive's site icon (its light-scheme one), shown to name the model's maker",
+      "source_sha256": "67c1de28a235a00482cfc7bb3a5e7161f107c5b156888b20c457e0cb2042e55e",
+      "size": [
+        56,
+        64
+      ],
+      "sha256": "cec2829e315dec9bb63b6f7d1a9d56c42180d49edca62275911ed1a3be60ef16"
+    },
+    "provider-particle-ai": {
+      "source": "https://cdn.prod.website-files.com/6abeb71ee3cbe1c6f573b5f3/6abfe33b11aec509e253790f_FaviconLight.png",
+      "page": "https://particle.ai/",
+      "licence": "Particle's site icon (its light-scheme one), shown to name the model's maker",
+      "source_sha256": "6e00fa6626f9c9d9a40dee5901baf596bc9a04c34e54b404d199d1dd725e736f",
+      "size": [
+        48,
+        48
+      ],
+      "sha256": "35fc2a9dbd5fa85d28ea6e353874f191d26ebb224d57c8f3fb6ff8f2313cf500"
+    },
+    "provider-xiaomi": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ae/Xiaomi_logo_%282021-%29.svg/500px-Xiaomi_logo_%282021-%29.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Xiaomi_logo_(2021-).svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "97219eef77e55930aab526a18375f0a5e7dab528a9967a4a5744ea7b5ed86740",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "aebbad17c5e3bc6842116d403deb8b2d4590bc06bf9d14f5d33fd2f400bfa975"
+    },
+    "provider-stepfun": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/6/6c/StepFun.png",
+      "page": "https://commons.wikimedia.org/wiki/File:StepFun.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "35796904b19e40341117eb79bad7069e97c581710e60c493e37f8388959914e8",
+      "processing": "cut to the mark left of its name",
+      "size": [
+        56,
+        54
+      ],
+      "sha256": "bac91a2bfb16624234c60901c6b867887a1eeebcfe2a333214972c0fc5477a41"
+    },
+    "provider-liquid": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6f/Liquid-ai-logo-2026.svg/500px-Liquid-ai-logo-2026.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Liquid-ai-logo-2026.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "2de6dc7965f8f80815444f1458b81c84a311bc1ee60599765194257982e3656d",
+      "processing": "cut to the mark left of its name",
+      "size": [
+        53,
+        64
+      ],
+      "sha256": "fd3fcc7a01ca442deb7e9c3ba5d3b02e03d0c543351dd202fe79fca4743cf9a8"
+    },
+    "provider-meituan": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/9/9b/Meituan_Logo.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Meituan_Logo.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "0e86bd9feb4c638442d463bf261350437558159257b6f3a8558803617eba7c04",
+      "processing": "cut to the mark left of its name",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "9bb38f9ccd96c946b56d22d16ec7fe9e39e69b64f3983c8a6b086d9c2ecccec5"
     }
   }
 }

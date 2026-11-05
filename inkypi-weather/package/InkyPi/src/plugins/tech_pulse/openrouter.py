@@ -27,11 +27,19 @@ def _float(value):
         return None
 
 
+def _plain(text):
+    return "".join(character for character in str(text or "").lower() if character.isalnum())
+
+
 def model_name(raw_name, model_id):
-    """"OpenAI: GPT-6.1 Terra" -> "GPT-6.1 Terra"; the id's own name when there is none."""
+    """"OpenAI: GPT-6.1 Terra" -> "GPT-6.1 Terra", "ricursiveAI/Ripple-65B" -> "Ripple-65B" (its maker is
+    named by the card's mark); the id's own name when there is none."""
     name = str(raw_name or "").strip()
     if ": " in name:
         name = name.split(": ", 1)[1]
+    maker, _, rest = name.partition("/")
+    if rest.strip() and _plain(maker) == _plain(str(model_id or "").split("/", 1)[0]):
+        name = rest.strip()
     return name or str(model_id or "").split("/")[-1]
 
 
@@ -62,7 +70,8 @@ def normalize_models(payload, now):
         architecture = row.get("architecture") if isinstance(row.get("architecture"), dict) else {}
         inputs = architecture.get("input_modalities") if isinstance(architecture.get("input_modalities"), list) else []
         models.append({
-            "id": base, "provider": base.split("/", 1)[0], "name": model_name(row.get("name"), base)[:40],
+            # An alias's "~" ("~openai/gpt-latest") is not part of its maker's name.
+            "id": base, "provider": base.split("/", 1)[0].lstrip("~"), "name": model_name(row.get("name"), base)[:40],
             "created": datetime.fromtimestamp(created, timezone.utc).isoformat() if created else None,
             "context": int(_float(row.get("context_length")) or 0),
             "prompt": None if prompt is None or prompt < 0 else prompt * PER_MILLION,

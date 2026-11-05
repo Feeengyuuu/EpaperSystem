@@ -6,6 +6,7 @@ import math
 import os
 import re
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from html import unescape
 from pathlib import Path
 from urllib.parse import urlparse
@@ -29,6 +30,9 @@ from utils.flat_icons import draw_icon
 from utils.http_client import get_http_session
 from utils.image_utils import text_width
 from utils.doodle_backdrop import paint_doodles
+from utils.local_wordmark import load_source_logo
+from utils.safe_image import safe_open_image
+from utils.theme_utils import relative_luminance
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +107,8 @@ PROVIDER_COLOURS = {
     "openai": (16, 163, 127), "anthropic": (204, 120, 92), "google": (66, 133, 244), "meta-llama": (0, 100, 224),
     "mistralai": (255, 112, 0), "deepseek": (77, 107, 254), "qwen": (98, 82, 255), "moonshotai": (22, 22, 22),
     "x-ai": (40, 40, 40), "z-ai": (40, 90, 220), "minimax": (230, 60, 90), "amazon": (255, 153, 0),
-    "nvidia": (118, 185, 0), "cohere": (57, 89, 77), "microsoft": (0, 120, 212),
+    "nvidia": (118, 185, 0), "cohere": (57, 89, 77), "microsoft": (0, 120, 212), "meta": (0, 100, 224),
+    "tencent": (0, 82, 217), "baidu": (41, 50, 225), "xiaomi": (255, 105, 0), "perplexity": (32, 128, 141),
 }
 # A maker's short name on its chip, where its id is long ("moonshotai" -> "Moonshot").
 PROVIDER_NAMES = {
@@ -111,7 +116,24 @@ PROVIDER_NAMES = {
     "deepseek": "DeepSeek", "qwen": "Qwen", "moonshotai": "Moonshot", "x-ai": "xAI", "z-ai": "Z.ai",
     "minimax": "MiniMax", "amazon": "Amazon", "nvidia": "NVIDIA", "cohere": "Cohere", "microsoft": "Microsoft",
 }
+# Each OpenRouter author (a model id's part before "/") whose official mark is in assets/logos
+# (tools/build_source_logos.py), by its file's key; an author not here keeps the chip with its name.
+PROVIDER_LOGOS = {
+    "openrouter": "openrouter_icon", "openai": "provider-openai", "anthropic": "provider-anthropic",
+    "google": "provider-google", "meta-llama": "provider-meta-llama", "meta": "provider-meta-llama",
+    "mistralai": "provider-mistralai", "qwen": "provider-qwen", "deepseek": "provider-deepseek",
+    "x-ai": "provider-x-ai", "moonshotai": "provider-moonshotai", "z-ai": "provider-z-ai",
+    "minimax": "provider-minimax", "tencent": "provider-tencent", "baidu": "provider-baidu",
+    "bytedance": "provider-bytedance", "bytedance-seed": "provider-bytedance", "amazon": "provider-amazon",
+    "nvidia": "provider-nvidia", "microsoft": "provider-microsoft", "cohere": "provider-cohere",
+    "inception": "provider-inception", "ricursiveai": "provider-ricursiveai", "recursive": "provider-recursive",
+    "particle-ai": "provider-particle-ai", "xiaomi": "provider-xiaomi", "stepfun": "provider-stepfun", "liquid": "provider-liquid", "meituan": "provider-meituan",
+}
 PROVIDER_MARK_HEIGHT, PROVIDER_MARK_WIDTH = 16, 46
+# A mark on its own ground (Kimi's, Z.ai's, Meituan's squares) fills at least this share of its box,
+# some of it near white or coloured: it keeps its printed colours at night, where other marks'
+# near-black parts take the page's ink.
+PROVIDER_BADGE_COVER, PROVIDER_BADGE_LIGHT, PROVIDER_BADGE_COLOUR = 0.55, 0.02, 0.25
 HN_LIST_ROWS = 3
 SKILL_ROWS = 4
 # The trending Spaces close the Hugging Face panel on one line this tall.
@@ -197,6 +219,35 @@ LOCAL_SAMPLE_STORIES = (
         "descendants": 39,
     },
 )
+
+
+def provider_author(value):
+    """A model's maker as OpenRouter names it, from its id or author: "tencent/hy4" -> "tencent";
+    an alias's "~" dropped ("~openai/gpt-latest" -> "openai")."""
+    return str(value or "").strip().split("/", 1)[0].lstrip("~").lower()
+
+
+def provider_logo_key(value):
+    """The assets/logos key of the official mark of a model's maker (from its id or author), or
+    None for a maker without one."""
+    return PROVIDER_LOGOS.get(provider_author(value))
+
+
+@lru_cache(maxsize=64)
+def _provider_badge(path):
+    """Whether the mark at ``path`` sits on its own ground (PROVIDER_BADGE_*)."""
+    try:
+        with safe_open_image(path) as source:
+            art = source.convert("RGBA")
+    except (OSError, ValueError):
+        return False
+    data = art.tobytes()
+    drawn = [pixel for pixel in zip(data[0::4], data[1::4], data[2::4], data[3::4]) if pixel[3] > 128]
+    if len(drawn) < PROVIDER_BADGE_COVER * art.width * art.height:
+        return False
+    light = sum(1 for red, green, blue, _ in drawn if 0.299 * red + 0.587 * green + 0.114 * blue > 225)
+    coloured = sum(1 for red, green, blue, _ in drawn if max(red, green, blue) - min(red, green, blue) >= 40)
+    return light >= PROVIDER_BADGE_LIGHT * len(drawn) or coloured >= PROVIDER_BADGE_COLOUR * len(drawn)
 
 
 class TechPulse(BasePlugin):
@@ -1137,23 +1188,25 @@ class TechPulse(BasePlugin):
             left = cards_left + index * (width + 6)
             card = (left, y0 + 6, left + width, y1 - 6)
             draw.rounded_rectangle(card, radius=8, fill=palette["row"])
-            colour = PROVIDER_COLOURS.get(model.get("provider"), palette["muted"])
+            author = provider_author(model.get("id") or model.get("provider"))
+            colour = PROVIDER_COLOURS.get(author, palette["muted"])
             if sum(colour) < 200 and sum(palette["background"]) < 240:
                 # A near-black maker colour would vanish on the night page: its chip takes the muted ink.
                 colour = palette["muted"]
             draw.rounded_rectangle((card[0], card[1], card[0] + 4, card[3]), radius=2, fill=colour)
             top, bottom = card[1] + 11, card[3] - 10
-            mark = self._provider_mark(model.get("provider"), palette["background"])
+            mark = self._provider_mark(author, palette)
             if mark is not None:
-                # The maker's own mark names it; the chip is for makers without one.
+                # The maker's official mark names it; the chip with its name is for makers without one.
                 image.paste(mark.convert("RGB"), (int(card[0] + 10), int(top - mark.height / 2)), mark.getchannel("A"))
                 chip_w = mark.width
             else:
-                provider = PROVIDER_NAMES.get(model.get("provider"),
-                                              str(model.get("provider") or "").split("-")[0].title())
+                provider = PROVIDER_NAMES.get(author, author.split("-")[0].title())
                 chip_w = self._text_width(draw, provider, fonts["tiny_bold"]) + 10
                 draw.rounded_rectangle((card[0] + 10, top - 7, card[0] + 10 + chip_w, top + 7), radius=7, fill=colour)
-                self._draw_text(draw, (card[0] + 10 + chip_w / 2, top), provider, fonts["tiny_bold"], (255, 255, 255),
+                # White on a dark chip; a light one (the night page's muted grey) takes dark lettering.
+                lettering = (255, 255, 255) if relative_luminance(colour) < 0.3 else (24, 27, 31)
+                self._draw_text(draw, (card[0] + 10 + chip_w / 2, top), provider, fonts["tiny_bold"], lettering,
                                 anchor="mm")
             added = self._parse_datetime(model.get("created"))
             when = ""
@@ -1177,18 +1230,19 @@ class TechPulse(BasePlugin):
                                                                           card[2] - card[0] - 18),
                             fonts["tiny"], palette["muted"], anchor="lm")
 
-    def _provider_mark(self, provider, background):
-        """A model maker's mark (assets/logos/provider-<id>.png) PROVIDER_MARK_HEIGHT tall and at most
-        PROVIDER_MARK_WIDTH wide; a dark mark turns light on a dark page. None without one."""
-        try:
-            with Image.open(ASSET_DIR / "logos" / f"provider-{provider}.png") as source:
-                mark = ImageOps.contain(source.convert("RGBA"), (PROVIDER_MARK_WIDTH, PROVIDER_MARK_HEIGHT),
-                                        method=Image.LANCZOS)
-        except (OSError, ValueError):
+    def _provider_mark(self, provider, palette):
+        """The official mark of a model's maker (PROVIDER_LOGOS) PROVIDER_MARK_HEIGHT tall and at most
+        PROVIDER_MARK_WIDTH wide, None without one. On a dark page its near-black parts take the
+        page's ink (xAI's X, Amazon's a, its smile still orange); a mark on its own ground stays as
+        printed."""
+        key = provider_logo_key(provider)
+        if key is None:
             return None
-        if sum(background) < 240 and self._mark_luminance(mark) < 60:
-            red, green, blue, alpha = mark.split()
-            mark = Image.merge("RGBA", (*ImageOps.invert(Image.merge("RGB", (red, green, blue))).split(), alpha))
+        path = ASSET_DIR / "logos" / f"{key}.png"
+        ink = palette["ink"] if sum(palette["background"]) < 240 and not _provider_badge(str(path)) else None
+        mark = load_source_logo(path, PROVIDER_MARK_HEIGHT, ink)
+        if mark is not None and mark.width > PROVIDER_MARK_WIDTH:
+            mark = load_source_logo(path, max(1, PROVIDER_MARK_HEIGHT * PROVIDER_MARK_WIDTH // mark.width), ink)
         return mark
 
     def _wordmark(self, key, height, background):

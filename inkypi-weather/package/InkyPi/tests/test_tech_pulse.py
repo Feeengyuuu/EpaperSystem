@@ -22,7 +22,7 @@ except ModuleNotFoundError:
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from plugins.tech_pulse import tech_pulse as tech_pulse_module  # noqa: E402
-from plugins.tech_pulse import trends  # noqa: E402
+from plugins.tech_pulse import openrouter, trends  # noqa: E402
 from plugins.ai_ecosystem_pulse.ai_ecosystem_pulse import AiEcosystemPulse  # noqa: E402
 from plugins.tech_pulse.tech_pulse import (  # noqa: E402
     CACHE_SCHEMA_VERSION,
@@ -1088,3 +1088,122 @@ def test_without_spaces_the_models_keep_the_whole_panel(tmp_path, monkeypatch):
                         datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc))
 
     assert drawn == []
+
+
+def test_openrouter_authors_map_to_their_makers_official_marks():
+    key = tech_pulse_module.provider_logo_key
+
+    assert key("tencent/hy4") == "provider-tencent"
+    assert key("openrouter/auto") == "openrouter_icon"
+    assert key("ricursiveai/ripple-65b-preview") == "provider-ricursiveai"
+    assert key("bytedance-seed/seed-2-1-turbo") == key("bytedance/ui-tars-1.5-7b") == "provider-bytedance"
+    assert key("meta/muse-spark-open") == key("meta-llama/llama-guard-4-12b") == "provider-meta-llama"
+    # An alias's "~" and the id's case do not hide its maker.
+    assert key("~openai/gpt-astra-latest") == key("OpenAI") == "provider-openai"
+    for unknown in ("stealth/crouton-alpha", "aion-labs/aion-3.5-mini", "perplexity/sonar-pro-search", "", None):
+        assert key(unknown) is None
+
+
+def test_every_maker_mark_is_a_recorded_official_logo():
+    logos = Path(tech_pulse_module.ASSET_DIR) / "logos"
+    records = json.loads((logos / "logos.source.json").read_text(encoding="utf-8"))["logos"]
+
+    for author, key in tech_pulse_module.PROVIDER_LOGOS.items():
+        path = logos / f"{key}.png"
+        assert path.is_file(), author
+        record = records[key]
+        assert record["source"].startswith("https://") and record["page"].startswith("https://"), key
+        assert record["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest(), key
+        with Image.open(path) as art:
+            assert list(art.size) == record["size"] and max(art.size) <= 128, key
+
+
+def test_maker_marks_fit_the_card_slot_and_unknown_makers_have_none(tmp_path):
+    plugin = _plugin(tmp_path)
+    for mode in ("day", "night"):
+        palette = plugin._palette({"_inkypi_theme": canonical_theme(mode)})
+        for author in tech_pulse_module.PROVIDER_LOGOS:
+            mark = plugin._provider_mark(author, palette)
+            assert mark is not None, author
+            assert mark.height <= tech_pulse_module.PROVIDER_MARK_HEIGHT, author
+            assert mark.width <= tech_pulse_module.PROVIDER_MARK_WIDTH, author
+            assert mark.getchannel("A").getbbox() is not None, author
+        assert plugin._provider_mark("stealth", palette) is None
+
+
+def _mark_pixels(mark):
+    return [pixel for pixel in mark.get_flattened_data() if pixel[3] > 200]
+
+
+def test_maker_marks_keep_their_colours_and_black_parts_take_the_night_ink(tmp_path):
+    plugin = _plugin(tmp_path)
+    day = plugin._palette({"_inkypi_theme": canonical_theme("day")})
+    night = plugin._palette({"_inkypi_theme": canonical_theme("night")})
+
+    def light(pixels):
+        return sum(1 for r, g, b, _ in pixels if min(r, g, b) > 200)
+
+    def dark(pixels):
+        return sum(1 for r, g, b, _ in pixels if max(r, g, b) < 80)
+
+    def orange(pixels):
+        return sum(1 for r, g, b, _ in pixels if r > 200 and 100 < g < 200 and b < 80)
+
+    # xAI's black mark is drawn in the night page's ink.
+    x_day, x_night = (_mark_pixels(plugin._provider_mark("x-ai", palette)) for palette in (day, night))
+    assert dark(x_day) > 0.8 * len(x_day) and light(x_night) > 0.8 * len(x_night)
+    # Amazon's black "a" takes the ink while its smile stays orange.
+    amazon_day, amazon_night = (_mark_pixels(plugin._provider_mark("amazon", palette)) for palette in (day, night))
+    assert dark(amazon_day) > 0 and dark(amazon_night) == 0 and light(amazon_night) > 0
+    assert orange(amazon_night) == orange(amazon_day) > 0
+    # Marks on their own ground (Kimi's, Z.ai's black squares) and coloured marks stay as printed.
+    for author in ("moonshotai", "z-ai", "tencent", "meituan", "microsoft"):
+        assert (plugin._provider_mark(author, day).tobytes() == plugin._provider_mark(author, night).tobytes()), author
+
+
+def _strip_models(*ids):
+    return {"week": len(ids), "models": [{"id": model_id, "provider": model_id.split("/")[0], "name": model_id,
+                                          "created": "2026-11-04T12:00:00+00:00", "context": 262144,
+                                          "prompt": 0.2, "completion": 0.6, "vision": False} for model_id in ids]}
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_openrouter_strip_names_makers_by_mark_and_keeps_the_chip_for_the_rest(tmp_path, monkeypatch, mode):
+    plugin = _plugin(tmp_path)
+    palette = plugin._palette({"_inkypi_theme": canonical_theme(mode)})
+    fonts = {name: plugin._load_font(None, size, weight) for name, (size, weight) in tech_pulse_module.FONT_SPECS.items()}
+    drawn = {}
+    original = plugin._draw_text
+
+    def capture(draw, xy, text, font, fill, **kwargs):
+        drawn[str(text)] = fill
+        return original(draw, xy, text, font, fill, **kwargs)
+
+    monkeypatch.setattr(plugin, "_draw_text", capture)
+    image = Image.new("RGB", (800, 480), palette["background"])
+    plugin._draw_openrouter(image, ImageDraw.Draw(image), tech_pulse_module.OPENROUTER_BOX,
+                            _strip_models("tencent/hy4", "stealth/crouton-alpha", "ricursiveai/ripple-65b-preview"),
+                            palette, fonts, datetime(2026, 11, 5, 18, 0, tzinfo=timezone.utc))
+
+    # Tencent and Ricursive are named by their marks, the maker without one by its chip.
+    assert "Tencent" not in drawn and "Ricursiveai" not in drawn
+    assert "Stealth" in drawn
+    # The chip's lettering reads on its grey: white by day, dark on the night page's light grey.
+    assert drawn["Stealth"] == ((255, 255, 255) if mode == "day" else (24, 27, 31))
+    # Tencent's Hy mark is blue, where its chip would have been.
+    x0, y0, _x1, _y1 = tech_pulse_module.OPENROUTER_BOX
+    slot = image.crop((x0 + 148 + 10, y0 + 6 + 3, x0 + 148 + 10 + 16, y0 + 6 + 19)).get_flattened_data()
+    assert sum(1 for r, g, b in slot if b > 150 and b > r + 60) > 20
+
+
+def test_model_names_drop_a_repeated_maker_and_aliases_drop_their_tilde():
+    assert openrouter.model_name("ricursiveAI/Ripple-65B-Preview", "ricursiveai/ripple-65b-preview") == \
+        "Ripple-65B-Preview"
+    assert openrouter.model_name("Tencent: Hy4", "tencent/hy4") == "Hy4"
+    assert openrouter.model_name("Auto Router", "openrouter/auto") == "Auto Router"
+    # A slash that is not the maker's name stays.
+    assert openrouter.model_name("Bonsai/Ternary 9B", "prism-ml/ternary-bonsai-2-9b") == "Bonsai/Ternary 9B"
+    data = openrouter.normalize_models({"data": [{"id": "~openai/gpt-astra-latest", "name": "OpenAI: GPT Astra Latest",
+                                                  "created": 1789000000}]},
+                                       datetime(2026, 11, 5, tzinfo=timezone.utc))
+    assert data["models"][0]["provider"] == "openai" and data["models"][0]["name"] == "GPT Astra Latest"
