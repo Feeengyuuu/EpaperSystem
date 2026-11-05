@@ -124,6 +124,19 @@ _LIVERADAR_YOUTUBE_KAI_ROOM = {
     "id": "UCoEmptob-eEGKk18c2VplJg",
     "isFav": False,
 }
+# Then Mr.Quin's Douyin room (摸鱼奎恩, live.douyin.com/200525029536) as a
+# favourite, which the Kai Cenat migration leaves at settings revision 10
+# (the instance hash unchanged in every deploy round since).
+_LIVERADAR_DOUYIN_QUIN_MIGRATION = "liveradar_douyin_200525029536_v1"
+_LIVERADAR_DOUYIN_QUIN_UUID_SHA256_PREFIX = "14c36f0ef259f0b5"
+_LIVERADAR_DOUYIN_QUIN_STRUCTURAL_GENERATION = 1
+_LIVERADAR_DOUYIN_QUIN_SETTINGS_REVISION = 10
+_LIVERADAR_DOUYIN_QUIN_REFRESH_INTERVAL_SECONDS = 5 * 60
+_LIVERADAR_DOUYIN_QUIN_ROOM = {
+    "platform": "douyin",
+    "id": "200525029536",
+    "isFav": True,
+}
 _NEWSPAPER_REFILL_INTERVAL_SECONDS = 60 * 60
 _VEHICLE_STATUS_LEGACY_REFRESH_INTERVAL_SECONDS = 60 * 60
 _VEHICLE_STATUS_REFRESH_INTERVAL_SECONDS = 3 * 60 * 60
@@ -277,6 +290,7 @@ class Config:
         self._migrate_liveradar_bilibili_fengge_room()
         self._migrate_liveradar_youtube_speed_room()
         self._migrate_liveradar_youtube_kai_room()
+        self._migrate_liveradar_douyin_quin_room()
         self._migrate_runtime_balance_cadences()
         self._migrate_runtime_balance_soft_threshold(
             cadence_marker_preexisting=cadence_marker_preexisting,
@@ -471,6 +485,18 @@ class Config:
             settings_revision=_LIVERADAR_YOUTUBE_KAI_SETTINGS_REVISION,
             refresh_interval=_LIVERADAR_YOUTUBE_KAI_REFRESH_INTERVAL_SECONDS,
             room=_LIVERADAR_YOUTUBE_KAI_ROOM,
+        )
+
+    def _migrate_liveradar_douyin_quin_room(self):
+        """Append Mr.Quin's Douyin room, as a favourite, to the same instance."""
+
+        self._append_liveradar_room(
+            migration=_LIVERADAR_DOUYIN_QUIN_MIGRATION,
+            uuid_prefix=_LIVERADAR_DOUYIN_QUIN_UUID_SHA256_PREFIX,
+            structural_generation=_LIVERADAR_DOUYIN_QUIN_STRUCTURAL_GENERATION,
+            settings_revision=_LIVERADAR_DOUYIN_QUIN_SETTINGS_REVISION,
+            refresh_interval=_LIVERADAR_DOUYIN_QUIN_REFRESH_INTERVAL_SECONDS,
+            room=_LIVERADAR_DOUYIN_QUIN_ROOM,
         )
 
     def _append_liveradar_room(
