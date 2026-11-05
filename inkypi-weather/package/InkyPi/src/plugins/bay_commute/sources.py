@@ -389,7 +389,9 @@ def _int(value):
 def _bart_station(station, now):
     """One station's next trains by destination: the line's colour, when each train leaves (as clock
     times, so a reading kept for a while still says when, not how long ago it said), how far behind
-    each runs, and the next train's cars and platform."""
+    each runs, how many cars each has (None when BART leaves it out) and which line each runs on
+    ("" when not one BART letters: a destination two lines serve mixes them), and the next train's
+    cars and platform."""
     lines = []
     for etd in station.get("etd") or []:
         if not isinstance(etd, dict) or not str(etd.get("destination") or "").strip():
@@ -402,16 +404,20 @@ def _bart_station(station, now):
             wait = 0 if minutes.lower() == "leaving" else _int(minutes)
             if wait is None:
                 continue
+            runs_on = str(estimate.get("color") or "").strip().lower()
             trains.append(((now + timedelta(minutes=wait)).isoformat(), max(0, _int(estimate.get("delay")) or 0),
-                           _int(estimate.get("length")), str(estimate.get("platform") or "").strip()[:2]))
+                           _int(estimate.get("length")), str(estimate.get("platform") or "").strip()[:2],
+                           runs_on if runs_on in BART_LINES else ""))
             colour = colour or (estimate.get("hexcolor") if BART_COLOUR.match(str(estimate.get("hexcolor") or "")) else None)
             direction = direction or str(estimate.get("direction") or "")
-            name = name or str(estimate.get("color") or "").strip().lower()
+            name = name or runs_on
         if trains:
-            trains = sorted(trains)[:BART_DEPARTURES]
+            # In time order only: a train without a length never compares against one with.
+            trains = sorted(trains, key=lambda train: train[0])[:BART_DEPARTURES]
             lines.append({"destination": str(etd["destination"]).strip()[:40], "colour": colour or "#8c96a0",
                           "line": name if name in BART_LINES else "", "direction": direction[:10],
                           "departures": [train[0] for train in trains], "delays": [train[1] for train in trains],
+                          "lengths": [train[2] for train in trains], "train_lines": [train[4] for train in trains],
                           "cars": trains[0][2], "platform": trains[0][3]})
     return {"station": str(station["name"])[:40], "code": str(station.get("abbr") or "")[:4],
             "time": now.isoformat(), "lines": lines}
@@ -709,17 +715,30 @@ def water_versus_prediction(water, tides, now, max_age_minutes=45):
 
 
 def coming_trains(data, now):
-    """The lines whose next train has not left yet, soonest first, each with only its trains to come."""
+    """The lines whose next train has not left yet, soonest first, each with only its trains to come.
+    When the reading keeps each train's length and line, ``cars`` and ``next_line`` are the next
+    train still to come's (an older reading without them keeps its first train's cars, and no
+    ``next_line``)."""
     now = local_now(now)
     lines = []
     for line in (data or {}).get("lines") or []:
         departures = [parse_time(stamp) for stamp in line.get("departures") or []]
         delays = list(line.get("delays") or []) + [0] * len(departures)
-        upcoming = [(stamp, delay) for stamp, delay in zip(departures, delays)
+        upcoming = [index for index, stamp in enumerate(departures)
                     if stamp and (stamp - now).total_seconds() >= -30]
         if upcoming:
-            lines.append({**line, "departures": [stamp for stamp, _delay in upcoming],
-                          "delays": [delay for _stamp, delay in upcoming]})
+            coming = {**line, "departures": [departures[index] for index in upcoming],
+                      "delays": [delays[index] for index in upcoming]}
+            # Each train's own length and line, kept with it as the trains ahead leave.
+            for key in ("lengths", "train_lines"):
+                if isinstance(line.get(key), list):
+                    values = list(line[key]) + [None] * len(departures)
+                    coming[key] = [values[index] for index in upcoming]
+            if "lengths" in coming:
+                coming["cars"] = coming["lengths"][0]
+            if "train_lines" in coming:
+                coming["next_line"] = coming["train_lines"][0] or ""
+            lines.append(coming)
     return sorted(lines, key=lambda line: line["departures"][0])
 
 

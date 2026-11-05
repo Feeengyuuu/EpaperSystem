@@ -55,6 +55,23 @@ SIGN_SHIELDS = {"I-680", "I-880", "SR-84"}
 # station's stop ring before its name is this wide.
 BART_LEADER_MIN = 14
 STATION_RING = 12
+# With the next train's length in the reading, the row draws that train in place of the leader,
+# heading right for its times over a rail that runs back to its cars label, speed streaks behind it
+# in the TRAIN_LEAD kept after the label: one car drawn for each it runs (BART up to ten; eBART one
+# or two), the front car longer by its slanted nose. One scale for every train on the page, so a
+# longer train reads longer: the widest car (CAR_WIDTHS, widest first) that lets the tightest row
+# keep its destination whole, else in short ("Dublin"), else TRAIN_NAME_MIN of it; past that
+# narrower, down to CAR_FLOOR. Each car width has its body's height (TRAIN_HEIGHTS), no taller
+# than the rows' spacing allows.
+TRAIN_MAX_CARS = 10
+CAR_WIDTHS = range(12, 6, -1)
+CAR_FLOOR = 5
+TRAIN_HEIGHTS = {5: 8, 6: 10, 7: 12, 8: 12, 9: 13, 10: 13, 11: 14, 12: 14}
+TRAIN_LEAD = 10
+TRAIN_NAME_MIN = 36
+# BART's own line colours, as its lettered bullets print them, for each train's stripe.
+BART_LINE_COLOURS = {"red": "#ed1c24", "orange": "#faa61a", "yellow": "#ffe600", "blue": "#009ad9",
+                     "green": "#50b848"}
 # The column (and its divider) end here, above the footer rule.
 BART_BOTTOM = 448
 PLACE_MARKS = {"san jose": ("san-jose.png", 31, ""),
@@ -590,8 +607,9 @@ def draw_bart_notes(page, notes, top):
 
 def bart(page, payload, now):
     """BART's next trains from the chosen station: its logo and name, then each destination with
-    its line's colour and its next departures as clock times; trains in service at the right of
-    the station and BART's service notes (advisories, elevators) under the trains."""
+    its line's colour, its next train drawn as long as it runs, and its next departures as clock
+    times; trains in service at the right of the station and BART's service notes (advisories,
+    elevators) under the trains."""
     source = payload.get("bart") or {}
     data = source.get("data") or {}
     page.rule((512, BART_Y - 6, 784, BART_Y - 6))
@@ -622,13 +640,17 @@ def bart(page, payload, now):
     if not lines:
         page.text((512, BART_Y + 22), "暂无发车信息" if data else "BART 发车暂不可用", 10, "muted", bold=False)
         return
-    # One destination a row, in BART's typeface: the line's colour, where it goes, its next trains.
-    # The rows share the column's height under the station evenly, however many trains are running.
+    # One destination a row, in BART's typeface: the line's colour, where it goes, its next train
+    # and its next times.
+    # The rows share the column's height under the station evenly, however many trains are running,
+    # and every train on the page one scale, set by the tightest row.
     step = (band_bottom - band_top) / len(lines)
-    for index, line in enumerate(lines):
+    plans = [row_plan(page, line) for line in lines]
+    shape = train_shape_for(plans, step)
+    for index, (line, plan) in enumerate(zip(lines, plans)):
         y = round(band_top + index * step + (step - BART_ROW_STEP) / 2)
-        # The bullet, the leader and the stop ring are all level with the middle of the row's
-        # capitals and figures (Hind's are 8 px tall at this size).
+        # The bullet and the train (or the leader and its stop ring) are all level with the middle of
+        # the row's capitals and figures (Hind's are 8 px tall at this size).
         middle = y + 4
         # The line's lettered bullet, as BART prints it (its colours stay by night); a dot in the
         # line's colour for one without (the airport shuttle).
@@ -638,10 +660,8 @@ def bart(page, payload, now):
             bullet.close()
         else:
             page.draw.ellipse((514, middle - 4, 522, middle + 4), fill=line["colour"])
-        stamps = line["departures"][:3]
-        delays = list(line.get("delays") or []) + [0] * len(stamps)
-        parts = [stamp.astimezone(PACIFIC).strftime("%H:%M") for stamp in stamps]
-        times_w = page.draw.textlength(" · ".join(parts), font=font(12, "bart"))
+        parts, times_w = plan["parts"], plan["times_w"]
+        delays = list(line.get("delays") or []) + [0] * len(parts)
         # The next trains as one right-aligned run, each in blue, a late one in red, parted by dots
         # on the row's middle (Hind's own middle dot sits at its x-height, above the figures').
         x = 784 - times_w
@@ -652,20 +672,158 @@ def bart(page, payload, now):
                 page.draw.ellipse((dot - 1, middle - 1, dot + 1, middle + 1), fill=page.palette["blue"])
                 x += gap
             x += page.text((x, y), part, 12, "red" if delay >= BART_LATE_SECONDS else "blue", role="bart")
-        # The next train's length after where it goes, as BART's platform signs give it.
-        cars = f"{line['cars']}节" if line.get("cars") else ""
-        cars_w = page.draw.textlength(cars, font=font(10, bold=False)) + 4 if cars else 0
-        name_w = page.text((529, y), line["destination"], 12, role="bart", width=272 - 31 - times_w - cars_w,
-                           bold=False)
+        # The next train's length after where it goes, as BART's platform signs give it, and that
+        # train, its nose just short of the times, its rail back to the label; the destination gives
+        # way to it.
+        cars = plan["cars"]
+        room = train_room(plan, shape) if cars else 272 - 31 - times_w
+        name_w = page.text((529, y), fitted_destination(page, line["destination"], room), 12, role="bart",
+                           width=room, bold=False)
         if cars:
-            page.text((529 + name_w + 4, y - 1), cars, 10, "muted", bold=False)
-        # The destination leads to its trains along its line, drawn as BART's map draws a line:
-        # a stripe in the line's colour into a stop ring before the times.
-        start, stop = 529 + name_w + cars_w + 6, 784 - times_w - 7
+            page.text((529 + name_w + 4, y - 1), f"{cars}节", 10, "muted", bold=False)
+            draw_train(page, round(529 + name_w + plan["cars_w"] + 5), plan["front"], middle, cars,
+                       train_colour(line), shape)
+            continue
+        # Without its length the destination leads to its trains along its line, drawn as BART's
+        # map draws a line: a stripe in the line's colour into a stop ring before the times.
+        start, stop = 529 + name_w + 6, 784 - times_w - 7
         if stop - start >= BART_LEADER_MIN:
             page.draw.line((start, middle, stop - 3, middle), fill=line["colour"], width=2)
             page.draw.ellipse((stop - 4, middle - 3, stop + 2, middle + 3), fill=page.palette["paper"],
                               outline=line["colour"], width=2)
+
+
+def train_cars(line):
+    """The next train's cars when the reading gives a length BART runs (one to ten), else None."""
+    cars = line.get("cars")
+    return cars if type(cars) is int and 1 <= cars <= TRAIN_MAX_CARS else None
+
+
+def train_colour(line):
+    """The train's stripe: BART's own colour for the line its next train runs on (a destination two
+    lines serve mixes them), else the destination's line (a reading kept from before each train's
+    line was), else the feed's colour."""
+    for name in (line.get("next_line"), line.get("line")):
+        if isinstance(name, str) and name in BART_LINE_COLOURS:
+            return BART_LINE_COLOURS[name]
+    return line["colour"]
+
+
+def short_destination(destination):
+    """A destination's first name ("Dublin/Pleasanton" reads "Dublin"); the whole without one."""
+    return destination.split("/")[0].strip() or destination
+
+
+def fitted_destination(page, destination, width):
+    """The destination as BART names it, or in short when the whole does not fit ``width``; past
+    that the row's text cuts it short."""
+    if page.draw.textlength(destination, font=font(12, "bart", False)) > width:
+        return short_destination(destination)
+    return destination
+
+
+def row_plan(page, line):
+    """What a row needs measured before any is drawn: its times and their width, where a train's
+    nose stops short of them, the next train's cars and its label's width, and its destination's
+    width whole and in short."""
+    parts = [stamp.astimezone(PACIFIC).strftime("%H:%M") for stamp in line["departures"][:3]]
+    times_w = page.draw.textlength(" · ".join(parts), font=font(12, "bart"))
+    cars = train_cars(line)
+    destination, face = str(line["destination"]), font(12, "bart", False)
+    return {"parts": parts, "times_w": times_w, "front": round(784 - times_w - 6), "cars": cars,
+            "cars_w": page.draw.textlength(f"{cars}节", font=font(10, bold=False)) + 4 if cars else 0,
+            "full_w": page.draw.textlength(destination, font=face),
+            "short_w": page.draw.textlength(short_destination(destination), font=face)}
+
+
+def car_rows(height):
+    """A car's rows from its roof down for a body ``height`` px tall (8 to 14): the roof, the window
+    band, the belt under it, the line's stripe (4 px from 10 px tall, 5 at 14), the underframe; the
+    ink in 2 px bands from 12 px tall."""
+    stripe = 5 if height >= 14 else 4 if height >= 10 else 3
+    belt = frame = 2 if height >= 12 else 1
+    roof = 2 if height >= 9 else 1
+    window = height - roof - belt - stripe - frame
+    return ("roof",) * roof + ("window",) * window + ("belt",) * belt + ("stripe",) * stripe + ("frame",) * frame
+
+
+def train_shape(car_w, tallest=TRAIN_HEIGHTS[12]):
+    """A train's shape for cars ``car_w`` wide: (car width, the gap between cars, the car's rows
+    from its roof down), its body as tall as that width has it but no taller than ``tallest``."""
+    height = max(TRAIN_HEIGHTS[CAR_FLOOR], min(tallest, TRAIN_HEIGHTS[car_w]))
+    return car_w, 2 if car_w >= 9 else 1, car_rows(height)
+
+
+def train_width(cars, shape):
+    """How wide a train of ``cars`` cars is drawn in ``shape``, its nose (as long as the rows over
+    its stripe, the slope stepping a pixel a row) included."""
+    car_w, gap, rows = shape
+    return cars * (car_w + gap) - gap + rows.index("stripe")
+
+
+def train_room(plan, shape):
+    """The room a row's destination keeps beside its train in ``shape``, with the train's lead."""
+    return plan["front"] + 1 - train_width(plan["cars"], shape) - TRAIN_LEAD - 529 - plan["cars_w"]
+
+
+def train_shape_for(plans, step):
+    """The one shape every train on the page is drawn in: the widest car of CAR_WIDTHS with which
+    every row keeps its destination whole. When even the narrowest leaves a row too little, the
+    destinations give way for it (in short, then cut to no less than TRAIN_NAME_MIN), and only past
+    that do the cars narrow, down to CAR_FLOOR. Its body is no taller than the rows' ``step``
+    leaves room for over the rail."""
+    tallest = max(TRAIN_HEIGHTS[CAR_FLOOR], int(step) - 5)
+    trains = [plan for plan in plans if plan["cars"]]
+
+    def fits(car_w, need):
+        shape = train_shape(car_w, tallest)
+        return all(train_room(plan, shape) >= need(plan) for plan in trains)
+
+    for car_w in CAR_WIDTHS:
+        if fits(car_w, lambda plan: plan["full_w"]):
+            return train_shape(car_w, tallest)
+    for car_w in range(CAR_WIDTHS[-1], CAR_FLOOR, -1):
+        if fits(car_w, lambda plan: min(plan["short_w"], TRAIN_NAME_MIN)):
+            return train_shape(car_w, tallest)
+    return train_shape(CAR_FLOOR, tallest)
+
+
+def draw_train(page, start, front, middle, cars, colour, shape):
+    """A BART train in side view heading right in ``shape``, the tip of its nose at x ``front``, its
+    body centred on ``middle`` (the row's capitals): each car a solid block of ink with a window
+    band of paper and a stripe in the line's ``colour`` under it, its roof's corners rounded, a gap
+    between cars; the front car's roof and windscreen sloping down into its nose. Two speed streaks
+    behind it and a 2 px rail under it, both from no further back than ``start``. Square on the
+    pixel grid, the ink pure black by day, so the panel's dither leaves the train's edges clean."""
+    car_w, gap, rows = shape
+    draw, paper = page.draw, page.palette["paper"]
+    ink = "#000000" if page.mode == "day" else page.palette["ink"]
+    height, nose, roof = len(rows), rows.index("stripe"), rows.count("roof")
+    pillar = 2 if car_w >= 7 else 1
+    top = middle - height // 2
+    tail = front - train_width(cars, shape) + 1
+    for index in range(cars):
+        cab = index == cars - 1
+        left = tail + index * (car_w + gap)
+        right = left + car_w - 1 + (nose if cab else 0)
+        for row, part in enumerate(rows):
+            # The cab steps down a pixel a row over its nose; the roof's corners round off over its
+            # rows, the nose's following the slope.
+            edge = right - max(0, nose - row) if cab else right
+            inset = roof - row if part == "roof" else 0
+            draw.line((left + inset, top + row, edge - (0 if cab else inset), top + row),
+                      fill=colour if part == "stripe" else ink)
+            if part == "window" and edge - pillar >= left + pillar:
+                draw.line((left + pillar, top + row, edge - pillar, top + row), fill=paper)
+    # The streaks at the windows and the stripe, a car and a car and a half long, clear of the last
+    # car by 3 px and shortened when the destination leaves less room; the rail to past the nose.
+    windows = top + rows.index("window") + (rows.count("window") - 2) // 2
+    stripe = top + nose + (rows.count("stripe") - 2) // 2
+    for row, length in ((windows, car_w), (stripe, car_w + car_w // 2 + 2)):
+        begin = max(start, tail - 3 - length)
+        if tail - 4 - begin >= 1:
+            draw.rectangle((begin, row, tail - 4, row + 1), fill=ink)
+    draw.rectangle((min(start, tail), top + height + 1, front + 2, top + height + 2), fill=ink)
 
 
 def station_ring(page, x, middle, colours):

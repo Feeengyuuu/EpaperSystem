@@ -628,6 +628,170 @@ def test_bart_rows_give_the_next_trains_cars_and_mark_late_trains_red(monkeypatc
     assert {("1 班晚点", "red"), ("6节", "muted"), (late, "red"), (on_time, "blue")} <= set(recorded)
 
 
+def test_bart_keeps_each_trains_length_and_line_and_the_row_follows_the_next_train_to_come():
+    richmond = sources.pick_bart_station(sources.parse_bart_network(NETWORK_PAYLOAD, NOW), "FRMT")["lines"][0]
+    assert richmond["lengths"] == [6, 5] and richmond["cars"] == 6 and richmond["train_lines"] == ["orange", "orange"]
+    # Once the six-car train has gone, the row's train is the five-car one after it.
+    later = sources.coming_trains({"lines": [richmond]}, NOW + timedelta(minutes=10))[0]
+    assert later["cars"] == 5 and later["lengths"] == [5] and later["next_line"] == "orange"
+    # A reading kept from before lengths and lines were kept still gives its first train's cars.
+    kept = {key: value for key, value in richmond.items() if key not in ("lengths", "train_lines")}
+    kept_later = sources.coming_trains({"lines": [kept]}, NOW + timedelta(minutes=10))[0]
+    assert kept_later["cars"] == 6 and "next_line" not in kept_later
+    # Trains BART gives no length read as None, and two leaving together never compare lengths.
+    assert [line["lengths"] for line in sources.parse_bart(BART_PAYLOAD, NOW)["lines"]] == [[None, None], [None], [None]]
+    together = {"root": {"station": [{"name": "Fremont", "abbr": "FRMT", "etd": [{"destination": "Richmond", "estimate": [
+        {"minutes": "4", "length": "6", "hexcolor": "#ff9933"}, {"minutes": "4", "hexcolor": "#ff9933"}]}]}]}}
+    assert sources.parse_bart(together, NOW)["lines"][0]["lengths"] == [6, None]
+    # A destination two lines serve: each train keeps its own line, the row the next one's.
+    mixed = sources.parse_bart({"root": {"station": [{"name": "12th St. Oakland City Center", "etd": [
+        {"destination": "Richmond", "estimate": [{"minutes": "2", "length": "5", "color": "ORANGE"},
+                                                 {"minutes": "9", "length": "6", "color": "RED"}]}]}]}}, NOW)
+    assert mixed["lines"][0]["line"] == "orange" and mixed["lines"][0]["train_lines"] == ["orange", "red"]
+    next_red = sources.coming_trains(mixed, NOW + timedelta(minutes=4))[0]
+    assert next_red["next_line"] == "red" and next_red["cars"] == 6
+
+
+def bart_rows_page(monkeypatch, etds, mode="day", at=NOW, status=None):
+    """The page for one station whose destinations are ``etds`` (BART's own shape) read at NOW and
+    drawn ``at``, with where each text went: {text: (x, y, width)}."""
+    reading = {"root": {"station": [{"name": "Fremont", "abbr": "FRMT", "etd": etds}]}}
+    payload = {"roads": {"state": "live", "data": {"items": []}, "fetched_at": NOW.isoformat()},
+               "tides": {"state": "live", "data": tide_data(NOW), "fetched_at": NOW.isoformat()},
+               "buoy": {"state": "live", "data": sources.parse_buoy(BUOY_PAGE)},
+               "bart": {"state": "live", "data": sources.parse_bart(reading, NOW)},
+               "bart_status": status or {"state": "unavailable"},
+               "routes": [], "station": "9414523", "window_days": 7, "nearby_cameras": {}}
+    rows = {}
+    original = Canvas.text
+
+    def capture(self, xy, text, *args, **kwargs):
+        width = original(self, xy, text, *args, **kwargs)
+        rows[str(text)] = (round(xy[0]), round(xy[1]), width)
+        return width
+
+    monkeypatch.setattr(Canvas, "text", capture)
+    return render_page((800, 480), payload, {"_inkypi_theme": {"mode": mode}}, at), rows
+
+
+def bart_etd(destination, line, hexcolor, minutes, length):
+    return {"destination": destination, "estimate": [
+        {"minutes": str(wait), "length": str(length), "color": line, "hexcolor": hexcolor, "cancelflag": "0"}
+        for wait in minutes]}
+
+
+def stripe_runs(image, row, colour, left=529, right=784):
+    """The runs of ``colour`` along ``row`` between ``left`` and ``right``, as (first x, last x)."""
+    runs = []
+    for x in range(left, right):
+        if image.getpixel((x, row)) == colour:
+            if runs and runs[-1][1] == x - 1:
+                runs[-1] = (runs[-1][0], x)
+            else:
+                runs.append((x, x))
+    return runs
+
+
+def stripe_rows(image, x, colour, top, bottom):
+    return [y for y in range(top, bottom) if image.getpixel((x, y)) == colour]
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_bart_rows_draw_the_next_train_as_long_as_it_runs_on_one_scale(monkeypatch, mode):
+    from PIL import ImageColor
+
+    from plugins.bay_commute.command_render import BART_LINE_COLOURS, NIGHT
+
+    image, rows = bart_rows_page(monkeypatch, [
+        bart_etd("Millbrae", "RED", "#ff0000", (4, 25, 45), 5),
+        bart_etd("SFO/Millbrae", "YELLOW", "#ffff33", (9, 29, 49), 10),
+        bart_etd("Dublin/Pleasanton", "BLUE", "#0099cc", (14, 34), 3)], mode)
+    # Ten cars beside three times take the room the whole name would; three cars leave it.
+    assert "SFO" in rows and "SFO/Millbrae" not in rows and "Dublin/Pleasanton" in rows
+    assert {"5节", "10节", "3节"} <= set(rows)
+    ink = (0, 0, 0) if mode == "day" else ImageColor.getrgb(NIGHT["ink"])
+    trains = {}
+    for name, line, cars in (("Millbrae", "red", 5), ("SFO", "yellow", 10), ("Dublin/Pleasanton", "blue", 3)):
+        _x, y, _width = rows[name]
+        colour = ImageColor.getrgb(BART_LINE_COLOURS[line])
+        # One run of the line's own colour (BART's, not the feed's) per car along its stripe.
+        runs = stripe_runs(image, y + 5, colour)
+        assert len(runs) == cars
+        first_time = min(x for text, (x, row_y, _w) in rows.items() if row_y == y and ":" in text)
+        assert runs[-1][1] < first_time - 3
+        # The stripe at least 4 px deep, and under the train a 2 px rail from past its nose back to
+        # the cars label.
+        assert len(stripe_rows(image, runs[0][0] + 2, colour, y - 6, y + 16)) >= 4
+        rail = [row for row in range(y, y + 16) if image.getpixel((runs[-1][1] + 1, row)) == ink]
+        assert len(rail) == 2 and rail[1] == rail[0] + 1
+        label_x, _label_y, label_w = rows[f"{cars}节"]
+        assert all(image.getpixel((label_x + round(label_w) + 6, row)) == ink for row in rail)
+        trains[cars] = runs
+    # One scale for the page: every car as wide (7 to 12 px), the same pitch, the same nose.
+    widths = {run[1] - run[0] + 1 for runs in trains.values() for run in runs[:-1]}
+    pitches = {later[0] - earlier[0] for runs in trains.values() for earlier, later in zip(runs, runs[1:])}
+    noses = {runs[-1][1] - runs[-1][0] + 1 for runs in trains.values()}
+    assert len(widths) == 1 and 7 <= min(widths) <= 12 and len(pitches) == 1 and len(noses) == 1
+    span = {cars: runs[-1][1] - runs[0][0] + 1 for cars, runs in trains.items()}
+    assert span[3] < span[5] < span[10]
+
+
+def test_bart_trains_take_the_widest_cars_the_tightest_row_allows(monkeypatch):
+    from plugins.bay_commute.command_render import car_rows, row_plan, train_shape_for
+
+    # Two trains with room to spare: the widest cars, the tallest body.
+    image, rows = bart_rows_page(monkeypatch, [bart_etd("Millbrae", "RED", "#ff0000", (4, 25, 45), 5),
+                                               bart_etd("Berryessa", "ORANGE", "#ff9933", (17, 37), 6)])
+    _x, y, _width = rows["Millbrae"]
+    runs = stripe_runs(image, y + 5, (0xed, 0x1c, 0x24))
+    assert len(runs) == 5 and runs[0][1] - runs[0][0] + 1 == 12
+    # Under an advisory and elevator notes the rows close up, and the body with them, rail and all
+    # clear of the next row; its stripe keeps 4 px.
+    busy = {"state": "live", "data": {"time": NOW.isoformat(), "advisories": sources.parse_bart_advisories(BSA_DELAY),
+                                      "elevators": sources.parse_bart_elevators(ELEVATORS_OUT), "trains": 56}}
+    image, rows = bart_rows_page(monkeypatch, [
+        bart_etd("Millbrae", "RED", "#ff0000", (4, 25, 45), 5),
+        bart_etd("Antioch", "YELLOW", "#ffff33", (9, 29, 49), 9),
+        bart_etd("Berryessa", "ORANGE", "#ff9933", (17, 37), 6)], status=busy)
+    first, second = rows["Millbrae"][1], rows["Antioch"][1]
+    assert second - first <= 16
+    runs = stripe_runs(image, first + 5, (0xed, 0x1c, 0x24))
+    assert len(runs) == 5 and len(stripe_rows(image, runs[0][0] + 2, (0xed, 0x1c, 0x24), first - 6, second)) >= 4
+    page = Canvas({"_inkypi_theme": {"mode": "day"}})
+    lines = sources.coming_trains(sources.parse_bart({"root": {"station": [{"name": "Fremont", "etd": [
+        bart_etd("Antioch", "YELLOW", "#ffff33", (9, 29, 49), 9)]}]}}, NOW), NOW)
+    shape = train_shape_for([row_plan(page, line) for line in lines], 15.3)
+    assert len(shape[2]) + 3 <= 15 - 2
+    # Every body height keeps its parts: the stripe 4 px from 10 px tall, the ink 2 px from 12.
+    for height in range(8, 15):
+        parts = car_rows(height)
+        assert len(parts) == height and parts[0] == "roof" and parts[-1] == "frame"
+        assert parts.count("stripe") >= (4 if height >= 10 else 3)
+        if height >= 12:
+            assert min(parts.count(part) for part in ("roof", "window", "belt", "frame")) >= 2
+
+
+def test_bart_trains_stripe_follows_the_line_the_next_train_runs_on(monkeypatch):
+    # A destination two lines serve: an orange train first, then a red one; once the orange has gone
+    # the train drawn is the red one, six cars in BART's red.
+    image, rows = bart_rows_page(monkeypatch, [{"destination": "Richmond", "estimate": [
+        {"minutes": "2", "length": "5", "color": "ORANGE", "hexcolor": "#ff9933", "cancelflag": "0"},
+        {"minutes": "9", "length": "6", "color": "RED", "hexcolor": "#ff0000", "cancelflag": "0"}]}],
+        at=NOW + timedelta(minutes=4))
+    _x, y, _width = rows["Richmond"]
+    assert "6节" in rows
+    assert len(stripe_runs(image, y + 5, (0xed, 0x1c, 0x24))) == 6
+    assert not stripe_runs(image, y + 5, (0xfa, 0xa6, 0x1a))
+
+
+def test_bart_rows_without_a_length_bart_runs_keep_the_leader(monkeypatch):
+    image, rows = bart_rows_page(monkeypatch, [bart_etd("Berryessa", "ORANGE", "#ff9933", (4, 19), 14)])
+    _x, y, _width = rows["Berryessa"]
+    # No train and no "14节": the destination leads along its line in the feed's orange, as before.
+    assert "14节" not in rows
+    assert stripe_runs(image, y + 4, (0xff, 0x99, 0x33)) and not stripe_runs(image, y + 5, (0xfa, 0xa6, 0x1a))
+
+
 def test_bart_rows_are_set_in_bart_typeface():
     from plugins.bay_commute.command_render import ASSETS, font
 
