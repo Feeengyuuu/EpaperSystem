@@ -24,7 +24,7 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from plugins.context_cache import write_context
-from plugins.daily_wiki_page import almanac, day_colours, zh_daily_picture
+from plugins.daily_wiki_page import almanac, day_colours, holiday_places, zh_daily_picture
 from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import DEFAULT_FONT_FAMILY, coerce_bool, get_available_font_names, get_base_ui_font, get_font
 from utils.cache_manager import CacheBudget, CachePathError
@@ -60,7 +60,8 @@ class _HTMLTextExtractor(HTMLParser):
         return "".join(self._parts)
 
 PLUGIN_ID = "daily_wiki_page"
-CACHE_SCHEMA_VERSION = "daily-wiki-page-v9"
+# v10: the almanac's holidays carry their places (holiday_places), so a v9 day is fetched again.
+CACHE_SCHEMA_VERSION = "daily-wiki-page-v10"
 DEFAULT_FONT = DEFAULT_FONT_FAMILY
 DEFAULT_TIMEZONE = "America/Los_Angeles"
 FEED_URL = "https://{language}.wikipedia.org/api/rest_v1/feed/featured/{year}/{month}/{day}"
@@ -79,6 +80,18 @@ MEDIA_CACHE_BUDGET = CacheBudget(
     max_files=256,
     max_bytes=50 * 1024 * 1024,
 )
+# The almanac's holiday flags: flagcdn's PNGs by code (the project's flag source, true
+# proportions), else the Commons picture the date page shows; the UN's ships with the plugin.
+# Kept on disk for 30 days (a few KB each), so a render never refetches one.
+FLAG_URL = "https://flagcdn.com/w80/{code}.png"
+FLAG_DIR = Path(__file__).resolve().parent / "assets" / "flags"
+FLAG_CACHE_HOURS = 30 * 24
+# Wikidata answers for a holiday the page places nowhere and the UN does not list: an item that
+# is a United Nations observance (Q2558684) is the UN's, one with a single country (P17) or
+# country of origin (P495) is that country's. Asked once, when the day's page is fetched.
+WIKIDATA_SPARQL_URL = "https://query.wikidata.org/sparql"
+UN_OBSERVANCE = "Q2558684"
+MAX_WIKIDATA_TITLES = 8
 
 TRADITIONAL_TO_SIMPLIFIED = str.maketrans({
     "俠": "侠", "盜": "盗", "獵": "猎", "車": "车", "獲": "获", "獎": "奖", "與": "与",
@@ -589,6 +602,38 @@ class DailyWikiPage(BasePlugin):
                                   label="wiki_images", protected=(path,))
         return image
 
+    def _holiday_flag(self, key, url, settings):
+        """A holiday place's flag as RGBA at its own proportions, or None: the UN's from the
+        plugin, a flagcdn code's or a Commons picture's through the media cache (theme-only
+        renders read that cache and never fetch)."""
+        key = str(key or "").strip().lower()
+        if key == "un":
+            try:
+                with Image.open(FLAG_DIR / "un.png") as source:
+                    return source.convert("RGBA")
+            except (OSError, ValueError):
+                return None
+        if holiday_places.FLAG_KEY.match(key):
+            url = FLAG_URL.format(code=key)
+        elif not holiday_places.COMMONS_FLAG_URL.match(str(url or "")):
+            return None
+        theme_only = self._enabled(settings.get("_theme_render_only"), default=False)
+        try:
+            path = self._media_cache_path(url, read_only=theme_only)
+
+            def fetch():
+                response = get_http_session().get(url, headers=IMAGE_HEADERS, timeout=(5, 10), stream=True)
+                return measured_image_response(response, limits=ImageLimits(max_bytes=1_000_000))
+
+            image = cached_resource_image(path, fetch, ttl=FLAG_CACHE_HOURS * 3600,
+                                          label="wiki_flags", read_only=theme_only)
+            return image.convert("RGBA") if image is not None else None
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("DailyWikiPage holiday flag unavailable: %s", type(exc).__name__)
+            return None
+
     def _media_cache_path(self, image_url, *, read_only=False):
         digest = hashlib.sha256(str(image_url).encode("utf-8")).hexdigest()
         if read_only:
@@ -663,7 +708,85 @@ class DailyWikiPage(BasePlugin):
             # A page that changed shape only hides the block.
             logger.warning("DailyWikiPage date-page almanac skipped: %s", type(exc).__name__)
             day_almanac = {}
+        if day_almanac.get("holidays"):
+            day_almanac["holidays"] = self._placed_holidays(day_almanac["holidays"], now)
         return {"events": events, "almanac": day_almanac}
+
+    def _placed_holidays(self, holidays, now):
+        """The holidays with where each belongs (holiday_places, then Wikidata for what is left);
+        any failure leaves a holiday as its plain name."""
+        try:
+            holidays = holiday_places.place_holidays(holidays, now.month, now.day)
+            unplaced = sorted({holiday["article"] for holiday in holidays
+                               if holiday.get("article") and not holiday.get("where") and not holiday.get("places")})
+            if unplaced:
+                found = self._wikidata_holiday_places(unplaced[:MAX_WIKIDATA_TITLES])
+                holidays = [{**holiday, "places": found[holiday["article"]]}
+                            if not holiday.get("where") and not holiday.get("places") and found.get(holiday.get("article"))
+                            else holiday for holiday in holidays]
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("DailyWikiPage holiday places incomplete: %s", self._failure_summary(exc))
+        return [holiday_places.public_holiday(holiday) for holiday in holidays]
+
+    def _wikidata_holiday_places(self, titles):
+        """{zh article title: [place]} for the articles Wikidata places (see UN_OBSERVANCE)."""
+        data = self._get_json(ZH_ACTION_API_URL, params={
+            "action": "query", "format": "json", "formatversion": "2", "redirects": "1",
+            "prop": "pageprops", "ppprop": "wikibase_item", "titles": "|".join(titles),
+        })
+        query = data.get("query") if isinstance(data, dict) else None
+        query = query if isinstance(query, dict) else {}
+        renamed = {step.get("from"): step.get("to") for key in ("normalized", "redirects")
+                   for step in query.get(key) or [] if isinstance(step, dict)}
+        items = {page.get("title"): (page.get("pageprops") or {}).get("wikibase_item")
+                 for page in query.get("pages") or [] if isinstance(page, dict)}
+        by_item = {}
+        for title in titles:
+            resolved = title
+            for _step in range(3):
+                resolved = renamed.get(resolved, resolved)
+            item = str(items.get(resolved) or "")
+            if re.fullmatch(r"Q\d+", item):
+                by_item.setdefault(item, []).append(title)
+        if not by_item:
+            return {}
+        sparql = (
+            "SELECT ?item ?class ?iso ?placeLabel WHERE { VALUES ?item { "
+            + " ".join(f"wd:{item}" for item in sorted(by_item))
+            + f" }} OPTIONAL {{ ?item wdt:P31 ?class . FILTER(?class = wd:{UN_OBSERVANCE}) }}"
+            " OPTIONAL { ?item wdt:P17|wdt:P495 ?place . ?place wdt:P297 ?iso . }"
+            ' SERVICE wikibase:label { bd:serviceParam wikibase:language "zh-cn,zh-hans,zh,en". } }'
+        )
+        answer = self._get_json(WIKIDATA_SPARQL_URL, params={"query": sparql, "format": "json"})
+        bindings = ((answer.get("results") or {}).get("bindings") or []) if isinstance(answer, dict) else []
+        un, countries = set(), {}
+        for binding in bindings:
+            if not isinstance(binding, dict):
+                continue
+            item = str((binding.get("item") or {}).get("value") or "").rsplit("/", 1)[-1]
+            if str((binding.get("class") or {}).get("value") or "").endswith("/" + UN_OBSERVANCE):
+                un.add(item)
+            iso = str((binding.get("iso") or {}).get("value") or "").strip().lower()
+            if holiday_places.FLAG_KEY.match(iso):
+                label = self._to_simplified_cn((binding.get("placeLabel") or {}).get("value"))
+                countries.setdefault(item, {})[iso] = label
+        places = {}
+        for item, item_titles in by_item.items():
+            if item in un:
+                place = dict(holiday_places.UN_PLACE)
+            elif len(countries.get(item, {})) == 1:
+                (iso, label), = countries[item].items()
+                name = holiday_places.place_name(iso) or label
+                if not name or not zh_daily_picture.contains_cjk(name):
+                    continue
+                place = {"name": name, "flag": iso}
+            else:
+                continue
+            for title in item_titles:
+                places[title] = [place]
+        return places
 
     def _date_page_history_section(self, html_text):
         start_match = re.search(r'id=["\']\u5927\u4e8b[\u8bb0\u8a18]["\']', html_text)

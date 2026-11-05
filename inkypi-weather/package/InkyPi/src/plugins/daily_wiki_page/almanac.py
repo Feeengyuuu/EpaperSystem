@@ -4,12 +4,18 @@ from the Chinese Wikipedia date page the plugin already downloads for its 大事
 The page lists everyone (eighty births on a busy day), so each list is ranked: a Nobel
 laureate, a head of state or a scientist, writer or artist outranks an idol-group member,
 a round anniversary this year (100, 50, 25 years) lifts an entry, and a Chinese one counts a
-little more; the best known come first. Holidays keep the page's order, short names first.
+little more; the best known come first. Holidays keep the page's order, short names first, each
+with the place the page states for it ("巴拿马：科隆日"), that place's flag picture and the article
+its name links, from which holiday_places tells where it belongs.
 """
 
 from __future__ import annotations
 
+import html
 import re
+from urllib.parse import unquote
+
+from plugins.daily_wiki_page.holiday_places import place_parts
 
 # Each list keeps this many of its best entries; the page shows whole entries while they fit.
 KEEP = {"births": 4, "deaths": 4, "holidays": 6}
@@ -37,6 +43,17 @@ MINOR_ROLES = ("偶像团体", "声优", "配音员", "艺人", "模特", "主�
 _PERSON = re.compile(r"^\s*(\d{1,4})年\s*[：:]\s*(.+)$")
 _OTHER_YEAR = re.compile(r"[（(]\s*(\d{1,4})年(?:出生|逝世)\s*[）)]")
 _CITATION = re.compile(r"\[\d+\]")
+# The note a page prints after a link to an article it lacks ("银行转账日（英语：Bank Transfer Day）").
+_LANGUAGE_NOTE = re.compile(r"\s*[（(][^（）()]*?语\s*[：:][^（）()]*[）)]")
+_ITEM = re.compile(r"<li\b[^>]*>(.*?)</li>", flags=re.IGNORECASE | re.DOTALL)
+_LIST_TAG = re.compile(r"<(/?)(li|ul|ol)\b[^>]*>", flags=re.IGNORECASE)
+_NESTED_LIST = re.compile(r"<(?:ul|ol)\b", flags=re.IGNORECASE)
+# A place's flag icon on the page: the picture after a "flagicon" span (Wikimedia Commons).
+_FLAG_ICON = re.compile(r'class="flagicon"[^>]*>.*?<img\b([^>]*)>', flags=re.DOTALL)
+_LINK = re.compile(r'<a\b([^>]*)>', flags=re.IGNORECASE)
+# A place heading a nested list of holidays ("中国：" over 光棍节 and 双十一) is at most this long;
+# a longer heading is a sentence introducing items that name their own places.
+PLACE_HEADING = 16
 
 
 def section_html(html_text, key):
@@ -49,14 +66,102 @@ def section_html(html_text, key):
     return rest[:following.start()] if following else rest
 
 
+def item_text(item_html, html_text_of):
+    """A list item as plain text, its citation marks and other-language notes dropped."""
+    return _LANGUAGE_NOTE.sub("", _CITATION.sub("", html_text_of(item_html))).strip()
+
+
 def list_items(section, html_text_of):
     """The section's list items as plain text (citation marks dropped)."""
     items = []
-    for item_html in re.findall(r"<li\b[^>]*>(.*?)</li>", section, flags=re.IGNORECASE | re.DOTALL):
-        text = _CITATION.sub("", html_text_of(item_html)).strip()
+    for item_html in _ITEM.findall(section):
+        text = item_text(item_html, html_text_of)
         if text:
             items.append(text)
     return items
+
+
+def _attribute(attributes, name):
+    match = re.search(r'\s' + name + r'="([^"]*)"', attributes)
+    return html.unescape(match.group(1)) if match else ""
+
+
+def flag_images(item_html):
+    """The flag pictures leading a list item, in order: each the largest rendering its icon offers
+    (an https Commons thumbnail without tracking parameters), "" for an icon without one."""
+    images = []
+    for attributes in _FLAG_ICON.findall(item_html):
+        sources = [part.split()[0] for part in _attribute(attributes, "srcset").split(",") if part.split()]
+        url = (sources[-1] if sources else "") or _attribute(attributes, "src")
+        url = url.split("?", 1)[0]
+        images.append("https:" + url if url.startswith("//") else url)
+    return images
+
+
+def linked_article(item_html, places=()):
+    """The title of the first article a holiday item links that is not one of its ``places``
+    ("世界海啸日" links 海嘯), "" when it links none that exists."""
+    for attributes in _LINK.findall(item_html):
+        href = _attribute(attributes, "href")
+        if not href.startswith("/wiki/") or re.search(r'\b(?:new|extiw)\b', _attribute(attributes, "class")):
+            continue
+        title = unquote(href[len("/wiki/"):].split("#", 1)[0]).replace("_", " ").strip()
+        if title and title not in places and _attribute(attributes, "title") not in places:
+            return title
+    return ""
+
+
+def parse_holiday_item(item_html, html_text_of):
+    """A holiday list item: its name and stated place (parse_holiday), plus what holiday_places
+    needs to place it: its places' flag pictures and the article its name links."""
+    holiday = parse_holiday(item_text(item_html, html_text_of))
+    if holiday is None:
+        return None
+    images = [image for image in flag_images(item_html) if image]
+    article = linked_article(item_html, place_parts(holiday["where"]))
+    return {**holiday, **({"flag_images": images} if images else {}), **({"article": article} if article else {})}
+
+
+def list_tree(fragment):
+    """The fragment's top-level list items as (their own HTML, their nested items' own HTML)."""
+    items, depth, start = [], 0, 0
+    for match in _LIST_TAG.finditer(fragment):
+        if match.group(2).lower() != "li":
+            continue
+        if not match.group(1):
+            start = match.end() if depth == 0 else start
+            depth += 1
+        elif depth:
+            depth -= 1
+            if depth == 0:
+                inner = fragment[start:match.start()]
+                nested = _NESTED_LIST.search(inner)
+                children = [own for own, _grand in list_tree(inner[nested.start():])] if nested else []
+                items.append((inner[:nested.start()] if nested else inner, children))
+    return items
+
+
+def holiday_items(section, html_text_of):
+    """The holidays section's holidays (parse_holiday_item). A place heading a nested list
+    ("中国：" over 光棍节 and 双十一) leads each holiday under it that names no place of its own."""
+    holidays = []
+    for own, children in list_tree(section):
+        parent = parse_holiday_item(own, html_text_of)
+        if parent is not None:
+            holidays.append(parent)
+        if not children:
+            continue
+        text = item_text(own, html_text_of)
+        where = parent["where"] if parent else text[:-1].strip() if text.endswith(("：", ":")) else ""
+        where = re.sub(r"\s*、\s*", "、", " ".join(where.split()))
+        images = [image for image in flag_images(own) if image]
+        for child_html in children:
+            child = parse_holiday_item(child_html, html_text_of)
+            if child is not None and not child["where"] and 0 < len(where) <= PLACE_HEADING:
+                child = {**child, "where": where, **({"flag_images": images} if images else {})}
+            if child is not None:
+                holidays.append(child)
+    return holidays
 
 
 def parse_person(text):
@@ -75,12 +180,13 @@ def parse_person(text):
 
 
 def parse_holiday(text):
-    """"墨西哥、 巴西：亡灵节" -> {"name": "亡灵节", "where": "墨西哥、巴西"}."""
+    """"墨西哥、 巴西：亡灵节" -> {"name": "亡灵节", "where": "墨西哥、巴西"}; what follows the
+    name's first comma or full stop is a note about it ("和平纪念日，纪念一次大战…")."""
     text = " ".join(text.split())
     where, sep, name = text.rpartition("：") if "：" in text else text.rpartition(":")
     if not sep:
         where, name = "", text
-    name, where = name.strip(), re.sub(r"\s*、\s*", "、", where).strip()
+    name, where = re.split(r"[，。；]", name)[0].strip(), re.sub(r"\s*、\s*", "、", where).strip()
     return {"name": name, "where": where} if name else None
 
 
@@ -117,13 +223,13 @@ def short_role(role, limit=10):
 
 
 def almanac_from_html(html_text, year, html_text_of):
-    """{"births": [...], "deaths": [...], "holidays": [...]} from a zh-cn date page."""
+    """{"births": [...], "deaths": [...], "holidays": [...]} from a zh-cn date page (a holiday as
+    parse_holiday_item gives it)."""
     people = {}
     for key in ("births", "deaths"):
         parsed = [parse_person(text) for text in list_items(section_html(html_text, key), html_text_of)]
         people[key] = ranked_people([person for person in parsed if person], year, KEEP[key])
-    holidays = [parse_holiday(text) for text in list_items(section_html(html_text, "holidays"), html_text_of)]
-    holidays = [holiday for holiday in holidays if holiday]
+    holidays = holiday_items(section_html(html_text, "holidays"), html_text_of)
     # A holiday known by a short name leads; a long official one ("终止针对记者犯罪不受惩罚
     # 现象国际日") follows, shown when the line still has room.
     holidays.sort(key=lambda holiday: len(holiday["name"]) > LONG_HOLIDAY)

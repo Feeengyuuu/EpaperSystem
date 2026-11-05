@@ -757,7 +757,7 @@ def test_daily_payload_ignores_v6_cache_and_fetches_current_source(tmp_path, mon
     assert payload["language"] == "zh-cn"
     assert payload["title"] == "Fresh Chinese source"
     assert payload["source_state"] == "live"
-    assert plugin._read_cache()["schema"] == "daily-wiki-page-v9"
+    assert plugin._read_cache()["schema"] == "daily-wiki-page-v10"
 
 
 def test_daily_payload_rejects_v6_cache_when_live_fetch_fails(tmp_path, monkeypatch):
@@ -1877,10 +1877,14 @@ def test_zh_date_page_gives_the_days_best_known_births_deaths_and_holidays(tmp_p
     assert almanac["births"][1] == {"year": "1082", "name": "宋徽宗赵佶", "role": "北宋皇帝", "other_year": "1135"}
     # A president's brother is not a president.
     assert [person["name"] for person in almanac["deaths"]] == ["彼得·德拜", "萧伯纳", "吴廷瑈"]
-    # Holidays (the traditional section id on a zh-cn page), short names first, citation marks gone.
-    assert almanac["holidays"] == [{"name": "诸灵节", "where": "西方基督教"},
-                                   {"name": "亡灵节", "where": "墨西哥、巴西"},
-                                   {"name": "终止针对记者犯罪不受惩罚现象国际日", "where": ""}]
+    # Holidays (the traditional section id on a zh-cn page), short names first, citation marks gone;
+    # each placed where the page says (a religion is no place) or, unplaced, as the UN's day it is.
+    assert almanac["holidays"] == [
+        {"name": "诸灵节", "where": "西方基督教"},
+        {"name": "亡灵节", "where": "墨西哥、巴西",
+         "places": [{"name": "墨西哥", "flag": "mx"}, {"name": "巴西", "flag": "br"}]},
+        {"name": "终止针对记者犯罪不受惩罚现象国际日", "where": "", "places": [{"name": "联合国", "flag": "un"}]},
+    ]
     # The 大事记 reader still answers with the events alone.
     monkeypatch.setattr(plugin, "_fetch_zh_date_page", lambda _now: {"events": ["e"], "almanac": {}})
     assert plugin._fetch_zh_date_page_events(datetime(2026, 11, 2, 10, 0)) == ["e"]
@@ -1895,3 +1899,178 @@ def test_payload_carries_the_almanac_only_with_on_this_day(tmp_path, monkeypatch
 
     assert plugin._payload_from_feed(sample_feed(), "zh-cn", {}, now=now)["almanac"] == almanac
     assert plugin._payload_from_feed(sample_feed(), "zh-cn", {"showOnThisDay": "false"}, now=now)["almanac"] == {}
+
+
+def flag_icon(file_name):
+    """A {{flagicon}} as the zh-cn date page renders it (Commons thumbnails with tracking)."""
+    base = f"//thumb.wikimedia.org/wikipedia/commons/thumb/a/a5/{file_name}"
+    return (f'<span class="flagicon"><span class="mw-image-border notpageimage" typeof="mw:File"><span>'
+            f'<img alt="" src="{base}/40px-{file_name}.png?utm_source=zh.wikipedia.org&amp;utm_content=thumbnail" '
+            f'srcset="{base}/60px-{file_name}.png?utm_source=zh.wikipedia.org 2x" data-file-width="1200" '
+            f'data-file-height="600" /></span></span>&#160;</span>')
+
+
+# The 11-05 page's holidays (世界海啸日 names no place and links 海嘯), with a place the table does
+# not know (its Commons flag), and a place heading a nested list (its holidays inherit it).
+PLACES_DATE_PAGE_HTML = f"""
+<div class="mw-heading"><h2 id="節假日和習俗">节假日和习俗</h2></div>
+<ul><li><a href="/wiki/%E6%B5%B7%E5%98%AF" class="mw-redirect" title="海啸">世界海啸日</a></li>
+<li>{flag_icon("Flag_of_the_United_Kingdom_%281-2%29.svg")}<a href="/wiki/%E8%8B%B1%E5%9B%BD" title="英国">英国</a>：<a href="/wiki/%E7%AF%9D%E7%81%AB%E4%B9%8B%E5%A4%9C" title="篝火之夜">篝火之夜</a></li>
+<li>{flag_icon("Flag_of_the_United_States.svg")}<a href="/wiki/US" title="美国">美国</a>：<span class="ilh-all"><span class="ilh-page"><a href="/w/index.php?title=X&amp;action=edit&amp;redlink=1" class="new" title="银行转账日（页面不存在）">银行转账日</a></span><span class="noprint ilh-comment"><span class="ilh-paren">（</span><span class="ilh-lang">英语</span><span class="ilh-colon">：</span><span class="ilh-link"><a href="https://en.wikipedia.org/wiki/Bank_Transfer_Day" class="extiw" title="en:Bank Transfer Day"><span lang="en" dir="auto">Bank Transfer Day</span></a></span><span class="ilh-paren">）</span></span></span></li>
+<li>{flag_icon("Flag_of_Catalonia.svg")}<a href="/wiki/Catalonia" title="加泰罗尼亚">加泰罗尼亚</a>：民族日</li>
+<li>{flag_icon("Flag_of_the_Republic_of_China.svg")}<a href="/wiki/ROC" title="中华民国">中华民国</a>：
+<ul><li>双胞胎日</li>
+<li><a href="/wiki/Industry" title="工业节">工业节</a>，纪念工业建设的节日。</li></ul></li></ul>
+<div class="mw-heading"><h2 id="參考資料">参考资料</h2></div>
+"""
+
+
+def test_zh_date_page_places_each_holiday_where_the_page_or_the_un_says(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    calls = []
+
+    def fake_get_json(url, params=None):
+        calls.append(params)
+        return {"parse": {"text": PLACES_DATE_PAGE_HTML}}
+
+    monkeypatch.setattr(plugin, "_get_json", fake_get_json)
+
+    holidays = plugin._fetch_zh_date_page(datetime(2026, 11, 5, 10, 0))["almanac"]["holidays"]
+
+    catalonia = "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a5/Flag_of_Catalonia.svg/60px-Flag_of_Catalonia.svg.png"
+    assert holidays == [
+        # No place on the page, but the UN's 世界海啸意识日 that day: the UN's.
+        {"name": "世界海啸日", "where": "", "places": [{"name": "联合国", "flag": "un"}]},
+        {"name": "篝火之夜", "where": "英国", "places": [{"name": "英国", "flag": "gb"}]},
+        # The other-language note after a missing article is not part of the name.
+        {"name": "银行转账日", "where": "美国", "places": [{"name": "美国", "flag": "us"}]},
+        # A place without a flagcdn code keeps the Commons flag the page shows (largest, untracked).
+        {"name": "民族日", "where": "加泰罗尼亚", "places": [{"name": "加泰罗尼亚", "flag_url": catalonia}]},
+        # A place heading a nested list leads each holiday under it; a note after the name is dropped.
+        {"name": "双胞胎日", "where": "中华民国", "places": [{"name": "中华民国", "flag": "tw"}]},
+        {"name": "工业节", "where": "中华民国", "places": [{"name": "中华民国", "flag": "tw"}]},
+    ]
+    # Everything was placed from the page itself: no Wikidata request.
+    assert len(calls) == 1
+
+
+WIKIDATA_DATE_PAGE_HTML = """
+<div class="mw-heading"><h2 id="节假日和习俗">节假日和习俗</h2></div>
+<ul><li><a href="/wiki/%E7%AF%9D%E7%81%AB%E4%B9%8B%E5%A4%9C" title="篝火之夜">篝火之夜</a></li>
+<li><a href="/wiki/Kindness" title="世界善意日">世界善意日</a></li>
+<li><a href="/wiki/Christmas" title="圣诞节">圣诞节</a></li>
+<li>无链接日</li></ul>
+<div class="mw-heading"><h2 id="参考资料">参考资料</h2></div>
+"""
+
+
+def wikidata_binding(item, iso=None, label=None, observance=False):
+    binding = {"item": {"type": "uri", "value": f"http://www.wikidata.org/entity/{item}"}}
+    if iso:
+        binding.update(iso={"type": "literal", "value": iso}, placeLabel={"type": "literal", "value": label})
+    if observance:
+        binding["class"] = {"type": "uri", "value": f"http://www.wikidata.org/entity/{wiki_module.UN_OBSERVANCE}"}
+    return binding
+
+
+def test_unplaced_holidays_are_placed_from_wikidata_once_with_the_page(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    calls = []
+
+    def fake_get_json(url, params=None):
+        calls.append((url, params))
+        if params.get("action") == "parse":
+            return {"parse": {"text": WIKIDATA_DATE_PAGE_HTML}}
+        if params.get("prop") == "pageprops":
+            assert params["titles"].split("|") == ["Christmas", "Kindness", "篝火之夜"]
+            return {"query": {
+                "redirects": [{"from": "篝火之夜", "to": "盖伊·福克斯之夜"}],
+                "pages": [{"title": "盖伊·福克斯之夜", "pageprops": {"wikibase_item": "Q1"}},
+                          {"title": "Kindness", "pageprops": {"wikibase_item": "Q2"}},
+                          {"title": "Christmas", "pageprops": {"wikibase_item": "Q3"}}],
+            }}
+        assert url == wiki_module.WIKIDATA_SPARQL_URL
+        assert "wd:Q1 wd:Q2 wd:Q3" in params["query"] and wiki_module.UN_OBSERVANCE in params["query"]
+        return {"results": {"bindings": [
+            wikidata_binding("Q1", "GB", "大不列顛及北愛爾蘭聯合王國"),
+            wikidata_binding("Q2", observance=True),
+            # Celebrated in more than one country: no single place.
+            wikidata_binding("Q3", "US", "美国"), wikidata_binding("Q3", "GB", "英国"),
+        ]}}
+
+    monkeypatch.setattr(plugin, "_get_json", fake_get_json)
+
+    # 11-03 has no UN day, so 世界善意日 is placed only by Wikidata (a UN observance there).
+    holidays = plugin._fetch_zh_date_page(datetime(2026, 11, 3, 10, 0))["almanac"]["holidays"]
+
+    assert holidays == [
+        {"name": "篝火之夜", "where": "", "places": [{"name": "英国", "flag": "gb"}]},
+        {"name": "世界善意日", "where": "", "places": [{"name": "联合国", "flag": "un"}]},
+        {"name": "圣诞节", "where": ""},
+        {"name": "无链接日", "where": ""},
+    ]
+    # The page, its articles' Wikidata items, one query: then the payload cache keeps the answer.
+    assert len(calls) == 3
+
+
+def test_a_wikidata_failure_leaves_holidays_as_their_plain_names(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+
+    def fake_get_json(url, params=None):
+        if params.get("action") == "parse":
+            return {"parse": {"text": WIKIDATA_DATE_PAGE_HTML}}
+        raise RuntimeError("Wikidata is down")
+
+    monkeypatch.setattr(plugin, "_get_json", fake_get_json)
+
+    holidays = plugin._fetch_zh_date_page(datetime(2026, 11, 3, 10, 0))["almanac"]["holidays"]
+
+    assert [holiday["name"] for holiday in holidays] == ["篝火之夜", "世界善意日", "圣诞节", "无链接日"]
+    assert not any("places" in holiday for holiday in holidays)
+
+
+def test_holiday_places_name_the_un_and_the_stated_places():
+    from plugins.daily_wiki_page import holiday_places
+
+    # The UN's own list, on its own date: 世界海啸日 is its 世界海啸意识日.
+    assert holiday_places.is_un_day("世界海啸日", 11, 5)
+    assert holiday_places.is_un_day("国际青年日", 8, 12)
+    assert not holiday_places.is_un_day("世界海啸日", 11, 6)
+    assert not holiday_places.is_un_day("世界素食日", 11, 1)
+    # Stated places, their notes dropped; every part must be a place.
+    assert holiday_places.stated_places("美国（部分州）") == [{"name": "美国", "flag": "us"}]
+    assert holiday_places.stated_places("德国 · 荷兰") == [{"name": "德国", "flag": "de"}, {"name": "荷兰", "flag": "nl"}]
+    assert holiday_places.stated_places("联合国教科文组织") == [{"name": "联合国", "flag": "un"}]
+    assert holiday_places.stated_places("美国阿拉斯加州") == [{"name": "美国阿拉斯加州", "flag": "us"}]
+    assert holiday_places.stated_places("西方基督教") == []
+    assert holiday_places.stated_places("马里亚纳群岛") == []
+    assert holiday_places.stated_places("美国、西方基督教") == []
+    # Only a Wikimedia flag picture stands in for a place the table does not know.
+    assert holiday_places.stated_places("加泰罗尼亚", ["https://example.test/flag.png"]) == []
+    assert holiday_places.place_name("gb") == "英国"
+
+
+def test_holiday_flags_come_from_the_plugin_flagcdn_or_commons_through_the_media_cache(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    forbidden = RecordingImageSession(forbidden=True)
+    monkeypatch.setattr(wiki_module, "get_http_session", lambda: forbidden)
+
+    # The UN's ships with the plugin (Wikimedia Commons, 3:2).
+    un = plugin._holiday_flag("un", "", {})
+    assert un.mode == "RGBA" and un.size == (120, 80)
+    # Nothing but Wikimedia stands in for a flag; a theme-only render never fetches one.
+    assert plugin._holiday_flag("", "https://example.test/flag.png", {}) is None
+    assert plugin._holiday_flag("gb", "", {"_theme_render_only": True}) is None
+    assert forbidden.calls == []
+
+    gb_url = wiki_module.FLAG_URL.format(code="gb")
+    session = RecordingImageSession({gb_url: png_bytes((1, 33, 105))})
+    monkeypatch.setattr(wiki_module, "get_http_session", lambda: session)
+    flag = plugin._holiday_flag("gb", "", {})
+
+    assert [url for url, _kwargs in session.calls] == [gb_url]
+    assert flag.mode == "RGBA" and media_cache_path(tmp_path, gb_url).is_file()
+    # Kept on disk: the next render (here a theme-only one) reads it without a request.
+    monkeypatch.setattr(wiki_module, "get_http_session", lambda: forbidden)
+    assert plugin._holiday_flag("gb", "", {"_theme_render_only": True}).size == flag.size
+    assert forbidden.calls == []

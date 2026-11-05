@@ -1,0 +1,13 @@
+{
+  "image": "un.png",
+  "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2f/Flag_of_the_United_Nations.svg/120px-Flag_of_the_United_Nations.svg.png",
+  "page": "https://commons.wikimedia.org/wiki/File:Flag_of_the_United_Nations.svg",
+  "licence": "Public domain on Wikimedia Commons (insignia: shown only to name a United Nations observance)",
+  "source_sha256": "660e8ddec2b80e6727f6f21da0819dfc2f9bed55f7622f7bb28850572cd4dbdb",
+  "processing": "Commons' 120 px rendering of the official SVG (3:2), unchanged",
+  "size": [
+    120,
+    80
+  ],
+  "sha256": "e21a6f9bf90cff7b277f39c484749ae82e001211bcb3d6a61fbab3b607b10ec5"
+}

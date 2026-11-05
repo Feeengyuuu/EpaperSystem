@@ -5,9 +5,11 @@ from datetime import datetime
 import math
 from pathlib import Path
 import re
+from typing import NamedTuple
 
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
 from plugins.daily_wiki_page.almanac import short_role
+from plugins.daily_wiki_page.holiday_places import MAX_PLACES
 from utils.doodle_backdrop import paint_doodles
 from utils.fonts import load_font
 
@@ -54,6 +56,21 @@ ALMANAC_SEPARATOR = (" · ", False)
 # their solid shapes stay crisp.
 ALMANAC_ICON_GRID = (80, 64)
 ALMANAC_ICON_SUPERSAMPLE = 4
+# A holiday leads with where it belongs: each place's flag, as tall as a Chinese glyph at its own
+# proportions and at most twice as wide (a wider flag keeps that width and stands shorter), as the
+# World Cup panels size theirs, ringed by a hairline in the rule colour as Orbital Signal's pad
+# flags are; then the place's name and the holiday ("[flag] 英国 篝火之夜"). Its row may take
+# ALMANAC_HOLIDAY_LINES lines when the history above keeps its type without the room.
+ALMANAC_FLAG_GAP = 3
+ALMANAC_HOLIDAY_LINES = 2
+FLAG = "flag"
+
+
+class FlagMark(NamedTuple):
+    """A flag run in an almanac entry: a flag key ("gb", "un") or a Commons picture's URL."""
+
+    key: str
+    url: str
 
 
 class LayoutOverflowError(ValueError):
@@ -104,15 +121,43 @@ def _history_image_index(events, payload):
 
 def _almanac_entry(key, item, full=True):
     """One almanac entry as (text, bold) runs: a person's name, year and (when ``full``) what
-    they were ("乔治·布尔 1815 英国数学家"), or a holiday's name; None when it has no name."""
+    they were ("乔治·布尔 1815 英国数学家"), or a holiday's name led by its places' flags
+    (FlagMark runs) and names, never without them; None when it has no name."""
     name = _text(item.get("name"))
     if not name:
         return None
     if key == "holidays":
-        return [(name, True)]
+        places = [place for place in item.get("places") or [] if isinstance(place, dict) and _text(place.get("name"))]
+        if not places:
+            return [(name, True)]
+        shown = places[:MAX_PLACES]
+        label = "、".join(_text(place["name"]) for place in shown) + ("等" if len(places) > len(shown) else "")
+        flags = [(FlagMark(_text(place.get("flag")).lower(), _text(place.get("flag_url"))), FLAG) for place in shown]
+        return [*flags, (label, False), (f" {name}", True)]
     role = short_role(item.get("role")) if full else ""
     year = _text(item.get("year"))
     return [(name, True), *([(f" {year}", False)] if year else []), *([(f" {role}", False)] if role else [])]
+
+
+def _almanac_forms(key, items):
+    """Each entry's forms, fullest first: a person with, then without, what they were; a run of
+    holidays in the same places as one entry naming them all ("[flag] 中国 光棍节、双十一购物狂欢节"),
+    then naming fewer of them."""
+    if key != "holidays":
+        for item in items:
+            if isinstance(item, dict):
+                yield [_almanac_entry(key, item, full) for full in (True, False)]
+        return
+    runs = []
+    for item in items:
+        if not isinstance(item, dict) or not _text(item.get("name")):
+            continue
+        if runs and item.get("places") and item.get("places") == runs[-1][0].get("places"):
+            runs[-1][1].append(_text(item.get("name")))
+        else:
+            runs.append((item, [_text(item.get("name"))]))
+    for item, names in runs:
+        yield [_almanac_entry(key, {**item, "name": "、".join(names[:count])}) for count in range(len(names), 0, -1)]
 
 
 def almanac_icon(kind, height):
@@ -162,6 +207,17 @@ def almanac_icon(kind, height):
     return mask.resize((width, height), RESAMPLE)
 
 
+def fit_flag(source, height):
+    """``source`` cropped to its visible pixels and contained in a ``height`` tall, twice as wide
+    box: as tall as ``height`` at its own proportions up to 2:1, a wider flag that wide and
+    shorter. Never stretched."""
+    flag = source.convert("RGBA")
+    bounds = flag.getchannel("A").getbbox()
+    if bounds:
+        flag = flag.crop(bounds)
+    return ImageOps.contain(flag, (2 * height, height), method=RESAMPLE)
+
+
 def _joined_runs(entries):
     runs = []
     for index, entry in enumerate(entries):
@@ -198,6 +254,7 @@ class _Page:
         self.image = Image.new("RGB", (self.width, self.height), self.palette["background"])
         self.draw = ImageDraw.Draw(self.image)
         self.fonts = {}
+        self.flags = {}
         self.margin = self.px(18)
         self.rule_y = self.px(70)
         self.top = self.px(83)
@@ -616,6 +673,7 @@ class _Page:
         image_index = _history_image_index(raw_events, self.payload) if source is not None else None
         # 今日人物与节日 takes the column's foot only while the events above it still fit
         # whole: all of them, else all but one (never the one with the picture); else it stays off.
+        # Its holidays take a second line only from room all the events leave unused.
         almanac = self.almanac_rows() if enabled else []
         selected = None
         if almanac:
@@ -623,6 +681,9 @@ class _Page:
             for events, index, omitted in _without_one_event(raw_events, image_index):
                 selected, size = self.fit_history_rows(events, source, index, room)
                 if selected is not None:
+                    roomier = None if omitted else self.roomier_almanac(events, source, index, available, almanac)
+                    if roomier is not None:
+                        almanac, room, selected = roomier
                     raw_events, image_index, available = events, index, room
                     self.audit["omitted_events"].extend(omitted)
                     break
@@ -692,43 +753,82 @@ class _Page:
                     return rows, size
         return None, self.minimum_font
 
-    def almanac_rows(self):
-        """今日人物与节日 as rows {key, icon, colour, entries}, each entry a list of (text, bold)
-        runs; a row keeps the entries that fit its line whole, and a row with none is left out."""
+    def almanac_rows(self, holiday_lines=1):
+        """今日人物与节日 as rows {key, icon, colour, lines}, each line a list of entries and each
+        entry a list of (text, bold) runs (FlagMark runs lead a placed holiday); a row keeps the
+        entries that fit its line whole (the holidays' up to ``holiday_lines`` lines, each entry
+        on the first with room), and a row with none is left out."""
         almanac = self.payload.get("almanac") if self.cjk else None
         if not isinstance(almanac, dict):
             return []
         width = self.right - self.history_left - self.px(ALMANAC_ICON_SLOT) - self.px(ALMANAC_CHIP_GAP)
         rows = []
         for key, icon, colour in ALMANAC_ROWS:
-            entries = []
-            for item in almanac.get(key) or []:
-                # A person whose role does not fit is still named, by name and year.
-                for full in (True, False):
-                    entry = _almanac_entry(key, item, full) if isinstance(item, dict) else None
-                    if entry and self.runs_width(_joined_runs([*entries, entry])) <= width:
-                        entries.append(entry)
-                        break
-            if entries:
-                rows.append({"key": key, "icon": icon, "colour": colour, "entries": entries})
+            lines = [[] for _line in range(max(1, holiday_lines) if key == "holidays" else 1)]
+            # A person whose role does not fit is still named, by name and year.
+            for forms in _almanac_forms(key, almanac.get(key) or []):
+                placement = next(((line, entry) for entry in forms if entry for line in lines
+                                  if self.runs_width(_joined_runs([*line, entry])) <= width), None)
+                if placement is not None:
+                    placement[0].append(placement[1])
+            lines = [line for line in lines if line]
+            if lines:
+                rows.append({"key": key, "icon": icon, "colour": colour, "lines": lines})
         return rows
+
+    def roomier_almanac(self, events, source, image_index, available, rows):
+        """(the almanac with its holidays over more lines, the history's room under it, the history
+        rows) when the holidays left some out and the events keep the same type in the smaller
+        room (size, spacing and thumbnail); else None."""
+        if ALMANAC_HOLIDAY_LINES < 2 or not any(row["key"] == "holidays" for row in rows):
+            return None
+        wider = self.almanac_rows(ALMANAC_HOLIDAY_LINES)
+        if sum(len(row["lines"]) for row in wider) <= sum(len(row["lines"]) for row in rows):
+            return None
+        before = self.audit.get("history_fit")
+        room = available - self.almanac_height(wider)
+        selected, _size = self.fit_history_rows(events, source, image_index, room)
+        if selected is not None and self.audit.get("history_fit") == before:
+            return wider, room, selected
+        self.audit["history_fit"] = before
+        return None
 
     def almanac_fonts(self):
         return {bold: self.font("国", self.minimum_font, weight=800 if bold else 500) for bold in (False, True)}
 
+    def almanac_flag(self, mark):
+        """The flag a FlagMark names, sized for an almanac line (fit_flag), or None."""
+        if mark not in self.flags:
+            flag = None
+            getter = getattr(self.plugin, "_holiday_flag", None)
+            source = getter(mark.key, mark.url, self.settings) if callable(getter) else None
+            if source is not None:
+                flag = fit_flag(source, self.glyph_height("国", self.almanac_fonts()[False]))
+            self.flags[mark] = flag
+        return self.flags[mark]
+
     def runs_width(self, runs):
-        fonts = self.almanac_fonts()
-        return sum(self.draw.textlength(text, font=fonts[bold]) for text, bold in runs)
+        """How far ``runs`` reach as draw_almanac lays them (a flag starts on a whole pixel, with
+        its hairline ring and gap; one that cannot load takes no room)."""
+        fonts, x = self.almanac_fonts(), 0
+        for text, bold in runs:
+            if bold != FLAG:
+                x += self.draw.textlength(text, font=fonts[bold])
+            elif (flag := self.almanac_flag(text)) is not None:
+                x = round(x) + flag.width + 2 + self.px(ALMANAC_FLAG_GAP)
+        return x
 
     def almanac_line_height(self):
         return self.line_height("国", self.almanac_fonts()[False])
 
     def almanac_height(self, rows):
-        return self.px(ALMANAC_TOP_GAP) + len(rows) * (self.almanac_line_height() + self.px(ALMANAC_ROW_GAP))
+        lines = sum(len(row["lines"]) for row in rows)
+        return self.px(ALMANAC_TOP_GAP) + lines * (self.almanac_line_height() + self.px(ALMANAC_ROW_GAP))
 
     def draw_almanac(self, rows, top):
         """The rows from ``top`` (a rule over them) to the column's foot: each one's icon, solid in
-        its category's colour and centred in its slot, then its entries in ink on one baseline."""
+        its category's colour and centred in its slot by its first line, then its entries in ink on
+        one baseline per line; a flag sits on the Chinese glyphs' middle, ringed in the rule colour."""
         self.draw.line((self.history_left, top, self.right, top), fill=self.palette["ink"], width=self.px(2))
         fonts = self.almanac_fonts()
         slot, line_h = self.px(ALMANAC_ICON_SLOT), self.almanac_line_height()
@@ -741,18 +841,35 @@ class _Page:
             icon_box = [self.history_left + (slot - icon.width) // 2, y + (line_h - height) // 2]
             icon_box += [icon_box[0] + icon.width, icon_box[1] + height]
             self.image.paste(self.palette[row["colour"]], tuple(icon_box), icon)
-            x = self.history_left + slot + self.px(ALMANAC_CHIP_GAP)
-            baseline = y + (line_h - self.px(2) - ascent) // 2 + ascent
-            runs = _joined_runs(row["entries"])
-            for text, bold in runs:
-                self.draw.text((x, baseline), text, font=fonts[bold], fill=self.palette["ink"], anchor="ls")
-                x += self.draw.textlength(text, font=fonts[bold])
-            if x > self.right + 1:
-                raise LayoutOverflowError("An almanac line would exceed the history column.")
+            row_top, texts, flags, right = y, [], [], self.history_left
+            for line in row["lines"]:
+                x = self.history_left + slot + self.px(ALMANAC_CHIP_GAP)
+                baseline = y + (line_h - self.px(2) - ascent) // 2 + ascent
+                glyph = self.draw.textbbox((x, baseline), "国", font=fonts[False], anchor="ls")
+                runs = _joined_runs(line)
+                for text, bold in runs:
+                    if bold == FLAG:
+                        flag = self.almanac_flag(text)
+                        if flag is None:
+                            continue
+                        left, flag_y = round(x), (glyph[1] + glyph[3] - flag.height) // 2
+                        self.image.paste(flag, (left + 1, flag_y), flag)
+                        self.draw.rectangle((left, flag_y - 1, left + flag.width + 1, flag_y + flag.height),
+                                            outline=self.palette["rule"], width=1)
+                        flags.append({"key": text.key, "url": text.url,
+                                      "bounds": [left, flag_y - 1, left + flag.width + 2, flag_y + flag.height + 1]})
+                        x = left + flag.width + 2 + self.px(ALMANAC_FLAG_GAP)
+                        continue
+                    self.draw.text((x, baseline), text, font=fonts[bold], fill=self.palette["ink"], anchor="ls")
+                    x += self.draw.textlength(text, font=fonts[bold])
+                if x > self.right + 1:
+                    raise LayoutOverflowError("An almanac line would exceed the history column.")
+                texts.append("".join(text for text, bold in runs if bold != FLAG))
+                right = max(right, round(x))
+                y += line_h + self.px(ALMANAC_ROW_GAP)
             records.append({"key": row["key"], "icon": row["icon"], "icon_bounds": icon_box,
-                            "text": "".join(text for text, _bold in runs),
-                            "bounds": [self.history_left, y, round(x), y + line_h]})
-            y += line_h + self.px(ALMANAC_ROW_GAP)
+                            "text": ALMANAC_SEPARATOR[0].join(texts), "lines": texts, "flags": flags,
+                            "bounds": [self.history_left, row_top, right, y - self.px(ALMANAC_ROW_GAP)]})
         self.audit["almanac"] = {"rows": records, "bounds": [self.history_left, top, self.right, self.bottom]}
 
     def shortened_history_rows(self, events, source, image_index, available):

@@ -748,3 +748,139 @@ def test_almanac_icons_are_solid_shapes_with_their_gaps_cut(kind):
     # Solid enough to read at a line's height, never a filled block.
     assert 60 <= solid <= 0.6 * 22 * 18
     assert icon.getpixel((0, 0)) == 0 and icon.getpixel((21, 17)) == 0
+
+
+# Stand-in flags: one solid colour each, at the real flags' proportions.
+FLAG_COLOURS = {"un": ((0, 158, 219), (3, 2)), "gb": ((200, 16, 46), (2, 1)), "pa": ((0, 82, 147), (3, 2)),
+                "us": ((178, 34, 52), (19, 10)), "ph": ((0, 56, 168), (2, 1))}
+PLACED_ALMANAC = {
+    **ALMANAC,
+    "holidays": [
+        {"name": "世界海啸日", "where": "", "places": [{"name": "联合国", "flag": "un"}]},
+        {"name": "篝火之夜", "where": "英国", "places": [{"name": "英国", "flag": "gb"}]},
+        {"name": "科隆日", "where": "巴拿马", "places": [{"name": "巴拿马", "flag": "pa"}]},
+        {"name": "银行转账日", "where": "美国", "places": [{"name": "美国", "flag": "us"}]},
+        {"name": "内格罗斯革命纪念日", "where": "菲律宾", "places": [{"name": "菲律宾", "flag": "ph"}]},
+    ],
+}
+
+
+def solid_flags(monkeypatch, plugin):
+    def holiday_flag(key, _url, _settings):
+        colour, (width, height) = FLAG_COLOURS[key]
+        return Image.new("RGBA", (width * 40, height * 40), (*colour, 255))
+
+    monkeypatch.setattr(plugin, "_holiday_flag", holiday_flag)
+
+
+def holiday_row(image):
+    return next(row for row in image.info["daily_wiki_layout"]["almanac"]["rows"] if row["key"] == "holidays")
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_placed_holidays_lead_with_their_flag_and_place(plugin, payload, monkeypatch, mode):
+    solid_flags(monkeypatch, plugin)
+    image = plugin._render_page((800, 480), {**payload, "almanac": PLACED_ALMANAC}, settings(mode), NOW)
+    audit = image.info["daily_wiki_layout"]
+    row = holiday_row(image)
+    region = audit["regions"]["history"]["bounds"]
+    palette = plugin._palette(settings(mode), datetime(2026, 10, 5))
+
+    # "[flag] 联合国 世界海啸日 · [flag] 英国 篝火之夜": each holiday whole, after its place's name.
+    assert row["lines"][0].startswith("联合国 世界海啸日 · 英国 篝火之夜")
+    shown = [holiday for holiday in PLACED_ALMANAC["holidays"] if holiday["name"] in row["text"]]
+    assert all(f'{holiday["places"][0]["name"]} {holiday["name"]}' in row["text"] for holiday in shown)
+    assert sorted(flag["key"] for flag in row["flags"]) == sorted(holiday["places"][0]["flag"] for holiday in shown)
+    # One height for every flag, each at its own proportions (never wider than 2:1), solid on the
+    # page, ringed in the rule colour, inside the column like the lines it leads.
+    heights = {flag["bounds"][3] - flag["bounds"][1] - 2 for flag in row["flags"]}
+    assert len(heights) == 1
+    height = heights.pop()
+    assert 8 <= height <= 16
+    for flag in row["flags"]:
+        left, top, right, bottom = flag["bounds"]
+        colour, (width, tall) = FLAG_COLOURS[flag["key"]]
+        assert abs((right - left - 2) - height * width / tall) <= 1 and right - left - 2 <= 2 * height
+        assert image.getpixel(((left + right) // 2, (top + bottom) // 2)) == colour
+        assert image.getpixel((left, (top + bottom) // 2)) == palette["rule"]
+        assert_inside(flag["bounds"], region)
+    assert_inside(row["bounds"], region)
+    assert all(event["complete"] for event in audit["events"])
+
+
+def test_holidays_in_the_same_place_share_its_flag_and_name(plugin, payload, monkeypatch):
+    solid_flags(monkeypatch, plugin)
+    britain = [{"name": "英国", "flag": "gb"}]
+    almanac = {"holidays": [{"name": "篝火之夜", "where": "英国", "places": britain},
+                            {"name": "银行日", "where": "英国", "places": britain},
+                            {"name": "科隆日", "where": "巴拿马", "places": [{"name": "巴拿马", "flag": "pa"}]}]}
+    roomy = {**payload, "on_this_day": payload["on_this_day"][1:3], "history_image_url": "",
+             "history_image_year": "", "almanac": almanac}
+
+    row = holiday_row(plugin._render_page((800, 480), roomy, settings(), NOW))
+
+    assert row["text"] == "英国 篝火之夜、银行日 · 巴拿马 科隆日"
+    assert [flag["key"] for flag in row["flags"]] == ["gb", "pa"]
+
+
+def test_a_placed_holiday_whose_flag_cannot_load_keeps_its_place_name(plugin, payload, monkeypatch):
+    monkeypatch.setattr(plugin, "_holiday_flag", lambda *_args: None)
+    image = plugin._render_page((800, 480), {**payload, "almanac": PLACED_ALMANAC}, settings(), NOW)
+    row = holiday_row(image)
+
+    assert row["lines"][0].startswith("联合国 世界海啸日 · 英国 篝火之夜")
+    assert row["flags"] == []
+
+
+def test_holidays_take_a_second_line_only_from_room_the_history_leaves(plugin, payload, monkeypatch):
+    solid_flags(monkeypatch, plugin)
+    # Two short events and no history picture leave the column room to spare.
+    roomy = {**payload, "on_this_day": payload["on_this_day"][1:3], "history_image_url": "",
+             "history_image_year": "", "almanac": PLACED_ALMANAC}
+
+    lines = swiss_renderer.ALMANAC_HOLIDAY_LINES
+    two = plugin._render_page((800, 480), roomy, settings(), NOW)
+    monkeypatch.setattr(swiss_renderer, "ALMANAC_HOLIDAY_LINES", 1)
+    one = plugin._render_page((800, 480), roomy, settings(), NOW)
+    monkeypatch.setattr(swiss_renderer, "ALMANAC_HOLIDAY_LINES", lines)
+
+    # One line keeps the holidays that fit it and leaves the rest out whole; with room to spare
+    # they continue on a second line, and the history keeps exactly its type.
+    assert len(holiday_row(one)["lines"]) == 1 and len(holiday_row(two)["lines"]) == 2
+    assert holiday_row(two)["lines"][0] == holiday_row(one)["lines"][0]
+    assert "巴拿马" not in holiday_row(one)["text"] and "科隆日" not in holiday_row(one)["text"]
+    assert "巴拿马 科隆日" in holiday_row(two)["text"]
+    fit = one.info["daily_wiki_layout"]["history_fit"]
+    assert two.info["daily_wiki_layout"]["history_fit"] == fit
+    assert_inside(holiday_row(two)["bounds"], two.info["daily_wiki_layout"]["regions"]["history"]["bounds"])
+
+    # When the history would need a smaller type in the room left, the holidays keep one line.
+    original, rooms = swiss_renderer._Page.fit_history_rows, []
+
+    def tighter(self, events, source, image_index, available):
+        rows, size = original(self, events, source, image_index, available)
+        rooms.append(available)
+        if rows is not None and len(rooms) > 1:
+            self.audit["history_fit"] = {**self.audit["history_fit"], "font_size": size - 1}
+        return rows, size
+
+    monkeypatch.setattr(swiss_renderer._Page, "fit_history_rows", tighter)
+    tight = plugin._render_page((800, 480), roomy, settings(), NOW)
+
+    assert len(rooms) == 2 and rooms[1] < rooms[0]
+    assert holiday_row(tight)["lines"] == holiday_row(one)["lines"]
+    assert tight.info["daily_wiki_layout"]["history_fit"] == fit
+
+
+def test_flags_keep_their_proportions_at_one_height_up_to_two_to_one():
+    fit = swiss_renderer.fit_flag
+
+    assert fit(Image.new("RGB", (300, 200), "red"), 12).size == (18, 12)
+    assert fit(Image.new("RGB", (1200, 600), "red"), 12).size == (24, 12)
+    # Wider than 2:1 (Qatar): as wide as the cap, shorter, never squeezed.
+    qatar = fit(Image.new("RGB", (280, 110), "red"), 12)
+    assert qatar.width == 24 and qatar.height == 9
+    # Transparent padding around a flag is not part of it.
+    padded = Image.new("RGBA", (100, 100), (0, 0, 0, 0))
+    padded.paste((0, 0, 255, 255), (20, 30, 80, 70))
+    assert fit(padded, 12).size == (18, 12)
