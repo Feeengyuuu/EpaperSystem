@@ -8,15 +8,17 @@ gives one, a summary and a picture.
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from runtime.refresh_contracts import TaskCancelled
-from utils.http_client import get_http_client
+from utils.http_client import HttpClientError, get_http_client
 
 
+logger = logging.getLogger(__name__)
 PACIFIC = ZoneInfo("America/Los_Angeles")
 BEIJING = ZoneInfo("Asia/Shanghai")
 USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -38,7 +40,8 @@ COOKIE_KEY = "WEIBO_COOKIE"
 ORDER = ("weibo",) + PLATFORMS
 MAX_ROWS = 20
 # The platforms' picture hosts (each serves from numbered mirrors): a picture is fetched only from these.
-IMAGE_HOST_SUFFIXES = (".cdn.bcebos.com", ".toutiaoimg.com", ".zhimg.com", ".douyinpic.com")
+IMAGE_HOST_SUFFIXES = (".cdn.bcebos.com", ".toutiaoimg.com", ".zhimg.com", ".douyinpic.com", ".thepaper.cn",
+                       ".mastodon.social")
 # A Zhihu picture's path names its size after the hash (v2-<hash>_1440w.png); "_xl" is a small one.
 ZHIHU_SIZED = re.compile(r"(/v2-[0-9a-f]+)(?:_[0-9a-z]+)?\.(?:png|jpe?g|webp)$")
 # Each platform's labels, as the page names them (anything else is left unmarked).
@@ -323,6 +326,86 @@ def fetch_weibo(cookie, context):
 
 
 FETCHERS = {"baidu": fetch_baidu, "toutiao": fetch_toutiao, "zhihu": fetch_zhihu, "douyin": fetch_douyin}
+
+
+# --- the turn cards: 澎湃's hot list and the overseas talk ---------------------------------------
+
+THEPAPER_URL = "https://cache.thepaper.cn/contentapi/wwwIndex/rightSidebar"
+BLUESKY_TRENDS_URL = "https://public.api.bsky.app/xrpc/app.bsky.unspecced.getTrends"
+MASTODON_LINKS_URL = "https://mastodon.social/api/v1/trends/links"
+OVERSEAS_EACH = 6
+# Bluesky's trend states and categories, in Chinese ("hot" is its hottest; cooling ones are left plain).
+BLUESKY_TAGS = {"hot": "热", "trending": "升"}
+BLUESKY_CATEGORIES = {"politics": "政治", "entertainment": "娱乐", "sports": "体育", "business": "商业",
+                      "science-tech": "科技", "science": "科学", "tech": "科技", "culture": "文化", "news": "新闻",
+                      "other": "其他", "video-games": "游戏", "pop-culture": "流行文化"}
+
+
+def normalize_thepaper(payload):
+    """澎湃新闻's hot list: each story with its likes, comments, column and picture."""
+    data = (payload or {}).get("data") if isinstance(payload, dict) else None
+    rows = []
+    for item in (data or {}).get("hotNews") or [] if isinstance(data, dict) else []:
+        if not isinstance(item, dict) or not _clean(item.get("name"), 80):
+            continue
+        node = item.get("nodeInfo") if isinstance(item.get("nodeInfo"), dict) else {}
+        since = _count(item.get("pubTimeLong")) // 1000
+        rows.append({"title": _clean(item.get("name"), 80), "heat": _count(item.get("praiseTimes")),
+                     "comments": _count(item.get("interactionNum")), "summary": _clean(node.get("name"), 12),
+                     "image": safe_image_url(item.get("pic") or item.get("smallPic")), "since": since or None,
+                     "tag": None})
+    return _rows(rows, "thepaper")
+
+
+def fetch_thepaper(context):
+    return normalize_thepaper(_get(THEPAPER_URL, context, max_bytes=512 * 1024))
+
+
+def _bluesky_rows(payload):
+    rows = []
+    for trend in (payload or {}).get("trends") or [] if isinstance(payload, dict) else []:
+        title = _clean((trend or {}).get("displayName") or (trend or {}).get("topic"), 80) if isinstance(trend, dict) else ""
+        if title:
+            rows.append({"title": title, "heat": _count(trend.get("postCount")), "source": "bluesky",
+                         "tag": BLUESKY_TAGS.get(str(trend.get("status") or "")),
+                         "summary": BLUESKY_CATEGORIES.get(str(trend.get("category") or ""), ""), "image": None})
+    return rows[:OVERSEAS_EACH]
+
+
+def _mastodon_rows(payload):
+    rows = []
+    for link in payload if isinstance(payload, list) else []:
+        title = _clean((link or {}).get("title"), 100) if isinstance(link, dict) else ""
+        if title:
+            uses = sum(_count(day.get("uses")) for day in link.get("history") or [] if isinstance(day, dict))
+            rows.append({"title": title, "heat": uses, "source": "mastodon", "tag": None,
+                         "summary": _clean(link.get("provider_name"), 24), "image": safe_image_url(link.get("image"))})
+    return rows[:OVERSEAS_EACH]
+
+
+def normalize_overseas(bluesky, mastodon):
+    """What the English-speaking social web talks about: Bluesky's trending topics (posts, state,
+    category) and the links most shared on mastodon.social (shares over its days, outlet), taking
+    turns."""
+    sky, toots = _bluesky_rows(bluesky), _mastodon_rows(mastodon)
+    rows = [row for pair in zip(sky, toots) for row in pair]
+    rows += sky[len(toots):] + toots[len(sky):]
+    return _rows(rows, "overseas")
+
+
+def fetch_overseas(context):
+    readings = []
+    for url, params in ((BLUESKY_TRENDS_URL, {"limit": OVERSEAS_EACH}), (MASTODON_LINKS_URL, {"limit": OVERSEAS_EACH})):
+        try:
+            readings.append(_get(url, context, max_bytes=256 * 1024, params=params))
+        except (HttpClientError, ValueError) as error:
+            # One network's trends alone still fill the card.
+            logger.info("Overseas trends unavailable from %s: %s", url.split("/")[2], type(error).__name__)
+            readings.append(None)
+    return normalize_overseas(*readings)
+
+
+EXTRA_FETCHERS = {"thepaper": fetch_thepaper, "overseas": fetch_overseas}
 
 
 def valid_rows(data):

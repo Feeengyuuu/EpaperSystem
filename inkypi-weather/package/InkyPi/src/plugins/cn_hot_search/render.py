@@ -7,7 +7,8 @@ game and car on its other boards. Each card shows a list's first three entries, 
 its heat, the platform's own label (新 / 热 / 辟谣 …), whether it is on other lists too, a line of
 what the platform says about it, and its move since the previous refresh. Baidu, Toutiao, Zhihu
 and Douyin fill a 2 x 2 grid; with the owner's Weibo login it leads a 3 x 2 grid whose last card
-gathers the other stories that are on several lists.
+takes turns by the hour between the other stories that are on several lists, 澎湃's hot list and
+the overseas talk (Bluesky's trends and Mastodon's most shared links, in Chinese once translated).
 """
 
 from __future__ import annotations
@@ -36,7 +37,15 @@ BRANDS = {"weibo": (0xE6, 0x16, 0x2D), "baidu": (0x29, 0x32, 0xE1), "toutiao": (
           "zhihu": (0x05, 0x6D, 0xE8), "douyin": (0xFE, 0x2C, 0x55)}
 NAMES = {"weibo": "微博", "baidu": "百度", "toutiao": "头条", "zhihu": "知乎", "douyin": "抖音"}
 NOTES = {"weibo": "微博热搜", "baidu": "实时热搜", "toutiao": "头条热榜", "zhihu": "知乎热榜", "douyin": "抖音热榜"}
-LOGO_HEIGHTS = {"weibo": 19, "baidu": 20, "toutiao": 15, "zhihu": 17, "douyin": 17}
+LOGO_HEIGHTS = {"weibo": 19, "baidu": 20, "toutiao": 15, "zhihu": 17, "douyin": 17, "thepaper": 18, "bluesky": 15,
+                "mastodon": 16}
+# The cards that take turns in the grid's spare places, hour by hour: the stories on several lists,
+# 澎湃's hot list and the overseas talk (Bluesky's trends and Mastodon's most shared links). Each
+# turn card wears its source's colour: 澎湃's ink-black mark, Bluesky's butterfly blue.
+TURN_CARDS = ("shared", "thepaper", "overseas")
+EXTRA_TINTS = {"overseas": (0x00, 0x85, 0xFF)}
+EXTRA_TITLES = {"thepaper": "澎湃热榜", "overseas": "海外热议"}
+EXTRA_NOTES = {"thepaper": "澎湃新闻", "overseas": "Bluesky · Mastodon"}
 # The header's row of logos: Baidu's paw stands above its letters, so it is set taller.
 KEY_LOGO_HEIGHTS = {"weibo": 22, "baidu": 24, "toutiao": 18, "zhihu": 20, "douyin": 20}
 KEY_GAP = 18
@@ -374,12 +383,19 @@ def _lead(canvas, payload, images, platforms, now):
 
 # --- the cards ------------------------------------------------------------------------------------
 
-def _slots(payload):
-    """The cards in order: Weibo when the owner signed in, the four lists, and the shared stories
-    when that leaves the 3 x 2 grid a card to spare."""
+def _slots(payload, now=None):
+    """The cards in order: Weibo when the owner signed in, the four lists, then the turn cards at
+    hand (TURN_CARDS, the hour choosing which comes first) in the 3 x 2 grid's spare places; the
+    grid stays even, so the four lists alone keep a 2 x 2 grid when nothing else is at hand."""
     lists = payload.get("lists") or {}
     slots = (["weibo"] if "weibo" in lists else []) + list(sources.PLATFORMS)
-    return slots + ["shared"] if len(slots) % 2 else slots
+    extras = payload.get("extras") or {}
+    candidates = [name for name in TURN_CARDS if name == "shared" or extras.get(name)]
+    turn = (now.hour if now else 0) % len(candidates)
+    chosen = (candidates[turn:] + candidates[:turn])[:max(0, 6 - len(slots))]
+    if (len(slots) + len(chosen)) % 2:
+        chosen = chosen[:-1]
+    return slots + chosen
 
 
 def _card_boxes(count, grid_top=GRID_TOP):
@@ -573,6 +589,56 @@ def _shared_card(canvas, box, payload, images):
              rank=number + 2, title=topic["title"], move=None, meta=meta)
 
 
+def row_title(row):
+    """A turn card row's title: the overseas talk's in Chinese once translated."""
+    return row.get("title_zh") or row.get("title")
+
+
+def _extra_meta(canvas, name, row, now):
+    """A turn card row's second line: 澎湃's column, likes, comments and age; the overseas talk's
+    network mark, Bluesky's category or the outlet, its posts or shares and its trend's state."""
+    def meta(x, middle, end):
+        if name == "overseas":
+            x += _paste_logo(canvas, row["source"], x, middle, 11) + 5
+        parts = []
+        if name == "thepaper":
+            parts = [f"{heat_text(row.get('heat'))}赞" if row.get("heat") else "",
+                     f"{row['comments']}评" if row.get("comments") else "", ago_text(row.get("since"), now)]
+        elif row.get("heat"):
+            parts = [f"{heat_text(row['heat'])}{'帖' if row['source'] == 'bluesky' else '次分享'}"]
+        if row.get("tag"):
+            x += _chip(canvas, x, middle, row["tag"], TAG_COLORS.get(row["tag"], SHARED)) + 5
+        if row.get("summary") and end - x > NOTE_MIN_WIDTH:
+            x += canvas.text((x, middle), row["summary"], 10, "ink", anchor="lm", width=min(90, end - x)) + 6
+        text = " · ".join(part for part in parts if part)
+        if text and end - x > NOTE_MIN_WIDTH:
+            canvas.text((x, middle), text, 10, "muted", anchor="lm", bold=False, width=end - x)
+    return meta
+
+
+def _extra_card(canvas, box, name, payload, images, now):
+    """A turn card: 澎湃's hot list or the overseas talk, under its sources' official logos."""
+    left, top, right, bottom = box
+    rows = ((payload.get("extras") or {}).get(name) or [])[:ROWS_SHOWN]
+    tint = EXTRA_TINTS.get(name) or canvas.color("ink")
+
+    def title(middle):
+        x = left + 9
+        for logo in (("bluesky", "mastodon") if name == "overseas" else (name,)):
+            x += _paste_logo(canvas, logo, x, middle) + 5
+        canvas.text((x + 1, middle), EXTRA_TITLES[name], 14, anchor="lm")
+        canvas.text((right - 9, middle), EXTRA_NOTES[name], 10, "muted", anchor="rm", bold=False)
+
+    row_top, row_h = _frame(canvas, box, tint, title, "shared")
+    for number, row in enumerate(rows):
+        y0 = row_top + number * row_h
+        if number:
+            canvas.rule((left + 8, y0 - 1, right - 8, y0 - 1))
+        picture = _picture_for(images, [row]) or topic_art.picture(row.get("title"), row.get("summary"))
+        _row(canvas, box, y0, row_h, picture=picture, tint=tint, rank=row.get("rank") or number + 1,
+             title=row_title(row), move=None, meta=_extra_meta(canvas, name, row, now))
+
+
 def _key(canvas, platforms, left, right):
     """The header's key: the platforms' official logos in a row, divided by thin rules, as far as
     there is room."""
@@ -595,8 +661,8 @@ def render_page(dimensions, payload, settings, now, images):
     beijing = now.astimezone(sources.BEIJING)
     stamp_left = 788 - canvas.text((788, 19), f"{now:%m.%d} 周{WEEKDAYS[now.weekday()]} {now:%H:%M}", 16, anchor="rm")
     canvas.text((788, 39), f"北京时间 {beijing:%m.%d %H:%M}", 10, "muted", anchor="rm", bold=False)
-    slots = _slots(payload)
-    platforms = [slot for slot in slots if slot != "shared"]
+    slots = _slots(payload, now)
+    platforms = [slot for slot in slots if slot in sources.ORDER]
     _key(canvas, platforms, title_right + 16, stamp_left - 14)
     canvas.rule((12, 52, 788, 52), "ink", 2)
     _lead(canvas, payload, images, platforms, now)
@@ -609,6 +675,8 @@ def render_page(dimensions, payload, settings, now, images):
     for slot, box in zip(slots, _card_boxes(len(slots), grid_top)):
         if slot == "shared":
             _shared_card(canvas, box, payload, images)
+        elif slot in EXTRA_TITLES:
+            _extra_card(canvas, box, slot, payload, images, now)
         else:
             _platform_card(canvas, box, slot, payload, images, marks[slot], now)
     result = canvas.image

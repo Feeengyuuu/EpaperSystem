@@ -283,3 +283,141 @@ def test_the_boards_strip_sits_under_the_lead_and_the_grid_moves_down(mode, monk
     # Without boards the page keeps its old grid.
     render_page((800, 480), payload, {"_inkypi_theme": {"mode": mode}}, NOW, {})
     assert boxes[-1] == render.GRID_TOP
+
+
+THEPAPER = {"resultCode": 1, "data": {"hotNews": [
+    {"contId": "34422015", "name": "霍志静任北京人艺院长，冯远征不再担任", "praiseTimes": "47", "interactionNum": "166",
+     "pic": "https://imgpai.thepaper.cn/newpai/image/1793966581311_k5DwND.jpg", "pubTimeLong": "1793966911741",
+     "nodeInfo": {"nodeId": 25423, "name": "人事风向"}},
+    {"contId": "34418620", "name": "国家卫健委原党组成员主动投案", "praiseTimes": "284", "interactionNum": "62",
+     "pic": "https://example.com/x.jpg", "pubTimeLong": "1793930484087", "nodeInfo": {"name": "打虎记"}},
+    {"contId": "1", "name": ""}]}}
+BLUESKY = {"trends": [
+    {"topic": "godzilla", "displayName": "Godzilla Minus Zero opens", "postCount": 2050, "status": "hot",
+     "category": "entertainment", "startedAt": "2026-11-03T02:04:25+00:00"},
+    {"topic": "tesla", "displayName": "Tesla halts Cybertruck production", "postCount": 5517, "status": "cooling",
+     "category": "business"}]}
+MASTODON = [
+    {"title": "Global stocks tumble as AI panic grips markets", "provider_name": "the Guardian",
+     "image": "https://files.mastodon.social/cache/preview_cards/images/213/705/536/original/43e.jpg",
+     "history": [{"day": "1793923200", "uses": "120", "accounts": "100"}, {"day": "1793836800", "uses": "58"}]},
+    {"title": "Protesters break into Microsoft AI data centre site", "provider_name": "Al Jazeera", "image": None,
+     "history": [{"day": "1793923200", "uses": "112"}]}]
+
+
+def test_the_papers_hot_list_reads_its_likes_column_and_picture():
+    rows = sources.normalize_thepaper(THEPAPER)["rows"]
+
+    assert [(row["rank"], row["title"]) for row in rows] == [
+        (1, "霍志静任北京人艺院长，冯远征不再担任"), (2, "国家卫健委原党组成员主动投案")]
+    assert (rows[0]["heat"], rows[0]["comments"], rows[0]["summary"], rows[0]["since"]) == (47, 166, "人事风向", 1793966911)
+    assert rows[0]["image"].startswith("https://imgpai.thepaper.cn/") and rows[1]["image"] is None
+    assert sources.valid_rows({"rows": rows})
+
+
+def test_the_overseas_talk_takes_turns_between_bluesky_and_mastodon():
+    rows = sources.normalize_overseas(BLUESKY, MASTODON)["rows"]
+
+    assert [(row["source"], row["title"]) for row in rows] == [
+        ("bluesky", "Godzilla Minus Zero opens"), ("mastodon", "Global stocks tumble as AI panic grips markets"),
+        ("bluesky", "Tesla halts Cybertruck production"), ("mastodon", "Protesters break into Microsoft AI data centre site")]
+    assert [row["rank"] for row in rows] == [1, 2, 3, 4]
+    # Bluesky's posts, its trend's state and its category in Chinese; Mastodon's shares and outlet.
+    assert (rows[0]["heat"], rows[0]["tag"], rows[0]["summary"]) == (2050, "热", "娱乐")
+    assert (rows[2]["tag"], rows[2]["summary"]) == (None, "商业")
+    assert (rows[1]["heat"], rows[1]["summary"]) == (178, "the Guardian")
+    assert rows[1]["image"].startswith("https://files.mastodon.social/") and rows[3]["image"] is None
+    assert sources.normalize_overseas({}, MASTODON)["rows"][0]["source"] == "mastodon"
+    with pytest.raises(ValueError):
+        sources.normalize_overseas({}, [])
+
+
+def test_the_spare_card_takes_turns_by_the_hour_with_the_papers_list_and_the_overseas_talk():
+    lists = {platform: [] for platform in ("weibo",) + sources.PLATFORMS}
+    extras = {"thepaper": sources.normalize_thepaper(THEPAPER)["rows"],
+              "overseas": sources.normalize_overseas(BLUESKY, MASTODON)["rows"]}
+    payload = {"lists": lists, "extras": extras}
+
+    assert [_slots(payload, NOW.replace(hour=hour))[-1] for hour in (21, 22, 23)] == ["shared", "thepaper", "overseas"]
+    # A card with nothing at hand gives its turns to the rest.
+    only = {"lists": lists, "extras": {"overseas": extras["overseas"]}}
+    assert [_slots(only, NOW.replace(hour=hour))[-1] for hour in (22, 23)] == ["shared", "overseas"]
+    # Without Weibo's list the two spare places of a 3 x 2 grid go to two of them in turn.
+    four = {"lists": {platform: [] for platform in sources.PLATFORMS}, "extras": extras}
+    assert _slots(four, NOW.replace(hour=22)) == [*sources.PLATFORMS, "thepaper", "overseas"]
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_the_turn_cards_name_their_sources_and_list_their_stories(monkeypatch, mode):
+    from plugins.cn_hot_search import render
+
+    drawn, logos = [], []
+    original = render.PageCanvas.text
+    monkeypatch.setattr(render.PageCanvas, "text", lambda self, xy, text, *args, **kwargs: drawn.append(text) or original(
+        self, xy, text, *args, **kwargs))
+    original_logo = render._paste_logo
+    monkeypatch.setattr(render, "_paste_logo", lambda canvas, platform, *args, **kwargs: logos.append(platform) or
+                        original_logo(canvas, platform, *args, **kwargs))
+    lists = {platform: [{"rank": 1, "title": f"{platform}的话题", "heat": 100, "image": None}]
+             for platform in sources.PLATFORMS}
+    payload = {"lists": lists, "topics": [], "history": {},
+               "extras": {"thepaper": sources.normalize_thepaper(THEPAPER)["rows"],
+                          "overseas": sources.normalize_overseas(BLUESKY, MASTODON)["rows"]}}
+
+    render_page((800, 480), payload, {"_inkypi_theme": {"mode": mode}}, NOW.replace(hour=22), {})
+
+    assert {"thepaper", "bluesky", "mastodon"} <= set(logos)
+    assert {"澎湃热榜", "海外热议", "霍志静任北京人艺院长，冯远征不再担任", "Godzilla Minus Zero opens", "人事风向"} <= set(drawn)
+
+
+def test_the_turn_cards_are_extras_outside_the_pages_provenance(monkeypatch, tmp_path):
+    from plugins.cn_hot_search import cn_hot_search as module
+    from runtime.refresh_contracts import TaskContext
+    import time
+
+    monkeypatch.setenv("CN_HOT_SEARCH_CACHE_DIR", str(tmp_path))
+    rows = {"rows": [{"rank": 1, "title": "话题", "heat": 1, "image": None}]}
+    monkeypatch.setattr(sources, "FETCHERS", {platform: (lambda ctx: rows) for platform in sources.PLATFORMS})
+    monkeypatch.setattr(sources, "fetch_baidu_boards", lambda ctx: {"boards": {}})
+    monkeypatch.setattr(sources, "EXTRA_FETCHERS", {
+        "thepaper": lambda ctx: sources.normalize_thepaper(THEPAPER),
+        "overseas": lambda ctx: (_ for _ in ()).throw(RuntimeError("down"))})
+    plugin = module.CnHotSearch({"id": "cn_hot_search"})
+
+    payload = plugin._payload({}, NOW, allow_network=True,
+                              context=TaskContext.never_cancelled(deadline_monotonic=time.monotonic() + 30))
+
+    assert payload["extras"]["thepaper"][0]["title"].startswith("霍志静") and payload["extras"]["overseas"] == []
+    assert "thepaper" not in payload["lists"] and payload["provenance"] == "live"
+
+
+def test_the_overseas_titles_read_in_chinese_once_translated(monkeypatch, tmp_path):
+    from plugins.cn_hot_search import cn_hot_search as module
+    from plugins.cn_hot_search import render
+    from runtime.refresh_contracts import TaskContext
+    import time
+
+    monkeypatch.setenv("CN_HOT_SEARCH_CACHE_DIR", str(tmp_path))
+    asked = []
+    monkeypatch.setattr(module.translate, "translate", lambda items, key, **kwargs: asked.append(
+        (key, [item["title"] for item in items])) or [{"id": item["id"], "title": f"译：{item['title'][:6]}",
+                                                        "summary": ""} for item in items])
+
+    class Device:
+        def load_env_key(self, key):
+            return "sk-test" if key == "OPEN_AI_SECRET" else None
+
+    plugin = module.CnHotSearch({"id": "cn_hot_search"})
+    rows = sources.normalize_overseas(BLUESKY, MASTODON)["rows"]
+    payload = {"extras": {"overseas": rows}}
+    context = TaskContext.never_cancelled(deadline_monotonic=time.monotonic() + 60)
+
+    plugin._translate_overseas(payload, Device(), allow_network=True, context=context)
+
+    assert asked[0][0] == "sk-test" and asked[0][1][0] == "Godzilla Minus Zero opens"
+    assert rows[0]["title_zh"] == "译：Godzil"
+    # Kept: a cache-only redraw and the next refresh read the same Chinese title without asking.
+    fresh = sources.normalize_overseas(BLUESKY, MASTODON)["rows"]
+    plugin._translate_overseas({"extras": {"overseas": fresh}}, Device(), allow_network=False, context=context)
+    assert fresh[0]["title_zh"] == "译：Godzil" and len(asked) == 1
+    assert render.row_title(fresh[0]) == "译：Godzil" and render.row_title({"title": "x"}) == "x"

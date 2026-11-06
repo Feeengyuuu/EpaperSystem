@@ -54,6 +54,39 @@
         27
       ],
       "sha256": "5fedf6f5291fdee44ea1facb93e691eac18a102bc70996ea361cfc1e332d413b"
+    },
+    "thepaper": {
+      "source": "https://www.thepaper.cn/favicon.ico",
+      "page": "https://www.thepaper.cn/",
+      "licence": "\u6f8e\u6e43\u65b0\u95fb's site icon, shown to name the source",
+      "source_sha256": "9a8e68dc03b5518bea680ccfada6b84d2ccb695197505fe70ca1be4637128b86",
+      "size": [
+        28,
+        32
+      ],
+      "sha256": "8de2b678a4d58bf710305ab2d290ce9f3068a400392e331289991c8c55a0ee02"
+    },
+    "bluesky": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7a/Bluesky_Logo.svg/500px-Bluesky_Logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Bluesky_Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "ddfd27df48d4df992eea52477d4133ffaaf4b78dc315319d31b0c595abcfd2f3",
+      "size": [
+        73,
+        64
+      ],
+      "sha256": "5ef32bc455431f3ea308ab4f8d9216d7523537a8a5c734c1e26aa3b2197c90b4"
+    },
+    "mastodon": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d5/Mastodon_logotype_(simple)_new_hue.svg/500px-Mastodon_logotype_(simple)_new_hue.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Mastodon_logotype_(simple)_new_hue.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "50c98b3a394a179f1f48759d3d4993d30261cb76b1e0fd38a5bb76733a87e9e7",
+      "size": [
+        60,
+        64
+      ],
+      "sha256": "d709bdbe92de7e57379ef83b7b084152e8c2767c53d36859f91f783a1b271f06"
     }
   }
 }

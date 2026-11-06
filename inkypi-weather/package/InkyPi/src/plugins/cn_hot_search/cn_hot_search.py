@@ -10,7 +10,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+from hashlib import sha1
 
+from plugins.ai_papers import translate
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.render_provenance import attach_source_provenance
 from plugins.base_plugin.source_book import LIVE, Source, SourceBook, combined_provenance
@@ -37,6 +39,8 @@ HISTORY_FILE = "history.json"
 # The lists turn over within the hour; a cached one still reads as today's news for a day.
 FRESH_SECONDS = 20 * 60
 USABLE_SECONDS = 86400
+# The turn cards change more slowly than the hot lists: an hour-old reading is current.
+EXTRA_FRESH_SECONDS = 3600
 # Baidu's 分榜 (dramas, films, novels, games, cars) move over hours: five small boards (8-38 KB)
 # fetched every few hours, a day-old reading still shown.
 BOARDS_FRESH_SECONDS = 3 * 3600
@@ -44,6 +48,19 @@ BOARDS_USABLE_SECONDS = 2 * 86400
 # Each card shows a list's first ROWS_SHOWN rows, every one with its picture at THUMB_PIXELS at most.
 ROWS_SHOWN = 3
 THUMB_PIXELS = (320, 200)
+# The overseas talk reads in Chinese once translated (the owner's OpenAI key, one request for the
+# titles not yet kept); a refresh with less time left than this keeps the English for now.
+TRANSLATE_MIN_SECONDS = 20
+OVERSEAS_INSTRUCTIONS = (
+    "Translate each trending topic or news headline from Bluesky and Mastodon into concise Simplified Chinese "
+    "for a Chinese reader skimming a hot-search list. Use the established Chinese names of people, places, "
+    "companies and products, else keep them as written; keep each title under 24 Chinese characters. The "
+    "summary is empty: return it empty. Return every id once."
+)
+
+
+def overseas_id(title):
+    return "o-" + sha1(str(title).encode("utf-8")).hexdigest()[:16]
 
 
 def _checkpoint(context):
@@ -146,16 +163,53 @@ class CnHotSearch(BasePlugin):
                                   fresh_seconds=BOARDS_FRESH_SECONDS, usable_seconds=BOARDS_USABLE_SECONDS,
                                   validate=sources.valid_boards, timeout_seconds=15),
                            now, allow_network=allow_network, context=context, force=force)
+        # The turn cards' lists (澎湃's hot list, the overseas talk) are extras too: never matched
+        # across the platforms' lists, never in the page's provenance.
+        extras = {}
+        for name, fetch in sources.EXTRA_FETCHERS.items():
+            result = book.load(Source(name, {"board": "hot"}, fetch, fresh_seconds=EXTRA_FRESH_SECONDS,
+                                      usable_seconds=USABLE_SECONDS, validate=sources.valid_rows, timeout_seconds=12),
+                               now, allow_network=allow_network, context=context, force=force)
+            extras[name] = (result.get("data") or {}).get("rows") or []
         return {**results, "lists": lists, "topics": sources.cross_topics(lists), "history": history,
-                "boards": (boards.get("data") or {}).get("boards") or {},
+                "boards": (boards.get("data") or {}).get("boards") or {}, "extras": extras,
                 "provenance": combined_provenance(results.values())}
+
+    @staticmethod
+    def _openai_key(device_config):
+        load = getattr(device_config, "load_env_key", None)
+        if load is None:
+            return ""
+        return str(load("OPEN_AI_SECRET") or load("OPENAI_API_KEY") or "").strip()
+
+    def _translate_overseas(self, payload, device_config, *, allow_network, context):
+        """Give the overseas rows their kept Chinese titles (``title_zh``), asking for the missing
+        ones when the network and time allow; a failure leaves them in English until later."""
+        rows = ((payload.get("extras") or {}).get("overseas") or [])[:2 * ROWS_SHOWN]
+        if not rows:
+            return
+        kept = translate.Translations(self._cache_root() / "translations.json")
+        items = [{"id": overseas_id(row["title"]), "title": row["title"], "summary": ""} for row in rows]
+        missing = kept.missing(items)
+        key = self._openai_key(device_config) if missing and allow_network else ""
+        if key and context.remaining_seconds() >= TRANSLATE_MIN_SECONDS:
+            try:
+                kept.add(translate.translate(missing, key, instructions=OVERSEAS_INSTRUCTIONS, name="cn_hot_search"))
+            except TaskCancelled:
+                raise
+            except Exception as exc:  # noqa: BLE001 - the card stays in English until a later refresh.
+                logger.warning("全网热搜 overseas translation failed (%s)", type(exc).__name__)
+        for row, item in zip(rows, items):
+            found = kept.get(item["id"])
+            if found:
+                row["title_zh"] = found["title"]
 
     def _images(self, payload, *, allow_network, context):
         """The lead story's pictures and each card's first rows' (the page shows ROWS_SHOWN of a list)."""
         urls = []
         for topic in payload["topics"][:4]:
             urls += [row.get("image") for row in topic["rows"].values()]
-        for rows in payload["lists"].values():
+        for rows in [*payload["lists"].values(), *(payload.get("extras") or {}).values()]:
             urls += [row.get("image") for row in rows[:ROWS_SHOWN]]
         return load_thumbnails([url for url in urls if url], self._cache_subdir("pictures"),
                                cached_only=not allow_network, size=THUMB_PIXELS, http=get_http_client(),
@@ -179,6 +233,7 @@ class CnHotSearch(BasePlugin):
         _checkpoint(context)
         payload = self._payload(settings, now, allow_network=not cache_only, context=context,
                                 cookie=self._weibo_cookie(device_config))
+        self._translate_overseas(payload, device_config, allow_network=not cache_only, context=context)
         images = self._images(payload, allow_network=not cache_only, context=context)
         try:
             image = render_page(self.get_dimensions(device_config), payload, settings, now, images)
