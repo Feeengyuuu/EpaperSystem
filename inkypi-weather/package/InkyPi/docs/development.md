@@ -146,6 +146,18 @@ During an update the device prints `timing: <phase> <seconds>s` lines
 (for example `delta-verify`, `venv-clone`, `preflight`, `switch`,
 `wait-ready` and `total`), which show where the install time goes.
 
+An update always runs the updater already installed on the device
+(`/usr/local/sbin/inkypi-update` and its library in
+`/usr/local/lib/inkypi-update`). A release that changes the updater installs
+the new one as part of its own update, so its changes take effect from the next
+update onward.
+
+When the runtime lock (`install/requirements.txt`) is unchanged, the updater
+reuses the active release's virtual environment: it hashes that environment's
+installed files once, clones it as hard links and, after relocating the clone,
+rehashes only the files the relocation rewrote. A changed lock builds a fresh
+environment from the new lock instead.
+
 The release toolkit in the repository's `tools/release` builds both artifacts
 and picks the delta automatically when the device reports `delta_v1`; pass
 `--full` to force a full release.
