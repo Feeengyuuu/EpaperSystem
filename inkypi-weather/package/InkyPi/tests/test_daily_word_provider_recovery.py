@@ -303,3 +303,11 @@ def test_cache_write_is_byte_bounded_even_when_entry_count_is_below_limit(setup_
     assert path.stat().st_size <= 524288
     saved = json.loads(path.read_text(encoding="utf-8"))
     assert "tranquil" in saved["entries"]
+
+
+@pytest.fixture(autouse=True)
+def _no_word_of_the_day(monkeypatch):
+    # These tests cover the local word list and its dictionary; test_daily_word_mw covers
+    # Merriam-Webster's word of the day.
+    monkeypatch.setattr(DailyWordPoem, "_word_of_the_day_state",
+                        lambda self, date_key, allow_network: (None, "missing"))

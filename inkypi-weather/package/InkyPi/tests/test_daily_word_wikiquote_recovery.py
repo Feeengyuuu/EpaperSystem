@@ -251,3 +251,11 @@ def test_legacy_nested_template_never_publishes_only_its_surrounding_words(tmp_p
     assert read_source_provenance(image) is SourceProvenance.LOCAL_FALLBACK
     assert cached is None
     image.close()
+
+
+@pytest.fixture(autouse=True)
+def _no_word_of_the_day(monkeypatch):
+    # These tests cover the local word list and its dictionary; test_daily_word_mw covers
+    # Merriam-Webster's word of the day.
+    monkeypatch.setattr(DailyWordPoem, "_word_of_the_day_state",
+                        lambda self, date_key, allow_network: (None, "missing"))

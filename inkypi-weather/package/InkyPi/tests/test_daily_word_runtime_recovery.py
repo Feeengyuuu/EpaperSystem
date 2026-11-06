@@ -126,3 +126,11 @@ def test_dailyword_outage_advances_daily_display_without_claiming_provider_recov
     with Image.open(cache_path) as cached:
         recovered_pixels = cached.tobytes()
     assert recovered_pixels != previous_pixels
+
+
+@pytest.fixture(autouse=True)
+def _no_word_of_the_day(monkeypatch):
+    # These tests cover the local word list and its dictionary; test_daily_word_mw covers
+    # Merriam-Webster's word of the day.
+    monkeypatch.setattr(DailyWordPoem, "_word_of_the_day_state",
+                        lambda self, date_key, allow_network: (None, "missing"))

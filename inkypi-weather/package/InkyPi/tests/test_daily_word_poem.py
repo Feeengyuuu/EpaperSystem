@@ -879,3 +879,11 @@ def test_render_quote_panel_marks_a_cut_quote_with_an_ellipsis(tmp_path):
     quote_lines = [call for call in draw.text_calls if "Legislative" in call or "cumbersome" in call or "slow" in call]
     assert quote_lines
     assert quote_lines[-1].endswith('..."')
+
+
+@pytest.fixture(autouse=True)
+def _no_word_of_the_day(monkeypatch):
+    # These tests cover the local word list and its dictionary; test_daily_word_mw covers
+    # Merriam-Webster's word of the day.
+    monkeypatch.setattr(DailyWordPoem, "_word_of_the_day_state",
+                        lambda self, date_key, allow_network: (None, "missing"))

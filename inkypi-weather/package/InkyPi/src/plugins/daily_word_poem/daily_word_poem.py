@@ -17,6 +17,7 @@ import pytz
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.daily_word_poem import mw_word
 from plugins.base_plugin.render_provenance import (
     SourceProvenance,
     attach_source_provenance,
@@ -39,6 +40,7 @@ WORD_CACHE_FRESH_SECONDS = 30 * 86400
 WORD_CACHE_MAX_AGE_SECONDS = 365 * 86400
 WORD_CACHE_MAX_ENTRIES = 128
 WORD_CACHE_MAX_BYTES = 524288
+WORD_OF_THE_DAY_DAYS = 14
 WIKIQUOTE_QOTD_URL = "https://wq-quote-of-the-day-parser.toolforge.org/api/quote_of_the_day"
 WIKIQUOTE_QOTD_DATE_URL = "https://wq-quote-of-the-day-parser.toolforge.org/api/quotes/{date}"
 WIKIQUOTE_DAY_RAW_URL = "https://en.wikiquote.org/w/index.php?title=Wikiquote:Quote_of_the_day/{day_slug}&action=raw"
@@ -526,7 +528,22 @@ class DailyWordPoem(BasePlugin):
 
     def _daily_payload(self, settings, now: datetime) -> dict[str, Any]:
         date_key = now.strftime("%Y-%m-%d")
-        word_entry = self._daily_word(settings, now)
+        theme_render_only = _enabled(settings.get("_theme_render_only"))
+        force_refresh = (
+            _enabled(settings.get("force_refresh"))
+            or _enabled(settings.get("forceRefresh"))
+        ) and not theme_render_only
+        # Merriam-Webster's word for the day, unless a custom list is set; the local list stands in.
+        word_of_the_day, word_state = None, "off"
+        if not self._custom_words(settings.get("word_list")) and _enabled(
+                settings.get("fetch_word_of_the_day"), default=True):
+            try:
+                word_of_the_day, word_state = self._word_of_the_day_state(date_key, allow_network=not theme_render_only)
+            except Exception as exc:
+                self._check_task_cancelled()
+                logger.warning("Merriam-Webster word of the day unavailable: %s", type(exc).__name__)
+                word_state = "failed"
+        word_entry = word_of_the_day or self._daily_word(settings, now)
         quote_entry = self._daily_quote(settings, now)
         cache_key = self._cache_key(date_key, word_entry["word"], settings)
         cache_file = self._cache_dir() / "daily.json"
@@ -534,11 +551,6 @@ class DailyWordPoem(BasePlugin):
         if not isinstance(cached, dict):
             cached = {}
 
-        theme_render_only = _enabled(settings.get("_theme_render_only"))
-        force_refresh = (
-            _enabled(settings.get("force_refresh"))
-            or _enabled(settings.get("forceRefresh"))
-        ) and not theme_render_only
         if cached.get("cache_key") == cache_key and not force_refresh:
             cached["from_cache"] = True
             cached["_source_provenance"] = (
@@ -555,7 +567,8 @@ class DailyWordPoem(BasePlugin):
             "date": date_key,
             "word": word_entry,
             "quote": quote_entry,
-            "sources": ["local word list", quote_entry.get("source") or "local golden sentences"],
+            "sources": [(word_of_the_day or {}).get("source") or "local word list",
+                        quote_entry.get("source") or "local golden sentences"],
             "warnings": [],
             "from_cache": False,
             "generated_at": now.isoformat(),
@@ -563,8 +576,16 @@ class DailyWordPoem(BasePlugin):
         providers_attempted = 0
         providers_succeeded = 0
         live_sources = 0
+        if word_of_the_day:
+            providers_attempted += 1
+            providers_succeeded += 1
+            live_sources += int(word_state == "live")
+        elif word_state == "failed":
+            providers_attempted += 1
+            payload["warnings"].append("word of the day offline")
 
-        if _enabled(settings.get("fetch_dictionary"), default=True):
+        # Merriam-Webster's word comes with its own definition; a local word asks a dictionary.
+        if not word_of_the_day and _enabled(settings.get("fetch_dictionary"), default=True):
             providers_attempted += 1
             try:
                 enriched, definition_state = self._definition_for_day(word_entry["word"], now, force_refresh)
@@ -631,6 +652,7 @@ class DailyWordPoem(BasePlugin):
             isinstance(source, str)
             and (
                 "free dictionary api" in source.lower()
+                or "merriam-webster" in source.lower()
                 or "wiktionary" in source.lower()
                 or "wikiquote" in source.lower()
             )
@@ -726,6 +748,42 @@ class DailyWordPoem(BasePlugin):
             }
 
         return LOCAL_WORDS[now.date().toordinal() % len(LOCAL_WORDS)]
+
+    def _fetch_word_of_the_day_feed(self) -> str:
+        parent = current_task_context()
+        if parent is None:
+            context = TaskContext.never_cancelled(deadline_monotonic=time.monotonic() + 8)
+        else:
+            parent.raise_if_cancelled()
+            context = TaskContext(parent.cancel_event, min(parent.deadline_monotonic, parent.clock() + 8), parent.clock)
+        return HttpClient(session=get_http_session()).request_text(
+            "GET", mw_word.FEED_URL, timeout=8, context=context, max_bytes=mw_word.FEED_MAX_BYTES,
+            headers=REQUEST_HEADERS,
+        ).data
+
+    def _word_of_the_day_state(self, date_key: str, *, allow_network: bool):
+        """(Merriam-Webster's entry for ``date_key`` or None, "cached" / "live" / "missing"). The
+        feed's ten days are kept in word_of_the_day.json, so it is read about once a week; a day it
+        did not list is not asked for again that day."""
+        path = self._cache_dir() / "word_of_the_day.json"
+        document = _safe_json_load(path, {})
+        if not isinstance(document, dict) or document.get("schema") != 1:
+            document = {}
+        words = {key: row for key, row in (document.get("words") or {}).items()
+                 if isinstance(row, dict) and isinstance(row.get("word"), str) and isinstance(row.get("definition"), str)}
+        if date_key in words:
+            return dict(words[date_key]), "cached"
+        if not allow_network or document.get("checked") == date_key:
+            return None, "missing"
+        fetched = mw_word.parse_feed(self._fetch_word_of_the_day_feed())
+        self._check_task_cancelled()
+        words.update(fetched)
+        kept = dict(sorted(words.items())[-WORD_OF_THE_DAY_DAYS:])
+        _safe_json_write(path, {"schema": 1, "checked": date_key, "words": kept})
+        return (dict(kept[date_key]), "live") if date_key in kept else (None, "missing")
+
+    def _word_of_the_day(self, date_key: str, *, allow_network: bool):
+        return self._word_of_the_day_state(date_key, allow_network=allow_network)[0]
 
     def _custom_words(self, text: Any) -> list[str]:
         words = []
@@ -1328,17 +1386,19 @@ class DailyWordPoem(BasePlugin):
 
     def _render_word_panel(self, draw, word, box, font_family, text, accent, muted):
         x, y, max_width, bottom = box
+        # A word with Merriam-Webster's story steps its type down a notch to leave the story room.
+        story = _clean_text(word.get("did_you_know"), 260)
         word_text = _clean_text(word.get("word") or "word", 64)
-        title_font = self._fit_single_text(draw, word_text, font_family, max_width, 78, 40, "bold")
+        title_font = self._fit_single_text(draw, word_text, font_family, max_width, 56 if story else 78, 40, "bold")
         draw.text((x, y), word_text, font=title_font, fill=text)
         y += self._line_height(draw, title_font) + 4
 
         meta_bits = [self._display_phonetic(word.get("phonetic")), word.get("part_of_speech")]
         meta = "  ".join(_clean_text(bit, 80) for bit in meta_bits if bit)
         if meta:
-            meta_font = self._load_font(font_family, 22)
+            meta_font = self._load_font(font_family, 20 if story else 22)
             draw.text((x, y), self._fit_single_line(draw, meta, meta_font, max_width), font=meta_font, fill=accent)
-            y += self._line_height(draw, meta_font) + 18
+            y += self._line_height(draw, meta_font) + (8 if story else 18)
 
         label_font = self._load_font(font_family, 15, "bold")
         body_font = self._fit_wrapped_text(
@@ -1346,9 +1406,9 @@ class DailyWordPoem(BasePlugin):
             _clean_text(word.get("definition"), 260),
             font_family,
             max_width,
-            max(44, bottom - y - 116),
-            28,
-            18,
+            max(44, bottom - y - (186 if story else 116)),
+            20 if story else 28,
+            16 if story else 18,
         )
         draw.text((x, y), "Definition", font=label_font, fill=accent)
         y += self._line_height(draw, label_font) + 6
@@ -1359,8 +1419,24 @@ class DailyWordPoem(BasePlugin):
         if example and y < bottom - 48:
             draw.text((x, y), "Example", font=label_font, fill=accent)
             y += self._line_height(draw, label_font) + 6
-            example_font = self._load_font(font_family, 17)
-            self._draw_wrapped(draw, example, (x, y), example_font, max_width, bottom - 28, muted)
+            example_font = self._load_font(font_family, 16 if story else 17)
+            y = self._draw_wrapped(draw, example, (x, y), example_font, max_width, bottom - 28, muted) + 10
+
+        # Merriam-Webster's note on the word's story, in the room left above the footer.
+        story_font = self._load_font(font_family, 14)
+        story_bottom = bottom - 20
+        line_height = self._line_height(draw, story_font)
+        if story and y + self._line_height(draw, label_font) + 4 + line_height <= story_bottom:
+            draw.text((x, y), "Did you know?", font=label_font, fill=accent)
+            y += self._line_height(draw, label_font) + 4
+            lines = self._wrap_text(draw, story, story_font, max_width)
+            fitting = max(1, int((story_bottom - y) // line_height))
+            if len(lines) > fitting:
+                lines = lines[:fitting]
+                lines[-1] = self._fit_single_line(draw, lines[-1].rstrip(" ,;:") + "\u2026", story_font, max_width)
+            for line in lines:
+                draw.text((x, y), line, font=story_font, fill=muted)
+                y += line_height
 
     def _render_quote_panel(self, draw, quote, box, font_family, text, accent, muted):
         x, y, max_width, bottom = box
