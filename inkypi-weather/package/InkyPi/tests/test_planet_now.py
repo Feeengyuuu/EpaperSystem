@@ -447,3 +447,36 @@ def test_the_grid_summary_is_its_own_optional_feed():
     text = Path(planet_now.__file__).read_text(encoding="utf-8")
     assert '"grid_stats": load("grid_stats", sources.fetch_grid_stats' in text
     assert "grid_stats" not in planet_now.CORE_FEEDS
+
+
+def test_nasas_exoplanet_archive_gives_the_confirmed_planet_count():
+    assert sources.parse_exoplanets([{"count(*)": 6464}]) == {"count": 6464}
+    assert sources.valid_exoplanets({"count": 6464})
+    # An empty answer or a count no one could believe is not a reading.
+    for payload in ([], [{}], [{"count(*)": "n/a"}], [{"count(*)": 12}], {"count(*)": 6464}):
+        assert sources.parse_exoplanets(payload) == {}
+    assert not sources.valid_exoplanets({})
+
+
+def test_the_space_card_header_counts_the_known_exoplanets(monkeypatch):
+    drawn = []
+    original = render._chip
+    monkeypatch.setattr(render, "_chip", lambda canvas, xy, text, **kwargs: drawn.append(text) or original(canvas, xy, text,
+                                                                                                         **kwargs))
+    payload = _payload()
+    payload["exoplanets"] = {"data": {"count": 6464}}
+    now = datetime(2026, 10, 25, 8, 5, tzinfo=sources.PACIFIC)
+    render.render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, now, {})
+    assert "系外行星 6,464" in drawn
+
+    drawn.clear()
+    render.render_page((800, 480), _payload(), {"_inkypi_theme": {"mode": "day"}}, now, {})
+    assert not any(text.startswith("系外行星") for text in drawn)
+
+
+def test_the_exoplanet_count_is_a_weekly_optional_feed():
+    from plugins.planet_now import planet_now
+
+    text = Path(planet_now.__file__).read_text(encoding="utf-8")
+    assert '"exoplanets": load("exoplanets", sources.fetch_exoplanets, 7 * DAY' in text
+    assert "exoplanets" not in planet_now.CORE_FEEDS

@@ -109,6 +109,11 @@ ISS_COORDINATES_URL = "https://api.wheretheiss.at/v1/coordinates"
 # The ISS's track drawn on the map: these minutes either side of now.
 ISS_TRACK_MINUTES = (-30, -20, -10, 10, 20, 30, 40)
 PEOPLE_URL = "https://corquaid.github.io/international-space-station-APIs/JSON/people-in-space.json"
+# NASA's Exoplanet Archive: how many planets beyond the Solar System are confirmed (one row per
+# planet in the Planetary Systems table), asked through its keyless TAP service.
+EXOPLANET_URL = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync"
+EXOPLANET_QUERY = "select count(*) from ps where default_flag=1"
+EXOPLANET_FLOOR = 5000
 WIKI_API = {"en": "https://en.wikipedia.org/w/api.php", "zh": "https://zh.wikipedia.org/w/api.php"}
 CREW_ROLES = {"commander": "指令长", "pilot": "驾驶员", "payload specialist": "载荷专家",
               "flight engineer": "飞行工程师", "mission specialist": "任务专家", "spaceflight participant": "太空游客"}
@@ -666,6 +671,26 @@ def fetch_fireballs(context):
 
 def valid_fireballs(data):
     return isinstance((data or {}).get("fireballs"), list)
+
+
+def parse_exoplanets(payload):
+    """{count} from the archive's one-row answer; {} for anything else (the count only grows, so
+    one below EXOPLANET_FLOOR is a broken answer, not news)."""
+    row = payload[0] if isinstance(payload, list) and payload and isinstance(payload[0], dict) else {}
+    try:
+        count = int(row.get("count(*)"))
+    except (TypeError, ValueError):
+        return {}
+    return {"count": count} if count >= EXOPLANET_FLOOR else {}
+
+
+def fetch_exoplanets(context):
+    return parse_exoplanets(_json(EXOPLANET_URL, context, max_bytes=4 * 1024,
+                                  params={"query": EXOPLANET_QUERY, "format": "json"}))
+
+
+def valid_exoplanets(data):
+    return isinstance((data or {}).get("count"), int)
 
 
 def _julian_centuries(now):

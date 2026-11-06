@@ -701,7 +701,13 @@ def _space(canvas, payload, images, now):
     canvas = SpaceCanvas(canvas)
     mars = payload.get("mars", {}).get("data") or {}
     iss = payload.get("iss", {}).get("data") or {}
-    _card(canvas, "space", "太空近况", "· wheretheiss.at", source="nasa")
+    free_left, free_right = _card(canvas, "space", "太空近况", "· wheretheiss.at", source="nasa")
+    count = (payload.get("exoplanets", {}).get("data") or {}).get("count")
+    if isinstance(count, int):
+        # How many worlds beyond the Solar System are confirmed, in the header's free span.
+        label = f"系外行星 {count:,}"
+        if canvas.width(label, 11) + 12 <= free_right - free_left - 6:
+            _chip(canvas, (free_left, CARDS["space"][1] + 17 - 9), label, fill="space", color="paper")
     left, top, right, bottom = CARDS["space"]
     crew_left = right - 176
     photo_box = (left + 8, top + HEADER + 6, left + 120, bottom - 6)
