@@ -86,6 +86,10 @@ CLUB_FOOTBALL_LOCAL_TEAM_LOGO_KEYS = {
 }
 
 
+class ClubApiFootballPlanRefused(RuntimeError):
+    """API-Football's plan does not reach the season asked for (a free plan reaches only past seasons)."""
+
+
 class _ClubFootballRotationSeed(int):
     def __new__(cls, value, previous_league=None):
         instance = int.__new__(cls, int(value))
@@ -1898,9 +1902,35 @@ class ClubFootballMixin:
         payload = response.json()
         if not isinstance(payload, Mapping):
             raise ValueError("API-Football returned an invalid payload")
-        if payload.get("errors"):
-            raise RuntimeError(f"API-Football returned errors: {payload.get('errors')}")
+        errors = payload.get("errors")
+        if isinstance(errors, Mapping) and errors.get("plan"):
+            raise ClubApiFootballPlanRefused(str(errors.get("plan")))
+        if errors:
+            raise RuntimeError(f"API-Football returned errors: {errors}")
         return payload
+
+    def _club_api_football_refusals_path(self):
+        return self._sports_dashboard_cache_dir() / "club_api_football_refusals.json"
+
+    def _club_api_football_season_refused(self, season):
+        """True once the account's plan has refused ``season`` (a free plan reaches only past seasons)."""
+        try:
+            refusals = self._read_json_file(self._club_api_football_refusals_path())
+        except (OSError, ValueError, TypeError):
+            return False
+        return str(season) in dict((refusals or {}).get("seasons") or {})
+
+    def _record_club_api_football_season_refused(self, season, reason, now_utc):
+        path = self._club_api_football_refusals_path()
+        try:
+            refusals = dict(self._read_json_file(path) or {})
+        except (OSError, ValueError, TypeError):
+            refusals = {}
+        seasons = dict(refusals.get("seasons") or {})
+        seasons[str(season)] = {"refused_at": now_utc.isoformat(), "reason": str(reason)[:200]}
+        self._write_json_file(path, {"version": 1, "seasons": seasons})
+        logger.info("Club API-Football odds paused for season %s: the plan refuses it (%s)", season,
+                    str(reason)[:120])
 
     @staticmethod
     def _club_api_football_season(start_utc):
@@ -1971,18 +2001,26 @@ class ClubFootballMixin:
         league_id = CLUB_FOOTBALL_LEAGUES.get(league_code, {}).get("api_football_id")
         if not league_id:
             return cached_odds
-        fixtures_payload = self._club_api_football_get_json(
-            "/fixtures",
-            {
-                "league": league_id,
-                "season": self._club_api_football_season(event_start),
-                "date": event_start.date().isoformat(),
-                "timezone": "UTC",
-            },
-            api_key,
-            settings,
-            now_utc,
-        )
+        season = self._club_api_football_season(event_start)
+        # A season the plan has refused stays refused: no request is spent on it again.
+        if self._club_api_football_season_refused(season):
+            return cached_odds
+        try:
+            fixtures_payload = self._club_api_football_get_json(
+                "/fixtures",
+                {
+                    "league": league_id,
+                    "season": season,
+                    "date": event_start.date().isoformat(),
+                    "timezone": "UTC",
+                },
+                api_key,
+                settings,
+                now_utc,
+            )
+        except ClubApiFootballPlanRefused as refusal:
+            self._record_club_api_football_season_refused(season, refusal, now_utc)
+            return cached_odds
         fixture_id = SportsDashboard._club_api_football_fixture_id(
             event, fixtures_payload
         )

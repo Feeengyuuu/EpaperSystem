@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
@@ -318,6 +319,36 @@ class HttpClient:
             ) from error
         return HttpResult(result.status, data, result.headers, result.url)
 
+    def request_text_head(
+        self,
+        method,
+        url,
+        *,
+        context=None,
+        max_bytes=DEFAULT_JSON_MAX_BYTES,
+        timeout=None,
+        encoding="utf-8",
+        **kwargs,
+    ):
+        """The page's first ``max_bytes`` as text (a character cut at the end dropped), for a page
+        whose useful part comes first; a longer page is cut there instead of refused."""
+        result = self._request_owned(
+            method,
+            url,
+            context=context,
+            max_bytes=max_bytes,
+            timeout=timeout,
+            consumer=_read_response_head,
+            **kwargs,
+        )
+        try:
+            data = codecs.getincrementaldecoder(encoding)().decode(result.data, final=False)
+        except UnicodeError as error:
+            raise HttpDecodeError(
+                f"invalid text response from {_safe_url(url)}"
+            ) from error
+        return HttpResult(result.status, data, result.headers, result.url)
+
     def request_bytes(
         self,
         method,
@@ -568,6 +599,19 @@ def _read_limited_response(response, limit, context):
         if len(payload) + len(chunk) > limit:
             raise ResponseTooLarge(limit)
         payload.extend(chunk)
+    return bytes(payload)
+
+
+def _read_response_head(response, limit, context):
+    """At most ``limit`` bytes from the body's start; the rest is never read."""
+    payload = bytearray()
+    for chunk in response.iter_content(chunk_size=_CHUNK_BYTES):
+        context.raise_if_cancelled()
+        if not chunk:
+            continue
+        payload.extend(chunk[: limit - len(payload)])
+        if len(payload) >= limit:
+            break
     return bytes(payload)
 
 

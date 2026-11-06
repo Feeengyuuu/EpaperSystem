@@ -66,10 +66,16 @@ ART_BUDGET = CacheBudget(7 * 86400, 48, 4 * 1024 * 1024)
 SPACE_STATE_RANK = {LIVE: 0, FRESH_CACHE: 1, STALE_CACHE: 2}
 
 
+def healthiest_result(results):
+    """The healthiest of feeds that stand in for each other on the page (live before a fresh cache
+    before a stale one), so one slow member alone does not degrade the page."""
+    return min(results, key=lambda result: SPACE_STATE_RANK.get(result.get("state"), len(SPACE_STATE_RANK)))
+
+
 def space_result(webb, hubble):
     """Webb's and Hubble's pictures stand in for each other (the page shows whichever it has), so the
     pair counts as its healthier member: ESA's slow Hubble site alone does not degrade the page."""
-    return min((webb, hubble), key=lambda result: SPACE_STATE_RANK.get(result.get("state"), len(SPACE_STATE_RANK)))
+    return healthiest_result((webb, hubble))
 
 
 def _checkpoint(context):
@@ -140,7 +146,8 @@ class DailyDigest(BasePlugin):
                            lambda ctx: sources.fetch_wordle(wordle_day, ctx), sources.valid_wordle, timeout=5),
         }
         results = [result for key, result in payload.items() if key not in ("news", "music", "webb", "hubble")]
-        results += [*payload["news"].values(), *payload["music"].values(),
+        # The headline feeds share one column, so one late feed alone does not degrade the page.
+        results += [healthiest_result(list(payload["news"].values())), *payload["music"].values(),
                     space_result(payload["webb"], payload["hubble"])]
         payload["provenance"] = combined_provenance(results)
         return payload

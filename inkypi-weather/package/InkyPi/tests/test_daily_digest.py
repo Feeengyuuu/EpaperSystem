@@ -642,3 +642,10 @@ def test_a_slow_hubble_site_does_not_degrade_the_page_while_webb_is_fresh():
     assert daily_digest.space_result(webb, hubble) is webb
     assert daily_digest.space_result({"state": "unavailable", "data": {}}, hubble) is hubble
     assert daily_digest.combined_provenance([daily_digest.space_result(webb, hubble)]).value == "live"
+
+
+def test_one_late_news_feed_does_not_degrade_the_page_while_the_others_are_fresh():
+    fresh, late = {"state": "live", "data": {"items": [{}]}}, {"state": "stale_cache", "data": {"items": [{}]}}
+    assert daily_digest.healthiest_result([late, fresh, late]) is fresh
+    assert daily_digest.healthiest_result([late, late])["state"] == "stale_cache"
+    assert daily_digest.combined_provenance([daily_digest.healthiest_result([late, fresh])]).value == "live"

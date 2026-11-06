@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin, urlsplit
 from zoneinfo import ZoneInfo
 
-from utils.http_client import get_http_client
+from utils.http_client import HttpStatusError, get_http_client
 
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
@@ -26,7 +26,9 @@ DAILY_PAPERS = "https://huggingface.co/api/daily_papers"
 ARXIV_REPOS = "https://huggingface.co/api/arxiv/{id}/repos"
 REPOS_MAX_BYTES = 512 * 1024
 ARXIV_HTML = "https://arxiv.org/html/{id}v1"
-# A day's list runs to about 50 papers (340 KB); arXiv's HTML version of a paper to about 750 KB.
+# A day's list runs to about 50 papers (340 KB); arXiv's HTML version of a paper to about 750 KB,
+# and only its first ARXIV_MAX_BYTES are read (the affiliations and first figures come first), so
+# a longer paper is cut there instead of refused.
 LIST_MAX_BYTES = 1536 * 1024
 ARXIV_MAX_BYTES = 2048 * 1024
 # The days the page ranks together: today's list fills through the day, yesterday's has its votes.
@@ -122,8 +124,14 @@ def _get_json(url, context, *, params=None):
 
 
 def fetch_day(day, context):
-    """One day's papers as Hugging Face lists them."""
-    payload = _get_json(DAILY_PAPERS, context, params={"date": day, "limit": 100})
+    """One day's papers as Hugging Face lists them; none for a day it has not opened yet (just past
+    midnight UTC its "today" is still the day before, and a later date is refused with HTTP 400)."""
+    try:
+        payload = _get_json(DAILY_PAPERS, context, params={"date": day, "limit": 100})
+    except HttpStatusError as exc:
+        if exc.status != 400:
+            raise
+        return {"day": day, "papers": []}
     papers = [paper for paper in (normalize_paper(raw, day) for raw in payload if isinstance(payload, list))
               if paper is not None] if isinstance(payload, list) else []
     return {"day": day, "papers": papers}
@@ -197,7 +205,7 @@ def fetch_arxiv_figure(paper_id, context):
         raise ValueError("not an arXiv id")
     context.raise_if_cancelled()
     page = ARXIV_HTML.format(id=paper_id)
-    response = get_http_client().request_text(
+    response = get_http_client().request_text_head(
         "GET", page, context=context, timeout=REQUEST_TIMEOUT, max_bytes=ARXIV_MAX_BYTES,
         headers={"User-Agent": USER_AGENT, "Accept": "text/html"})
     context.raise_if_cancelled()

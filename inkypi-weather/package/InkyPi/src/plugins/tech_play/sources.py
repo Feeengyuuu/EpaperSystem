@@ -408,7 +408,7 @@ def fetch_arxiv_paper(paper_id, context):
     context.raise_if_cancelled()
     page = paper_sources.ARXIV_HTML.format(id=paper_id)
     try:
-        response = get_http_client().request_text(
+        response = get_http_client().request_text_head(
             "GET", page, context=context, timeout=REQUEST_TIMEOUT, max_bytes=paper_sources.ARXIV_MAX_BYTES,
             headers={"User-Agent": USER_AGENT, "Accept": "text/html"})
     except HttpStatusError as exc:

@@ -689,6 +689,26 @@ def test_fresh_cache_avoids_network_and_stale_cache_survives_failure(tmp_path):
     assert error == "RuntimeError"
 
 
+def test_no_coming_events_is_an_answer_not_a_failure(tmp_path):
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    plugin._cache_dir = lambda create=True: tmp_path / "cache"
+    fixture = [{"name": "Fixture walk", "label": "EVA", "date": NOW.isoformat()}]
+
+    # No event dated to the day within the horizon: the timeline shows none (never the fixture's
+    # made-up ones), and the empty answer is cached like any other.
+    rows, state, error = plugin._resolve_source("events", NOW, force=False, fetcher=lambda: [], fixture=fixture,
+                                                ttl_minutes=60)
+    assert (rows, state, error) == ([], "live", "")
+    rows, state, _error = plugin._resolve_source(
+        "events", NOW + timedelta(minutes=10), force=False,
+        fetcher=lambda: (_ for _ in ()).throw(AssertionError("network called")), fixture=fixture, ttl_minutes=60)
+    assert (rows, state) == ([], "fresh_cache")
+    # Launches still treat an empty answer as a failed source.
+    rows, state, _error = plugin._resolve_source("launches", NOW, force=False, fetcher=lambda: [], fixture=[],
+                                                 ttl_minutes=60)
+    assert state == "fixture"
+
+
 def test_payload_keeps_one_live_panel_when_the_other_source_fails(tmp_path, monkeypatch):
     plugin = OrbitalSignal({"id": PLUGIN_ID})
     plugin._cache_dir = lambda create=True: tmp_path / "cache"

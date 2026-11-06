@@ -345,7 +345,7 @@ class _Text:
 
 def test_a_papers_arxiv_page_gives_its_figures_and_affiliations(monkeypatch):
     class Client:
-        def request_text(self, _method, url, **_kwargs):
+        def request_text_head(self, _method, url, **_kwargs):
             if "2610.00002" in url:
                 raise HttpStatusError("GET", url, 404)
             return _Text(ARXIV_PAGE)

@@ -51,6 +51,8 @@ WORDMARK_ASSET_PATH = Path(__file__).with_name("assets") / "orbital-signal-wordm
 POLYMARKET_LOGO_PATH = Path(__file__).with_name("assets") / "polymarket-logo.png"
 POLYMARKET_LOGO_HEIGHT = 26
 CACHE_SCHEMA = "orbital-signal-v1"
+# Sources for which an empty list is a real answer (no spaceflight event dated to the day ahead).
+SOURCES_EMPTY_OK = frozenset({"events"})
 SOURCE_STATES = {"live", "fresh_cache", "stale_cache", "fixture"}
 LAUNCH_PHOTO_CACHE_BUDGET = CacheBudget(
     30 * 24 * 60 * 60,
@@ -574,6 +576,8 @@ class OrbitalSignal(BasePlugin):
         return [dict(row) for row in items if validator(row)]
 
     def _resolve_source(self, name, now, force, fetcher, fixture, ttl_minutes):
+        # Weeks can pass with no spaceflight event dated to the day: no events is an answer.
+        empty_ok = name in SOURCES_EMPTY_OK
         cache_file = self._cache_dir() / f"{name}.json"
         cached = self._read_json(cache_file, {})
         cached_items = cached.get("items") if isinstance(cached, dict) else None
@@ -582,15 +586,16 @@ class OrbitalSignal(BasePlugin):
             isinstance(cached, dict)
             and cached.get("schema") == CACHE_SCHEMA
             and isinstance(cached_items, list)
-            and bool(valid_cached)
+            and (bool(valid_cached) or empty_ok)
             and len(valid_cached) == len(cached_items)
         )
         if not force and cache_valid and self._cache_fresh(cached, now, ttl_minutes):
             return valid_cached, "fresh_cache", ""
 
         try:
-            live_items = self._valid_items(name, fetcher())
-            if not live_items:
+            fetched = fetcher()
+            live_items = self._valid_items(name, fetched)
+            if not live_items and not (empty_ok and fetched == []):
                 raise ValueError("source returned no usable rows")
             self._write_json(
                 cache_file,

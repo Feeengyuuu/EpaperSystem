@@ -303,6 +303,21 @@ def test_provider_io_lease_wraps_direct_transport_with_bound_context():
     assert governor.releases == 1
 
 
+def test_request_text_head_keeps_the_first_bytes_of_a_long_page():
+    page = ("<html>" + "é" * 3000 + "</html>").encode("utf-8")
+    response = FakeResponse(200, page, headers={"Content-Length": str(len(page))})
+    client = http_client.HttpClient(session=FakeSession([response]))
+
+    result = client.request_text_head("GET", "https://example.test/page", max_bytes=1001, context=_context())
+
+    # The first 1,001 bytes, the character cut in half at the end dropped; no ResponseTooLarge.
+    assert result.data == "<html>" + "é" * 497
+    assert response.closed
+    short = FakeResponse(200, b"<p>short</p>")
+    client = http_client.HttpClient(session=FakeSession([short]))
+    assert client.request_text_head("GET", "https://example.test/p", max_bytes=1001, context=_context()).data == "<p>short</p>"
+
+
 def test_request_bytes_closes_response_when_limit_exceeded():
     response = FakeResponse(200, b"12345")
     client = http_client.HttpClient(session=FakeSession([response]))

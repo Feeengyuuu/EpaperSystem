@@ -93,6 +93,24 @@ def test_over_a_weekend_the_page_ranks_the_last_two_days_with_papers(monkeypatch
     assert render.render_page((800, 480), payload, {}, sunday, {}).size == (800, 480)
 
 
+def test_a_day_hugging_face_has_not_opened_yet_has_no_papers(monkeypatch):
+    from utils.http_client import HttpStatusError
+
+    class Client:
+        def request_json(self, method, url, **kwargs):
+            if kwargs["params"]["date"] == "2026-11-07":
+                # Just past midnight UTC Hugging Face still calls the day before "today".
+                raise HttpStatusError("GET", url, 400)
+            raise HttpStatusError("GET", url, 503)
+
+    monkeypatch.setattr(sources, "get_http_client", Client)
+
+    assert sources.fetch_day("2026-11-07", _context()) == {"day": "2026-11-07", "papers": []}
+    # Any other failure still fails, so the cache stands in for it.
+    with pytest.raises(HttpStatusError):
+        sources.fetch_day("2026-11-06", _context())
+
+
 def test_an_arxiv_figure_comes_from_the_numbered_figures_not_the_title_block(monkeypatch):
     html = ('<div class="ltx_authors"><img src="2610.38568v1/trento-university-official.png" class="ltx_graphics"></div>'
             '<figure id="S1.F1" class="ltx_figure"><img src="2610.38568v1/figures/hf-logo.png" class="ltx_graphics">'
@@ -101,7 +119,7 @@ def test_an_arxiv_figure_comes_from_the_numbered_figures_not_the_title_block(mon
     seen = {}
 
     class Client:
-        def request_text(self, method, url, **kwargs):
+        def request_text_head(self, method, url, **kwargs):
             seen["url"] = url
             return SimpleNamespace(data=html)
 

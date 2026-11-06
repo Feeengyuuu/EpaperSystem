@@ -17377,6 +17377,44 @@ def test_club_api_football_odds_loader_caches_positive_response(monkeypatch, tmp
     assert [path for path, _params in calls] == ["/fixtures", "/odds"]
 
 
+def test_club_api_football_plan_refusal_stops_asking_for_that_season(monkeypatch, tmp_path):
+    from plugins.sports_dashboard import club_football
+
+    plugin = _plugin()
+    now = datetime(2026, 11, 6, 18, tzinfo=timezone.utc)
+    event = SportsDashboard._parse_club_espn_events("PL", _sample_club_espn_payload(), timezone.utc)[0]
+    for key in list(event):
+        if key.startswith("odds_"):
+            event.pop(key)
+    event["start_utc"] = now + timedelta(hours=20)
+    event["event_key"] = "PL:refused"
+    monkeypatch.setattr(plugin, "_sports_dashboard_cache_dir", lambda: tmp_path)
+    requests_made = []
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"errors": {"plan": "Free plans do not have access to this season, try from 2022 to 2024."},
+                    "response": []}
+
+    class Session:
+        def get(self, url, **kwargs):
+            requests_made.append(url)
+            return Response()
+
+    monkeypatch.setattr(club_football, "get_http_session", lambda: Session())
+
+    # The free plan's refusal is remembered for the season: no warning-raising error, cached odds
+    # (none) instead, and no further requests for that season's games, even another day.
+    assert plugin._load_club_api_football_odds_for_event(event, {}, "api-key", timezone.utc, now) == {}
+    later = {**event, "event_key": "PL:refused-2", "start_utc": now + timedelta(days=3)}
+    assert plugin._load_club_api_football_odds_for_event(later, {}, "api-key", timezone.utc,
+                                                         now + timedelta(days=2)) == {}
+    assert len(requests_made) == 1
+
+
 def test_parse_club_football_data_event_never_infers_live_from_kickoff():
     event = SportsDashboard._parse_club_football_data_events(
         "PL", _sample_club_football_data_matches(), timezone.utc
