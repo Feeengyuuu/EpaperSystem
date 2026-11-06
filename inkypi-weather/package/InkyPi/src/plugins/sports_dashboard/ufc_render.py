@@ -41,7 +41,7 @@ class UfcRenderMixin:
         if not event.get("fights"):
             self._draw_centered_in_box(draw, (left, top, right, bottom), "暂无 UFC 赛事", self._font(14, True), COLORS["muted"])
             return
-        self._draw_ufc_banner(draw, (left, top, right, top + BANNER_HEIGHT), event, card.get("status"), now, accent)
+        self._draw_ufc_banner(image, draw, (left, top, right, top + BANNER_HEIGHT), event, card.get("status"), now, accent)
         face = (left, top + BANNER_HEIGHT + 5, right, top + BANNER_HEIGHT + 5 + FACE_OFF_HEIGHT)
         self._draw_ufc_face_off(image, draw, face, event["fights"][0], accent)
         rows_top = face[3] + 5
@@ -53,7 +53,7 @@ class UfcRenderMixin:
                 break
             self._draw_ufc_row(image, draw, (left, y, right, y + row_h), fight, now)
 
-    def _draw_ufc_banner(self, draw, box, event, status, now, accent):
+    def _draw_ufc_banner(self, image, draw, box, event, status, now, accent):
         x1, y1, x2, y2 = [int(value) for value in box]
         self._draw_hub_card_shell(draw, x1, y1, x2, y2, accent)
         status = str(status or "NEXT").upper()
@@ -72,10 +72,22 @@ class UfcRenderMixin:
         headline, headline_font = self._fit_text_ellipsis(draw, str(event.get("headline") or ""), px1 - headline_x - 10, 14,
                                                           bold=True, min_size=10)
         self._draw_text_in_box(draw, (headline_x, y1 + 3, px1 - 8, y1 + 22), headline, headline_font, COLORS["text"])
+        # The venue and the start by the page's pin and clock icons, the broadcaster by its logo.
         start = local_label(event.get("start"), now)
-        sub = "  ·  ".join(part for part in (event.get("venue"), event.get("city"), f"{start} 开打" if start else "") if part)
-        sub, sub_font = self._fit_text_ellipsis(draw, sub, x2 - x1 - 24, 9, bold=False, min_size=8)
-        self._draw_text_in_box(draw, (x1 + 12, y1 + 23, x2 - 10, y1 + 35), sub, sub_font, COLORS["text"])
+        broadcast = next((fight.get("broadcast") for fight in event.get("fights") or [] if fight.get("broadcast")), "")
+        end = x2 - 10
+        if broadcast and self._draw_kit_small_broadcast(image, (x2 - 110, y1 + 23, x2 - 10, y1 + 36), broadcast, 12,
+                                                        align="right"):
+            end = x2 - 116
+        venue = "  ·  ".join(part for part in (event.get("venue"), event.get("city")) if part)
+        sub_font = self._font(9, False)
+        x = x1 + 12
+        if venue:
+            x = self._draw_icon_text(draw, "VENUE", (x, y1 + 23, min(end, x + 230), y1 + 36), venue, sub_font,
+                                     COLORS["text"], accent=accent) + 12
+        if start and end - x > 60:
+            self._draw_icon_text(draw, "CLOCK", (x, y1 + 23, end, y1 + 36), f"{start} 开打", sub_font, COLORS["text"],
+                                 accent=accent)
 
     def _draw_ufc_face_off(self, image, draw, box, fight, accent):
         x1, y1, x2, y2 = [int(value) for value in box]
@@ -135,11 +147,15 @@ class UfcRenderMixin:
                                outline=COLORS["border"], width=1)
         weight, weight_font = self._fit_text(draw, weight, chip_w - 8, 10, bold=True, min_size=7)
         self._draw_centered_in_box(draw, (x1 + 3, y1 + 3, x1 + chip_w, y2 - 3), weight, weight_font, COLORS["text"])
-        result = ufc.result_label(fight) or local_label(fight.get("date"), now).split(" ")[-1]
+        result = ufc.result_label(fight)
         result_font = self._font(10, True)
         result_w = 64
-        self._draw_text_in_box(draw, (x2 - result_w - 6, y1, x2 - 6, y2), result, result_font,
-                               COLORS["red"] if fight.get("state") == "in" else COLORS["text"], align="right")
+        if result:
+            self._draw_text_in_box(draw, (x2 - result_w - 6, y1, x2 - 6, y2), result, result_font,
+                                   COLORS["red"] if fight.get("state") == "in" else COLORS["text"], align="right")
+        else:
+            clock = local_label(fight.get("date"), now).split(" ")[-1]
+            self._draw_icon_text(draw, "CLOCK", (x2 - result_w + 14, y1, x2 - 6, y2), clock, result_font, COLORS["text"])
         middle = (x1 + chip_w + x2 - result_w) // 2
         decided = fight.get("state") == "post"
         self._draw_centered_in_box(draw, (middle - 12, y1, middle + 12, y2), "vs", self._font(9, False), COLORS["muted"])

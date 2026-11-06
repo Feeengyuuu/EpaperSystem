@@ -54,6 +54,127 @@
         64
       ],
       "sha256": "8c5c7a69988b656fae6cf3f8d8e5298c0c2c1d65815f7c5f7bbc030c800ee516"
+    },
+    "tennis_atp_1000": {
+      "source": "https://www.atptour.com/assets/atpwt/images/tournament/badges/categorystamps_1000.png",
+      "page": "https://www.atptour.com/en/tournaments",
+      "licence": "ATP Tour's ATP 1000 category stamp from its own site, shown to name the tournament's tier",
+      "source_sha256": "e23230350ce87b1693aee6852d729237387acc93e655f880fd0609189fd2ebf2",
+      "size": [
+        132,
+        64
+      ],
+      "sha256": "3a648066d1609a5affa5f149cf7a17a1dab2e0dd09e264bdca28d9e24b2b9d75"
+    },
+    "tennis_atp_500": {
+      "source": "https://www.atptour.com/assets/atpwt/images/tournament/badges/categorystamps_500.png",
+      "page": "https://www.atptour.com/en/tournaments",
+      "licence": "ATP Tour's ATP 500 category stamp from its own site, shown to name the tournament's tier",
+      "source_sha256": "88375dc726e98b5a1bef390b697a19ab03498c43fbff05639436f1a0212e6079",
+      "size": [
+        132,
+        64
+      ],
+      "sha256": "5a7c690762e734c82c330c8f7582ae78e17377ae20d59209804153fa8744ff70"
+    },
+    "tennis_atp_250": {
+      "source": "https://www.atptour.com/assets/atpwt/images/tournament/badges/categorystamps_250.png",
+      "page": "https://www.atptour.com/en/tournaments",
+      "licence": "ATP Tour's ATP 250 category stamp from its own site, shown to name the tournament's tier",
+      "source_sha256": "444f689a6310d2a572ffb19896deba05893004caa586acdaf2ac8b1d7e26706d",
+      "size": [
+        132,
+        64
+      ],
+      "sha256": "a0c7a7ec2a52301ec1d0747727938d122e9c558d12f7ac818bf0ef54488772eb"
+    },
+    "tennis_australian_open": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b4/Australian_Open_Logo_2017.svg/500px-Australian_Open_Logo_2017.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Australian_Open_Logo_2017.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "5f02c1ea53ed150c6a5632a18912367090946dcf0d921102956ce411f555523a",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "6fd28d16a320a09505713a10b0ae461054963d14c6dc632f216a4f03d5f4fc6a"
+    },
+    "tennis_roland_garros": {
+      "source": "https://upload.wikimedia.org/wikipedia/en/thumb/1/1d/Logo_Roland-Garros.svg/500px-Logo_Roland-Garros.svg.png",
+      "page": "https://en.wikipedia.org/wiki/File:Logo_Roland-Garros.svg",
+      "licence": "Roland-Garros' official logo (English Wikipedia's copy), shown to name the tournament",
+      "source_sha256": "ed20b89d59a6c5a1c2fc88d4a2b42fff4db36313df82880980e621c4341dbcba",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "e18b1b7cedda98710fdfed984747c852bb539c59fdb31f8255d823ad86ff572f"
+    },
+    "tennis_us_open": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Usopen-horizontal-logo.svg/500px-Usopen-horizontal-logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Usopen-horizontal-logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "a5059c27998ba367fc4d10beaf67f0c0edf7054b1ac047a239340f3126838a40",
+      "size": [
+        95,
+        64
+      ],
+      "sha256": "33a37e6851e32b24d5c6e1fd2f613a6609636b01c15f32a9275c78d5308171ea"
+    },
+    "motogp_ducati": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/36/Ducati_red_logo.svg/500px-Ducati_red_logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Ducati_red_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "6331e6930b125ff27773c7790f9fd0ca76617483d42c41120dfebcfa9ddd27a1",
+      "size": [
+        60,
+        64
+      ],
+      "sha256": "19e2f451a2c046d30c6c63bea48350902235cac2434fbe64d7fd1042eb91378c"
+    },
+    "motogp_ktm": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a9/KTM-Logo.svg/500px-KTM-Logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:KTM-Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "30a425bb559058a34deaef198dbe62823d09290e75525bfcc0d974cb11d0fdd9",
+      "size": [
+        163,
+        64
+      ],
+      "sha256": "8df4e7d54323cba03ce92995e6215fdd55b1db0c2acf96cc7bb5fcb79085ac41"
+    },
+    "motogp_aprilia": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/9/99/Aprilia-logo.svg/500px-Aprilia-logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Aprilia-logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "e8a47ab623299e8c845944c51d9e5e82a2406379deb7b2eeb5789d05c5f66dfb",
+      "size": [
+        128,
+        64
+      ],
+      "sha256": "8d997025f29e43d5eace91ec277a1ba180f337a0bc547d18e160780240214037"
+    },
+    "motogp_honda": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c7/Honda_Racing_logo_(2022).svg/500px-Honda_Racing_logo_(2022).svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Honda_Racing_logo_(2022).svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "9404b3d5dc00b4a5eff7d9a2de8a7b017e1ae9398825b23001bceb02e39c3aa4",
+      "size": [
+        179,
+        64
+      ],
+      "sha256": "e6695ed82a8cd72d230143051feb5d6794e78af83a22e66eee43da06c47f58d0"
+    },
+    "motogp_yamaha": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/de/Yamaha_Motor_logo.svg/500px-Yamaha_Motor_logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Yamaha_Motor_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "83db9226dae3bab48b90b218b7d4304b1d233d172a33400155b68d3bf99388a4",
+      "size": [
+        271,
+        64
+      ],
+      "sha256": "6432288e6bdffa862947e695437f964eca7e73f0fa41ab674c807bb59d767c29"
     }
   }
 }

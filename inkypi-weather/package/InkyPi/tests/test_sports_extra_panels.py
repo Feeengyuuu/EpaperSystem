@@ -108,3 +108,48 @@ def test_the_golf_board_shows_places_as_medals_and_countries_as_flags(monkeypatc
     assert medals == [(1, False), (3, True)]
     assert flags == [("https://a.espncdn.com/i/teamlogos/countries/500/usa.png", "USA"),
                      ("https://a.espncdn.com/i/teamlogos/countries/500/can.png", "CAN")]
+
+
+def test_tournaments_are_named_by_their_official_marks():
+    paris = {"tour": "ATP", "name": "Rolex Paris Masters"}
+    assert (tennis.tournament_category(paris), tennis.tournament_mark(paris)) == ("1000", "tennis_atp_1000")
+    assert tennis.tournament_mark({"tour": "ATP", "name": "Swiss Indoors Basel"}) == "tennis_atp_500"
+    assert tennis.tournament_mark({"tour": "ATP", "name": "Moselle Open"}) == "tennis_atp_250"
+    assert tennis.tournament_mark({"tour": "WTA", "name": "Australian Open"}) == "tennis_australian_open"
+    # A WTA event carries the tour's wordmark with its tier as a badge; Wimbledon and the Finals have no
+    # bundled mark.
+    hong_kong = {"tour": "WTA", "name": "Prudential Hong Kong Tennis Open"}
+    assert (tennis.tournament_category(hong_kong), tennis.tournament_mark(hong_kong)) == ("250", None)
+    assert tennis.tournament_category({"tour": "WTA", "name": "Wuhan Open"}) == "1000"
+    assert tennis.tournament_mark({"tour": "ATP", "name": "Wimbledon"}) is None
+    assert tennis.tournament_mark({"tour": "ATP", "name": "Nitto ATP Finals"}) is None
+    from plugins.sports_dashboard.common import LOCAL_TEAM_LOGO_DIR
+
+    for key in ("tennis_atp_1000", "tennis_atp_500", "tennis_atp_250", "tennis_australian_open", "tennis_roland_garros",
+                "tennis_us_open", "motogp_ducati", "motogp_ktm", "motogp_aprilia", "motogp_honda", "motogp_yamaha"):
+        assert (Path(LOCAL_TEAM_LOGO_DIR) / f"{key}.png").is_file(), key
+
+
+def test_each_rider_carries_his_manufacturers_mark():
+    from plugins.sports_dashboard.motogp_render import maker_mark
+
+    assert [maker_mark(name) for name in ("Ducati", "KTM", "Aprilia", "Honda", "Yamaha", "Unknown")] == [
+        "motogp_ducati", "motogp_ktm", "motogp_aprilia", "motogp_honda", "motogp_yamaha", None]
+
+
+def test_at_night_only_dark_neutral_strokes_take_the_light_ink():
+    from plugins.sports_dashboard.icon_marks import night_inked
+
+    mark = Image.new("RGBA", (3, 1))
+    mark.putpixel((0, 0), (10, 10, 10, 255))     # black lettering
+    mark.putpixel((1, 0), (230, 0, 18, 255))     # a brand red (Aprilia)
+    mark.putpixel((2, 0), (20, 30, 90, 255))     # ATP navy
+    token = _ACTIVE_COLORS.set(DEEP_NIGHT_COLORS)
+    try:
+        inked = night_inked(mark)
+    finally:
+        _ACTIVE_COLORS.reset(token)
+    light = (*DEEP_NIGHT_COLORS["text"], 255)
+    assert inked.getpixel((0, 0)) == light and inked.getpixel((2, 0)) == light
+    assert inked.getpixel((1, 0)) == (230, 0, 18, 255)
+    assert night_inked(mark) is mark  # by day the mark is drawn as printed

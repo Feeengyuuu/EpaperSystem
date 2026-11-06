@@ -54,12 +54,25 @@ class TennisRenderMixin:
         x1, y1, x2, y2 = [int(value) for value in box]
         tournament = entry.get("tournament") or {}
         self._draw_hub_card_shell(draw, x1, y1, x2, y1 + HEAD_HEIGHT, accent)
-        mark = self._load_local_logo(TOUR_MARKS[tour], (40, 14), alpha_threshold=8)
+        # The tournament by its official mark: a Grand Slam's logo or the ATP's tier stamp; a WTA
+        # event by the tour's wordmark and its tier as a badge.
+        key = tennis.tournament_mark(tournament)
+        path = os.path.join(LOCAL_TEAM_LOGO_DIR, f"{key}.png") if key else TOUR_MARKS[tour]
+        mark = self._load_local_logo(path, (52, 20) if key else (40, 14), alpha_threshold=8)
         x = x1 + 8
         if mark:
             mark = SportsDashboard._night_inked_mark(mark)
             image.paste(mark, (x, y1 + (HEAD_HEIGHT - mark.height) // 2), mark)
             x += mark.width + 6
+        category = tennis.tournament_category(tournament)
+        if not key and category in ("1000", "500", "250"):
+            badge_font = self._font(9, True)
+            badge_w = self._text_width(draw, category, badge_font) + 10
+            draw.rounded_rectangle((x, y1 + 6, x + badge_w, y1 + HEAD_HEIGHT - 6), radius=4,
+                                   fill=accent, outline=COLORS["border"], width=1)
+            self._draw_centered_in_box(draw, (x, y1 + 6, x + badge_w, y1 + HEAD_HEIGHT - 6), category, badge_font,
+                                       (255, 255, 255))
+            x += badge_w + 6
         name = tournament.get("name_zh") or tournament.get("name") or tour
         city = tournament.get("city") or ""
         city_font = self._font(9, False)
@@ -88,8 +101,15 @@ class TennisRenderMixin:
         state = match_state_label(match, now)
         if live:
             draw.ellipse((x2 - 66, y1 + 5, x2 - 59, y1 + 12), fill=COLORS["red"], outline=COLORS["border"], width=1)
-        self._draw_text_in_box(draw, (x2 - 58, y1 + 2, x2 - 6, y1 + 15), state, self._font(9, live),
-                               COLORS["red"] if live else COLORS["muted"], align="right")
+        if match.get("state") == "pre" and state != "待定":
+            # A match to come by the page's clock icon and its local start.
+            font = self._font(9, False)
+            width = self._text_width(draw, state, font)
+            self._draw_icon_text(draw, "CLOCK", (x2 - 6 - width - 12, y1 + 2, x2 - 4, y1 + 15), state, font, COLORS["muted"],
+                                 accent=accent)
+        else:
+            self._draw_text_in_box(draw, (x2 - 58, y1 + 2, x2 - 6, y1 + 15), state, self._font(9, live),
+                                   COLORS["red"] if live else COLORS["muted"], align="right")
         players = match.get("players") or []
         sets = max((len(player.get("sets") or []) for player in players), default=0)
         row_h = (y2 - y1 - 17) // 2

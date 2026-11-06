@@ -41,6 +41,51 @@ THOUSANDS = (("indian wells|bnp paribas open", "印第安维尔斯大师赛"), (
              ("wuhan", "武汉网球公开赛"), ("qatar|doha", "多哈公开赛"), ("dubai", "迪拜网球锦标赛"))
 
 
+SLAM_KEYS = (("australian open", "australian_open"), ("roland garros|french open", "roland_garros"),
+             ("wimbledon", "wimbledon"), ("us open", "us_open"))
+# The 500-level events of each tour (the rest below the 1000s are 250s).
+ATP_500 = ("rotterdam|abn amro|dallas|rio open|mexican open|acapulco|abierto mexicano|dubai|qatar|doha|barcelona|munich|"
+           "bmw open|queen|halle|terra wortmann|hamburg|washington|citi open|china open|beijing|japan open|tokyo|basel|"
+           "swiss indoors|vienna|erste bank")
+WTA_1000 = ("qatar|doha|dubai|indian wells|bnp paribas|miami|madrid|internazionali|rome|italian open|canadian|"
+            "national bank|cincinnati|china open|beijing|wuhan")
+WTA_500 = ("brisbane|adelaide|abu dhabi|linz|charleston|credit one|stuttgart|porsche|berlin|queen|bad homburg|eastbourne|"
+           "washington|citi open|monterrey|san diego|seoul|korea open|pan pacific|toray|tokyo|ningbo|strasbourg|"
+           "guadalajara|zhengzhou")
+# The bundled official marks: the Grand Slams' logos and the ATP's tier stamps.
+MARKS = {"australian_open", "roland_garros", "us_open"}
+
+
+def tournament_category(tournament):
+    """"australian_open" / "roland_garros" / "wimbledon" / "us_open" for a Grand Slam, "finals" for
+    the year-end Finals, else the tour's tier: "1000", "500" or "250"."""
+    tournament = tournament or {}
+    name = str(tournament.get("name") or "").lower()
+    slam = next((key for pattern, key in SLAM_KEYS if re.search(pattern, name)), None)
+    if slam:
+        return slam
+    if _match_name(name, FINALS):
+        return "finals"
+    if tournament.get("tour") == "WTA":
+        if re.search(WTA_1000, name) or "1000" in name:
+            return "1000"
+        return "500" if re.search(WTA_500, name) else "250"
+    if _match_name(name, THOUSANDS) or re.search(r"masters|1000", name):
+        return "1000"
+    return "500" if re.search(ATP_500, name) else "250"
+
+
+def tournament_mark(tournament):
+    """The bundled official mark naming the tournament: a Grand Slam's logo, or for an ATP event its
+    tier stamp (tennis_atp_1000 / 500 / 250); None for a WTA event or the Finals."""
+    category = tournament_category(tournament)
+    if category in MARKS:
+        return f"tennis_{category}"
+    if (tournament or {}).get("tour") != "WTA" and category in ("1000", "500", "250"):
+        return f"tennis_atp_{category}"
+    return None
+
+
 def _date(value):
     try:
         return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(timezone.utc)

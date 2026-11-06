@@ -34,8 +34,13 @@ def night_inked(mark):
         return mark
     mark = mark.convert("RGBA")
     alpha = mark.getchannel("A")
+    red, green, blue = mark.convert("RGB").split()
+    # Dark and nearly neutral strokes only: a brand red or orange (Aprilia, KTM) keeps its colour.
+    chroma = ImageChops.subtract(ImageChops.lighter(ImageChops.lighter(red, green), blue),
+                                 ImageChops.darker(ImageChops.darker(red, green), blue))
     dark = ImageChops.multiply(mark.convert("L").point(lambda value: 255 if value < 90 else 0),
-                               alpha.point(lambda value: 255 if value else 0))
+                               chroma.point(lambda value: 255 if value < 110 else 0))
+    dark = ImageChops.multiply(dark, alpha.point(lambda value: 255 if value else 0))
     ink = Image.new("RGBA", mark.size, (*COLORS["text"], 255))
     ink.putalpha(alpha)
     return Image.composite(ink, mark, dark)
@@ -72,6 +77,42 @@ class IconMarksMixin:
         text = f"T{number}" if tied and number is not None else (str(number) if number is not None else "-")
         font_size = max(7, int(size * (0.5 if len(text) <= 1 else 0.42 if len(text) == 2 else 0.34)))
         self._draw_centered_in_box(draw, disc, text, self._font(font_size, True), (8, 8, 8) if fill else COLORS["text"])
+
+    def _draw_session_glyph(self, draw, kind, x, y, colour):
+        """A race weekend session as a 10 px glyph in the page's line-icon style: a chequered flag
+        for the race, a lightning bolt for the sprint, two staggered grid boxes for qualifying and a
+        stopwatch for practice or the warm-up."""
+        x, y = int(x), int(y)
+        ink = COLORS["text"]
+        if kind == "RAC":
+            draw.line((x + 1, y, x + 1, y + 10), fill=ink, width=1)
+            for row in range(3):
+                for column in range(3):
+                    if (row + column) % 2 == 0:
+                        draw.rectangle((x + 2 + column * 3, y + row * 2, x + 4 + column * 3, y + 1 + row * 2), fill=ink)
+            draw.rectangle((x + 2, y, x + 10, y + 5), outline=ink, width=1)
+        elif kind == "SPR":
+            draw.polygon([(x + 6, y), (x + 1, y + 6), (x + 5, y + 6), (x + 3, y + 10), (x + 9, y + 4), (x + 5, y + 4)],
+                         fill=colour, outline=ink)
+        elif kind == "Q":
+            draw.rectangle((x, y + 1, x + 4, y + 5), outline=ink, width=1)
+            draw.rectangle((x + 5, y + 5, x + 9, y + 9), fill=colour, outline=ink, width=1)
+            draw.line((x + 2, y + 6, x + 2, y + 9), fill=ink, width=1)
+        else:
+            draw.ellipse((x, y + 1, x + 9, y + 10), outline=ink, width=1)
+            draw.rectangle((x + 4, y - 1, x + 5, y), fill=ink)
+            draw.line((x + 4, y + 5, x + 4, y + 2), fill=colour, width=1)
+            draw.line((x + 4, y + 5, x + 7, y + 5), fill=ink, width=1)
+
+    def _draw_icon_text(self, draw, kind, box, text, font, colour, *, accent=None):
+        """A line icon (the dashboard's CLOCK, VENUE, TV...) and its text in ``box``; returns the end x."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        middle = (y1 + y2) // 2
+        self._draw_sport_info_icon(draw, kind, x1, middle - 4, accent or COLORS["red"])
+        text, font = self._fit_text_ellipsis(draw, text, x2 - x1 - 12, font.size if hasattr(font, "size") else 9,
+                                             bold=False, min_size=7)
+        self._draw_text_in_box(draw, (x1 + 12, y1, x2, y2), text, font, colour)
+        return x1 + 12 + self._text_width(draw, text, font)
 
     def _load_icon_flag(self, url, size):
         """The flag at ``url`` trimmed and contained in ``size``, its file kept in the team-logo disk

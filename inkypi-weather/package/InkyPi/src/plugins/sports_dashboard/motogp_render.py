@@ -20,6 +20,14 @@ BANNER_HEIGHT = 38
 COLUMN_GAP = 8
 ROW_H = 19
 RESULT_NAMES = {"RAC": "正赛成绩", "SPR": "冲刺赛成绩"}
+# Each manufacturer's official mark (assets/logos), shown beside its riders.
+MAKER_MARKS = {"ducati": "motogp_ducati", "ktm": "motogp_ktm", "aprilia": "motogp_aprilia", "honda": "motogp_honda",
+               "yamaha": "motogp_yamaha"}
+
+
+def maker_mark(constructor):
+    text = str(constructor or "").lower()
+    return next((key for name, key in MAKER_MARKS.items() if name in text), None)
 
 
 def _local(value, now):
@@ -82,9 +90,13 @@ class MotoGPRenderMixin:
         sponsor, sponsor_font = self._fit_text_ellipsis(draw, str(weekend.get("sponsored") or ""), px1 - sponsor_x - 10, 9,
                                                         bold=False, min_size=7)
         self._draw_text_in_box(draw, (sponsor_x, y1 + 6, px1 - 8, y1 + 21), sponsor, sponsor_font, COLORS["muted"])
-        sub = "  ·  ".join(part for part in (weekend.get("circuit"), dates) if part)
-        sub, sub_font = self._fit_text_ellipsis(draw, sub, x2 - text_x - 12, 9, bold=False, min_size=8)
-        self._draw_text_in_box(draw, (text_x, y1 + 23, x2 - 10, y1 + 35), sub, sub_font, COLORS["text"])
+        sub_font = self._font(9, False)
+        x = text_x
+        if weekend.get("circuit"):
+            x = self._draw_icon_text(draw, "VENUE", (x, y1 + 23, x2 - 90, y1 + 36), weekend["circuit"], sub_font,
+                                     COLORS["text"], accent=accent) + 12
+        if dates:
+            self._draw_icon_text(draw, "CLOCK", (x, y1 + 23, x2 - 10, y1 + 36), dates, sub_font, COLORS["text"], accent=accent)
 
     def _draw_motogp_column_head(self, draw, box, title, accent):
         x1, y1, x2, _y2 = [int(value) for value in box]
@@ -115,11 +127,12 @@ class MotoGPRenderMixin:
                 draw.line((mark[0] + 3, mark[3], mark[2], mark[1]), fill=COLORS["green"], width=2)
             else:
                 draw.ellipse(mark, outline=COLORS["border"], width=1)
+            self._draw_session_glyph(draw, session.get("type"), x1 + 15, y + 4, accent)
             label_font = self._font(10, is_live or is_next or session.get("type") in ("RAC", "SPR"))
-            self._draw_text_in_box(draw, (x1 + 15, y, x1 + 62, y + ROW_H), session.get("label") or "", label_font,
+            self._draw_text_in_box(draw, (x1 + 30, y, x1 + 72, y + ROW_H), session.get("label") or "", label_font,
                                    COLORS["muted"] if done else COLORS["text"])
             when = f"周{WEEKDAYS_ZH[local.weekday()]} {local:%H:%M}" if local else ""
-            self._draw_text_in_box(draw, (x1 + 62, y, x2 - 2, y + ROW_H), when, self._font(10, is_next or is_live),
+            self._draw_text_in_box(draw, (x1 + 70, y, x2 - 2, y + ROW_H), when, self._font(10, is_next or is_live),
                                    COLORS["red"] if is_live else (COLORS["text"] if not done else COLORS["muted"]), align="right")
             y += ROW_H
 
@@ -129,11 +142,20 @@ class MotoGPRenderMixin:
         self._draw_rank_medal(draw, (x1, y1 + 1, x1 + disc, y1 + 1 + disc), place if place is not None else row.get("pos"))
         flag_x = x1 + disc + 4
         self._draw_flag_icon(image, draw, iso2_flag_url(row.get("iso")), (flag_x, y1 + 3, flag_x + 18, y2 - 3), row.get("iso"))
-        number = f"#{row['number']}" if row.get("number") is not None else ""
-        number_font = self._font(9, True)
+        # The rider's manufacturer by its official mark; the race number only without one.
         number_x = flag_x + 22
-        number_w = self._text_width(draw, number, number_font) if number else 0
-        self._draw_text_in_box(draw, (number_x, y1, number_x + number_w, y2), number, number_font, COLORS["muted"])
+        key = maker_mark(row.get("constructor"))
+        mark = self._load_local_logo(os.path.join(LOCAL_TEAM_LOGO_DIR, f"{key}.png"), (26, y2 - y1 - 6),
+                                     alpha_threshold=8) if key else None
+        if mark:
+            mark = SportsDashboard._night_inked_mark(mark)
+            image.paste(mark, (number_x, y1 + (y2 - y1 - mark.height) // 2), mark)
+            number_w = mark.width
+        else:
+            number = f"#{row['number']}" if row.get("number") is not None else ""
+            number_font = self._font(9, True)
+            number_w = self._text_width(draw, number, number_font) if number else 0
+            self._draw_text_in_box(draw, (number_x, y1, number_x + number_w, y2), number, number_font, COLORS["muted"])
         value_font = self._font(10, True)
         value_w = self._text_width(draw, value, value_font) if value else 0
         self._draw_text_in_box(draw, (x2 - value_w - 2, y1, x2 - 2, y2), value, value_font, COLORS["text"], align="right")
