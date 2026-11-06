@@ -605,6 +605,9 @@ VENUE_LOGO_KEYS = {
     "arenacdmx": "arena_cdmx", "fcbayernmunichstadium": "allianz_arena",
     "geodispark": "geodis_park", "nissanstadium": "nissan_stadium",
     "toyotastadium": "toyota_stadium",
+    # Club grounds whose logo only the French Wikipedia's infobox shows.
+    "allianzriviera": "allianz_riviera", "estadiodelacermica": "estadio_de_la_ceramica",
+    "spotifycampnou": "spotify_camp_nou", "stadeocane": "stade_oceane",
 }
 # A home city's official emblem (its seal, else its arms, logo or flag) stands in for its name after a
 # venue logo, by every scoreboard spelling of it with only its letters and digits, lower case

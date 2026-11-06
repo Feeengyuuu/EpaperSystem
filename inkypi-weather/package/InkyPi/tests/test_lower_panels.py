@@ -1804,7 +1804,10 @@ def test_every_league_home_venue_has_its_logo():
     # The World Series parks, a renamed one and an alias the feeds use resolve to their own files.
     for venue, key in (("Tropicana Field", "tropicana_field"), ("Daikin Park", "daikin_park"),
                        ("Toyota Center", "toyota_center"), ("crypto.com Arena", "crypto_com_arena"),
-                       ("Michelob ULTRA Arena", "michelob_ultra_arena")):
+                       ("Michelob ULTRA Arena", "michelob_ultra_arena"),
+                       # ESPN's NFL name for the Allianz Arena, and grounds with an accented name.
+                       ("FC Bayern Munich Stadium", "allianz_arena"), ("Estadio de la Cerámica", "estadio_de_la_ceramica"),
+                       ("Stade Océane", "stade_oceane"), ("Spotify Camp Nou", "spotify_camp_nou")):
         assert VENUE_LOGO_KEYS[re.sub(r"[^a-z0-9]", "", venue.lower())] == key
         assert (Path(LOCAL_VENUE_LOGO_DIR) / f"{key}.png").is_file()
     assert len(set(VENUE_LOGO_KEYS.values())) >= 68

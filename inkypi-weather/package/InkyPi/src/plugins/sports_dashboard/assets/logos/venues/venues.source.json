@@ -2947,6 +2947,62 @@
         42,
         48
       ]
+    },
+    "allianz_riviera": {
+      "file": "Logo Allianz Riviera (Nice).svg",
+      "page": "https://fr.wikipedia.org/wiki/Fichier:Logo_Allianz_Riviera_(Nice).svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/fr/thumb/7/75/Logo_Allianz_Riviera_%28Nice%29.svg/960px-Logo_Allianz_Riviera_%28Nice%29.svg.png",
+      "licence": "Non-free logo on French Wikipedia (the venue's trademark, marque déposée); shown to name the venue",
+      "original_sha1": "b0526b150179cd903acb7a8b61b95e30d86ad8e9",
+      "source_png_sha256": "a2742b250ad376cc0938a7a470531e1f2bb6a8594cc28de253608f653e9e2584",
+      "sha256": "bae745f0edf0e35371c3e1678c435b9d0bdbc44c83d4ba6598ca5e9cbfc566b2",
+      "size": [
+        326,
+        48
+      ],
+      "processing": "the French Wikipedia infobox logo; cropped to the alpha bounding box, scaled to 48 px high"
+    },
+    "estadio_de_la_ceramica": {
+      "file": "Logo Estadio de La Cerámica 2024.png",
+      "page": "https://fr.wikipedia.org/wiki/Fichier:Logo_Estadio_de_La_Cer%C3%A1mica_2024.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/fr/4/4b/Logo_Estadio_de_La_Cer%C3%A1mica_2024.png",
+      "licence": "Non-free logo on French Wikipedia (the venue's trademark, marque déposée); shown to name the venue",
+      "original_sha1": "77a624e1db0d0258d2efab850615a7cdcbd6622c",
+      "source_png_sha256": "8d9ea1be1a832b6fa38f271bea69c8a3f1d346ab79ca718f443196de2a561c67",
+      "sha256": "6b61936a8355bb204d7c624c157fc719ba8c9ef01702b6c4c1644319d8e9e1d5",
+      "size": [
+        70,
+        48
+      ],
+      "processing": "the French Wikipedia infobox logo; cropped to the alpha bounding box, scaled to 48 px high"
+    },
+    "spotify_camp_nou": {
+      "file": "Logo Spotify Camp Nou 2025.svg",
+      "page": "https://fr.wikipedia.org/wiki/Fichier:Logo_Spotify_Camp_Nou_2025.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/fr/thumb/c/c9/Logo_Spotify_Camp_Nou_2025.svg/960px-Logo_Spotify_Camp_Nou_2025.svg.png",
+      "licence": "Non-free logo on French Wikipedia (the venue's trademark, marque déposée); shown to name the venue",
+      "original_sha1": "3e207026821d1d78617ca5fd3104417cecb1828a",
+      "source_png_sha256": "748c9d93df054fb8315017c8d20af5b6fe90c5a92faf954602999beae6699d04",
+      "sha256": "9fe0607c75844ad895523e5566e54d01d9675edf3002ea05b210102520c207e2",
+      "size": [
+        391,
+        48
+      ],
+      "processing": "the French Wikipedia infobox logo; cropped to the alpha bounding box, scaled to 48 px high"
+    },
+    "stade_oceane": {
+      "file": "Logo Stade Océane.svg",
+      "page": "https://fr.wikipedia.org/wiki/Fichier:Logo_Stade_Oc%C3%A9ane.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/fr/thumb/1/1a/Logo_Stade_Oc%C3%A9ane.svg/960px-Logo_Stade_Oc%C3%A9ane.svg.png",
+      "licence": "Non-free logo on French Wikipedia (the venue's trademark, marque déposée); shown to name the venue",
+      "original_sha1": "34f6492e3197412c8544e9a1ea342a8c6f256a22",
+      "source_png_sha256": "82f4f43fd681c5f588c44dc0416112d502115930509ecd12b50d06a2f76ee1d6",
+      "sha256": "b354bc1b883bd8f3fec0c38ca7f2934f0cb94bfdabfa255172903432994d105f",
+      "size": [
+        114,
+        48
+      ],
+      "processing": "the French Wikipedia infobox logo; cropped to the alpha bounding box, scaled to 48 px high"
     }
   }
 }
