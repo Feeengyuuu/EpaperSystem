@@ -27,7 +27,7 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from plugins.context_cache import read_contexts
-from plugins.simple_calendar import panel_scene
+from plugins.simple_calendar import cn_holidays, panel_scene
 from plugins.simple_calendar.panel_stage import PanelStageMixin
 from plugins.simple_calendar.game_events import GameEventProvider, enabled as game_events_enabled
 from plugins.simple_calendar.apple_events import AppleEventProvider
@@ -62,6 +62,10 @@ EVENT_SNAPSHOT_FILENAME_RE = re.compile(r"[0-9a-f]{64}\.json\Z")
 CALENDAR_SOURCE_MAX_BYTES = 8 * 1024 * 1024
 CALENDAR_SOURCE_MAX_REDIRECTS = 4
 
+CN_HOLIDAY_PROVIDER = "cn_official"
+# A day off ("off") or make-up workday ("work") an event marks, shown as 休 / 班 on its day.
+DAY_OFF_KINDS = frozenset({"off", "work"})
+
 DEFAULT_HOLIDAY_CALENDARS = [
     {
         "label": "US",
@@ -69,9 +73,12 @@ DEFAULT_HOLIDAY_CALENDARS = [
         "color": "#345995",
     },
     {
+        # China's official days off and make-up workdays (调休 / 补班) with the traditional
+        # festivals: cn_holidays (the holiday API), not an iCalendar feed.
         "label": "CN",
-        "url": "https://calendar.google.com/calendar/ical/china__zh_cn%40holiday.calendar.google.com/public/basic.ics",
+        "url": cn_holidays.CN_HOLIDAY_URL,
         "color": "#c62828",
+        "provider": CN_HOLIDAY_PROVIDER,
     },
 ]
 
@@ -803,6 +810,11 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
                         selected=day == selected_date.day,
                         selected_color=selected_text,
                     )
+                    # China's 休 (a day off) or 班 (a make-up workday) at the number's top right.
+                    day_off = self._day_off_kind(holiday_events_by_day[day])
+                    if day_off:
+                        self._draw_day_off_badge(draw, day_off, (col_cx, row_cy), day_font_size,
+                                                 (col_w, row_h), text_color, theme_palette)
 
         self._draw_holiday_list(
             draw,
@@ -1906,6 +1918,8 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
         starts_at = event.get("starts_at")
         if isinstance(starts_at, datetime):
             normalized["starts_at"] = starts_at
+        if event.get("day_off") in DAY_OFF_KINDS:
+            normalized["day_off"] = event["day_off"]
         return normalized
 
     @staticmethod
@@ -1920,6 +1934,8 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
         }
         if event.get("starts_at"):
             serialized["starts_at"] = event["starts_at"].isoformat()
+        if event.get("day_off") in DAY_OFF_KINDS:
+            serialized["day_off"] = event["day_off"]
         return serialized
 
     @staticmethod
@@ -1961,6 +1977,10 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
             if starts_at.tzinfo is None:
                 raise ValueError("starts_at must include a timezone")
             restored["starts_at"] = starts_at
+        if event.get("day_off") is not None:
+            if event["day_off"] not in DAY_OFF_KINDS:
+                raise ValueError("invalid day_off")
+            restored["day_off"] = event["day_off"]
         return restored
 
     def _get_holiday_events(
@@ -2009,6 +2029,7 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
                     "label": source["label"],
                     "color": self._parse_color(source["color"], (80, 80, 80)),
                     "kind": "holiday",
+                    **({"provider": source["provider"]} if source.get("provider") else {}),
                 }
                 for source in DEFAULT_HOLIDAY_CALENDARS
             ]
@@ -2070,9 +2091,25 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
         return not (not parsed.scheme and Path(url).is_absolute())
 
     def _fetch_holiday_events(self, source, selected_date, tz):
+        if source.get("provider") == CN_HOLIDAY_PROVIDER:
+            return self._cn_holiday_events(source, selected_date)
         content = self._read_calendar_source(source["url"])
         cal = icalendar.Calendar.from_ical(content)
         return self._extract_holiday_events(cal, source, selected_date, tz)
+
+    @staticmethod
+    def _cn_holiday_events(source, selected_date):
+        """The selected month's Chinese days off, make-up workdays and festivals (cn_holidays)."""
+        month_start = date(selected_date.year, selected_date.month, 1)
+        month_end = (date(selected_date.year + 1, 1, 1) if selected_date.month == 12
+                     else date(selected_date.year, selected_date.month + 1, 1))
+        payload = cn_holidays.fetch_year(selected_date.year)
+        return [
+            {"date": day["date"], "title": day["title"], "label": source.get("label") or "",
+             "color": source.get("color") or (80, 80, 80), "kind": "holiday", "time": "",
+             **({"day_off": day["day_off"]} if day["day_off"] else {})}
+            for day in cn_holidays.month_days(payload, selected_date.year, month_start, month_end)
+        ]
 
     def _read_calendar_source(self, url):
         url = str(url or "").strip()
@@ -2581,7 +2618,16 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
             if self._event_is_upcoming(event, selected_date, reference_dt)
         ]
         ordered = sorted(upcoming, key=lambda event: (event["date"], self._same_day_event_sort_key(event)))
-        return [{**event, "title": self._event_display_title(event)} for event in ordered[:limit]]
+        # A run of days with one title (a holiday's "国庆节 休7天") is listed once, on its first day.
+        listed, last = [], {}
+        for event in ordered:
+            key = (event.get("title"), event.get("label"))
+            if last.get(key) is not None and event["date"] - last[key] == timedelta(days=1):
+                last[key] = event["date"]
+                continue
+            last[key] = event["date"]
+            listed.append(event)
+        return [{**event, "title": self._event_display_title(event)} for event in listed[:limit]]
 
     def _draw_focus_holiday(
         self,
@@ -2697,6 +2743,29 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
             color = selected_color if selected else event.get("color", (80, 80, 80))
             cx = start_x + gap * index
             draw.ellipse([cx - radius, y - radius, cx + radius, y + radius], fill=color)
+
+    @staticmethod
+    def _day_off_kind(events):
+        """"off" (休) when any of the day's events marks it a day off, else "work" (班) for a
+        make-up workday, else None."""
+        kinds = {event.get("day_off") for event in events or ()}
+        return "off" if "off" in kinds else ("work" if "work" in kinds else None)
+
+    def _draw_day_off_badge(self, draw, kind, centre, day_font_size, cell, text_color, theme_palette=None):
+        """A small square stamp up and right of the day's number: 休 in China red, 班 in the ink,
+        its glyph in the paper's colour."""
+        col_cx, row_cy = centre
+        size = max(11, min(int(day_font_size * 0.62), int(min(cell) * 0.32)))
+        left = int(min(col_cx + day_font_size * 0.42, col_cx + cell[0] / 2 - size - 1))
+        top = int(max(row_cy - day_font_size * 0.78, row_cy - cell[1] / 2 + 1))
+        fill = HOLIDAY_LABEL_COUNTRY_COLORS["CN"] if kind == "off" else tuple(text_color[:3])
+        paper = tuple(((theme_palette or {}).get("panel") or (255, 255, 255))[:3])
+        glyph = paper if relative_luminance(paper) > relative_luminance(fill) else (255, 255, 255)
+        draw.rounded_rectangle((left, top, left + size, top + size), radius=max(2, size // 5), fill=fill)
+        # The agenda's title face: the calendar's UI face has no Chinese.
+        font = self._get_holiday_title_font(max(8, size - 4), bold=True)
+        draw.text((left + size / 2, top + size / 2 + 0.5), "休" if kind == "off" else "班", font=font,
+                  fill=glyph, anchor="mm")
 
     @staticmethod
     def _agenda_sizes(width):

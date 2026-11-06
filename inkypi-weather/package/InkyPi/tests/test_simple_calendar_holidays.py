@@ -79,7 +79,76 @@ def test_default_us_cn_holiday_sources_when_enabled():
     })
 
     assert [source["label"] for source in sources] == ["US", "CN"]
-    assert all(source["url"].startswith("https://calendar.google.com/calendar/ical/") for source in sources)
+    assert sources[0]["url"].startswith("https://calendar.google.com/calendar/ical/")
+    # China's days come from the holiday API (with its make-up workdays), not Google's feed.
+    assert sources[1]["provider"] == calendar_module.CN_HOLIDAY_PROVIDER
+
+
+# China's official days off and make-up workdays, as the holiday API lists them (2026, trimmed).
+CN_2026 = {"code": 0, "holiday": {
+    "01-01": {"holiday": True, "name": "元旦", "wage": 3, "date": "2026-01-01"},
+    "01-02": {"holiday": True, "name": "元旦", "wage": 2, "date": "2026-01-02"},
+    "01-03": {"holiday": True, "name": "元旦", "wage": 2, "date": "2026-01-03"},
+    "01-04": {"holiday": False, "name": "元旦后补班", "target": "元旦", "after": True, "date": "2026-01-04"},
+    "02-14": {"holiday": False, "name": "春节前补班", "target": "春节", "after": False, "date": "2026-02-14"},
+    "02-15": {"holiday": True, "name": "春节", "date": "2026-02-15"},
+    "02-16": {"holiday": True, "name": "除夕", "date": "2026-02-16"},
+    "02-17": {"holiday": True, "name": "初一", "date": "2026-02-17"},
+    "02-18": {"holiday": True, "name": "初二", "date": "2026-02-18"},
+    "10-01": {"holiday": True, "name": "国庆节", "date": "2026-10-01"},
+    "10-02": {"holiday": True, "name": "国庆节", "date": "2026-10-02"},
+    "10-10": {"holiday": False, "name": "国庆节后补班", "target": "国庆节", "date": "2026-10-10"},
+}}
+
+
+def test_china_days_off_and_make_up_workdays_come_from_the_holiday_api():
+    from plugins.simple_calendar import cn_holidays
+
+    days = {(event["date"].isoformat(), event["title"], event["day_off"])
+            for event in cn_holidays.official_days(CN_2026, 2026)}
+    # A run of days off shares one title; a make-up workday names its festival.
+    assert ("2026-01-02", "元旦 休3天", "off") in days and ("2026-01-04", "补班（元旦）", "work") in days
+    assert ("2026-02-17", "春节 休4天", "off") in days and ("2026-02-14", "补班（春节）", "work") in days
+    assert ("2026-10-10", "补班（国庆节）", "work") in days
+    traditional = {(event["date"].isoformat(), event["title"]) for event in cn_holidays.traditional_days(2026)}
+    assert {("2026-02-16", "除夕"), ("2026-03-03", "元宵节"), ("2026-08-19", "七夕"), ("2026-08-27", "中元节"),
+            ("2026-09-10", "教师节")} <= traditional
+    # 除夕 of a 春节 early in the next year still falls in this year when it does.
+    assert ("2027-02-05", "除夕") in {(event["date"].isoformat(), event["title"])
+                                     for event in cn_holidays.traditional_days(2027)}
+
+
+def test_the_calendar_marks_china_days_off_and_lists_a_holiday_run_once(monkeypatch):
+    from plugins.simple_calendar import cn_holidays
+
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    monkeypatch.setattr(cn_holidays, "fetch_year", lambda year, context=None: CN_2026)
+    source = plugin._get_holiday_sources({"showHolidays": "true", "holidayPreset": "us_cn"})[1]
+    events = plugin._fetch_holiday_events(source, date(2026, 2, 10), pytz.UTC)
+
+    by_day = {}
+    for event in events:
+        by_day.setdefault(event["date"].day, []).append(event)
+    assert plugin._day_off_kind(by_day[16]) == "off" and plugin._day_off_kind(by_day[14]) == "work"
+    assert {event["title"] for event in by_day[16]} == {"春节 休4天", "除夕"}
+    # The day-off mark survives the event snapshot.
+    restored = [plugin._deserialize_snapshot_event(plugin._serialize_snapshot_event(plugin._normalize_snapshot_event(event)))
+                for event in events]
+    assert {event["date"].day: event.get("day_off") for event in restored if event.get("day_off")}[14] == "work"
+    # The agenda lists the run once, on its first day.
+    rows = plugin._upcoming_event_rows(events, date(2026, 2, 1), limit=20)
+    assert [row["title"] for row in rows].count("春节 休4天") == 1
+
+
+def test_a_day_off_wears_a_red_stamp_and_a_make_up_workday_an_ink_one():
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    image = Image.new("RGB", (80, 80), (255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    plugin._draw_day_off_badge(draw, "off", (20, 40), 24, (40, 40), (20, 20, 20))
+    plugin._draw_day_off_badge(draw, "work", (60, 40), 24, (40, 40), (20, 20, 20))
+    left, right = image.crop((25, 15, 40, 40)).getcolors(4096), image.crop((65, 15, 80, 40)).getcolors(4096)
+    assert any(colour == calendar_module.HOLIDAY_LABEL_COUNTRY_COLORS["CN"] and count > 40 for count, colour in left)
+    assert any(colour == (20, 20, 20) and count > 40 for count, colour in right)
 
 
 def test_settings_template_persists_refresh_on_display_default():
