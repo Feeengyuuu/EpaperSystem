@@ -678,19 +678,24 @@ class ArtifactPreparer:
         Every file keeps the current release's inode until something must
         change it; relocation then writes a new file and renames it into
         place, so the live and previous releases are never modified.
+
+        The payload is hashed once, in venv-check.  The finalize probe skips
+        the inodes the clone still shares with that verified venv and hashes
+        only what relocation wrote, so the live venv's metadata must stay
+        unchanged from before that hash until finalize ends.
         """
 
         with self._timer.phase("venv-check") as note:
-            source_venv = self._reusable_current_venv(requirements, destination)
-            note["reuse"] = "no" if source_venv is None else "yes"
-        if source_venv is None:
+            reusable = self._reusable_current_venv(requirements, destination)
+            note["reuse"] = "no" if reusable is None else "yes"
+        if reusable is None:
             return False
+        source_venv, source_snapshot = reusable
         destination_venv = Path(destination)
-        source_snapshot = _venv_metadata_digest(source_venv)
         with self._timer.phase("venv-clone") as note:
             note.update(_link_tree(source_venv, destination_venv))
         if _venv_metadata_digest(source_venv) != source_snapshot:
-            raise ArtifactError("current virtual environment changed while it was copied")
+            raise ArtifactError("current virtual environment changed while it was checked or copied")
         if _venv_metadata_digest(destination_venv) != source_snapshot:
             raise ArtifactError("candidate virtual environment copy is incomplete")
         with self._timer.phase("venv-finalize") as note:
@@ -700,11 +705,18 @@ class ArtifactPreparer:
                 published_destination=published_destination,
                 cwd=destination_venv,
                 environment_prevalidated=True,
+                verified_source=source_venv,
             )
+            if _venv_metadata_digest(source_venv) != source_snapshot:
+                raise ArtifactError("current virtual environment changed while the clone was verified")
         return True
 
     def _reusable_current_venv(self, requirements, destination):
-        """Return the current release's venv when the lock and every check allow reuse."""
+        """Return ``(venv, metadata digest)`` of the current release when it may be reused.
+
+        The digest is taken before the payload is hashed, so any later change
+        to the venv shows up when the caller compares it again.
+        """
 
         source = self.links.read(self.layout.current_link)
         if source is None:
@@ -761,6 +773,7 @@ class ArtifactPreparer:
             return None
 
         locked_versions = _locked_distribution_versions(candidate_requirements)
+        snapshot = _venv_metadata_digest(source_venv)
         try:
             self._probe_venv_environment(
                 source_venv,
@@ -773,9 +786,16 @@ class ArtifactPreparer:
             )
         except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
             return None
-        return source_venv
+        return source_venv, snapshot
 
-    def _probe_venv_environment(self, venv, locked_versions, *, cwd) -> None:
+    def _probe_venv_environment(
+        self,
+        venv,
+        locked_versions,
+        *,
+        cwd,
+        verified_source=None,
+    ) -> None:
         candidate_venv = Path(venv)
         python = candidate_venv / "bin" / "python"
         site_packages = (
@@ -804,6 +824,7 @@ class ArtifactPreparer:
                     site_packages,
                     expected_abi,
                     locked_versions,
+                    verified_source=verified_source,
                 ),
             ],
             cwd=cwd,
@@ -843,6 +864,7 @@ class ArtifactPreparer:
         published_destination=None,
         cwd,
         environment_prevalidated=False,
+        verified_source=None,
     ) -> int:
         candidate_venv = Path(venv)
         published_venv = (
@@ -888,6 +910,7 @@ class ArtifactPreparer:
             candidate_venv,
             locked_versions,
             cwd=cwd,
+            verified_source=verified_source,
         )
         self._run_isolated_pip_check(candidate_venv, cwd=cwd)
         return relocated
@@ -2209,14 +2232,32 @@ def _locked_distribution_versions(requirements) -> dict[str, str]:
     return pins
 
 
-def _venv_environment_probe(venv, site_packages, expected_abi, locked_versions) -> str:
+def _venv_environment_probe(
+    venv,
+    site_packages,
+    expected_abi,
+    locked_versions,
+    *,
+    verified_source=None,
+) -> str:
+    """Source of the probe that checks the venv's ABI, pins and RECORD hashes.
+
+    With ``verified_source`` (a venv this run already hashed in full), a file
+    that is the very same inode as the file at its path in that venv is not
+    read again; everything else is hashed.  The caller must prove the source
+    stayed unchanged from before that hash until after this probe.
+    """
+
+    source = None if verified_source is None else str(Path(verified_source))
     return f"""
 from importlib import metadata
 from pathlib import Path
 import base64
 import hashlib
+import os
 import platform
 import re
+import stat
 import sys
 import sysconfig
 
@@ -2246,6 +2287,43 @@ locked = {locked_versions!r}
 assert all(installed.get(name) == version for name, version in locked.items())
 assert set(installed) - set(locked) <= {{"pip"}}
 
+verified_source = {source!r}
+real_directories = {{}}
+
+
+def resolve_strict(path):
+    # Path.resolve(strict=True), resolving each directory only once.
+    parent, name = os.path.split(path)
+    if name in {{"", ".", ".."}}:
+        return os.path.realpath(path, strict=True)
+    real_parent = real_directories.get(parent)
+    if real_parent is None:
+        real_parent = real_directories[parent] = os.path.realpath(parent, strict=True)
+    candidate = os.path.join(real_parent, name)
+    if os.path.islink(candidate):
+        return os.path.realpath(candidate, strict=True)
+    os.lstat(candidate)
+    return candidate
+
+
+def shares_verified_inode(installed_file):
+    if verified_source is None:
+        return False
+    try:
+        reference = os.lstat(os.path.join(verified_source, installed_file[len(venv_prefix):]))
+    except FileNotFoundError:
+        return False
+    current = os.lstat(installed_file)
+    return stat.S_ISREG(reference.st_mode) and (reference.st_dev, reference.st_ino) == (
+        current.st_dev,
+        current.st_ino,
+    )
+
+
+# Plain strings: on the device pathlib's parents/relative_to cost more than the I/O.
+venv_text = os.fspath(venv)
+venv_prefix = os.path.join(venv_text, "")
+site_packages_text = os.fspath(site_packages)
 documentation_names = {{"copying", "license", "notice"}}
 for distribution in distributions:
     files = distribution.files
@@ -2254,14 +2332,17 @@ for distribution in distributions:
         if item.hash is None:
             continue
         assert item.hash.mode == "sha256"
-        installed_file = Path(distribution.locate_file(item)).resolve(strict=True)
-        assert installed_file == venv or venv in installed_file.parents
-        if installed_file.parent == site_packages and (
-            installed_file.suffix.lower() in {{".md", ".rst"}}
-            or installed_file.name.lower() in documentation_names
+        installed_file = resolve_strict(os.fspath(distribution.locate_file(item)))
+        assert installed_file == venv_text or installed_file.startswith(venv_prefix)
+        directory, name = os.path.split(installed_file)
+        if directory == site_packages_text and (
+            os.path.splitext(name)[1].lower() in {{".md", ".rst"}}
+            or name.lower() in documentation_names
         ):
             continue
-        with installed_file.open("rb") as stream:
+        if shares_verified_inode(installed_file):
+            continue
+        with open(installed_file, "rb") as stream:
             digest = hashlib.file_digest(stream, "sha256").digest()
         actual_hash = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
         assert actual_hash == item.hash.value
@@ -2308,31 +2389,47 @@ if dependency_errors:
 
 
 def _venv_metadata_digest(root) -> str:
-    """Fingerprint a venv tree without reading package payloads into memory."""
+    """Fingerprint a venv tree's names, modes, sizes, mtimes and link targets.
 
-    venv = Path(root)
+    Only compared within one run, never stored.  Built from plain strings and
+    one ``lstat`` per entry: the pathlib/JSON version took ~10 s per call on
+    the device for a venv of about eleven thousand entries.
+    """
+
+    base = os.fspath(root)
+    lines = []
+    pending = [""]
+    while pending:
+        relative_directory = pending.pop()
+        directory = os.path.join(base, relative_directory) if relative_directory else base
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                relative = (
+                    f"{relative_directory}/{entry.name}" if relative_directory else entry.name
+                )
+                path_stat = entry.stat(follow_symlinks=False)
+                mode = path_stat.st_mode
+                if stat.S_ISDIR(mode):
+                    fields = ("d", relative, stat.S_IMODE(mode))
+                    pending.append(relative)
+                elif stat.S_ISREG(mode):
+                    fields = (
+                        "f",
+                        relative,
+                        stat.S_IMODE(mode),
+                        path_stat.st_size,
+                        path_stat.st_mtime_ns,
+                    )
+                elif stat.S_ISLNK(mode):
+                    fields = ("l", relative, os.readlink(entry.path))
+                else:
+                    raise ArtifactError(
+                        f"virtual environment contains an unsupported file: {relative}"
+                    )
+                lines.append((relative, "\0".join(map(str, fields))))
     digest = hashlib.sha256()
-    for path in sorted(venv.rglob("*"), key=lambda item: item.relative_to(venv).as_posix()):
-        relative = path.relative_to(venv).as_posix()
-        path_stat = os.lstat(path)
-        mode = path_stat.st_mode
-        if stat.S_ISDIR(mode):
-            record = ("d", relative, stat.S_IMODE(mode))
-        elif stat.S_ISREG(mode):
-            record = (
-                "f",
-                relative,
-                stat.S_IMODE(mode),
-                path_stat.st_size,
-                path_stat.st_mtime_ns,
-            )
-        elif stat.S_ISLNK(mode):
-            record = ("l", relative, os.readlink(path))
-        else:
-            raise ArtifactError(
-                f"virtual environment contains an unsupported file: {relative}"
-            )
-        digest.update(json.dumps(record, separators=(",", ":")).encode("utf-8"))
+    for _relative, line in sorted(lines):
+        digest.update(line.encode("utf-8", "surrogateescape"))
         digest.update(b"\n")
     return digest.hexdigest()
 
@@ -2406,18 +2503,56 @@ def _venv_has_unsafe_symlink(root, install_root, trusted_python) -> bool:
     return False
 
 
-def _record_target(record, raw_path, venv) -> Path:
-    value = str(raw_path)
-    pure_path = PurePosixPath(value)
-    if not value or "\\" in value or pure_path.is_absolute():
-        raise ArtifactError("virtual environment RECORD contains an unsafe path")
-    target = record.parent.parent.joinpath(*pure_path.parts).resolve(strict=False)
-    if target != venv and venv not in target.parents:
-        raise ArtifactError("virtual environment RECORD escapes the environment")
-    return target
+class _RecordTargetResolver:
+    """Resolve RECORD rows exactly like ``Path.resolve(strict=False)``, faster.
+
+    A venv's RECORD files name about ten thousand paths in a few hundred
+    directories.  Resolving each from the root with pathlib (one ``lstat``
+    per component, plus ``venv in target.parents`` building a Path for every
+    ancestor) took ~17 s per pass on the device.  ``realpath(a/b)`` equals
+    ``realpath(realpath(a)/b)``, so each directory is resolved once, only the
+    last component of a row is looked at again, and containment is a prefix
+    test on the normalized string ``realpath`` returns.
+    """
+
+    def __init__(self, venv):
+        self.venv = Path(venv)
+        self._venv_text = os.fspath(self.venv)
+        self._venv_prefix = os.path.join(self._venv_text, "")
+        self._bases = {}
+        self._directories = {}
+        self._targets = {}
+
+    def target(self, record, raw_path) -> Path:
+        value = str(raw_path)
+        if not value or "\\" in value or value.startswith("/"):
+            raise ArtifactError("virtual environment RECORD contains an unsafe path")
+        base = self._bases.get(record)
+        if base is None:
+            base = self._bases[record] = os.fspath(record.parent.parent)
+        joined = os.path.join(base, *value.split("/"))
+        target = self._targets.get(joined)
+        if target is None:
+            resolved = self._realpath(joined)
+            if resolved != self._venv_text and not resolved.startswith(self._venv_prefix):
+                raise ArtifactError("virtual environment RECORD escapes the environment")
+            target = self._targets[joined] = Path(resolved)
+        return target
+
+    def _realpath(self, path) -> str:
+        parent, name = os.path.split(path)
+        if name in {"", ".", ".."}:
+            return os.path.realpath(path)
+        real_parent = self._directories.get(parent)
+        if real_parent is None:
+            real_parent = self._directories[parent] = os.path.realpath(parent)
+        candidate = os.path.join(real_parent, name)
+        if os.path.islink(candidate):
+            return os.path.realpath(candidate)
+        return candidate
 
 
-def _read_record_rows(record, venv) -> list[list[str]]:
+def _read_record_rows(record, venv, resolver=None) -> list[list[str]]:
     if record.is_symlink() or not record.is_file() or record.stat().st_size > 16 * 1024 * 1024:
         raise ArtifactError("virtual environment RECORD is unsafe")
     try:
@@ -2427,20 +2562,22 @@ def _read_record_rows(record, venv) -> list[list[str]]:
         raise ArtifactError("virtual environment RECORD cannot be parsed") from error
     if not rows or any(len(row) != 3 for row in rows):
         raise ArtifactError("virtual environment RECORD is malformed")
+    resolver = resolver or _RecordTargetResolver(venv)
     for row in rows:
-        _record_target(record, row[0], venv)
+        resolver.target(record, row[0])
     return rows
 
 
 def _hashed_record_paths(venv) -> set[Path]:
     hashed_paths = set()
+    resolver = _RecordTargetResolver(venv)
     for record in venv.rglob("*.dist-info/RECORD"):
-        for row in _read_record_rows(record, venv):
+        for row in _read_record_rows(record, venv, resolver):
             if not row[1]:
                 continue
             if not re.fullmatch(r"sha256=[A-Za-z0-9_-]{43}", row[1]):
                 raise ArtifactError("virtual environment RECORD uses an unsafe hash")
-            hashed_paths.add(_record_target(record, row[0], venv))
+            hashed_paths.add(resolver.target(record, row[0]))
     return hashed_paths
 
 
@@ -2539,11 +2676,12 @@ def _relocate_venv_paths(root, published_destination, *, install_root) -> int:
 
     record_documents = {}
     owners = {}
+    resolver = _RecordTargetResolver(venv)
     for record in venv.rglob("*.dist-info/RECORD"):
-        rows = _read_record_rows(record, venv)
+        rows = _read_record_rows(record, venv, resolver)
         record_documents[record] = rows
         for index, row in enumerate(rows):
-            target = _record_target(record, row[0], venv)
+            target = resolver.target(record, row[0])
             if target in planned:
                 owners.setdefault(target, []).append((record, index))
 

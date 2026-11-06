@@ -1461,6 +1461,281 @@ def test_preparer_rejects_clone_when_copied_environment_probe_fails(tmp_path):
     assert probe_calls == 2
 
 
+def _is_environment_probe(command):
+    return command[1:4] == ["-I", "-S", "-c"] and not _is_isolated_pip_check(command)
+
+
+@pytest.mark.parametrize("probe_number", [1, 2])
+def test_preparer_rejects_clone_when_source_venv_changes_during_a_probe(
+    tmp_path, probe_number
+):
+    # Probe 1 hashes the live venv (venv-check); probe 2 runs in venv-finalize and
+    # no longer re-hashes the inodes the clone shares with it, so a change to the
+    # live venv at any point from the first hash to the end of finalize must fail.
+    layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
+    layout.ensure()
+    current, _source_venv, requirements, destination, source_package = (
+        _compatible_venv_fixture(layout, tmp_path)
+    )
+    probes = 0
+
+    def run_command(command, **_kwargs):
+        nonlocal probes
+        if not _is_environment_probe(command):
+            return
+        probes += 1
+        if probes == probe_number:
+            with source_package.open("a", encoding="utf-8") as stream:
+                stream.write("CHANGED = True\n")
+
+    preparer = ArtifactPreparer(
+        layout,
+        run_command=run_command,
+        links=FakeLinks(current),
+    )
+
+    with pytest.raises(ArtifactError, match="changed"):
+        preparer._try_clone_current_venv(requirements, destination)
+
+    assert probes == probe_number
+
+
+def test_preparer_finalize_probe_names_the_verified_source_venv(tmp_path):
+    layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
+    layout.ensure()
+    current, source_venv, requirements, destination, _source_package = (
+        _compatible_venv_fixture(layout, tmp_path)
+    )
+    preparer = ArtifactPreparer(
+        layout,
+        run_command=lambda _command, **_kwargs: None,
+        links=FakeLinks(current),
+    )
+    probed = []
+    probe = preparer._probe_venv_environment
+
+    def recording_probe(venv, locked_versions, *, cwd, verified_source=None):
+        probed.append((Path(venv), verified_source))
+        probe(venv, locked_versions, cwd=cwd, verified_source=verified_source)
+
+    preparer._probe_venv_environment = recording_probe
+
+    assert preparer._try_clone_current_venv(requirements, destination) is True
+
+    assert probed == [(source_venv, None), (destination, source_venv)]
+
+
+def _probe_abi():
+    import platform
+    import sysconfig
+
+    return (
+        sys.implementation.name,
+        sys.implementation.cache_tag,
+        sys.version_info[:2],
+        platform.machine(),
+        sysconfig.get_config_var("SOABI"),
+    )
+
+
+def _probe_fixture(tmp_path, *, recorded_payload):
+    """A venv whose RECORD lists ``example.py`` with the hash of ``recorded_payload``."""
+
+    source = tmp_path / "source-venv"
+    site_packages = (
+        source / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+    )
+    metadata_dir = site_packages / "example-1.0.dist-info"
+    metadata_dir.mkdir(parents=True)
+    (site_packages / "example.py").write_bytes(b"VALUE = 'installed'\n")
+    (metadata_dir / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: example\nVersion: 1.0\n", encoding="utf-8"
+    )
+    digest = base64.urlsafe_b64encode(hashlib.sha256(recorded_payload).digest()).rstrip(b"=")
+    (metadata_dir / "RECORD").write_text(
+        f"example.py,sha256={digest.decode('ascii')},{len(recorded_payload)}\n"
+        "example-1.0.dist-info/METADATA,,\n"
+        "example-1.0.dist-info/RECORD,,\n",
+        encoding="utf-8",
+    )
+    return source, site_packages
+
+
+def _hard_link_clone(source, destination, *, copy=()):
+    for directory, _dirnames, filenames in os.walk(source):
+        relative = Path(directory).relative_to(source)
+        (destination / relative).mkdir(parents=True, exist_ok=True)
+        for name in filenames:
+            if relative / name in copy:
+                shutil.copy2(Path(directory) / name, destination / relative / name)
+            else:
+                os.link(Path(directory) / name, destination / relative / name)
+
+
+def _run_probe(venv, *, verified_source=None):
+    site_packages = (
+        venv / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+    )
+    script = update_engine_module._venv_environment_probe(
+        venv,
+        site_packages,
+        _probe_abi(),
+        {"example": "1.0"},
+        verified_source=verified_source,
+    )
+    return subprocess.run(
+        [sys.executable, "-I", "-S", "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+
+
+def test_environment_probe_skips_hashing_files_shared_with_the_verified_source(tmp_path):
+    # The recorded hash is wrong on purpose: only a probe that skips the shared
+    # inode can pass, which proves the shared payload is not read again.
+    source, _site_packages = _probe_fixture(tmp_path, recorded_payload=b"something else\n")
+    clone = tmp_path / "clone-venv"
+    _hard_link_clone(source, clone)
+
+    assert _run_probe(clone).returncode != 0
+    assert _run_probe(clone, verified_source=source).returncode == 0
+
+
+def test_environment_probe_still_hashes_files_the_clone_rewrote(tmp_path):
+    source, site_packages = _probe_fixture(tmp_path, recorded_payload=b"something else\n")
+    clone = tmp_path / "clone-venv"
+    rewritten = site_packages.relative_to(source) / "example.py"
+    _hard_link_clone(source, clone, copy={rewritten})
+
+    result = _run_probe(clone, verified_source=source)
+
+    assert result.returncode != 0
+    assert "AssertionError" in result.stderr
+
+
+def test_environment_probe_with_verified_source_accepts_matching_rewritten_files(tmp_path):
+    source, site_packages = _probe_fixture(tmp_path, recorded_payload=b"VALUE = 'installed'\n")
+    clone = tmp_path / "clone-venv"
+    rewritten = site_packages.relative_to(source) / "example.py"
+    _hard_link_clone(source, clone, copy={rewritten})
+
+    assert _run_probe(clone, verified_source=source).returncode == 0
+
+
+def test_record_target_resolver_matches_path_resolve(tmp_path):
+    venv = tmp_path / "venv"
+    site_packages = venv / "lib" / "python3.13" / "site-packages"
+    record = site_packages / "example-1.0.dist-info" / "RECORD"
+    record.parent.mkdir(parents=True)
+    (venv / "bin").mkdir()
+    (venv / "bin" / "tool").write_text("tool\n", encoding="utf-8")
+    (site_packages / "pkg").mkdir()
+    (site_packages / "pkg" / "module.py").write_text("x = 1\n", encoding="utf-8")
+    rows = [
+        "pkg/module.py",
+        "pkg/./module.py",
+        "pkg/../pkg/module.py",
+        "../../../bin/tool",
+        "../../../bin/missing-tool",
+        "pkg/missing/deeper.py",
+        "example-1.0.dist-info/RECORD",
+    ]
+    try:
+        (site_packages / "linked").symlink_to("pkg", target_is_directory=True)
+        (site_packages / "leaf.py").symlink_to(Path("pkg") / "module.py")
+    except OSError:
+        pass
+    else:
+        rows.extend(("linked/module.py", "linked/../pkg/module.py", "leaf.py"))
+    resolver = update_engine_module._RecordTargetResolver(venv.resolve())
+
+    for raw in rows:
+        expected = record.parent.parent.joinpath(*Path(raw).parts).resolve(strict=False)
+        assert resolver.target(record, raw) == expected, raw
+        assert resolver.target(record, raw) == expected, f"{raw} (cached)"
+
+
+def test_record_target_resolver_rejects_rows_that_escape_the_venv(tmp_path):
+    venv = tmp_path / "venv"
+    site_packages = venv / "lib" / "python3.13" / "site-packages"
+    record = site_packages / "example-1.0.dist-info" / "RECORD"
+    record.parent.mkdir(parents=True)
+    outside = tmp_path / "outside.py"
+    outside.write_text("x = 1\n", encoding="utf-8")
+    resolver = update_engine_module._RecordTargetResolver(venv.resolve())
+
+    for raw in ("../../../../outside.py", "", "/etc/passwd", "pkg\\module.py"):
+        with pytest.raises(ArtifactError):
+            resolver.target(record, raw)
+    try:
+        (site_packages / "escape.py").symlink_to(outside)
+    except OSError as error:
+        pytest.skip(f"symlinks unavailable: {error}")
+    with pytest.raises(ArtifactError, match="escapes"):
+        resolver.target(record, "escape.py")
+
+
+def test_record_target_resolver_resolves_each_directory_once(tmp_path, monkeypatch):
+    venv = tmp_path / "venv"
+    site_packages = venv / "lib" / "python3.13" / "site-packages"
+    record = site_packages / "example-1.0.dist-info" / "RECORD"
+    (site_packages / "pkg").mkdir(parents=True)
+    record.parent.mkdir()
+    resolver = update_engine_module._RecordTargetResolver(venv.resolve())
+    realpath = os.path.realpath
+    calls = []
+
+    def counting_realpath(path, *args, **kwargs):
+        calls.append(os.fspath(path))
+        return realpath(path, *args, **kwargs)
+
+    monkeypatch.setattr(update_engine_module.os.path, "realpath", counting_realpath)
+
+    for index in range(50):
+        resolver.target(record, f"pkg/module_{index}.py")
+
+    assert len(calls) == 1
+
+
+def test_venv_metadata_digest_tracks_every_tree_change(tmp_path):
+    venv = tmp_path / "venv"
+    (venv / "lib").mkdir(parents=True)
+    module = venv / "lib" / "module.py"
+    module.write_text("x = 1\n", encoding="utf-8")
+    digest = update_engine_module._venv_metadata_digest
+    seen = {digest(venv)}
+
+    def changed():
+        value = digest(venv)
+        assert value not in seen
+        seen.add(value)
+
+    os.utime(module, ns=(1_000_000_000, 1_000_000_000))
+    changed()
+    module.write_text("x = 22\n", encoding="utf-8")
+    os.utime(module, ns=(1_000_000_000, 1_000_000_000))
+    changed()
+    (venv / "lib" / "other.py").write_text("", encoding="utf-8")
+    changed()
+    (venv / "lib" / "nested").mkdir()
+    changed()
+    (venv / "lib" / "other.py").unlink()
+    changed()
+    if os.name != "nt":
+        module.chmod(0o600)
+        changed()
+    try:
+        (venv / "lib" / "link").symlink_to("module.py")
+    except OSError:
+        return
+    changed()
+    (venv / "lib" / "link").unlink()
+    (venv / "lib" / "link").symlink_to("nested")
+    changed()
+
+
 def test_preparer_does_not_clone_current_venv_when_dependency_lock_differs(tmp_path):
     layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
     layout.ensure()
