@@ -372,18 +372,46 @@ def record_health(ctx: TaskContext, device: Device, label: str) -> dict:
     now = datetime.now(timezone.utc)
     config = device.document(CONFIG)
     readyz = device.http_json("/readyz")
-    failing, stalled = classify_instances(config, device.document(RUNTIME), now)
+    runtime = device.document(RUNTIME)
+    failing, stalled = classify_instances(config, runtime, now)
     document = {"label": label, "captured_at": now.isoformat(), "release": device.resolved_link(CURRENT_LINK),
                 "readyz": readyz.get("payload", {}).get("status"), "readyz_http": readyz.get("http_status"),
-                "failing": failing, "stalled_hours": stalled}
+                "failing": failing, "failed_at": failure_times(config, runtime), "stalled_hours": stalled}
     ctx.save(f"health-{label}.json", document)
     return document
 
 
-def compare_health(before: dict, after: dict, require_ready: bool) -> dict:
-    new_failing = sorted(set(after["failing"]) - set(before["failing"]))
+def failure_times(config: dict, runtime: dict) -> dict[str, str]:
+    """When each failing instance's DATA lane last failed (UTC, ISO), by plugin."""
+    times = {}
+    for playlist in config["playlist_config"]["playlists"]:
+        for item in playlist.get("plugins", []):
+            lane = ((((runtime.get("instances") or {}).get(item["instance_uuid"]) or {}).get("lanes") or {})
+                    .get("data") or {})
+            success, failure = parse_time(lane.get("last_success_at")), parse_time(lane.get("last_failure_at"))
+            if failure and (success is None or failure > success):
+                times[item["plugin_id"]] = failure.astimezone(timezone.utc).isoformat()
+    return times
+
+
+def switch_time(deployment: dict) -> datetime | None:
+    """When the old release's service had stopped (the updater's "stop" phase), else the deploy's start."""
+    for phase in deployment.get("device_timing") or []:
+        if phase.get("phase") == "stop" and parse_time(phase.get("at")):
+            return parse_time(phase["at"])
+    return parse_time(deployment.get("started_at"))
+
+
+def compare_health(before: dict, after: dict, require_ready: bool, switched_at: datetime | None = None) -> dict:
+    """The verdict on after vs before. A failure the old release's process recorded (before
+    ``switched_at``, though after the predeploy record) is not this release's: it is listed apart."""
+    appeared = sorted(set(after["failing"]) - set(before["failing"]))
+    failed_at = {name: parse_time(value) for name, value in (after.get("failed_at") or {}).items()}
+    earlier = [name for name in appeared
+               if switched_at is not None and failed_at.get(name) is not None and failed_at[name] < switched_at]
+    new_failing = [name for name in appeared if name not in earlier]
     return {"before": before["label"], "after": after["label"], "readyz": [before["readyz"], after["readyz"]],
-            "new_failing": new_failing,
+            "new_failing": new_failing, "failed_before_switch": earlier,
             "new_stalled": sorted(set(after["stalled_hours"]) - set(before["stalled_hours"])),
             "cleared_failing": sorted(set(before["failing"]) - set(after["failing"])),
             "still_failing": sorted(after["failing"]),
@@ -391,8 +419,10 @@ def compare_health(before: dict, after: dict, require_ready: bool) -> dict:
 
 
 def health_gate(ctx: TaskContext, before_label: str, after_label: str, require_ready: bool) -> dict:
+    deployment = ctx.load("deployment.json") if ctx.has("deployment.json") else {}
     verdict = compare_health(ctx.load(f"health-{require_label(before_label)}.json"),
-                             ctx.load(f"health-{require_label(after_label)}.json"), require_ready)
+                             ctx.load(f"health-{require_label(after_label)}.json"), require_ready,
+                             switched_at=switch_time(deployment))
     ctx.save(f"health-gate-{after_label}.json", verdict)
     return verdict
 

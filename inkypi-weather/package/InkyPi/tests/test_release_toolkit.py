@@ -971,6 +971,40 @@ def test_health_gate_fails_on_new_failures_or_lost_readiness():
     assert release_checks.compare_health(before, health("postdeploy", readyz="degraded"), False)["passed"]
 
 
+def test_health_records_when_each_failing_instance_last_failed():
+    runtime = {"instances": {"uuid-apod": {"lanes": {"data": {
+        "last_success_at": "2026-11-06T19:55:00+00:00", "last_failure_at": "2026-11-06T20:34:09Z",
+        "last_error": "stale_cache"}}}}}
+    assert release_checks.failure_times(config(apod=3600), runtime) == {"apod": "2026-11-06T20:34:09+00:00"}
+
+
+def test_health_gate_does_not_blame_a_release_for_a_failure_before_its_switch():
+    before = health("predeploy")
+    after = {**health("postdeploy", failing=["nature_nearby"], readyz="degraded"),
+             "failed_at": {"nature_nearby": "2026-11-06T20:34:09+00:00"}}
+    switched = datetime(2026, 11, 6, 20, 35, 22, tzinfo=timezone.utc)
+
+    # The old release's process failed it (before it stopped): not this release's failure.
+    verdict = release_checks.compare_health(before, after, False, switched_at=switched)
+    assert verdict["passed"] and verdict["new_failing"] == []
+    assert verdict["failed_before_switch"] == ["nature_nearby"]
+    # Failing again after the switch, or with no time recorded, it counts.
+    later = {**after, "failed_at": {"nature_nearby": "2026-11-06T20:40:00+00:00"}}
+    assert release_checks.compare_health(before, later, False, switched_at=switched)["new_failing"] == ["nature_nearby"]
+    assert release_checks.compare_health(before, health("postdeploy", failing=["nature_nearby"]), False,
+                                         switched_at=switched)["new_failing"] == ["nature_nearby"]
+
+
+def test_the_switch_time_is_when_the_old_release_stopped():
+    deployment = {"started_at": "2026-11-06T20:32:27+00:00", "device_timing": [
+        {"phase": "fsync", "seconds": 7.8, "at": "2026-11-06T20:35:10+00:00"},
+        {"phase": "stop", "seconds": 2.8, "at": "2026-11-06T20:35:22+00:00"},
+        {"phase": "switch", "seconds": 12.9, "at": "2026-11-06T20:35:35+00:00"}]}
+    assert release_checks.switch_time(deployment) == datetime(2026, 11, 6, 20, 35, 22, tzinfo=timezone.utc)
+    assert release_checks.switch_time({"started_at": "2026-11-06T20:32:27+00:00"}) == datetime(
+        2026, 11, 6, 20, 32, 27, tzinfo=timezone.utc)
+
+
 def test_health_gate_saves_its_verdict(ctx):
     ctx.save("health-predeploy.json", health("predeploy"))
     ctx.save("health-postdeploy.json", health("postdeploy", failing=["apod"]))
@@ -1339,6 +1373,22 @@ def test_rotation_requires_matching_display_and_health_proof(ctx, change, messag
     with pytest.raises(ReleaseError, match=message):
         release_backup.rotate(ctx, "apod", execute=True)
     assert sorted(path.name for path in previous.iterdir()) == ["inkypi-2050df7d.zip", "manifest.json"]
+
+
+def test_rotation_accepts_a_degraded_service_only_after_a_passed_health_gate(ctx):
+    previous = prepare_rotation(ctx)
+    proof = acceptance()
+    proof["readyz"]["payload"].update(status="degraded")
+    ctx.save("acceptance-apod-shown.json", proof)
+    # A gate that saw a new failure does not open the way.
+    ctx.save("health-gate-postdeploy.json", {"passed": False, "new_failing": ["apod"]})
+    with pytest.raises(ReleaseError, match="Healthy ready"):
+        release_backup.rotate(ctx, "apod", execute=True)
+    # Degraded by what already failed before this release (an offline printer), with the gate passed.
+    ctx.save("health-gate-postdeploy.json", {"passed": True, "new_failing": [], "still_failing": ["bambu_monitor"]})
+    record = release_backup.rotate(ctx, "apod", execute=True)
+    assert record["status"] == "rotated_verified"
+    assert sorted(path.name for path in previous.iterdir()) == ["inkypi-95b4c029.zip", "manifest.json"]
 
 
 def test_rotation_refuses_a_changed_backup_layout_or_hash(ctx):

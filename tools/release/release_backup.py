@@ -24,8 +24,10 @@ MANIFEST = "manifest.json"
 
 
 def check_rotation_evidence(prepared: dict, draft: dict, deployment: dict, current: dict,
-                            acceptance: dict, plugin: str) -> None:
-    """Refuse unless the deployment, the prepared backup and the physical display proof all agree."""
+                            acceptance: dict, plugin: str, health_gate: dict | None = None) -> None:
+    """Refuse unless the deployment, the prepared backup and the physical display proof all agree.
+    The service must be ready, or degraded only by what already failed before this release: its
+    postdeploy health gate passed with no new failure (an offline printer keeps /readyz degraded)."""
     require(deployment.get("status") == "passed" and deployment.get("commit") == current.get("commit")
             and current.get("status") == "passed", "Successful validated deployment required.")
     require(prepared.get("status") == "prepared_verified_not_rotated" and prepared.get("commit") == draft.get("commit")
@@ -44,10 +46,12 @@ def check_rotation_evidence(prepared: dict, draft: dict, deployment: dict, curre
             "Source and configuration acceptance required.")
     service = acceptance.get("service") or {}
     healthz, readyz = acceptance.get("healthz") or {}, acceptance.get("readyz") or {}
+    gate_clear = bool(health_gate) and health_gate.get("passed") is True and not health_gate.get("new_failing")
+    accepted = ("ready", "degraded") if gate_clear else ("ready",)
     require(service.get("ActiveState") == "active" and service.get("SubState") == "running"
             and healthz.get("http_status") == 200 and healthz.get("payload", {}).get("status") == "alive"
             and healthz.get("payload", {}).get("release_id") == release_id
-            and readyz.get("http_status") == 200 and readyz.get("payload", {}).get("status") == "ready"
+            and readyz.get("http_status") == 200 and readyz.get("payload", {}).get("status") in accepted
             and readyz.get("payload", {}).get("release_id") == release_id, "Healthy ready deployed service required.")
     display, image = acceptance.get("display") or {}, acceptance.get("image") or {}
     require(display.get("hardware_written") is True
@@ -89,7 +93,8 @@ def rotate(ctx: TaskContext, plugin: str, label: str | None = None, *, execute: 
     deployment = ctx.load("deployment.json")
     current = ctx.load("current-manifest.json")
     acceptance = ctx.load("acceptance-" + label + ".json")
-    check_rotation_evidence(prepared, draft, deployment, current, acceptance, plugin)
+    gate = ctx.load("health-gate-postdeploy.json") if ctx.has("health-gate-postdeploy.json") else None
+    check_rotation_evidence(prepared, draft, deployment, current, acceptance, plugin, gate)
 
     previous = Path(os.path.abspath(ctx.repo / PREVIOUS_BACKUP_DIR))
     source = Path(os.path.abspath(prepared["artifact"]))
