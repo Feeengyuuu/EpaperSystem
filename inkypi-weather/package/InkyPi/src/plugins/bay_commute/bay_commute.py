@@ -28,7 +28,9 @@ CACHE_BUDGET = CacheBudget(7 * 86400, 16, 3 * 1024 * 1024)
 # The extras that never decide whether the page counts as live: (fresh, usable) seconds. BART's
 # advisories change within the hour, the signs' travel times every few minutes (a 220 KB reading,
 # so ten minutes apart at most), NOAA's observed level every six minutes.
-EXTRA_FRESH = {"bart_status": (600, 2 * 3600), "signs": (600, 45 * 60), "water": (360, 3600)}
+EXTRA_FRESH = {"bart_status": (600, 2 * 3600), "signs": (600, 45 * 60), "water": (360, 3600),
+               # Bay Wheels' docks change rarely (a week), their bikes by the minute.
+               "bike_stations": (7 * 86400, 30 * 86400), "bike_status": (600, 3600)}
 DEFAULT_FONT = "Microsoft YaHei"
 
 
@@ -81,6 +83,10 @@ class BayCommute(BasePlugin):
             return sources.valid_bart_status(data)
         if name == "signs":
             return sources.valid_signs(data)
+        if name == "bike_stations":
+            return sources.valid_bike_stations(data)
+        if name == "bike_status":
+            return sources.valid_bike_status(data)
         if name == "water":
             return sources.valid_water_level(data)
         if name == "roads":
@@ -218,6 +224,15 @@ class BayCommute(BasePlugin):
         water = self._source("water", {"station": station}, now,
                              allow_network=allow_network, force=force, context=context,
                              fetcher=lambda: sources.fetch_water_level(station, context))
+        # Bay Wheels' bikes at the docks beside the chosen station, an extra like the buoy.
+        docks = self._source("bike_stations", {"system": "baywheels"}, now,
+                             allow_network=allow_network, force=False, context=context,
+                             fetcher=lambda: sources.fetch_bike_stations(context))
+        ids = sorted(row["id"] for row in (docks.get("data") or {}).get("stations") or [])
+        bike_status = self._source("bike_status", {"docks": ids}, now,
+                                   allow_network=allow_network and bool(ids), force=force, context=context,
+                                   fetcher=lambda: sources.fetch_bike_status(ids, context)) if ids else {}
+        bikes = sources.bikes_at(docks.get("data"), bike_status.get("data"), (stop or {}).get("station"))
         states = {roads["state"], tides["state"]}
         provenance = (SourceProvenance.LOCAL_FALLBACK if "unavailable" in states
                       else SourceProvenance.STALE_CACHE if "stale_cache" in states
@@ -225,7 +240,8 @@ class BayCommute(BasePlugin):
         return {"roads": roads, "tides": tides, "buoy": buoy, "bart": bart, "bart_status": bart_status,
                 "sign": sources.pick_sign(signs.get("data"), now), "signs_state": signs["state"],
                 "water": sources.water_versus_prediction(water.get("data"), tides.get("data"), now),
-                "routes": list(routes), "station": station, "window_days": window_days, "provenance": provenance}
+                "bikes": bikes, "routes": list(routes), "station": station, "window_days": window_days,
+                "provenance": provenance}
 
     def render_cached_display(self, settings, device_config, *, resolved_theme_context):
         return self.render_themed_image(settings, device_config, theme_render_only=True,

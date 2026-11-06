@@ -24,6 +24,12 @@ NDBC_URL = "https://www.ndbc.noaa.gov/data/latest_obs/{station}.txt"
 # NDBC 46026, San Francisco: the buoy 18 nautical miles west of the Golden Gate.
 BUOY_STATION = "46026"
 BART_URL = "https://api.bart.gov/api/etd.aspx"
+# Bay Wheels' public GBFS feeds (no key): its docks (360 KB, kept a week, only those named for a BART
+# station) and their bikes now (250 KB).
+BIKE_INFO_URL = "https://gbfs.baywheels.com/gbfs/en/station_information.json"
+BIKE_STATUS_URL = "https://gbfs.baywheels.com/gbfs/en/station_status.json"
+BIKE_FEED_BYTES = 1024 * 1024
+MAX_BIKE_DOCKS = 60
 # The key BART publishes for anyone to use with its API (api.bart.gov/docs/overview).
 BART_PUBLIC_KEY = "MW9S-E7SL-26DU-VV8V"
 # Warm Springs / South Fremont, the station nearest home; any station's four-letter code works.
@@ -493,7 +499,7 @@ def parse_bart_advisories(payload):
     items = []
     for row in _bsa_rows(payload):
         text = _cdata(row.get("description"))
-        if not text or re.search(r"\bno delays reported\b", text, re.IGNORECASE):
+        if not text or re.search(r"\bno (?:delays reported|advisories issued)\b", text, re.IGNORECASE):
             continue
         items.append({"type": str(row.get("type") or "").strip().upper()[:20],
                       "station": str(row.get("station") or "").strip().upper()[:8],
@@ -748,3 +754,89 @@ def next_tides(data, now):
                      if parse_time(row.get("time")) and parse_time(row["time"]) > now),
                     key=lambda row: parse_time(row["time"]))
     return {kind: next((row for row in future if row.get("type") == kind), None) for kind in ("H", "L")}
+
+
+def _bike_words(name):
+    """A station name's words for matching a dock to its BART station: lower case, "street" as "st",
+    without BART's qualifiers ("(SF)", "/UN Plaza") or the dock's ("BART", "North", "2")."""
+    name = re.split(r"[/(]", str(name or ""))[0].lower().replace("street", "st")
+    words = re.findall(r"[a-z0-9]+", name)
+    while words and words[-1] in {"bart", "north", "south", "east", "west", "station", "2", "3"}:
+        words.pop()
+    return [word for word in words if word != "bart"]
+
+
+def parse_bike_stations(payload):
+    """Bay Wheels' docks named for a BART station: {stations: [{id, name, words}]}."""
+    rows = (((payload or {}).get("data") or {}).get("stations") or []) if isinstance(payload, dict) else []
+    stations = []
+    for row in rows:
+        name = " ".join(str((row or {}).get("name") or "").split())[:60]
+        if not isinstance(row, dict) or "BART" not in name.upper() or not row.get("station_id"):
+            continue
+        stations.append({"id": str(row["station_id"])[:64], "name": name, "words": _bike_words(name)})
+    return {"stations": stations[:MAX_BIKE_DOCKS]}
+
+
+def valid_bike_stations(data):
+    rows = (data or {}).get("stations") if isinstance(data, dict) else None
+    return isinstance(rows, list) and 0 < len(rows) <= MAX_BIKE_DOCKS and all(
+        isinstance(row, dict) and row.get("id") and row.get("name") and isinstance(row.get("words"), list)
+        for row in rows)
+
+
+def parse_bike_status(payload, ids):
+    """The bikes at the docks ``ids`` now: {stations: {id: {bikes, ebikes, free, renting}}}, the
+    classic bikes apart from the e-bikes."""
+    rows = (((payload or {}).get("data") or {}).get("stations") or []) if isinstance(payload, dict) else []
+    found = {}
+    for row in rows:
+        if not isinstance(row, dict) or str(row.get("station_id")) not in ids:
+            continue
+        total, ebikes = _int(row.get("num_bikes_available")) or 0, _int(row.get("num_ebikes_available")) or 0
+        found[str(row["station_id"])] = {"bikes": max(0, total - ebikes), "ebikes": ebikes,
+                                         "free": _int(row.get("num_docks_available")) or 0,
+                                         "renting": bool(row.get("is_renting", 1))}
+    return {"stations": found}
+
+
+def valid_bike_status(data):
+    rows = (data or {}).get("stations") if isinstance(data, dict) else None
+    return isinstance(rows, dict) and len(rows) <= MAX_BIKE_DOCKS and all(
+        isinstance(row, dict) and all(isinstance(row.get(key), int) for key in ("bikes", "ebikes", "free"))
+        for row in rows.values())
+
+
+def bikes_at(stations, status, bart_name):
+    """The bikes at the Bay Wheels docks named for the BART station ``bart_name`` (its docks added
+    up; a dock not renting counts none): {name, docks_count, bikes, ebikes, free}, else None."""
+    words = _bike_words(bart_name)
+    if not words:
+        return None
+    live = (status or {}).get("stations") or {}
+    docks = [row for row in (stations or {}).get("stations") or []
+             if row["words"] and (row["words"] == words[:len(row["words"])] or words == row["words"][:len(words)])
+             and row["id"] in live]
+    if not docks:
+        return None
+    counts = [live[row["id"]] for row in docks]
+    renting = [count for count in counts if count.get("renting", True)]
+    name = re.sub(r"\s+(North|South|East|West|\d)$", "", docks[0]["name"])
+    return {"name": name, "docks_count": len(docks), "bikes": sum(count["bikes"] for count in renting),
+            "ebikes": sum(count["ebikes"] for count in renting), "free": sum(count["free"] for count in counts)}
+
+
+def fetch_bike_stations(context):
+    context.raise_if_cancelled()
+    response = get_http_client().request_json(
+        "GET", BIKE_INFO_URL, context=context, timeout=REQUEST_TIMEOUT, max_bytes=BIKE_FEED_BYTES,
+        headers={"User-Agent": USER_AGENT})
+    return parse_bike_stations(response.data)
+
+
+def fetch_bike_status(ids, context):
+    context.raise_if_cancelled()
+    response = get_http_client().request_json(
+        "GET", BIKE_STATUS_URL, context=context, timeout=REQUEST_TIMEOUT, max_bytes=BIKE_FEED_BYTES,
+        headers={"User-Agent": USER_AGENT})
+    return parse_bike_status(response.data, set(ids))

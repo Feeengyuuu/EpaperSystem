@@ -947,3 +947,56 @@ def test_the_header_shows_a_travel_time_sign_and_the_readout_the_measured_water(
     render_page((800, 480), quiet, {"_inkypi_theme": {"mode": "day"}}, NOW)
     assert "全线无延误公告 · 电梯全部运行" in {text for text, _color in recorded}
     assert "预测此刻" not in {text for text, _color in recorded}
+
+
+BIKE_INFO = {"data": {"stations": [
+    {"station_id": "pn", "name": "Powell St BART North", "lat": 37.78, "lon": -122.41, "capacity": 31},
+    {"station_id": "ps", "name": "Powell St BART South", "lat": 37.78, "lon": -122.41, "capacity": 23},
+    {"station_id": "gp", "name": "Glen Park BART", "lat": 37.73, "lon": -122.43, "capacity": 19},
+    {"station_id": "be", "name": "Berryessa BART", "lat": 37.37, "lon": -121.87, "capacity": 15},
+    {"station_id": "x", "name": "Market St at 10th St", "lat": 37.77, "lon": -122.42, "capacity": 27}]}}
+BIKE_STATUS = {"data": {"stations": [
+    {"station_id": "pn", "num_bikes_available": 10, "num_ebikes_available": 6, "num_docks_available": 17,
+     "is_renting": 1},
+    {"station_id": "ps", "num_bikes_available": 3, "num_ebikes_available": 1, "num_docks_available": 20,
+     "is_renting": 1},
+    {"station_id": "gp", "num_bikes_available": 0, "num_ebikes_available": 0, "num_docks_available": 19,
+     "is_renting": 0},
+    {"station_id": "x", "num_bikes_available": 5, "num_ebikes_available": 5, "num_docks_available": 2}]}}
+
+
+def test_bay_wheels_docks_beside_a_bart_station_are_found_by_name_and_counted():
+    stations = sources.parse_bike_stations(BIKE_INFO)
+    assert [station["name"] for station in stations["stations"]] == [
+        "Powell St BART North", "Powell St BART South", "Glen Park BART", "Berryessa BART"]
+    status = sources.parse_bike_status(BIKE_STATUS, {station["id"] for station in stations["stations"]})
+    assert set(status["stations"]) == {"pn", "ps", "gp"}
+    # Powell's two docks add up: e-bikes apart from the classic bikes, and the free docks.
+    assert sources.bikes_at(stations, status, "Powell St.") == {
+        "name": "Powell St BART", "docks_count": 2, "bikes": 6, "ebikes": 7, "free": 37}
+    # BART's own names with a qualifier still find their docks; a closed dock counts nothing.
+    assert sources.bikes_at(stations, status, "Glen Park (SF)")["bikes"] == 0
+    assert sources.bikes_at(stations, status, "Berryessa/North San Jose") is None  # no status for it
+    assert sources.bikes_at(stations, status, "Fremont") is None
+    assert sources.valid_bike_stations(stations) and sources.valid_bike_status(status)
+
+
+def test_bart_notes_add_the_bikes_at_the_station_and_keep_three_trains():
+    from plugins.bay_commute.command_render import bart_notes
+
+    page = Canvas({"_inkypi_theme": {"mode": "day"}})
+    status = {"state": "live", "data": {"time": NOW.isoformat(), "advisories": sources.parse_bart_advisories(BSA_DELAY),
+                                        "elevators": {"out": 0, "stations": []}, "trains": 56}}
+    bikes = {"name": "Powell St BART", "docks_count": 2, "bikes": 6, "ebikes": 7, "free": 37}
+    notes = bart_notes(page, {"bart_status": status, "bikes": bikes})
+    labels = [label for label, _colour, _lines in notes]
+    assert labels[-1] == "单车"
+    assert "6 辆普通" in notes[-1][2][0] and "7 辆电助力" in notes[-1][2][0] and "37 个空桩" in notes[-1][2][0]
+    # The advisory gives up its second line to the bikes, so the trains keep their rows.
+    assert len(notes[0][2]) == 1
+    assert sum(len(lines) for _label, _colour, lines in notes) <= 3
+
+
+def test_no_advisories_issued_reads_as_the_quiet_line():
+    payload = {"root": {"bsa": [{"type": "", "description": {"#cdata-section": "No advisories issued."}}]}}
+    assert sources.parse_bart_advisories(payload) == []

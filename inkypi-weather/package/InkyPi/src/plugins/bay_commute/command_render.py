@@ -566,26 +566,30 @@ def _note_x(page, label):
 
 def bart_notes(page, payload):
     """BART's service notes for the foot of its block, each (chip label, chip colour, text lines):
-    the newest advisory over up to two lines, elevators out of service; one quiet line when there
-    is neither."""
+    the newest advisory over up to two lines (one when the bikes take the other), elevators out of
+    service, one quiet line when there is neither; then the Bay Wheels bikes at the station's docks."""
     status = (payload.get("bart_status") or {})
     data = status.get("data") or {}
-    if status.get("state") in (None, "unavailable") or not data:
-        return []
+    bikes = payload.get("bikes")
     notes = []
-    advisories = data.get("advisories") or []
-    if advisories:
-        first = advisories[0]
-        label = ADVISORY_KINDS.get(first.get("type"), "公告") + (f" {len(advisories)}" if len(advisories) > 1 else "")
-        notes.append((label, "crimson", wrap_latin(page, compact_advisory(first["text"]), 10,
-                                                   784 - _note_x(page, label), ADVISORY_LINES)))
-    elevators = data.get("elevators") or {}
-    if elevators.get("out"):
-        stations = ", ".join(elevators.get("stations") or [])
-        notes.append(("电梯", "orange", [f"{elevators['out']} 部停用" + (f" · {stations}" if stations else "")]))
-    if not notes:
-        quiet = "全线无延误公告" + (" · 电梯全部运行" if elevators.get("out") == 0 else "")
-        notes.append(("", "emerald", [quiet]))
+    if status.get("state") not in (None, "unavailable") and data:
+        advisories = data.get("advisories") or []
+        if advisories:
+            first = advisories[0]
+            label = ADVISORY_KINDS.get(first.get("type"), "公告") + (f" {len(advisories)}" if len(advisories) > 1 else "")
+            notes.append((label, "crimson", wrap_latin(page, compact_advisory(first["text"]), 10,
+                                                       784 - _note_x(page, label), 1 if bikes else ADVISORY_LINES)))
+        elevators = data.get("elevators") or {}
+        if elevators.get("out"):
+            stations = ", ".join(elevators.get("stations") or [])
+            notes.append(("电梯", "orange", [f"{elevators['out']} 部停用" + (f" · {stations}" if stations else "")]))
+        if not notes:
+            quiet = "全线无延误公告" + (" · 电梯全部运行" if elevators.get("out") == 0 else "")
+            notes.append(("", "emerald", [quiet]))
+    if bikes:
+        # The last mile: the bikes at Bay Wheels' docks beside the station.
+        notes.append(("单车", "blue", [f"站旁 {bikes['bikes']} 辆普通 · {bikes['ebikes']} 辆电助力 · "
+                                      f"{bikes['free']} 个空桩"]))
     return notes
 
 
