@@ -637,6 +637,40 @@ def test_successful_activation_commits_target_release_and_managed_files(tmp_path
     ]
 
 
+def test_activation_skips_the_systemd_reload_when_no_managed_file_changed(tmp_path):
+    layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
+    layout.ensure()
+    old = _release(layout, "old", "same-unit")
+    new = _release(layout, "new", "same-unit")
+    unit_target = tmp_path / "etc" / "inkypi.service"
+    launcher_target = tmp_path / "bin" / "inkypi"
+    unit_target.parent.mkdir(parents=True)
+    launcher_target.parent.mkdir(parents=True)
+    unit_target.write_text("same-unit", encoding="utf-8")
+    launcher_target.write_text("launcher-new", encoding="utf-8")
+    copies = []
+    links = FakeLinks(old)
+    links.new_target = new
+    service = FakeService()
+    coordinator = UpdateCoordinator(
+        layout,
+        service,
+        links=links,
+        managed_files=(
+            ManagedFile("install/inkypi.service", unit_target, 0o644),
+            ManagedFile("install/inkypi", launcher_target, 0o755),
+        ),
+        copy_file=lambda source, destination, mode: copies.append(destination),
+    )
+
+    coordinator.activate(_prepared_journal(layout, "new"), new)
+
+    # The unit and launcher already match the release: nothing rewritten and no 12 s reload.
+    assert copies == []
+    assert "daemon_reload" not in service.events
+    assert service.events[0] == "stop" and ("ready", "new") in service.events
+
+
 def test_activation_ignores_retired_fallback_release_from_n1_updater(tmp_path):
     layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
     layout.ensure()

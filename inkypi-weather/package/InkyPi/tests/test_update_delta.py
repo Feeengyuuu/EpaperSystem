@@ -308,7 +308,8 @@ def test_delta_install_reports_one_timing_line_per_phase(tmp_path, monkeypatch, 
     assert all(line.startswith("timing: ") and len(line) < 100 for line in case.lines)
     apply_line = case.lines[0]
     assert " written=2 " in apply_line and " removed=1" in apply_line and " linked=" in apply_line
-    assert case.lines[1].endswith(f" files={len(target_files())}")
+    # The base release has no verification record yet: nothing is trusted, every file is hashed.
+    assert case.lines[1].endswith(f" files={len(target_files())} trusted=0")
     assert case.lines[2].endswith(" seeded=1") and case.lines[3].endswith(" reuse=yes")
     metadata = case.journal.metadata
     assert metadata["artifact_format"] == "delta_v1" and metadata["delta_base_release"] == BASE_ID
@@ -422,6 +423,61 @@ def test_verification_refuses_unlisted_and_missing_candidate_files(tmp_path, mod
     (root / "src" / "new.py").unlink()
     with pytest.raises(DeltaRefused, match="1 target files are missing, e.g. src/new.py"):
         update_engine.verify_package_tree(root, plan)
+
+
+def test_verification_trusts_the_linked_files_it_verified_before(tmp_path, monkeypatch, modes):
+    base = tmp_path / "base"
+    files = target_files()
+    for name, data in files.items():
+        (base / name).parent.mkdir(parents=True, exist_ok=True)
+        (base / name).write_bytes(data)
+    plan = SimpleNamespace(hashes={name: sha(data) for name, data in files.items()},
+                           modes={name: 0o644 for name in files})
+    record = {}
+    assert update_engine.verify_package_tree(base, plan, record=record) == len(files)
+    assert set(record) == set(files)
+
+    # The next candidate: every file a hard link into the base, except one rewritten.
+    candidate = tmp_path / "candidate"
+    for name in files:
+        (candidate / name).parent.mkdir(parents=True, exist_ok=True)
+        if name == "src/new.py":
+            (candidate / name).write_bytes(b"print('v2')\n")
+        else:
+            os.link(base / name, candidate / name)
+    plan2 = SimpleNamespace(hashes={**plan.hashes, "src/new.py": sha(b"print('v2')\n")}, modes=plan.modes)
+    hashed = []
+    original = update_engine._sha256_file
+    monkeypatch.setattr(update_engine, "_sha256_file", lambda path: hashed.append(Path(path).name) or original(path))
+
+    assert update_engine.verify_package_tree(candidate, plan2, trusted=record) == len(files)
+    assert hashed == ["new.py"]
+
+    # A linked file rewritten in place (its mtime moves) is hashed again, and refused.
+    hashed.clear()
+    victim = next(name for name in files if name != "src/new.py")
+    (base / victim).write_bytes(b"x" * len(files[victim]))
+    os.utime(base / victim, ns=(10**18, 10**18))
+    with pytest.raises(DeltaRefused, match="does not match its target sha256"):
+        update_engine.verify_package_tree(candidate, plan2, trusted=record)
+    assert Path(victim).name in hashed
+
+
+def test_verified_file_records_are_kept_only_for_releases_on_disk(tmp_path):
+    layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
+    layout.ensure()
+    for release in ("deploy-a", "deploy-b"):
+        layout.release_path(release).mkdir(parents=True)
+    update_engine.save_verified_files(layout, "deploy-a", {"src/a.py": [1, 2, 3, 4, "ab"]})
+    update_engine.save_verified_files(layout, "deploy-gone", {"src/a.py": [1, 2, 3, 4, "ab"]})
+    update_engine.save_verified_files(layout, "deploy-b", {"src/b.py": [5, 6, 7, 8, "cd"]})
+
+    assert update_engine.load_verified_files(layout, "deploy-a") == {"src/a.py": [1, 2, 3, 4, "ab"]}
+    assert update_engine.load_verified_files(layout, "deploy-b") == {"src/b.py": [5, 6, 7, 8, "cd"]}
+    # A record of a release no longer on disk is dropped; a missing or broken one reads as empty.
+    assert update_engine.load_verified_files(layout, "deploy-gone") == {}
+    (layout.state_root / "verified" / "deploy-a.json").write_text("{", encoding="utf-8")
+    assert update_engine.load_verified_files(layout, "deploy-a") == {}
 
 
 def test_a_failed_delta_leaves_both_pointers_and_the_service_untouched(tmp_path, monkeypatch, modes):

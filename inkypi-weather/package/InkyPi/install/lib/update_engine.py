@@ -45,6 +45,20 @@ MAX_ARCHIVE_FILE_BYTES = 512 * 1024 * 1024
 MAX_COMPRESSION_RATIO = 1000
 DEFAULT_DISK_RESERVE_BYTES = 256 * 1024 * 1024
 BOOT_RECOVERY_UNIT_NAME = "inkypi-update-recover.service"
+# The fixed boot recovery capability: (release-relative source, host destination, mode, whether it
+# is a systemd unit or drop-in, so that changing it needs a daemon-reload).
+BOOT_RECOVERY_CAPABILITY_FILES = (
+    ("install/inkypi-update-recover.service", "/etc/systemd/system/inkypi-update-recover.service", 0o644, True),
+    ("install/inkypi-update-finalize.service", "/etc/systemd/system/inkypi-update-finalize.service", 0o644, True),
+    ("install/systemd/inkypi.service.d/10-update-recovery.conf",
+     "/etc/systemd/system/inkypi.service.d/10-update-recovery.conf", 0o644, True),
+    ("install/systemd/lightdm.service.d/10-inkypi-update-recovery.conf",
+     "/etc/systemd/system/lightdm.service.d/10-inkypi-update-recovery.conf", 0o644, True),
+    ("install/lib/release_state.py", "/usr/local/lib/inkypi-update/release_state.py", 0o644, False),
+    ("install/lib/release_archive.py", "/usr/local/lib/inkypi-update/release_archive.py", 0o644, False),
+    ("install/lib/host_migration.py", "/usr/local/lib/inkypi-update/host_migration.py", 0o644, False),
+    ("install/lib/update_engine.py", "/usr/local/lib/inkypi-update/update_engine.py", 0o644, False),
+)
 
 # Reported by ``inkypi-update --print-capabilities``.  The delta code lives in
 # this module on purpose: the installed library directory only ever receives
@@ -318,8 +332,9 @@ class UpdateCoordinator:
                 if previous is not None:
                     self.links.replace(previous, self.layout.previous_link)
                 self.links.replace(target, self.layout.current_link)
-                self._install_managed_files(target)
-                self.service.daemon_reload()
+                # systemd is reloaded (about 12 s on the device) only when a managed file changed.
+                if self._install_managed_files(target):
+                    self.service.daemon_reload()
                 if not service_was_enabled:
                     self.service.enable()
             journal.transition(UpdatePhase.STARTING)
@@ -558,12 +573,19 @@ class UpdateCoordinator:
     def cleanup_candidate(self, journal) -> None:
         self._clean_staging(journal)
 
-    def _install_managed_files(self, release_path):
+    def _install_managed_files(self, release_path) -> bool:
+        """Install the release's managed host files; True when any had to be rewritten (one already
+        matching byte for byte, mode included, is left alone)."""
+        changed = False
         for managed in self.managed_files:
             source = release_path.joinpath(*PurePosixPath(managed.source_relative).parts)
             if not source.is_file() or source.is_symlink():
                 raise UpdateFailed(f"managed release file is missing: {source}")
+            if files_identical(source, managed.destination, managed.mode):
+                continue
             self.copy_file(source, managed.destination, managed.mode)
+            changed = True
+        return changed
 
     def _restore_managed_files(self, records):
         records = tuple(records or ())
@@ -943,7 +965,11 @@ class ArtifactPreparer:
             with self._timer.phase("delta-apply") as note:
                 note.update(apply_delta(inspection, plan, base, candidate))
             with self._timer.phase("delta-verify") as note:
-                note["files"] = verify_package_tree(candidate, plan)
+                trusted = load_verified_files(self.layout, plan.base_release)
+                record = {}
+                note["files"] = verify_package_tree(candidate, plan, trusted=trusted, record=record)
+                note["trusted"] = sum(1 for name, known in record.items() if trusted.get(name) == known)
+            save_verified_files(self.layout, release_id, record)
         else:
             if _zip_has_member(inspection.path, DELTA_MANIFEST_MEMBER):
                 raise ArtifactError("a delta artifact needs --artifact-format delta_v1")
@@ -1242,11 +1268,21 @@ class BootRecoveryUnitInstaller:
         systemctl="/usr/bin/systemctl",
         runner=None,
         copy_file=None,
+        capability_files=None,
     ):
         self.unit_target = Path(unit_target)
         self.systemctl = str(systemctl)
         self._runner = runner or subprocess.run
         self._copy_file = copy_file or atomic_copy_file
+        # (release-relative source, destination, mode, is a systemd unit or drop-in); the
+        # recovery unit itself goes to ``unit_target``.
+        self.capability_files = tuple(
+            (relative, Path(destination), mode, unit)
+            for relative, destination, mode, unit in (capability_files or tuple(
+                (relative, self.unit_target if relative == "install/" + BOOT_RECOVERY_UNIT_NAME else destination,
+                 mode, unit)
+                for relative, destination, mode, unit in BOOT_RECOVERY_CAPABILITY_FILES))
+        )
 
     def install(self, source) -> None:
         self._copy_file(source, self.unit_target, 0o644)
@@ -1257,70 +1293,30 @@ class BootRecoveryUnitInstaller:
         self._systemctl("--no-block", "start", BOOT_RECOVERY_UNIT_NAME)
 
     def install_capability(self, release_root) -> None:
-        """Install every fixed recovery file before any host migration."""
+        """Install every fixed recovery file before any host migration.
+
+        A file already in place byte for byte (and mode) is left alone, and systemd is reloaded
+        only when a unit or drop-in changed: each reload takes about 12 s on a Pi Zero 2 W. The
+        `enable` calls never reload again (``--no-reload``); a new unit was loaded just before."""
 
         root = Path(release_root)
-        mappings = (
-            (
-                "install/inkypi-update-recover.service",
-                self.unit_target,
-                0o644,
-            ),
-            (
-                "install/inkypi-update-finalize.service",
-                Path("/etc/systemd/system/inkypi-update-finalize.service"),
-                0o644,
-            ),
-            (
-                "install/systemd/inkypi.service.d/10-update-recovery.conf",
-                Path(
-                    "/etc/systemd/system/inkypi.service.d/"
-                    "10-update-recovery.conf"
-                ),
-                0o644,
-            ),
-            (
-                "install/systemd/lightdm.service.d/"
-                "10-inkypi-update-recovery.conf",
-                Path(
-                    "/etc/systemd/system/lightdm.service.d/"
-                    "10-inkypi-update-recovery.conf"
-                ),
-                0o644,
-            ),
-            (
-                "install/lib/release_state.py",
-                Path("/usr/local/lib/inkypi-update/release_state.py"),
-                0o644,
-            ),
-            (
-                "install/lib/release_archive.py",
-                Path("/usr/local/lib/inkypi-update/release_archive.py"),
-                0o644,
-            ),
-            (
-                "install/lib/host_migration.py",
-                Path("/usr/local/lib/inkypi-update/host_migration.py"),
-                0o644,
-            ),
-            (
-                "install/lib/update_engine.py",
-                Path("/usr/local/lib/inkypi-update/update_engine.py"),
-                0o644,
-            ),
-        )
-        for relative, destination, mode in mappings:
+        units_changed = False
+        for relative, destination, mode, unit in self.capability_files:
             source = root.joinpath(*PurePosixPath(relative).parts)
             if not source.is_file() or source.is_symlink():
                 raise UpdateFailed(f"boot recovery capability file is missing: {source}")
+            if files_identical(source, destination, mode):
+                continue
             self._copy_file(source, destination, mode)
-        self._systemctl("daemon-reload")
-        self._systemctl("enable", BOOT_RECOVERY_UNIT_NAME)
+            units_changed = units_changed or unit
+        if units_changed:
+            self._systemctl("daemon-reload")
+        self._systemctl("--no-reload", "enable", BOOT_RECOVERY_UNIT_NAME)
         # Queue recovery while the updater still owns the shared lock.  The
         # oneshot itself waits for that lock, and the caller releases it before
         # joining the systemd job with wait_ready().
         self._systemctl("--no-block", "start", BOOT_RECOVERY_UNIT_NAME)
-        self._systemctl("enable", "inkypi-update-finalize.service")
+        self._systemctl("--no-reload", "enable", "inkypi-update-finalize.service")
 
     def wait_ready(self) -> None:
         """Join the queued oneshot and propagate a fail-closed unit failure."""
@@ -1831,8 +1827,14 @@ def apply_delta(inspection, plan, base, candidate) -> dict:
     return counts
 
 
-def verify_package_tree(root, plan) -> int:
-    """Prove the candidate holds exactly the target package: names, hashes and modes."""
+def verify_package_tree(root, plan, *, trusted=None, record=None) -> int:
+    """Prove the candidate holds exactly the target package: names, hashes and modes.
+
+    ``trusted`` is the base release's record from its own verification (load_verified_files): a
+    file whose inode, size and mtime match that record, and whose recorded hash is the target's,
+    is the very file verified then (a hard link to it) and is not read again; any change to it
+    since moves its mtime. Every other file is hashed. ``record`` (a dict) receives each
+    verified file's [dev, ino, size, mtime_ns, sha256] for the next round."""
 
     root_path = Path(root)
     seen = set()
@@ -1848,10 +1850,17 @@ def verify_package_tree(root, plan) -> int:
                 expected = plan.hashes.get(relative)
                 if expected is None:
                     raise DeltaRefused(f"unlisted file {relative} in the candidate")
-                if not stat.S_ISREG(os.lstat(path).st_mode):
+                status = os.lstat(path)
+                if not stat.S_ISREG(status.st_mode):
                     raise DeltaRefused(f"{relative} is not a regular file")
-                if not hmac.compare_digest(_sha256_file(path), expected):
-                    raise DeltaRefused(f"{relative} does not match its target sha256")
+                fingerprint = [status.st_dev, status.st_ino, status.st_size, status.st_mtime_ns]
+                known = (trusted or {}).get(relative)
+                if not (isinstance(known, list) and known[:4] == fingerprint and len(known) == 5
+                        and hmac.compare_digest(str(known[4]), expected)):
+                    if not hmac.compare_digest(_sha256_file(path), expected):
+                        raise DeltaRefused(f"{relative} does not match its target sha256")
+                if record is not None:
+                    record[relative] = [*fingerprint, expected]
                 if _MODES_ENFORCED and _file_mode(path) != plan.modes[relative]:
                     raise DeltaRefused(f"{relative} does not have its target mode")
                 seen.add(relative)
@@ -1865,6 +1874,35 @@ def verify_package_tree(root, plan) -> int:
     if not _is_release_root(root_path):
         raise DeltaRefused("the candidate is not a complete InkyPi package")
     return len(seen)
+
+
+def _verified_files_dir(layout) -> Path:
+    return Path(layout.state_root) / "verified"
+
+
+def save_verified_files(layout, release_id, record) -> None:
+    """Keep ``release_id``'s verification record (verify_package_tree's ``record``) for the next
+    delta, and drop the records of releases no longer on disk."""
+    directory = _verified_files_dir(layout)
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / f"{validate_release_id(release_id)}.json"
+    temporary = target.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(record, separators=(",", ":")), encoding="utf-8")
+    os.replace(temporary, target)
+    on_disk = {entry.name for entry in Path(layout.releases_dir).iterdir()} if Path(layout.releases_dir).is_dir() else set()
+    for stale in directory.glob("*.json"):
+        if stale.stem not in on_disk and stale != target:
+            stale.unlink(missing_ok=True)
+
+
+def load_verified_files(layout, release_id) -> dict:
+    """``release_id``'s verification record, or {} (none kept, or unreadable)."""
+    try:
+        target = _verified_files_dir(layout) / f"{validate_release_id(release_id)}.json"
+        record = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError, ArtifactError, RuntimeError):
+        return {}
+    return record if isinstance(record, dict) else {}
 
 
 def _write_delta_member(archive, info, destination, expected_sha256) -> None:
@@ -2034,6 +2072,27 @@ def _strict_json_object(pairs):
             raise ValueError("duplicate JSON key")
         result[key] = value
     return result
+
+
+def files_identical(source, destination, mode) -> bool:
+    """True when ``destination`` is already a regular file with ``source``'s bytes (and ``mode``)."""
+    target = Path(destination)
+    try:
+        if target.is_symlink() or not target.is_file():
+            return False
+        if os.name != "nt" and stat.S_IMODE(target.stat().st_mode) != int(mode):
+            return False
+        if target.stat().st_size != Path(source).stat().st_size:
+            return False
+        with Path(source).open("rb") as left, target.open("rb") as right:
+            while True:
+                chunk = left.read(1024 * 1024)
+                if chunk != right.read(1024 * 1024):
+                    return False
+                if not chunk:
+                    return True
+    except OSError:
+        return False
 
 
 def atomic_copy_file(source, destination, mode) -> None:

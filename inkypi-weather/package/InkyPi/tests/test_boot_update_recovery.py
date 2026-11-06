@@ -852,6 +852,67 @@ def test_recovery_unit_installer_copies_then_reloads_and_enables_fixed_unit(tmp_
     ]
 
 
+def _capability_release(root, text="v1"):
+    files = {}
+    for relative, _destination, _mode, _unit in update_engine_module.BOOT_RECOVERY_CAPABILITY_FILES:
+        source = root.joinpath(*Path(relative).parts)
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(f"{relative} {text}\n", encoding="utf-8")
+        files[relative] = source
+    return files
+
+
+def _capability_installer(tmp_path, events):
+    destinations = tmp_path / "host"
+    capability = tuple(
+        (relative, destinations / Path(destination).name, mode, unit)
+        for relative, destination, mode, unit in update_engine_module.BOOT_RECOVERY_CAPABILITY_FILES
+    )
+
+    def copy_file(source, destination, mode):
+        events.append(("copy", Path(destination).name))
+        update_engine_module.atomic_copy_file(source, destination, mode)
+
+    def runner(command, **_kwargs):
+        events.append(tuple(command[1:]))
+        return SimpleNamespace(returncode=0)
+
+    return BootRecoveryUnitInstaller(unit_target=destinations / RECOVERY_UNIT_NAME, runner=runner,
+                                     copy_file=copy_file, capability_files=capability)
+
+
+def test_boot_recovery_capability_reloads_systemd_only_when_a_unit_changed(tmp_path):
+    release = tmp_path / "release"
+    _capability_release(release)
+    events = []
+    installer = _capability_installer(tmp_path, events)
+    queue = [("--no-reload", "enable", RECOVERY_UNIT_NAME), ("--no-block", "start", RECOVERY_UNIT_NAME),
+             ("--no-reload", "enable", "inkypi-update-finalize.service")]
+
+    # First install: every file copied, one reload; `enable` never reloads again (each reload
+    # takes about 12 s on the device).
+    installer.install_capability(release)
+    assert sum(1 for event in events if event[0] == "copy") == len(update_engine_module.BOOT_RECOVERY_CAPABILITY_FILES)
+    assert [event for event in events if event[0] != "copy"] == [("daemon-reload",), *queue]
+
+    # The same files again: nothing rewritten, no reload; the oneshot is still queued.
+    events.clear()
+    installer.install_capability(release)
+    assert events == queue
+
+    # Only the library changed: it is rewritten, systemd is not reloaded.
+    events.clear()
+    (release / "install" / "lib" / "update_engine.py").write_text("engine v2\n", encoding="utf-8")
+    installer.install_capability(release)
+    assert events == [("copy", "update_engine.py"), *queue]
+
+    # A unit changed: rewritten and reloaded.
+    events.clear()
+    (release / "install" / "inkypi-update-finalize.service").write_text("finalize v2\n", encoding="utf-8")
+    installer.install_capability(release)
+    assert events == [("copy", "inkypi-update-finalize.service"), ("daemon-reload",), *queue]
+
+
 def test_activation_failure_restores_previous_managed_recovery_unit(tmp_path):
     layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
     layout.ensure()
