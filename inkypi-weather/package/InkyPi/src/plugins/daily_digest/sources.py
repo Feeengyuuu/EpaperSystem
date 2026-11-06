@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import calendar
 import html
+import logging
 import re
 import unicodedata
 from datetime import date, datetime, timedelta, timezone
@@ -33,9 +34,10 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import feedparser
 
 from plugins.daily_ai_news.news_text import TRADITIONAL_PHRASE_REPLACEMENTS, TRADITIONAL_TO_SIMPLIFIED
-from utils.http_client import get_http_client
+from utils.http_client import HttpClientError, get_http_client
 
 
+logger = logging.getLogger(__name__)
 PACIFIC = ZoneInfo("America/Los_Angeles")
 USER_AGENT = "InkyPi DailyDigest/1.0 (personal e-paper display)"
 REQUEST_TIMEOUT = (3, 10)
@@ -46,7 +48,12 @@ NETEASE_PLAYLIST = "https://music.163.com/api/v6/playlist/detail"
 NETEASE_REFERER = "https://music.163.com/"
 # The charts the page reads, by their ids: soaring, new, original, hot.
 NETEASE_CHARTS = {19723756: "飙升榜", 3779629: "新歌榜", 2884035: "原创榜", 3778678: "热歌榜"}
-MUSIC_IMAGE_HOST = re.compile(r"^p\d+\.music\.126\.net$")
+MUSIC_IMAGE_HOST = re.compile(r"^(p\d+\.music\.126\.net|is\d+-ssl\.mzstatic\.com)$")
+# Billboard's Hot 100 as a community mirror keeps it (weekly, 12 KB), and the iTunes Store's
+# search for each song's cover, album and length.
+BILLBOARD_URL = "https://raw.githubusercontent.com/mhollingshead/billboard-hot-100/main/recent.json"
+BILLBOARD_ID = "billboard"
+ITUNES_SEARCH = "https://itunes.apple.com/search"
 MUSIC_COVER_SIZE = "200y200"
 DOUBAN = "https://m.douban.com/rexxar/api/v2/subject_collection/{collection}/items"
 DOUBAN_REFERER = "https://m.douban.com/movie/"
@@ -240,6 +247,51 @@ def fetch_chart(chart_id, context):
 
 def valid_chart(data):
     return isinstance(data, dict) and bool(data.get("tracks"))
+
+
+# --- Billboard Hot 100 -----------------------------------------------------------------------------
+
+def normalize_billboard(payload):
+    """This week's Hot 100 top songs: each with its place last week (None off the chart), its weeks
+    on the chart and its peak; a song back after weeks away is marked a re-entry."""
+    rows = (payload or {}).get("data") if isinstance(payload, dict) else None
+    tracks = []
+    for row in sorted((row for row in rows or [] if isinstance(row, dict) and row.get("song")),
+                      key=lambda row: _number(row.get("this_week")) or 999):
+        last, weeks, peak = (_number(row.get(key)) for key in ("last_week", "weeks_on_chart", "peak_position"))
+        tracks.append({"title": _clean(row.get("song"), 60), "artist": _clean(row.get("artist"), 60), "cover": "",
+                       "album": "", "published": "", "seconds": None,
+                       "last_rank": int(last) if last else None, "reentry": not last and (weeks or 0) > 1,
+                       "weeks": int(weeks) if weeks else None, "peak": int(peak) if peak else None})
+        if len(tracks) >= TRACKS:
+            break
+    if not tracks:
+        raise ValueError("Billboard chart lists no songs")
+    return {"id": BILLBOARD_ID, "name": "Hot 100", "updated": str(payload.get("date") or "")[:10], "tracks": tracks}
+
+
+def _itunes_song(track, context):
+    """The song's cover (200 px), album, length and release day from the iTunes Store's search."""
+    payload = _get(ITUNES_SEARCH, context, params={"term": f"{track['title']} {track['artist']}", "entity": "song",
+                                                   "limit": 1, "country": "us"}, max_bytes=64 * 1024)
+    found = next((item for item in (payload or {}).get("results") or [] if isinstance(item, dict)), None)
+    if not found:
+        return {}
+    millis = _number(found.get("trackTimeMillis"))
+    album = re.sub(r" - (Single|EP)$", "", _clean(found.get("collectionName"), 60))
+    return {"cover": safe_music_image(str(found.get("artworkUrl100") or "").replace("100x100bb", "200x200bb")) or "",
+            "album": album[:40], "seconds": int(millis // 1000) if millis and 0 < millis < 3600 * 1000 else None,
+            "published": str(found.get("releaseDate") or "")[:10]}
+
+
+def fetch_billboard(context):
+    chart = normalize_billboard(_get(BILLBOARD_URL, context, max_bytes=64 * 1024))
+    for track in chart["tracks"]:
+        try:
+            track.update(_itunes_song(track, context))
+        except (HttpClientError, ValueError, TypeError) as error:
+            logger.info("No iTunes match for a Billboard song: %s", type(error).__name__)
+    return chart
 
 
 # --- Douban ----------------------------------------------------------------------------------------

@@ -44,6 +44,7 @@ FRESHNESS = {
     "poem": (HOUR, 30 * DAY),
     "news": (HOUR, DAY),
     "music": (6 * HOUR, 3 * DAY),
+    "billboard": (12 * HOUR, 14 * DAY),
     "douban": (6 * HOUR, 3 * DAY),
     "gas": (12 * HOUR, 21 * DAY),
     "space": (12 * HOUR, 62 * DAY),
@@ -149,6 +150,10 @@ class DailyDigest(BasePlugin):
         # The headline feeds share one column, so one late feed alone does not degrade the page.
         results += [healthiest_result(list(payload["news"].values())), *payload["music"].values(),
                     space_result(payload["webb"], payload["hubble"])]
+        # Billboard's weekly chart takes a turn among the NetEase charts: an extra whose mirror or
+        # cover lookups failing never makes the page stale.
+        payload["music"][sources.BILLBOARD_ID] = load("music-billboard", "billboard", {"chart": "hot-100", "fields": 1},
+                                                      sources.fetch_billboard, sources.valid_chart, timeout=15)
         payload["provenance"] = combined_provenance(results)
         return payload
 

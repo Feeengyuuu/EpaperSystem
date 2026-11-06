@@ -407,6 +407,8 @@ LOGOS = {
                         "Alternative.me's logo from its own site header, shown to name the source"), [DIGEST], 1.0),
     "wordle": ((COMMONS.format(path="a/a7/The_New_York_Times_Wordle.svg", name="The_New_York_Times_Wordle.svg"),
                 COMMONS_FILE.format(name="The_New_York_Times_Wordle.svg"), PUBLIC_DOMAIN), [DIGEST], 1.0),
+    "billboard": ((COMMONS.format(path="9/95/Billboard_logo.svg", name="Billboard_logo.svg"),
+                   COMMONS_FILE.format(name="Billboard_logo.svg"), PUBLIC_DOMAIN), [DIGEST], 1.0),
 }
 PUBLISHERS = PLUGINS / "base_plugin" / "assets" / "publisher_logos"
 # The cover pages' publishers and magazines (base_plugin/publisher_logos.py knows their names): key ->

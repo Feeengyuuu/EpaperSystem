@@ -307,6 +307,7 @@ def _fake_fetchers(monkeypatch, failing=()):
     monkeypatch.setattr(sources, "fetch_news", fake("news", news))
     monkeypatch.setattr(sources, "fetch_chart", lambda chart_id, ctx: fake("chart", {
         **sources.normalize_chart(SOARING, 19723756), "id": chart_id, "name": sources.NETEASE_CHARTS[chart_id]})())
+    monkeypatch.setattr(sources, "fetch_billboard", fake("chart", sources.normalize_billboard(BILLBOARD)))
     monkeypatch.setattr(sources, "fetch_douban", fake("douban", sources.normalize_douban(SHOWING)))
     monkeypatch.setattr(sources, "fetch_gas", fake("gas", sources.normalize_gas(EIA_PAGE)))
     monkeypatch.setattr(sources, "fetch_space", lambda name, ctx: fake("space", sources.normalize_space(
@@ -649,3 +650,81 @@ def test_one_late_news_feed_does_not_degrade_the_page_while_the_others_are_fresh
     assert daily_digest.healthiest_result([late, fresh, late]) is fresh
     assert daily_digest.healthiest_result([late, late])["state"] == "stale_cache"
     assert daily_digest.combined_provenance([daily_digest.healthiest_result([late, fresh])]).value == "live"
+
+
+BILLBOARD = {"date": "2026-11-07", "data": [
+    {"song": "Choosin' Texas", "artist": "Ella Langley", "this_week": 1, "last_week": 1, "peak_position": 1,
+     "weeks_on_chart": 54},
+    {"song": "Housewife", "artist": "Tate McRae", "this_week": 2, "last_week": None, "peak_position": 2,
+     "weeks_on_chart": 1},
+    {"song": "Boston", "artist": "Stella Lefty", "this_week": 3, "last_week": None, "peak_position": 2,
+     "weeks_on_chart": 30},
+    {"song": "Been By Now", "artist": "Morgan Wallen", "this_week": 4, "last_week": 7, "peak_position": 2,
+     "weeks_on_chart": 14}]}
+ARTWORK = "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/69/64/e4/196874840146.jpg/100x100bb.jpg"
+ITUNES = {"resultCount": 1, "results": [{"kind": "song", "trackName": "Housewife", "artistName": "Tate McRae",
+                                         "collectionName": "Housewife - Single", "artworkUrl100": ARTWORK,
+                                         "trackTimeMillis": 175000, "releaseDate": "2026-10-24T07:00:00Z"}]}
+
+
+def test_billboards_hot_100_reads_its_top_songs_moves_and_weeks():
+    chart = sources.normalize_billboard(BILLBOARD)
+
+    assert (chart["id"], chart["name"], chart["updated"]) == ("billboard", "Hot 100", "2026-11-07")
+    tracks = chart["tracks"]
+    assert [track["title"] for track in tracks] == ["Choosin' Texas", "Housewife", "Boston"]
+    assert [(track["last_rank"], track["weeks"], track["peak"]) for track in tracks] == [
+        (1, 54, 1), (None, 1, 2), (None, 30, 2)]
+    # A song back on the chart after weeks away is a re-entry, not a debut.
+    assert [render.song_move(track, rank) for rank, track in enumerate(tracks, 1)] == [
+        None, ("new", "NEW"), ("new", "RE")]
+    with pytest.raises(ValueError):
+        sources.normalize_billboard({"date": "2026-11-07", "data": []})
+
+
+def test_each_billboard_song_finds_its_cover_album_and_length_on_itunes(monkeypatch):
+    asked = []
+
+    def get(url, context, **kwargs):
+        if url == sources.BILLBOARD_URL:
+            return BILLBOARD
+        asked.append(kwargs["params"]["term"])
+        return ITUNES if "Housewife" in kwargs["params"]["term"] else {"resultCount": 0, "results": []}
+
+    monkeypatch.setattr(sources, "_get", get)
+    chart = sources.fetch_billboard(_context())
+
+    assert asked == ["Choosin' Texas Ella Langley", "Housewife Tate McRae", "Boston Stella Lefty"]
+    song = chart["tracks"][1]
+    assert song["cover"] == ARTWORK.replace("100x100bb", "200x200bb") and sources.safe_music_image(song["cover"])
+    assert (song["album"], song["seconds"], song["published"]) == ("Housewife", 175, "2026-10-24")
+    assert chart["tracks"][0]["cover"] == ""
+
+
+def test_billboard_takes_its_turn_after_the_netease_charts_under_its_own_logo(monkeypatch):
+    soaring = {"data": sources.normalize_chart(SOARING, 19723756)}
+    billboard = {"data": sources.normalize_billboard(BILLBOARD)}
+    music = {19723756: soaring, "billboard": billboard}
+    assert [chart["name"] for chart in render.music_charts(music)] == ["飙升榜", "Hot 100"]
+
+    canvas = render.PageCanvas(render._palette({"themeMode": "day"})[0], family="Microsoft YaHei")
+    drawn, logos = [], []
+    original_text, original_logo = canvas.text, render._paste_logo
+    monkeypatch.setattr(canvas, "text", lambda xy, text, *args, **kwargs: drawn.append(text) or original_text(
+        xy, text, *args, **kwargs))
+    monkeypatch.setattr(render, "_paste_logo", lambda canvas, night, name, *args, **kwargs: logos.append(name) or
+                        original_logo(canvas, night, name, *args, **kwargs))
+    render._music_panel(canvas, False, (20, 330, 280, 470), billboard["data"], {}, sources.PACIFIC, NOW)
+
+    assert logos == ["billboard"] and "Hot 100" in drawn and "11.07 榜单" in drawn
+    # A song below its peak names the peak, which a narrow slot drops before the weeks.
+    assert "上榜 54 周" in drawn and "首周上榜" in drawn and "上榜 30 周" in drawn
+    tracks = billboard["data"]["tracks"]
+    assert [render.song_note(track, NOW, rank) for rank, track in enumerate(tracks, 1)] == [
+        "上榜 54 周", "首周上榜", "上榜 30 周 · 最高第 2"]
+
+
+def test_the_billboard_logo_is_built_with_its_provenance():
+    record = json.loads((render.LOGOS / "logos.source.json").read_text(encoding="utf-8"))["logos"]
+    assert (render.LOGOS / "billboard.png").is_file() and record["billboard"]["source"]
+    assert render.logo("billboard", 16, True, (237, 241, 234)) is not None

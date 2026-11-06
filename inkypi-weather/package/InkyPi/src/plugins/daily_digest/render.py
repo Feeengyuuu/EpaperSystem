@@ -22,7 +22,7 @@ and the cards beside it take the room.
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
@@ -100,6 +100,8 @@ MOVE_INKS = {"up": (22, 163, 74), "down": (220, 38, 38)}
 # A single's release day reads as a day within this many days, else as its year.
 RECENT_DAYS = 60
 NETEASE_ORDER = (19723756, 3779629, 2884035, 3778678)
+# The charts in turn: NetEase's four, then Billboard's Hot 100.
+MUSIC_ORDER = (*NETEASE_ORDER, "billboard")
 NEWS_SIZE = 13
 NEWS_LINE = 18
 NEWS_HEAD = 22
@@ -573,9 +575,9 @@ def _tile_ready(key, data):
 # --- 影音: songs, films, series -------------------------------------------------------------------
 
 def music_charts(music):
-    """The NetEase charts at hand (each one's data), in the page's order."""
+    """The charts at hand (each one's data), in the page's order."""
     music = music or {}
-    return [((music.get(chart_id) or {}).get("data") or {}) for chart_id in NETEASE_ORDER
+    return [((music.get(chart_id) or {}).get("data") or {}) for chart_id in MUSIC_ORDER
             if ((music.get(chart_id) or {}).get("data") or {}).get("tracks")]
 
 
@@ -643,6 +645,8 @@ def song_move(track, rank):
     new to the chart; None when it held its place or the chart keeps no record of the last edition."""
     if "last_rank" not in track:
         return None
+    if track.get("reentry"):
+        return "new", "RE"
     if track.get("soaring"):
         return "up", f"{track['soaring']}%"
     last = track.get("last_rank")
@@ -653,10 +657,16 @@ def song_move(track, rank):
     return ("up" if last > rank else "down"), str(abs(last - rank))
 
 
-def song_note(track, now):
+def song_note(track, now, rank=None):
     """The line under a song's artist: its album when that is not the song itself (a single), else
     when it came out (the day within RECENT_DAYS, else the year), then its length: '《未完成》· 5:20'.
-    The parts are joined by " · "; the length is the part a narrow slot drops (_music_panel)."""
+    The parts are joined by " · "; the length is the part a narrow slot drops (_music_panel).
+    A Billboard song instead says how long it has been on the chart and, below its peak, the peak."""
+    weeks = track.get("weeks")
+    if isinstance(weeks, int):
+        note = "首周上榜" if weeks == 1 else f"上榜 {weeks} 周"
+        peak = track.get("peak")
+        return f"{note} · 最高第 {peak}" if isinstance(peak, int) and rank and peak < rank else note
     parts = []
     album, title = str(track.get("album") or "").strip(), str(track.get("title") or "").strip()
     published = str(track.get("published") or "")
@@ -701,12 +711,17 @@ def _move_mark(canvas, right, bottom, move):
 def _music_panel(canvas, night, box, chart, images, zone, now=None):
     left, top, right, bottom = box
     updated = ""
+    billboard = chart.get("id") == "billboard"
     if chart.get("updated"):
         try:
-            updated = f"{datetime.fromisoformat(chart['updated']).astimezone(zone):%m.%d} 更新"
+            updated = (f"{date.fromisoformat(chart['updated'][:10]):%m.%d} 榜单" if billboard else
+                       f"{datetime.fromisoformat(chart['updated']).astimezone(zone):%m.%d} 更新")
         except ValueError:
             updated = ""
-    _panel_head(canvas, night, box, "netease_music", 18, f"网易云{chart['name']}", updated)
+    if billboard:
+        _panel_head(canvas, night, box, "billboard", 14, chart["name"], updated)
+    else:
+        _panel_head(canvas, night, box, "netease_music", 18, f"网易云{chart['name']}", updated)
     art_top = top + ART_TOP
     side = min(bottom - art_top - 32, round((right - left) / MEDIA_ROWS) - ART_GAP)
     for index, ((slot_left, slot_right), track) in enumerate(zip(_slots(box), chart["tracks"][:MEDIA_ROWS])):
@@ -726,7 +741,7 @@ def _music_panel(canvas, night, box, chart, images, zone, now=None):
         canvas.text((centre, art_top + side + 11), track["title"], size, anchor="mm", width=width)
         canvas.text((centre, art_top + side + 26), track["artist"], 11, "muted", anchor="mm", width=width,
                     bold=False)
-        note = song_note(track, now)
+        note = song_note(track, now, index + 1)
         if " · " in note and canvas.width(note, 10, bold=False) > width:
             note = note.rsplit(" · ", 1)[0]
         if note:

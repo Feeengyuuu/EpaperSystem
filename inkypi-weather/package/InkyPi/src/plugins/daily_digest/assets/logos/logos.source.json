@@ -143,6 +143,17 @@
         64
       ],
       "sha256": "54116102c905a0adf91b7ff33e9ae93832eb967fd7127ec4cd0e44c701acbf40"
+    },
+    "billboard": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/9/95/Billboard_logo.svg/500px-Billboard_logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Billboard_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "c9148b9a1fae6b9494ba3f4fa54ab8c73d0d8ae2f5cb9814eda3ce7ad6115fe9",
+      "size": [
+        302,
+        64
+      ],
+      "sha256": "776dbcafd10d280f54a6e0c50aa1e1bb988341afab2c147ffaeb452f1f3e0f41"
     }
   }
 }
