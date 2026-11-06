@@ -56,7 +56,7 @@ PARALLEL_IMAGE_PLUGINS = frozenset(
 )
 
 NESTED_IO_PLUGINS = frozenset(
-    {"ai_papers", "apod", "daily_ai_news", "steam_charts", "telegram_digest"}
+    {"ai_papers", "apod", "daily_ai_news", "print_inspiration", "steam_charts", "telegram_digest"}
 )
 
 SERIAL_HEAVY_PLUGINS = frozenset(

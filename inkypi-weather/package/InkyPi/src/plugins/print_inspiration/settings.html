@@ -1,0 +1,31 @@
+<input type="hidden" name="refreshOnDisplay" id="refreshOnDisplay" value="false">
+<div class="form-group">
+  <small>3D 打印社区 Printables 本周最受欢迎的模型：头条配模型大图、作者、分类、简介与点赞、下载、打印、评分、评论数，下方四张卡片接续本周排名；右栏是本周被打印最多的模型和历史名作。公开接口，无需密钥。</small>
+</div>
+<div class="form-group">
+  <label class="form-label" for="fontFamily">字体</label>
+  <select name="fontFamily" id="fontFamily">
+    {% for font_name in available_fonts %}<option value="{{ font_name }}">{{ font_name }}</option>{% endfor %}
+  </select>
+</div>
+<div class="form-group">
+  <label><input type="checkbox" name="translate" id="translate"> 模型名与简介翻成中文</label>
+  <small>使用已保存的 OpenAI 密钥（与 AI 论文日报相同），每个模型只翻译一次并保存；没有密钥时显示英文原文。</small>
+</div>
+<div class="form-group">
+  <label><input type="checkbox" name="forceRefresh" id="forceRefresh"> 下次刷新重新获取榜单</label>
+  <small>榜单三小时以上才重新获取。轮播使用本地缓存，不请求网络。</small>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  for (const key of ['fontFamily', 'translate', 'forceRefresh']) {
+    const el = document.getElementById(key);
+    const value = typeof pluginSettings !== 'undefined' ? pluginSettings[key] : undefined;
+    if (value !== undefined) {
+      if (el.type === 'checkbox') el.checked = [true, 'true', 'on', '1'].includes(value);
+      else el.value = value;
+    } else if (key === 'fontFamily') el.value = 'Microsoft YaHei';
+    else if (key === 'translate') el.checked = true;
+  }
+});
+</script>

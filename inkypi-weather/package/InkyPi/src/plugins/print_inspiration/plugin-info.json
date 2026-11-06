@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "id": "print_inspiration",
+  "class": "PrintInspiration",
+  "display_name": "打印灵感",
+  "refresh_on_display": false,
+  "recommended_refresh": {"interval": 10800},
+  "capabilities": {
+    "supports_live_refresh": false,
+    "supports_presentation_refresh": false,
+    "supports_day_night_theme": true,
+    "supports_cached_display_redraw": true
+  },
+  "theme": {
+    "presentation": "ui",
+    "day": {"background": "#ffffff", "accent": "#fa6831"},
+    "night": {"background": "#000000", "accent": "#ff8a5c"}
+  }
+}

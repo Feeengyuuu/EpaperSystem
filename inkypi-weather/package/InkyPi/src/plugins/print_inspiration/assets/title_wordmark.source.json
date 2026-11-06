@@ -1,0 +1,16 @@
+{
+  "asset": "title_wordmark.png",
+  "text": "打印灵感",
+  "scene": "打印灵感 in heavy rounded maker-magazine lettering built from printed layers, Printables orange with a charcoal outline and offset shadow, a nozzle extruding a filament line under the word",
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "job_id": "39e8f1ac-35c9-4fc7-9add-2ae4533a04fa",
+  "generated": "2026-11-06",
+  "background": "transparent PNG, 2112x704",
+  "processing": "alpha below 40 cleared, cropped to the alpha bounding box, scaled to 96 px high with LANCZOS",
+  "source_sha256": "c9924893031c987be2b846ee1e63687a5c3d3cd620f6c169a8da50fd3d2cec56",
+  "sha256": "1b3003c67f0d181f033cba9c88d8aa63879ca7b2c240ff8ea8a0a775907dc6ed",
+  "size": [
+    310,
+    96
+  ]
+}

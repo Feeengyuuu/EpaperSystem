@@ -110,6 +110,7 @@
         ai_image: "AI 绘图",
         ai_image_multiverse: "AI 多元宇宙",
         ai_papers: "AI 论文日报",
+        print_inspiration: "打印灵感",
         ai_text: "AI 文字",
         apod: "NASA 天文图",
         backtothedate: "回到那天",

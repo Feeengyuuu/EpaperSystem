@@ -1,0 +1,18 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw), 1232 px, styled on LiveRadar's doodle tiles",
+  "generated": "2026-11-06",
+  "processing": "greyscale, 480 px square tile, LANCZOS, paper above 232 set to white",
+  "rendering": "density map tinted Printables orange by utils.doodle_backdrop",
+  "assets": {
+    "workshop.png": {
+      "motifs": "desktop 3D printers, filament spools, nozzles, a boat model, gears, calipers, nuts and bolts, layered cubes and vases, wrenches, stars",
+      "job_id": "d045061d-1aa7-4047-8873-70c4046ee0b1",
+      "source_sha256": "c9c2ee657a9fbbbfbdcec6c1462b71f808059f4474ffe2f409f60d9cec3fec2e",
+      "sha256": "d64c87aaacdb07b381249b1da3fbae6a1a1ad0149ada3cb244107920fef40198",
+      "size": [
+        480,
+        480
+      ]
+    }
+  }
+}

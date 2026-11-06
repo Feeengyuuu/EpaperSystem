@@ -94,8 +94,10 @@ def checked(content, papers):
     return list(entries.values())
 
 
-def translate(papers, api_key, *, client_factory=None, model=DEFAULT_MODEL):
-    """Chinese titles and summaries for ``papers`` in one request; [] without a key or a reply."""
+def translate(papers, api_key, *, client_factory=None, model=DEFAULT_MODEL, instructions=INSTRUCTIONS,
+              name="ai_papers"):
+    """Chinese titles and summaries for ``papers`` (any items with an id, a title and a summary; 打印灵感
+    passes its models with its own ``instructions``) in one request; [] without a key or a reply."""
     if not api_key or not papers:
         return []
     if client_factory is not None:
@@ -106,11 +108,11 @@ def translate(papers, api_key, *, client_factory=None, model=DEFAULT_MODEL):
         client = OpenAI(api_key=api_key, timeout=TIMEOUT_SECONDS, max_retries=0)
     request = [{"id": paper["id"], "title": paper["title"], "summary": paper["summary"]} for paper in papers]
 
-    def ask(name):
+    def ask(model_name):
         return client.responses.create(
-            model=name, instructions=INSTRUCTIONS, input=json.dumps(request, ensure_ascii=False),
+            model=model_name, instructions=instructions, input=json.dumps(request, ensure_ascii=False),
             max_output_tokens=MAX_OUTPUT_TOKENS, reasoning={"effort": "low"},
-            text={"format": {"type": "json_schema", "name": "ai_papers", "strict": True, "schema": SCHEMA},
+            text={"format": {"type": "json_schema", "name": name, "strict": True, "schema": SCHEMA},
                   "verbosity": "low"})
 
     try:
