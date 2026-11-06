@@ -414,6 +414,9 @@ def _lead(canvas, payload, images):
 
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
           "November", "December")
+# A deadline outcome: "October 28", "June 30, 2027", "Dec 31, 2026", "Sept 3" (a month, full or cut to
+# three or four letters, its day, then perhaps the year).
+DEADLINE = re.compile(r"(?P<month>[A-Za-z]{3,9})\.?\s+(?P<day>\d{1,2})(?:,?\s+\d{4})?")
 
 
 def _outcome_kind(name):
@@ -435,12 +438,23 @@ def _outcome_kind(name):
     states = [part.strip().upper() for part in text.replace("&", ",").replace("/", ",").split(",")]
     if states and all(part in US_STATES for part in states):
         return ("states", tuple(states))
-    words = text.split()
-    if len(words) == 2 and words[0] in MONTHS and words[1].isdigit():
-        return ("date", int(words[1]))
+    deadline = DEADLINE.fullmatch(text)
+    if deadline and 1 <= int(deadline.group("day")) <= 31 and _is_month(deadline.group("month")):
+        return ("date", int(deadline.group("day")))
     if text[:1] in ("↑", "↓"):
         return "level"
     return None
+
+
+def _is_month(word):
+    """True for a month's name, whole ("June") or cut to its first three or four letters ("Dec", "Sept")."""
+    word = word.lower()
+    return any(month.lower() == word or (len(word) in (3, 4) and month.lower().startswith(word)) for month in MONTHS)
+
+
+def _initial(name):
+    """The first letter, digit or character of an outcome's name, for its badge ("G" for "Google")."""
+    return next((character.upper() for character in str(name or "") if character.isalnum()), "")
 
 
 def _mark_source(event, outcome, images):
@@ -454,17 +468,19 @@ def _mark_source(event, outcome, images):
 
 
 def _mark_room(kind, picture, side):
-    """The room an outcome's mark ``side`` px tall takes before its name, 0 without one."""
+    """The room an outcome's mark ``side`` px tall takes before its name. Every outcome has a mark:
+    one without a picture or a kind of its own wears its initial on a badge."""
     if picture is None and isinstance(kind, tuple) and kind[0] == "states":
         flags = _flag_images(kind[1], side)
         return (flags[0].width // 2 + 2 if len(flags) > 1 else 0) + flags[-1].width + 6
-    return side + 5 if picture is not None or kind in ("yes", "no", "none") or isinstance(kind, tuple) else 0
+    return side + 5
 
 
 def _outcome_mark(canvas, event, outcome, images, x, middle, side, color):
     """The outcome's mark before its name: its own picture (a party's or company's logo), a ✓ / ✗
     for Yes / No, a ⌀ for None, the flags of the states it names, a small calendar page for a date,
-    the event's own picture (the coin) for a price level. Returns the room it took, 0 without one."""
+    the event's own picture (the coin) for a price level, else its initial on a disc of ``color``.
+    Returns the room it took."""
     top = int(middle - side / 2)
     kind, picture = _mark_source(event, outcome, images)
     room = _mark_room(kind, picture, side)
@@ -495,6 +511,15 @@ def _outcome_mark(canvas, event, outcome, images, x, middle, side, color):
         canvas.draw.rectangle((x, top + band - 2, x + side, top + band), fill=color)
         canvas.text((x + side / 2 + 0.5, top + band + (side - band) / 2), str(kind[1]), max(7, side - band - 3),
                     (0x12, 0x1A, 0x20), anchor="mm")
+    else:
+        canvas.draw.ellipse((x, top, x + side, top + side), fill=color)
+        # A price level without the event's picture shows its arrow.
+        initial = str(outcome.get("name") or "").strip()[:1] if kind == "level" else _initial(outcome.get("name"))
+        if initial:
+            # White on a dark disc, ink on a light one (the night's muted grey).
+            red, green, blue = canvas.color(color)[:3]
+            letter = (255, 255, 255) if 0.299 * red + 0.587 * green + 0.114 * blue < 160 else (0x12, 0x1A, 0x20)
+            canvas.text((x + side / 2 + 0.5, top + side / 2), initial, max(7, side - 6), letter, anchor="mm")
     return room
 
 

@@ -107,6 +107,35 @@ def test_tile_outcomes_without_a_picture_get_a_drawn_mark():
         "yes", "no", ("date", 28), "level", None, None]
 
 
+def test_dated_deadlines_with_a_year_get_the_calendar_page():
+    from plugins.world_odds.render import _outcome_kind
+
+    assert [_outcome_kind(name) for name in ("June 30, 2027", "December 31, 2026", "Dec 31, 2026", "Sept 3")] == [
+        ("date", 30), ("date", 31), ("date", 31), ("date", 3)]
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_every_outcome_without_a_picture_or_kind_gets_an_initial_badge(mode):
+    from plugins.world_odds.render import _mark_room, _outcome_mark, _palette
+    from utils.page_canvas import PageCanvas
+
+    assert _mark_room(None, None, 17) == _mark_room("yes", None, 17) == 22
+    for name in ("Google", "Ohio", "7,600-7,800", "特朗普"):
+        palette = _palette({"_inkypi_theme": {"mode": mode}})
+        canvas = PageCanvas(palette, family="Microsoft YaHei", size=(40, 40))
+        before = canvas.image.convert("RGB").copy()
+        room = _outcome_mark(canvas, {}, {"name": name}, {}, 10, 20, 17, (0x1F, 0x6F, 0xEB))
+        badge = canvas.image.convert("RGB").crop((10, 11, 28, 29))
+        assert room == 22
+        assert badge.tobytes() != before.crop((10, 11, 28, 29)).tobytes()
+        # A disc in the row's tint with the name's first character in white on it (inside the disc,
+        # away from the page around it).
+        colours = badge.getcolors(4096)
+        assert any(colour == (0x1F, 0x6F, 0xEB) and count > 80 for count, colour in colours)
+        letter = canvas.image.convert("RGB").crop((14, 16, 24, 26)).getcolors(4096)
+        assert sum(count for count, pixel in letter if min(pixel) >= 200) >= 4
+
+
 @pytest.mark.parametrize("mode", ["day", "night"])
 def test_rate_decision_outcomes_get_a_direction_disc_in_the_fed_colours(mode):
     from plugins.world_odds.render import FED_COLORS, _mark_room, _outcome_kind, _outcome_mark, _palette
