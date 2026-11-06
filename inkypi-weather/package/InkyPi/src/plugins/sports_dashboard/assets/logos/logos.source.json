@@ -10,6 +10,50 @@
         64
       ],
       "sha256": "68062ba009c63ffcaab115503c4a6407ccabe760420a1a5f5c8a18af206d69a0"
+    },
+    "ufc": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0d/UFC_logo.svg/500px-UFC_logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:UFC_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "290a25379c49341c577305500bf99221a228fc877aa2a927b5d1ac07e2ac5631",
+      "size": [
+        187,
+        64
+      ],
+      "sha256": "4a896a34456a6ad71723930cc1b523d47a0046925ecb030371e369e872efccd2"
+    },
+    "atp": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3f/ATP_Tour_logo.svg/500px-ATP_Tour_logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:ATP_Tour_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "06e09968331b84e2a64de778f32ac08456f095abdd15170596bbea02c41b1442",
+      "size": [
+        216,
+        64
+      ],
+      "sha256": "9216e93e20ac3c11deea8a13934201b38b9c7cd1343bc464e8a190001c76e887"
+    },
+    "wta": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0a/WTA_2025.svg/500px-WTA_2025.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:WTA_2025.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "8c098ed74709f97a22ce277fe877da9179e32cb08d606b27367cd89564c2ea6f",
+      "size": [
+        173,
+        64
+      ],
+      "sha256": "449b50e2ca3d5401c4eaae1b5f259f9707f95635d755b77650137bebed447bc6"
+    },
+    "motogp": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f9/MotoGP_logo_(2024).svg/500px-MotoGP_logo_(2024).svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:MotoGP_logo_(2024).svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "f5e65f6635e9b0a57f68eaf5aac60fff0e47c89916546f64db73dabd53e6ab4d",
+      "size": [
+        400,
+        64
+      ],
+      "sha256": "8c5c7a69988b656fae6cf3f8d8e5298c0c2c1d65815f7c5f7bbc030c800ee516"
     }
   }
 }

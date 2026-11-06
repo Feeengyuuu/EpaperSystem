@@ -90,6 +90,18 @@ def pytest_collection_finish(session):
 
 
 @pytest.fixture(autouse=True)
+def _extra_sports_feeds_offline(monkeypatch):
+    """The sports page's UFC, tennis and MotoGP feeds never reach the network in tests: their
+    loader finds no client (and leaves the leagues out) unless a test gives it one."""
+    from plugins.sports_dashboard import extra_feeds
+
+    def offline():
+        raise RuntimeError("extra sports feeds are offline in tests")
+
+    monkeypatch.setattr(extra_feeds, "create_single_attempt_http_client", offline)
+
+
+@pytest.fixture(autouse=True)
 def _collect_new_scratch_entries(request):
     """Queue whatever a test adds under the known scratch roots for teardown cleanup."""
 

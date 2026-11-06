@@ -1,7 +1,8 @@
 """PGA TOUR panel ("leaderboard board").
 
 A tournament banner (event, course, dates, round status) over a two-column
-leaderboard of the top eight: position badge, player, round-by-round scores
+leaderboard of the top eight: the place as a medal disc (gold, silver, bronze; a tie
+marked "T"), the player's flag icon and name, round-by-round scores
 and the total to par, under par in red as on a course scoreboard. Before the
 first tee time the board shows tee-off / dates / course tiles and the next
 events on tour.
@@ -9,6 +10,7 @@ events on tour.
 
 from .common import *
 from .card_backdrops import card_backdrop_box, paint_card_backdrop, paint_list_backdrop
+from .icon_marks import espn_flag_url, place_parts
 from .scorebug_kit import ScorebugSpec
 
 SportsDashboard = None
@@ -35,7 +37,7 @@ class GolfRenderMixin:
         board = (left, top + PGA_BANNER_HEIGHT + 6, right, bottom)
         rows = list(event.get("leaderboard") or [])
         if rows:
-            self._draw_pga_board(draw, board, rows, state, spec)
+            self._draw_pga_board(image, draw, board, rows, state, spec)
         else:
             self._draw_pga_preview(draw, board, event, card.get("calendar") or [], now, spec)
         paint_list_backdrop(image, board, "golf", COLORS["panel"], (COLORS["paper"], COLORS["panel"]))
@@ -64,7 +66,7 @@ class GolfRenderMixin:
             sub, sub_font = self._fit_text_ellipsis(draw, sub, x2 - text_x1 - 14, 9, bold=False, min_size=8)
             self._draw_text_in_box(draw, (text_x1, y1 + 25, x2 - 10, y1 + 37), sub, sub_font, COLORS["text"])
 
-    def _draw_pga_board(self, draw, box, rows, state, spec):
+    def _draw_pga_board(self, image, draw, box, rows, state, spec):
         x1, y1, x2, y2 = [int(value) for value in box]
         gap = 8
         column_w = (x2 - x1 - gap) // 2
@@ -73,25 +75,28 @@ class GolfRenderMixin:
             column, slot = divmod(index, PGA_ROWS_PER_COLUMN)
             left = x1 + column * (column_w + gap)
             top = y1 + slot * (row_h + 4)
-            self._draw_pga_board_row(draw, (left, top, left + column_w, top + row_h), row, index == 0, state, spec)
+            self._draw_pga_board_row(image, draw, (left, top, left + column_w, top + row_h), row, index == 0, state, spec)
 
-    def _draw_pga_board_row(self, draw, box, row, leader, state, spec):
+    def _draw_pga_board_row(self, image, draw, box, row, leader, state, spec):
         x1, y1, x2, y2 = [int(value) for value in box]
         draw.rounded_rectangle((x1, y1, x2, y2), radius=4, fill=COLORS["panel"], outline=COLORS["border"], width=2 if leader else 1)
-        badge = (x1 + 5, y1 + 5, x1 + 37, y1 + 21)
-        draw.rounded_rectangle(badge, radius=3, fill=COLORS["amber"] if leader else COLORS[spec.tag], outline=COLORS["border"], width=1)
-        position = str(row.get("position_label") or row.get("position") or "-")
-        self._draw_centered_in_box(draw, badge, position, self._font(11 if len(position) < 3 else 9, True), COLORS["text"])
+        # The place as a medal disc (gold, silver, bronze for the first three; a tie marked "T") and
+        # the player's country as its flag icon beside it.
+        number, tied = place_parts(row.get("position_label"), row.get("position"))
+        disc = min(24, y2 - y1 - 8)
+        self._draw_rank_medal(draw, (x1 + 6, y1 + (y2 - y1 - disc) // 2, x1 + 6 + disc, y1 + (y2 - y1 - disc) // 2 + disc),
+                              number, tied)
         country = str(row.get("country") or "").strip().upper()[:3]
-        if country:
-            self._draw_centered_in_box(draw, (badge[0], y2 - 13, badge[2], y2 - 2), country, self._font(8, False), COLORS["text"])
+        flag_x = x1 + 6 + disc + 5
+        self._draw_flag_icon(image, draw, row.get("flag") or espn_flag_url(country),
+                             (flag_x, y1 + 6, flag_x + 21, y1 + 20), country)
         score = str(row.get("score") or "E").strip() or "E"
         score, score_font = self._fit_score(draw, score, 42, 18 if leader else 16, bold=True,
                                             sport="PGA", max_height=y2 - y1 - 4)
         score_w = self._text_width(draw, score, score_font)
         under_par = score.startswith("-")
         self._draw_text_in_box(draw, (x2 - 6 - score_w, y1, x2 - 6, y2), score, score_font, COLORS[spec.live] if under_par else COLORS["text"], align="right")
-        name_x1, name_x2 = x1 + 43, x2 - score_w - 12
+        name_x1, name_x2 = flag_x + 27, x2 - score_w - 12
         name, name_font = self._fit_text_ellipsis(draw, str(row.get("name") or "Player"), name_x2 - name_x1, 12, bold=True, min_size=9)
         self._draw_text_in_box(draw, (name_x1, y1 + 3, name_x2, y1 + 19), name, name_font, COLORS["text"])
         detail = SportsDashboard._pga_row_rounds_label(row, state)

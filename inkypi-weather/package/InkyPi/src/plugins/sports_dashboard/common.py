@@ -397,6 +397,12 @@ LOCAL_MLB_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "mlb.png")
 LOCAL_WNBA_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "wnba.png")
 LOCAL_NHL_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "nhl.png")
 LOCAL_PGA_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "pga.png")
+# The wordmarks that stand as the header title of the UFC, tennis and MotoGP panels.
+SPORT_TITLE_WORDMARKS = {
+    "UFC": (os.path.join(LOCAL_TEAM_LOGO_DIR, "ufc.png"),),
+    "TENNIS": (os.path.join(LOCAL_TEAM_LOGO_DIR, "atp.png"), os.path.join(LOCAL_TEAM_LOGO_DIR, "wta.png")),
+    "MOTOGP": (os.path.join(LOCAL_TEAM_LOGO_DIR, "motogp.png"),),
+}
 LOCAL_NFL_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "nfl.png")
 LOCAL_NCAA_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "ncaa.png")
 LOCAL_WORLDCUP_PITCH_STRIP_PATH = os.path.join(LOCAL_DECOR_DIR, "worldcup_pitch_strip.png")
@@ -3890,12 +3896,26 @@ class SportsDashboardCommonMixin:
         sport = str(sport or "MLB").upper()
         accent = self._hub_sport_accent(sport)
         header_y = y1 + 8
-        logo_w = 74 if sport in {"MLB", "WNBA"} else 42
-        self._draw_sport_logo(image, draw, sport, x1 + 14, header_y - 1, logo_w, 34)
-        title_x = x1 + 98 if sport in {"MLB", "WNBA"} else x1 + 66
+        wordmarks = SPORT_TITLE_WORDMARKS.get(sport)
+        if wordmarks:
+            # A league whose mark is a wordmark (UFC, ATP and WTA, MotoGP) leads with it as the title.
+            title_x = x1 + 14
+        else:
+            logo_w = 74 if sport in {"MLB", "WNBA"} else 42
+            self._draw_sport_logo(image, draw, sport, x1 + 14, header_y - 1, logo_w, 34)
+            title_x = x1 + 98 if sport in {"MLB", "WNBA"} else x1 + 66
         title_text = "PGA TOUR" if sport == "PGA" else ("NCAA FB" if sport == "NCAA" else sport)
         title_drawn = False
-        if sport == "MLB":
+        if wordmarks:
+            x = title_x
+            for path in wordmarks:
+                mark = self._load_local_logo(path, (150, 22), alpha_threshold=8)
+                if mark:
+                    mark = SportsDashboard._night_inked_mark(mark)
+                    image.paste(mark, (int(x), int(header_y + (22 - mark.height) / 2)), mark)
+                    x += mark.width + 10
+                    title_drawn = True
+        elif sport == "MLB":
             title_drawn = self._draw_mlb_title_wordmark(image, title_x, header_y - 1, 154, 24)
         elif sport == "WNBA":
             title_drawn = self._draw_wnba_title_wordmark(image, title_x, header_y - 1, 154, 24)

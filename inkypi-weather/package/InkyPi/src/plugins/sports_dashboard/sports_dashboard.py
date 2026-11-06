@@ -22,6 +22,10 @@ from . import football_render as _football_render_module
 from . import basketball_render as _basketball_render_module
 from . import baseball_render as _baseball_render_module
 from . import golf_render as _golf_render_module
+from . import icon_marks as _icon_marks_module
+from . import ufc_render as _ufc_render_module
+from . import tennis_render as _tennis_render_module
+from . import motogp_render as _motogp_render_module
 from . import f1_render as _f1_render_module
 from . import lower_panel as _lower_panel_module
 from . import lower_wall_render as _lower_wall_render_module
@@ -47,6 +51,10 @@ from .football_render import FootballRenderMixin
 from .basketball_render import BasketballRenderMixin
 from .baseball_render import BaseballRenderMixin
 from .golf_render import GolfRenderMixin
+from .icon_marks import IconMarksMixin
+from .ufc_render import UfcRenderMixin
+from .tennis_render import TennisRenderMixin
+from .motogp_render import MotoGPRenderMixin
 from .f1_render import F1RenderMixin
 from .lower_panel import LowerPanelMixin
 from .lower_wall_render import LowerWallRenderMixin
@@ -83,6 +91,10 @@ class SportsDashboard(
     BasketballRenderMixin,
     BaseballRenderMixin,
     GolfRenderMixin,
+    IconMarksMixin,
+    UfcRenderMixin,
+    TennisRenderMixin,
+    MotoGPRenderMixin,
     F1RenderMixin,
     LowerPanelMixin,
     LowerWallRenderMixin,
@@ -1020,6 +1032,10 @@ _SPLIT_MODULES = (
     _basketball_render_module,
     _baseball_render_module,
     _golf_render_module,
+    _icon_marks_module,
+    _ufc_render_module,
+    _tennis_render_module,
+    _motogp_render_module,
     _f1_render_module,
     _lower_panel_module,
     _lower_wall_render_module,

@@ -51,6 +51,8 @@ class OffseasonRenderMixin:
             return COLORS["nfl_accent"]
         if sport == "NCAA":
             return COLORS["ncaa_accent"]
+        if sport in ("UFC", "TENNIS", "MOTOGP"):
+            return COLORS[{"UFC": "red", "TENNIS": "blue", "MOTOGP": "orange"}[sport]]
         return COLORS["mlb_accent"]
 
     def _draw_hub_card_shell(self, draw, x1, y1, x2, y2, accent):

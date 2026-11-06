@@ -15,13 +15,18 @@ at the last display gives way to a close runner-up (display_rotation).
 ``nbaOffseasonPanelMode`` keeps its meaning: ``nba``/``off`` pins the NBA,
 ``hub``/``always`` leaves the NBA out of the ranking. ``f1PanelMode`` ``off``
 removes F1 and ``always`` pins it.
+
+UFC, ATP/WTA tennis and MotoGP (ufc, tennis, motogp) are ranked the same way as
+extra candidates; ``extraSportsPanels`` ``off`` leaves them out. Like F1 they
+have no wall row, so one of them live keeps its own panel when it outranks the
+best live game.
 """
 
 from runtime.refresh_contracts import TaskCancelled
 
 from .common import *
 from .common import _safe_exception_text
-from . import event_ranking
+from . import event_ranking, motogp, tennis, ufc
 from .nfl_insights import attach_nfl_insights
 
 SportsDashboard = None
@@ -31,6 +36,13 @@ _HUB_ALWAYS_MODES = {"always", "on", "true", "hub", "live-hub", "offseason"}
 _HUB_TEAM_SPORTS = ("MLB", "WNBA", "NHL", "NFL", "NCAA")
 # An F1 weekend whose session times are unknown still sits within hours of running.
 _F1_WEEKEND_FALLBACK_POINTS = 50.0
+_EXTRA_OFF_MODES = {"off", "false", "disabled", "disable", "none"}
+# Each extra league: its loader (card, source state), its ranking candidate and its panel.
+_EXTRA_LEAGUES = (
+    ("UFC", ufc.load_card, ufc.candidate, "_draw_ufc_panel"),
+    ("TENNIS", tennis.load_card, tennis.candidate, "_draw_tennis_panel"),
+    ("MOTOGP", motogp.load_card, motogp.candidate, "_draw_motogp_panel"),
+)
 
 
 class LowerPanelMixin:
@@ -47,9 +59,10 @@ class LowerPanelMixin:
             except Exception as exc:
                 logger.warning("Lower panel hub load failed: %s", _safe_exception_text(exc))
         f1_selected, f1_source_state = self._load_lower_f1(settings, timezone_info, now)
+        extras, extra_states = self._load_lower_extras(settings, now)
         choice = SportsDashboard._choose_lower_panel(
             settings, nba_selected, hub_selected, hub_source_state, f1_selected, now,
-            recent_shown=self._region_recent_shown(settings, "lower"),
+            recent_shown=self._region_recent_shown(settings, "lower"), extras=extras,
         )
         # Every loaded league records its live state so the live refresh
         # cadence follows whichever source is live, shown or not.
@@ -66,6 +79,12 @@ class LowerPanelMixin:
                 return SportsDashboard._lower_wall_provenance(
                     choice["games"], nba_source_state, hub_source_state,
                 )
+            if kind == "extra":
+                key = choice.get("key")
+                drawer = next(name for league, _load, _rank, name in _EXTRA_LEAGUES if league == key)
+                getattr(self, drawer)(image, draw, box, choice["card"], extra_states.get(key, ""), now)
+                self._write_nba_live_state(nba_selected, now, nba_source_state)
+                return self._sports_source_state_provenance(extra_states.get(key, ""))
             if kind == "f1":
                 self._attach_f1_session_digests(f1_selected, settings, now)
                 if f1_selected.get("live_session"):
@@ -102,6 +121,26 @@ class LowerPanelMixin:
             logger.warning("Lower panel F1 load failed: %s", _safe_exception_text(exc))
             return None, ""
 
+    def _load_lower_extras(self, settings, now):
+        """([candidate, ...], {key: source state}) for UFC, tennis and MotoGP; a league whose
+        feed fails or has nothing to show is left out."""
+        if str((settings or {}).get("extraSportsPanels") or "auto").strip().lower() in _EXTRA_OFF_MODES:
+            return [], {}
+        candidates, states = [], {}
+        for key, load, rank, _drawer in _EXTRA_LEAGUES:
+            try:
+                card, state = load(self, settings, now)
+                found = rank(card, now)
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                logger.warning("Lower panel %s load failed: %s", key, _safe_exception_text(exc))
+                continue
+            states[key] = state
+            if found is not None:
+                candidates.append(found)
+        return candidates, states
+
     @staticmethod
     def _lower_hub_wanted(settings):
         mode = str((settings or {}).get("nbaOffseasonPanelMode") or "auto").strip().lower()
@@ -117,8 +156,9 @@ class LowerPanelMixin:
         return "auto"
 
     @staticmethod
-    def _choose_lower_panel(settings, nba_selected, hub_selected, hub_source_state, f1_selected, now, recent_shown=()):
-        """{"kind": "nba" | "hub" | "f1" | "wall", "key", "card", "games"}."""
+    def _choose_lower_panel(settings, nba_selected, hub_selected, hub_source_state, f1_selected, now, recent_shown=(),
+                            extras=()):
+        """{"kind": "nba" | "hub" | "f1" | "extra" | "wall", "key", "card", "games"}."""
         settings = settings or {}
         nba_selected = nba_selected or {}
         mode = str(settings.get("nbaOffseasonPanelMode") or "auto").strip().lower()
@@ -139,7 +179,10 @@ class LowerPanelMixin:
         f1_live = f1_candidate is not None and str((f1 or {}).get("status") or "").upper() == "LIVE"
         # The wall has no F1 row, so a session in progress that outranks every
         # live game keeps its own panel; otherwise F1 is ranked like any league.
-        if len(live_games) >= 2 and not (f1_live and f1_candidate["score"] >= live_games[0]["score"]):
+        extras = [item for item in extras or () if item]
+        live_extra = max((item["score"] for item in extras if item["score"] >= event_ranking.LIVE_POINTS), default=None)
+        if len(live_games) >= 2 and not (f1_live and f1_candidate["score"] >= live_games[0]["score"]) \
+                and not (live_extra is not None and live_extra >= live_games[0]["score"]):
             return {"kind": "wall", "key": "WALL", "card": None, "games": live_games}
 
         candidates = []
@@ -151,6 +194,7 @@ class LowerPanelMixin:
                 candidates.append(candidate)
         if f1_candidate is not None:
             candidates.append(f1_candidate)
+        candidates.extend(extras)
         if not candidates:
             return {"kind": "nba", "key": "NBA", "card": None}
         best = event_ranking.rank(candidates, recent_shown)[0]

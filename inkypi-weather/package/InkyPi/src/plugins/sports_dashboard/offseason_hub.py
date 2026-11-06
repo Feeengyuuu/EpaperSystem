@@ -1107,6 +1107,7 @@ class OffseasonHubMixin:
                     "position_label": SportsDashboard._pga_position_display_label(competitor, position),
                     "name": str(athlete.get("shortName") or athlete.get("displayName") or athlete.get("fullName") or "Player").strip(),
                     "country": country,
+                    "flag": str(((athlete.get("flag") or {}) if isinstance(athlete.get("flag"), Mapping) else {}).get("href") or ""),
                     "score": str(raw_score or "E").strip() or "E",
                     "_score_provided": raw_score is not None and bool(str(raw_score).strip()),
                     "_rank_provided": SportsDashboard._pga_has_provider_rank(competitor),
