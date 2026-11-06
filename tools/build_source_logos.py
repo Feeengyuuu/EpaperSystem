@@ -139,6 +139,9 @@ LOGOS = {
     "nasa": ((COMMONS.format(path="e/e5/NASA_logo.svg", name="NASA_logo.svg"),
               "https://commons.wikimedia.org/wiki/File:NASA_logo.svg", PUBLIC_DOMAIN),
              [PLUGINS / "bay_alerts" / "assets" / "logos"], 1.0),
+    "cdc": ((COMMONS.format(path="7/71/US_CDC_logo.svg", name="US_CDC_logo.svg"),
+             "https://commons.wikimedia.org/wiki/File:US_CDC_logo.svg", PUBLIC_DOMAIN),
+            [PLUGINS / "bay_alerts" / "assets" / "logos"], 1.0),
     "spare_the_air": (("https://www.sparetheair.org/~/media/spare-the-air/images/site-assets/logos/logo_summer-png.png",
                        "https://www.sparetheair.org/",
                        "Spare the Air's official mark (Bay Area Air Quality Management District) from its own site's "

@@ -66,6 +66,17 @@
         64
       ],
       "sha256": "5a81151f3ad6948b2b2c94965a8502f70e7dcf94c6e49b40f2f4cbf041ec7f6c"
+    },
+    "cdc": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/71/US_CDC_logo.svg/500px-US_CDC_logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:US_CDC_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "bc1f840619125f88e619dbd58b785f19689b46454a491290d4b2f417b2e6c106",
+      "size": [
+        85,
+        64
+      ],
+      "sha256": "0543d79ecac787cd33ce6d07ee5800f3375399ef1b1e08029f21d0730a6b2623"
     }
   }
 }

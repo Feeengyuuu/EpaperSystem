@@ -145,7 +145,7 @@ def _air_chip(canvas, air, left, right, now):
     mark (its colours as printed, straight on the paper), then a chip with the status, an emerald
     outline and ink text on a day without an alert, solid crimson on an alert day (a winter one
     bans burning wood), with tomorrow's alert named when one is called. The mark's absence puts
-    the programme's name in the chip."""
+    the programme's name in the chip. Returns the chip's right end, or None when it did not fit."""
     logo = source_logo(air_mark(air, now), AIR_LOGO_HEIGHT)
     name = "" if logo is not None else "Spare the Air · "
     if air["alert"]:
@@ -155,7 +155,7 @@ def _air_chip(canvas, air, left, right, now):
     mark_w = logo.width + 6 if logo is not None else 0
     width = min(right - left - mark_w, canvas.width(text, 12) + (20 if logo is not None else 36))
     if width < 80:
-        return False
+        return None
     if logo is not None:
         canvas.image.paste(logo, (round(left), round(27 - logo.height / 2)), logo)
         logo.close()
@@ -172,6 +172,48 @@ def _air_chip(canvas, air, left, right, now):
         if name:
             draw_icon(canvas.draw, "haze", (chip_left + 8, 19), 16, canvas.color("ok"), canvas.color("paper"))
         canvas.text((text_left, 27), text, 12, anchor="lm", width=chip_left + width - 6 - text_left)
+    return chip_left + width
+
+
+FLU_LOGO_HEIGHT = 22
+FLU_TRENDS = {"up": "alert", "down": "ok", "flat": "muted"}
+
+
+def flu_trend(flu):
+    """Whether the week's share of flu-like visits rose, fell or held (within 0.1 point)."""
+    previous = flu.get("previous")
+    if not isinstance(previous, (int, float)) or abs(flu["ili"] - previous) < 0.05:
+        return "flat"
+    return "up" if flu["ili"] > previous else "down"
+
+
+def _flu_chip(canvas, payload, left, right):
+    """California's flu activity from ``left``: the CDC's mark, then an outlined chip with a pulse
+    icon, the latest week's share of outpatient visits for influenza-like illness and an arrow for
+    its week-on-week direction (crimson rising, emerald falling). The mark goes first, then the
+    long label, when the room is short. Returns whether it was drawn."""
+    source = payload.get("flu") or {}
+    flu = source.get("data") if source.get("state") not in (None, "unavailable", "disabled") else None
+    if not isinstance(flu, dict) or not isinstance(flu.get("ili"), (int, float)):
+        return False
+    trend = flu_trend(flu)
+    for label, with_logo in (("流感样病例", True), ("流感样病例", False), ("流感", False)):
+        text = f"{label} {flu['ili']:.1f}%"
+        width = 30 + canvas.width(text, 12) + 22
+        logo = source_logo("cdc", FLU_LOGO_HEIGHT) if with_logo else None
+        if left + width + (logo.width + 6 if logo is not None else 0) <= right:
+            break
+    else:
+        return False
+    x = left
+    if logo is not None:
+        canvas.image.paste(logo, (round(x), round(27 - logo.height / 2)), logo)
+        x += logo.width + 6
+    paper = canvas.color("paper")
+    canvas.draw.rounded_rectangle((x, 15, x + width, 39), radius=12, fill=paper, outline=canvas.color("rule"), width=2)
+    draw_icon(canvas.draw, "pulse", (x + 9, 19), 16, canvas.color("alert"), paper)
+    canvas.text((x + 30, 27), text, 12, anchor="lm")
+    draw_icon(canvas.draw, trend, (x + width - 19, 21), 12, canvas.color(FLU_TRENDS[trend]), paper)
     return True
 
 
@@ -201,8 +243,12 @@ def _header(canvas, payload, now):
     # Between the title and the pill: the Air District's Spare the Air status for today, or the
     # page's subject when the feed has nothing for today.
     air = spare_the_air(payload, now)
-    if not air or not _air_chip(canvas, air, title_right + 14, left - 12, now):
-        canvas.text((title_right + 14, 30), "地震 · 气象预警 · 自然事件", 14, "muted", anchor="lm", bold=False)
+    end = _air_chip(canvas, air, title_right + 14, left - 12, now) if air else None
+    if end is None:
+        end = title_right + 14 + canvas.text((title_right + 14, 30), "地震 · 气象预警 · 自然事件", 14, "muted",
+                                             anchor="lm", bold=False)
+    # Then California's flu activity, where it fits before the pill.
+    _flu_chip(canvas, payload, end + 10, left - 12)
     canvas.rule((12, 52, RIGHT, 52), "ink", 2)
 
 

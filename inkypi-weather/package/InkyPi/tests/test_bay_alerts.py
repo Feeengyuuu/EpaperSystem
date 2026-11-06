@@ -54,6 +54,12 @@ AIR_RSS = """<?xml version="1.0" encoding="utf-8" ?>
 </channel></rss>"""
 
 
+FLU = {"result": 1, "epidata": [
+    {"release_date": "2026-11-06", "region": "ca", "issue": 202643, "epiweek": week, "lag": 202643 - week,
+     "num_ili": ili, "num_patients": patients, "wili": None, "ili": round(100 * ili / patients, 5)}
+    for week, ili, patients in ((202641, 8880, 272225), (202643, 11459, 272493), (202642, 10662, 274951))]}
+
+
 @pytest.fixture(autouse=True)
 def quiet_extras(monkeypatch):
     """No test reaches the NWS discussion or the Air District: they read the samples above."""
@@ -62,6 +68,7 @@ def quiet_extras(monkeypatch):
                                       "office": "KMTR"})
     monkeypatch.setattr(sources, "fetch_spare_the_air",
                         lambda _ctx: sources.parse_spare_the_air(AIR_RSS.format(today="No Alert", tomorrow="No Alert")))
+    monkeypatch.setattr(sources, "fetch_flu", lambda now, _ctx: sources.normalize_flu(FLU))
 
 
 class Device:
@@ -778,3 +785,41 @@ def test_spare_the_airs_marks_follow_its_seasons_and_keep_their_colours_at_night
                         lambda self, xy, text, *a, **k: drawn.append(text) or original(self, xy, text, *a, **k))
     render_page((800, 480), {**_payload(), **_extras()}, {"_inkypi_theme": {"mode": "day"}}, NOW)
     assert "Spare the Air · 今日无警报" in drawn
+
+
+def test_mmwr_weeks_start_on_the_sunday_of_the_first_four_day_week():
+    from datetime import date
+
+    assert sources.mmwr_week(date(2026, 11, 6)) == 202644
+    assert sources.mmwr_week(date(2026, 1, 3)) == 202553  # 2026 starts on a Thursday: week 1 begins Jan 4
+    assert sources.mmwr_week(date(2026, 1, 4)) == 202601
+    assert sources.mmwr_week(date(2027, 1, 2)) == 202652
+
+
+def test_californias_flu_activity_is_the_latest_weeks_share_of_visits():
+    flu = sources.normalize_flu(FLU)
+
+    assert flu == {"week": 202643, "ili": 4.2, "previous": 3.9, "series": [3.3, 3.9, 4.2], "released": "2026-11-06"}
+    assert sources.valid_flu(flu) and not sources.valid_flu({})
+    assert sources.normalize_flu({"result": -2, "message": "no results"}) == {}
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_the_header_names_californias_flu_activity_and_its_direction(monkeypatch, mode):
+    drawn, icons = [], []
+    original = render.PageCanvas.text
+    monkeypatch.setattr(render.PageCanvas, "text", lambda self, xy, text, *args, **kwargs: drawn.append(text) or original(
+        self, xy, text, *args, **kwargs))
+    original_icon = render.draw_icon
+    monkeypatch.setattr(render, "draw_icon", lambda draw, name, *args, **kwargs: icons.append(name) or original_icon(
+        draw, name, *args, **kwargs))
+    payload = {**_payload(), **_extras(), "flu": {"state": "live", "data": sources.normalize_flu(FLU)}}
+
+    render_page((800, 480), payload, {"_inkypi_theme": {"mode": mode}}, NOW)
+
+    assert "流感样病例 4.2%" in drawn and "今日无警报" in drawn
+    assert "pulse" in icons and "up" in icons
+
+    drawn.clear()
+    render_page((800, 480), {**_payload(), **_extras()}, {"_inkypi_theme": {"mode": mode}}, NOW)
+    assert not any(str(text).startswith("流感样病例") for text in drawn)

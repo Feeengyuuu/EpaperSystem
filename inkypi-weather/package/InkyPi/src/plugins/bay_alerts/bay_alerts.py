@@ -101,6 +101,11 @@ class BayAlerts(BasePlugin):
                                     fresh_seconds=1800, usable_seconds=12 * 3600,
                                     validate=sources.valid_spare_the_air, timeout_seconds=8),
                              now, allow_network=allow_network, context=context, force=force),
+            # California's weekly flu activity (CDC ILINet, published on Fridays).
+            "flu": book.load(Source("flu", {"region": "ca"}, lambda context: sources.fetch_flu(now, context),
+                                    fresh_seconds=12 * 3600, usable_seconds=14 * 86400, validate=sources.valid_flu,
+                                    timeout_seconds=8),
+                             now, allow_network=allow_network, context=context, force=force),
         }
         label = " ".join(str(settings.get("homeLabel") or "家").split())[:8]
         return {**results, **extras, "hotspots": hotspots, "home": list(home), "home_label": label,

@@ -565,3 +565,56 @@ def air_today(data, now):
         return None
     tomorrow = days.get((now + timedelta(days=1)).date().isoformat())
     return {**today, "tomorrow_alert": bool(tomorrow and tomorrow.get("alert"))}
+
+
+# --- California's flu activity (CDC ILINet through CMU Delphi's keyless FluView API) -----------
+
+FLU_URL = "https://api.delphi.cmu.edu/epidata/fluview/"
+FLU_WEEKS = 8
+
+
+def mmwr_week(day):
+    """The CDC's (MMWR) epidemiological week of ``day`` as YYYYWW: weeks run Sunday to Saturday,
+    and week 1 is the first one with at least four days in the new year."""
+    def first_sunday(year):
+        new_year = datetime(year, 1, 1).date()
+        back = (new_year.weekday() + 1) % 7
+        return new_year - timedelta(days=back) + timedelta(days=7 if back > 3 else 0)
+
+    year = day.year
+    if day >= first_sunday(year + 1):
+        year += 1
+    elif day < first_sunday(year):
+        year -= 1
+    return year * 100 + (day - first_sunday(year)).days // 7 + 1
+
+
+def normalize_flu(payload):
+    """The latest week's share of outpatient visits for influenza-like illness in California (%),
+    the week before and the last weeks' series; {} without readings."""
+    rows = payload.get("epidata") if isinstance(payload, dict) else None
+    weeks = {}
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict) or not isinstance(row.get("epiweek"), int):
+            continue
+        try:
+            ili = float(row.get("ili"))
+        except (TypeError, ValueError):
+            continue
+        if 0 <= ili <= 100:
+            weeks[row["epiweek"]] = (ili, str(row.get("release_date") or "")[:10])
+    if not weeks:
+        return {}
+    ordered = sorted(weeks)
+    series = [round(weeks[week][0], 1) for week in ordered]
+    return {"week": ordered[-1], "ili": series[-1], "previous": series[-2] if len(series) > 1 else None,
+            "series": series, "released": weeks[ordered[-1]][1]}
+
+
+def fetch_flu(now, context):
+    weeks = f"{mmwr_week((now - timedelta(weeks=FLU_WEEKS)).date())}-{mmwr_week(now.date())}"
+    return normalize_flu(_get_json(FLU_URL, {"regions": "ca", "epiweeks": weeks}, context, 64 * 1024))
+
+
+def valid_flu(data):
+    return isinstance(data, dict) and isinstance(data.get("ili"), float) and isinstance(data.get("series"), list)
