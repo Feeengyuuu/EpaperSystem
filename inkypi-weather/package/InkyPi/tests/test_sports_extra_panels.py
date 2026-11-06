@@ -153,3 +153,24 @@ def test_at_night_only_dark_neutral_strokes_take_the_light_ink():
     assert inked.getpixel((0, 0)) == light and inked.getpixel((2, 0)) == light
     assert inked.getpixel((1, 0)) == (230, 0, 18, 255)
     assert night_inked(mark) is mark  # by day the mark is drawn as printed
+
+
+def test_an_upcoming_tennis_match_shows_both_players_headshots(monkeypatch):
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    asked = []
+    monkeypatch.setattr(plugin, "_load_team_logo_for_render", lambda url, size: asked.append(url) or
+                        Image.new("RGBA", (size, size * 3 // 4), (90, 60, 40, 255)))
+    monkeypatch.setattr(plugin, "_load_icon_flag", lambda url, size: Image.new("RGBA", size, (0, 80, 200, 255)))
+    event = tennis.parse_scoreboard(feeds.ATP, "ATP")["tournaments"][0]
+    upcoming = next(match for match in event["matches"] if match["state"] == "pre")
+    played = next(match for match in event["matches"] if match["state"] == "post")
+    image = Image.new("RGB", (270, 70), DAY_COLORS["paper"])
+
+    plugin._draw_tennis_match(image, ImageDraw.Draw(image), (0, 0, 260, 58), upcoming, feeds.NOW, DAY_COLORS["blue"])
+    assert asked == [player["headshot"] for player in upcoming["players"]]
+    assert asked[0] == "https://a.espncdn.com/i/headshots/tennis/players/full/7.png"
+    # The pictures stand at the block's right edge, where a played match keeps its set scores.
+    assert (90, 60, 40) in set(image.crop((170, 16, 258, 58)).get_flattened_data())
+    asked.clear()
+    plugin._draw_tennis_match(image, ImageDraw.Draw(image), (0, 0, 260, 58), played, feeds.NOW, DAY_COLORS["blue"])
+    assert asked == []

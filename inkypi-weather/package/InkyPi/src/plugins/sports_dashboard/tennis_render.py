@@ -18,6 +18,8 @@ TOUR_MARKS = {"ATP": os.path.join(LOCAL_TEAM_LOGO_DIR, "atp.png"), "WTA": os.pat
 COLUMN_GAP = 10
 HEAD_HEIGHT = 24
 SET_W = 20
+# The two headshots of a match still to be played, side by side at the block's right edge.
+HEADSHOT_PAIR_W = 84
 
 
 def match_state_label(match, now):
@@ -112,10 +114,27 @@ class TennisRenderMixin:
                                    COLORS["red"] if live else COLORS["muted"], align="right")
         players = match.get("players") or []
         sets = max((len(player.get("sets") or []) for player in players), default=0)
+        # A match still to be played has no set scores: its two players' headshots stand there instead.
+        faces = [player.get("headshot") for player in players[:2]] if match.get("state") == "pre" and not sets else []
+        reserve = HEADSHOT_PAIR_W if any(faces) else 0
         row_h = (y2 - y1 - 17) // 2
         for index, player in enumerate(players[:2]):
             top = y1 + 16 + index * row_h
-            self._draw_tennis_player(image, draw, (x1 + 5, top, x2 - 5, top + row_h), player, match, sets)
+            self._draw_tennis_player(image, draw, (x1 + 5, top, x2 - 5 - reserve, top + row_h), player, match, sets)
+        if reserve:
+            self._draw_tennis_headshots(image, (x2 - 4 - reserve, y1 + 18, x2 - 3, y2 - 1), faces)
+
+    def _draw_tennis_headshots(self, image, box, faces):
+        """The players' headshots side by side, standing on the block's bottom edge."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        height = y2 - y1
+        slot = (x2 - x1) // 2
+        for index, url in enumerate(faces):
+            face = self._load_team_logo_for_render(url, int(height * 1.22)) if url else None
+            if face is None:
+                continue
+            left = x1 + index * slot + (slot - face.width) // 2
+            image.paste(face, (left, y2 - face.height), face)
 
     def _draw_tennis_player(self, image, draw, box, player, match, sets):
         x1, y1, x2, y2 = [int(value) for value in box]
