@@ -2451,6 +2451,28 @@ def test_memory_maintenance_collects_and_trims_when_forced(monkeypatch):
     assert result["after"]["swap_percent"] == 99.0
 
 
+def test_a_heavy_command_is_trimmed_after_it_even_within_the_interval(monkeypatch):
+    task = RefreshTask(FakeDeviceConfig(make_test_dir("memory-heavy-command")), display_manager=None)
+    collected = []
+    monkeypatch.setattr("refresh_task.gc.collect", lambda: collected.append("gc") or 3)
+    monkeypatch.setattr(task, "_malloc_trim", lambda: True)
+    monkeypatch.setattr(task, "_read_memory_stats",
+                        lambda: {"available_mb": 120.0, "memory_percent": 70.0, "swap_percent": 10.0})
+    peak = {"value": 150.0}
+    monkeypatch.setattr(task, "_read_process_memory_stats",
+                        lambda: {"rss_mb": 180.0, "hwm_mb": 300.0, "command_peak_mb": peak["value"]})
+    command = SimpleNamespace(plugin_id="lol_info", source=None, intent=None)
+
+    assert task._run_memory_maintenance("first", force=True) is not None
+    # Within the interval a light command is skipped as before...
+    assert task._run_memory_maintenance("refresh-command-finally", command=command) is None
+    # ...but one that grew the process past the heavy mark is trimmed at once (the device
+    # otherwise holds its extra 100 MB for up to a minute).
+    peak["value"] = 280.0
+    assert task._run_memory_maintenance("refresh-command-finally", command=command) is not None
+    assert collected == ["gc", "gc"]
+
+
 def test_queue_command_final_memory_log_includes_command_and_process_usage(
     monkeypatch,
     caplog,

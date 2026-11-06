@@ -218,6 +218,7 @@ DEFAULT_BACKGROUND_CACHE_REFRESH_MAX_PER_PASS = 2
 DEFAULT_BACKGROUND_CACHE_REFRESH_MIN_AVAILABLE_MB = 150
 DEFAULT_BACKGROUND_CACHE_REFRESH_MAX_SWAP_PERCENT = 70
 DEFAULT_MEMORY_MAINTENANCE_INTERVAL_SECONDS = 60
+HEAVY_COMMAND_PEAK_MB = 240.0
 DEFAULT_MEMORY_WATCHDOG_MIN_AVAILABLE_MB = 70
 DEFAULT_MEMORY_WATCHDOG_MAX_SWAP_PERCENT = 75
 DEFAULT_MEMORY_WATCHDOG_CONFIRMATION_MAX_AVAILABLE_MB = 115
@@ -9009,6 +9010,9 @@ class RefreshTask:
             not force
             and self._last_memory_maintenance_monotonic
             and now - self._last_memory_maintenance_monotonic < interval_seconds
+            # A command that grew the process past the heavy mark is trimmed at once.
+            and not (command is not None and (self._read_process_memory_stats().get("command_peak_mb")
+                                              or 0) >= HEAVY_COMMAND_PEAK_MB)
         ):
             self._log_skipped_command_memory_maintenance(
                 reason,
