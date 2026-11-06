@@ -5,6 +5,7 @@ import json
 import inspect
 import logging
 import os
+import re
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone, timedelta
@@ -125,6 +126,11 @@ def _settings_default_refresh_on_display_plugin_ids():
     for settings_path in PLUGIN_SOURCE_ROOT.glob("*/settings.html"):
         text = settings_path.read_text(encoding="utf-8")
         if "refreshOnDisplay" not in text:
+            continue
+        # A hidden refreshOnDisplay field set to "false" (and never set true by the page) is off,
+        # whatever other fields default to "true".
+        hidden = re.search(r'<input[^>]*name="refreshOnDisplay"[^>]*value="(true|false)"', text)
+        if hidden and hidden.group(1) == "false" and not re.search(r"refreshOnDisplay\W{0,12}['\"]true['\"]", text):
             continue
         if (
             'value="true"' in text

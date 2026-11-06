@@ -218,7 +218,7 @@ PLATFORM_ICON_FILES = {
 # and an offline row, so the white room there says where the stream is.
 PLATFORM_DOODLE_FILES = {
     platform: os.path.join(PLUGIN_DIR, "platform_doodles", f"{platform}.png")
-    for platform in ("douyu", "bilibili", "douyin", "twitch", "kick")
+    for platform in ("douyu", "bilibili", "douyin", "twitch", "kick", "youtube")
 }
 PLATFORM_DOODLE_STRENGTH = 0.28
 # The footer names every platform LiveRadar follows by its official logo, transparent and in its own

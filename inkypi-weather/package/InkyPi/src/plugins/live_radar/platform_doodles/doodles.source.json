@@ -53,6 +53,17 @@
         360,
         360
       ]
+    },
+    "youtube.png": {
+      "motifs": "play buttons, video thumbnails with progress bars, a bell, thumbs-up, film reels, cameras, microphones, comment bubbles, headphones, ring lights, stars",
+      "job_id": "e98c335f-e996-423f-96d7-74e0761b9f72",
+      "generated": "2026-11-06 (Twitch's tile as the style reference)",
+      "source_sha256": "a547ce4d594a77d6cbe5403ba66077d5def1b1ea4ea9eb6216ec57319a0f230a",
+      "sha256": "728b97924b0ba8081b704272d13e849fe05534bc4db2eda2cc13c1b51ec7fd49",
+      "size": [
+        360,
+        360
+      ]
     }
   }
 }
