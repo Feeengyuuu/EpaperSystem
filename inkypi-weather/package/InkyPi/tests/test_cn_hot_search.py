@@ -421,3 +421,46 @@ def test_the_overseas_titles_read_in_chinese_once_translated(monkeypatch, tmp_pa
     plugin._translate_overseas({"extras": {"overseas": fresh}}, Device(), allow_network=False, context=context)
     assert fresh[0]["title_zh"] == "译：Godzil" and len(asked) == 1
     assert render.row_title(fresh[0]) == "译：Godzil" and render.row_title({"title": "x"}) == "x"
+
+
+ZHWIKI = {"mostread": {"date": "2026-11-04Z", "articles": [
+    {"title": "Wikipedia:首页", "normalizedtitle": "Wikipedia:首页", "views": 900000, "rank": 1, "namespace": {"id": 4}},
+    {"title": "美國中期選舉", "normalizedtitle": "美國中期選舉", "views": 42723, "rank": 2, "namespace": {"id": 0},
+     "description": "美國定期選舉之一",
+     "thumbnail": {"source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5b/Arms.svg/330px-Arms.svg.png"}},
+    {"title": "嫁金钗", "normalizedtitle": "嫁金钗", "views": 42618, "rank": 3, "namespace": {"id": 0},
+     "description": "2026年中国电视剧"}]}}
+
+
+def test_chinese_wikipedias_most_read_reads_in_simplified_chinese_with_its_views():
+    rows = sources.normalize_zhwiki(ZHWIKI)["rows"]
+
+    # Only articles: the main page and other namespaces are left out.
+    assert [(row["rank"], row["title"]) for row in rows] == [(1, "美国中期选举"), (2, "嫁金钗")]
+    assert (rows[0]["heat"], rows[0]["summary"]) == (42723, "美国定期选举之一")
+    assert rows[0]["image"].startswith("https://thumb.wikimedia.org/") and rows[1]["image"] is None
+    with pytest.raises(ValueError):
+        sources.normalize_zhwiki({"tfa": {}})
+
+
+def test_the_most_read_card_takes_its_turn_under_the_wikipedia_mark(monkeypatch):
+    from plugins.cn_hot_search import render
+
+    lists = {platform: [] for platform in ("weibo",) + sources.PLATFORMS}
+    extras = {"zhwiki": sources.normalize_zhwiki(ZHWIKI)["rows"]}
+    hours = {render._slots({"lists": lists, "extras": extras}, NOW.replace(hour=hour))[-1] for hour in range(4)}
+    assert hours == {"shared", "zhwiki"}
+
+    drawn, logos = [], []
+    original = render.PageCanvas.text
+    monkeypatch.setattr(render.PageCanvas, "text", lambda self, xy, text, *args, **kwargs: drawn.append(text) or original(
+        self, xy, text, *args, **kwargs))
+    original_logo = render._paste_logo
+    monkeypatch.setattr(render, "_paste_logo", lambda canvas, platform, *args, **kwargs: logos.append(platform) or
+                        original_logo(canvas, platform, *args, **kwargs))
+    four = {platform: [{"rank": 1, "title": f"{platform}的话题", "heat": 100, "image": None}]
+            for platform in sources.PLATFORMS}
+    render_page((800, 480), {"lists": four, "topics": [], "history": {}, "extras": extras},
+                {"_inkypi_theme": {"mode": "day"}}, NOW, {})
+
+    assert "wikipedia_zh" in logos and {"维基热读", "美国中期选举", "4.3万次浏览"} <= set(drawn)

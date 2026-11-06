@@ -652,11 +652,13 @@ def _wikipedia_zh(records):
     art = Image.new("RGBA", (globe.width + gap + mark.width, globe.height), (0, 0, 0, 0))
     art.alpha_composite(globe, (0, 0))
     art.alpha_composite(mark, (globe.width + gap, (globe.height - mark.height) // 2))
-    _write(records, POSTERS, "wikipedia_zh", _fit(art), {
-        "source": [globe_url, mark_url], "page": [globe_page, mark_page],
-        "licence": f"globe: {globe_licence}; wordmark: {mark_licence}",
-        "source_sha256": [hashlib.sha256(globe_bytes).hexdigest(), hashlib.sha256(mark_bytes).hexdigest()],
-        "processing": "the logo's globe (its lettering below cut off) with the 维基百科 wordmark beside it"})
+    # BacktotheDate's poster sources and 全网热搜's 维基热读 turn card.
+    for folder in (POSTERS, HOT_SEARCH):
+        _write(records, folder, "wikipedia_zh", _fit(art), {
+            "source": [globe_url, mark_url], "page": [globe_page, mark_page],
+            "licence": f"globe: {globe_licence}; wordmark: {mark_licence}",
+            "source_sha256": [hashlib.sha256(globe_bytes).hexdigest(), hashlib.sha256(mark_bytes).hexdigest()],
+            "processing": "the logo's globe (its lettering below cut off) with the 维基百科 wordmark beside it"})
 
 
 def _chineseposters(records):

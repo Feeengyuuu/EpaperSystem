@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
+from plugins.daily_ai_news.news_text import TRADITIONAL_PHRASE_REPLACEMENTS, TRADITIONAL_TO_SIMPLIFIED
 from runtime.refresh_contracts import TaskCancelled
 from utils.http_client import HttpClientError, get_http_client
 
@@ -41,7 +42,7 @@ ORDER = ("weibo",) + PLATFORMS
 MAX_ROWS = 20
 # The platforms' picture hosts (each serves from numbered mirrors): a picture is fetched only from these.
 IMAGE_HOST_SUFFIXES = (".cdn.bcebos.com", ".toutiaoimg.com", ".zhimg.com", ".douyinpic.com", ".thepaper.cn",
-                       ".mastodon.social")
+                       ".mastodon.social", ".wikimedia.org")
 # A Zhihu picture's path names its size after the hash (v2-<hash>_1440w.png); "_xl" is a small one.
 ZHIHU_SIZED = re.compile(r"(/v2-[0-9a-f]+)(?:_[0-9a-z]+)?\.(?:png|jpe?g|webp)$")
 # Each platform's labels, as the page names them (anything else is left unmarked).
@@ -405,7 +406,44 @@ def fetch_overseas(context):
     return normalize_overseas(*readings)
 
 
-EXTRA_FETCHERS = {"thepaper": fetch_thepaper, "overseas": fetch_overseas}
+ZHWIKI_FEED_URL = "https://zh.wikipedia.org/api/rest_v1/feed/featured/{day:%Y/%m/%d}"
+
+
+def _simplified(text):
+    value = str(text or "")
+    for traditional, replacement in TRADITIONAL_PHRASE_REPLACEMENTS:
+        value = value.replace(traditional, replacement)
+    return value.translate(TRADITIONAL_TO_SIMPLIFIED)
+
+
+def normalize_zhwiki(feed):
+    """Chinese Wikipedia's most-read articles of the day before, in Simplified Chinese: each with
+    its views, its short description and its picture (the main page and other namespaces left out)."""
+    articles = ((feed or {}).get("mostread") or {}).get("articles") if isinstance(feed, dict) else None
+    rows = []
+    for article in articles if isinstance(articles, list) else []:
+        if not isinstance(article, dict) or (article.get("namespace") or {}).get("id", 0) != 0:
+            continue
+        title = _clean(_simplified(article.get("normalizedtitle") or article.get("title")), 60)
+        if not title or ":" in title:
+            continue
+        rows.append({"title": title, "heat": _count(article.get("views")),
+                     "summary": _clean(_simplified(article.get("description")), 30),
+                     "image": safe_image_url((article.get("thumbnail") or {}).get("source")), "tag": None})
+    return _rows(rows, "zhwiki")
+
+
+def fetch_zhwiki(context, now=None):
+    # The most-read block comes a day late, and not in every day's feed.
+    day = local_now(now).astimezone(BEIJING)
+    for back in (0, 1, 2):
+        feed = _get(ZHWIKI_FEED_URL.format(day=day - timedelta(days=back)), context, max_bytes=1024 * 1024)
+        if ((feed or {}).get("mostread") or {}).get("articles"):
+            return normalize_zhwiki(feed)
+    raise ValueError("Chinese Wikipedia listed no most-read articles")
+
+
+EXTRA_FETCHERS = {"thepaper": fetch_thepaper, "overseas": fetch_overseas, "zhwiki": fetch_zhwiki}
 
 
 def valid_rows(data):

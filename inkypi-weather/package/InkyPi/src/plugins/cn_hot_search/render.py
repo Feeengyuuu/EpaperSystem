@@ -8,7 +8,8 @@ its heat, the platform's own label (新 / 热 / 辟谣 …), whether it is on ot
 what the platform says about it, and its move since the previous refresh. Baidu, Toutiao, Zhihu
 and Douyin fill a 2 x 2 grid; with the owner's Weibo login it leads a 3 x 2 grid whose last card
 takes turns by the hour between the other stories that are on several lists, 澎湃's hot list and
-the overseas talk (Bluesky's trends and Mastodon's most shared links, in Chinese once translated).
+the overseas talk (Bluesky's trends and Mastodon's most shared links, in Chinese once translated) and
+Chinese Wikipedia's most-read articles.
 """
 
 from __future__ import annotations
@@ -38,14 +39,15 @@ BRANDS = {"weibo": (0xE6, 0x16, 0x2D), "baidu": (0x29, 0x32, 0xE1), "toutiao": (
 NAMES = {"weibo": "微博", "baidu": "百度", "toutiao": "头条", "zhihu": "知乎", "douyin": "抖音"}
 NOTES = {"weibo": "微博热搜", "baidu": "实时热搜", "toutiao": "头条热榜", "zhihu": "知乎热榜", "douyin": "抖音热榜"}
 LOGO_HEIGHTS = {"weibo": 19, "baidu": 20, "toutiao": 15, "zhihu": 17, "douyin": 17, "thepaper": 18, "bluesky": 15,
-                "mastodon": 16}
+                "mastodon": 16, "wikipedia_zh": 18}
 # The cards that take turns in the grid's spare places, hour by hour: the stories on several lists,
 # 澎湃's hot list and the overseas talk (Bluesky's trends and Mastodon's most shared links). Each
 # turn card wears its source's colour: 澎湃's ink-black mark, Bluesky's butterfly blue.
-TURN_CARDS = ("shared", "thepaper", "overseas")
+TURN_CARDS = ("shared", "thepaper", "overseas", "zhwiki")
 EXTRA_TINTS = {"overseas": (0x00, 0x85, 0xFF)}
-EXTRA_TITLES = {"thepaper": "澎湃热榜", "overseas": "海外热议"}
-EXTRA_NOTES = {"thepaper": "澎湃新闻", "overseas": "Bluesky · Mastodon"}
+EXTRA_TITLES = {"thepaper": "澎湃热榜", "overseas": "海外热议", "zhwiki": "维基热读"}
+EXTRA_NOTES = {"thepaper": "澎湃新闻", "overseas": "Bluesky · Mastodon", "zhwiki": "昨日浏览最多"}
+EXTRA_LOGOS = {"overseas": ("bluesky", "mastodon"), "zhwiki": ("wikipedia_zh",)}
 # The header's row of logos: Baidu's paw stands above its letters, so it is set taller.
 KEY_LOGO_HEIGHTS = {"weibo": 22, "baidu": 24, "toutiao": 18, "zhihu": 20, "douyin": 20}
 KEY_GAP = 18
@@ -604,6 +606,8 @@ def _extra_meta(canvas, name, row, now):
         if name == "thepaper":
             parts = [f"{heat_text(row.get('heat'))}赞" if row.get("heat") else "",
                      f"{row['comments']}评" if row.get("comments") else "", ago_text(row.get("since"), now)]
+        elif name == "zhwiki" and row.get("heat"):
+            parts = [f"{heat_text(row['heat'])}次浏览"]
         elif row.get("heat"):
             parts = [f"{heat_text(row['heat'])}{'帖' if row['source'] == 'bluesky' else '次分享'}"]
         if row.get("tag"):
@@ -624,7 +628,7 @@ def _extra_card(canvas, box, name, payload, images, now):
 
     def title(middle):
         x = left + 9
-        for logo in (("bluesky", "mastodon") if name == "overseas" else (name,)):
+        for logo in EXTRA_LOGOS.get(name, (name,)):
             x += _paste_logo(canvas, logo, x, middle) + 5
         canvas.text((x + 1, middle), EXTRA_TITLES[name], 14, anchor="lm")
         canvas.text((right - 9, middle), EXTRA_NOTES[name], 10, "muted", anchor="rm", bold=False)
