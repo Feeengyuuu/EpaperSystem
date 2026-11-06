@@ -1,6 +1,8 @@
 """Printables' public GraphQL lists for 打印灵感 (no key): the week's most liked models, the week's
 most printed (most "makes") and the all-time classics, each model with its picture, maker,
-category, counts and rating.
+category, counts and rating; its print settings from its first sliced file (printer, material,
+time, filament, layer height, nozzle), its files, licence, tags and remixes, its next pictures and
+its maker's level and followers.
 """
 
 from __future__ import annotations
@@ -25,10 +27,15 @@ LISTS = {
     "classics": ("-likes_count", 3),
 }
 FIELDS = ("id name slug likesCount downloadCount makesCount ratingAvg ratingCount commentCount displayCount "
-          "datePublished summary category { path { name } } user { publicUsername avatarFilePath } "
-          "image { filePath } images { filePath } gcodes { id }")
+          "datePublished summary category { path { name } } "
+          "user { publicUsername avatarFilePath level followersCount } image { filePath } images { filePath } "
+          "gcodes { id printer { name } material { name } printDuration weight layerHeight nozzleDiameter } "
+          "stls { id } slas { id } otherFiles { id } tags { name } remixCount license { name } mmu")
 # A model's pictures tried in order (its cover, then its next ones): an old upload may have no thumbnail.
 PICTURE_CANDIDATES = 3
+# The pictures after the cover the lead shows beside it.
+GALLERY = 3
+TAGS = 6
 QUERY = 'query { morePrints(ordering: "%s", limit: %d) { items { %s } } }'
 # Printables' categories in Chinese (top level and the common sub-categories); others keep their name.
 CATEGORIES = {
@@ -87,13 +94,60 @@ def category_name(path):
     return " · ".join(CATEGORIES.get(name, name) for name in names[-2:])
 
 
+def license_label(name):
+    """A licence's short name: "CC BY-NC-SA", "CC0", "GPL", "标准授权" (Printables' standard file
+    licence); others keep a short form of their name."""
+    text = " ".join(str(name or "").split())
+    lowered = text.lower()
+    if not text:
+        return ""
+    if "standard digital file" in lowered:
+        return "标准授权"
+    if "public domain" in lowered or "cc0" in lowered:
+        return "CC0"
+    if "gnu" in lowered or "gpl" in lowered:
+        return "GPL"
+    if "creative commons" in lowered:
+        label = "CC BY"
+        for words, suffix in (("noncommercial", "-NC"), ("no derivatives", "-ND"), ("share alike", "-SA")):
+            if words in lowered:
+                label += suffix
+        return label
+    return text[:16]
+
+
+def print_settings(gcodes):
+    """The first sliced file's settings: {printer, material, minutes, weight, layer, nozzle}, only
+    those it gives ({} without any). Printables gives the print time in hours ("1.05")."""
+    for gcode in gcodes or ():
+        if not isinstance(gcode, dict):
+            continue
+        settings = {"printer": _text((gcode.get("printer") or {}).get("name"), 24),
+                    "material": _text((gcode.get("material") or {}).get("name"), 16)}
+        try:
+            settings["minutes"] = round(float(gcode.get("printDuration")) * 60)
+        except (TypeError, ValueError):
+            pass
+        settings["weight"] = _int(gcode.get("weight"))
+        settings["layer"] = _text(gcode.get("layerHeight"), 6)
+        settings["nozzle"] = _text(gcode.get("nozzleDiameter"), 6)
+        settings = {key: value for key, value in settings.items() if value}
+        if settings:
+            return settings
+    return {}
+
+
+def _count_list(value):
+    return len(value) if isinstance(value, list) else 0
+
+
 def normalize_model(raw):
     """One listed model, or None without an id, a name and a picture."""
     if not isinstance(raw, dict):
         return None
     model_id, name = str(raw.get("id") or "").strip(), _text(raw.get("name"), 120)
     paths = []
-    for item in [raw.get("image"), *(raw.get("images") or [])[:PICTURE_CANDIDATES]]:
+    for item in [raw.get("image"), *(raw.get("images") or [])[:PICTURE_CANDIDATES + GALLERY]]:
         path = (item or {}).get("filePath") if isinstance(item, dict) else None
         if path and path not in paths:
             paths.append(path)
@@ -112,6 +166,8 @@ def normalize_model(raw):
     except (TypeError, ValueError):
         pass
     user = raw.get("user") or {}
+    gallery = [url for url in (media_url(path, "320x240") for path in paths[1:1 + GALLERY]) if url]
+    tags = [_text(tag.get("name"), 24) for tag in raw.get("tags") or [] if isinstance(tag, dict) and tag.get("name")]
     return {
         "id": model_id, "name": name, "summary": _text(raw.get("summary"), 300),
         "likes": _int(raw.get("likesCount")), "downloads": _int(raw.get("downloadCount")),
@@ -122,6 +178,12 @@ def normalize_model(raw):
         "image": picture, "image_small": small[0] if small else None, "pictures": pictures, "pictures_small": small,
         "gcode": bool(raw.get("gcodes")),
         "published": published,
+        "print": print_settings(raw.get("gcodes")),
+        "files": sum(_count_list(raw.get(key)) for key in ("stls", "slas", "otherFiles", "gcodes")),
+        "license": license_label((raw.get("license") or {}).get("name")),
+        "tags": tags[:TAGS], "remixes": _int(raw.get("remixCount")), "multi_material": bool(raw.get("mmu")),
+        "maker_level": _int(user.get("level")), "maker_followers": _int(user.get("followersCount")),
+        "gallery": gallery,
     }
 
 
