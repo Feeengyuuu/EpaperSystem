@@ -143,7 +143,12 @@ class MoneyRadar(BasePlugin):
                 timeout_seconds=12))
         else:
             results["earnings"] = self._week_earnings(load, symbols, now)
-        return {**results, "symbols": list(symbols), "symbols_from_portfolio": from_portfolio,
+        # CoinGecko's most searched coins of the day with their logos: an extra along the coin
+        # tiles that never makes the page stale.
+        trending = load(Source("trending", {"skip": list(coins)}, lambda ctx: sources.fetch_trending(coins, ctx),
+                               fresh_seconds=2 * 3600, usable_seconds=2 * 86400, validate=sources.valid_trending,
+                               timeout_seconds=12))
+        return {**results, "trending": trending, "symbols": list(symbols), "symbols_from_portfolio": from_portfolio,
                 "provenance": combined_provenance(results.values())}
 
     @staticmethod

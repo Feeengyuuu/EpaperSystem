@@ -7,15 +7,20 @@ feed is simply disabled (earnings then come from Nasdaq's calendar for the comin
 
 from __future__ import annotations
 
+import base64
 import calendar
+import io
 import math
 import re
 from datetime import date, datetime, timedelta, timezone
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 import feedparser
+from PIL import Image
 
 from utils.http_client import HttpClientError, get_http_client
+from utils.safe_image import ImageLimits, safe_open_image
 
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
@@ -23,6 +28,11 @@ USER_AGENT = "InkyPi MoneyRadar/1.0 (personal e-paper display)"
 REQUEST_TIMEOUT = (3, 9)
 FX_URL = "https://api.frankfurter.dev/v1/{start}..{end}"
 COINGECKO_URL = "https://api.coingecko.com/api/v3/coins/markets"
+COINGECKO_TRENDING_URL = "https://api.coingecko.com/api/v3/search/trending"
+TRENDING_COINS = 6
+COIN_LOGO_HOSTS = ("coin-images.coingecko.com", "assets.coingecko.com")
+COIN_LOGO_PIXELS = 28
+COIN_LOGO_LIMITS = ImageLimits(max_bytes=256 * 1024, max_width=1024, max_height=1024, max_pixels=1024 * 1024)
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 YAHOO_RSS_URL = "https://feeds.finance.yahoo.com/rss/2.0/headline"
 BLS_URL = "https://api.bls.gov/publicAPI/v1/timeseries/data/{series}"
@@ -202,6 +212,63 @@ def valid_crypto(data):
     coins = (data or {}).get("coins")
     return isinstance(coins, list) and bool(coins) and all(
         isinstance(coin, dict) and _finite(coin.get("price")) for coin in coins)
+
+
+# --- Trending coins (CoinGecko's most searched of the past day) -------------------------------
+
+def normalize_trending(payload, skip=()):
+    """CoinGecko's trending coins in its order, without the ones the page already shows:
+    {coins: [{id, symbol, name, rank, change_24h, thumb}]}."""
+    coins = []
+    entries = payload.get("coins") if isinstance(payload, dict) else None
+    for entry in entries if isinstance(entries, list) else []:
+        item = entry.get("item") if isinstance(entry, dict) else None
+        if not isinstance(item, dict):
+            continue
+        coin_id = str(item.get("id") or "").strip()
+        symbol = str(item.get("symbol") or "").strip().upper()
+        if not coin_id or not symbol or coin_id in skip:
+            continue
+        change = _finite(((item.get("data") or {}).get("price_change_percentage_24h") or {}).get("usd"))
+        rank = item.get("market_cap_rank")
+        coins.append({"id": coin_id, "symbol": symbol[:8], "name": str(item.get("name") or "")[:40],
+                      "rank": rank if isinstance(rank, int) and not isinstance(rank, bool) else None,
+                      "change_24h": round(change, 1) if change is not None else None,
+                      "thumb": str(item.get("small") or item.get("thumb") or "")})
+        if len(coins) >= TRENDING_COINS:
+            break
+    return {"coins": coins}
+
+
+def _coin_logo(url, context):
+    """A coin's official logo from CoinGecko's image host, shrunk and kept as base64 PNG ("" when
+    it is not on that host or cannot be read)."""
+    if urlparse(str(url or "")).hostname not in COIN_LOGO_HOSTS:
+        return ""
+    try:
+        data = get_http_client().request_bytes("GET", url, context=context, timeout=REQUEST_TIMEOUT,
+                                               max_bytes=COIN_LOGO_LIMITS.max_bytes,
+                                               headers={"User-Agent": USER_AGENT}).data
+        logo = safe_open_image(io.BytesIO(data), limits=COIN_LOGO_LIMITS).convert("RGBA")
+    except (HttpClientError, OSError, ValueError, Image.DecompressionBombError):
+        return ""
+    logo.thumbnail((COIN_LOGO_PIXELS, COIN_LOGO_PIXELS), Image.Resampling.LANCZOS)
+    out = io.BytesIO()
+    logo.save(out, format="PNG", optimize=True)
+    return base64.b64encode(out.getvalue()).decode("ascii")
+
+
+def fetch_trending(skip, context):
+    trending = normalize_trending(_get("GET", COINGECKO_TRENDING_URL, context, max_bytes=256 * 1024), skip)
+    for coin in trending["coins"]:
+        coin["logo"] = _coin_logo(coin.pop("thumb"), context)
+    return trending
+
+
+def valid_trending(data):
+    coins = (data or {}).get("coins")
+    return isinstance(coins, list) and bool(coins) and all(
+        isinstance(coin, dict) and coin.get("symbol") for coin in coins)
 
 
 # --- Yields, dollar index and gold (Yahoo chart) ----------------------------------------------

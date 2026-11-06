@@ -648,3 +648,101 @@ def test_share_classes_match_nasdaqs_and_yahoos_spelling():
     assert items == [{"symbol": "BRK.B", "date": "2026-11-06", "hour": "bmo", "eps_estimate": 4.81}]
     assert (sources.yahoo_symbol("BRK.B"), sources.yahoo_symbol("BRK/B"), sources.yahoo_symbol("AAPL")) == (
         "BRK-B", "BRK-B", "AAPL")
+
+
+TRENDING = {"coins": [
+    {"item": {"id": "pudgy-penguins", "symbol": "pengu", "name": "Pudgy Penguins", "market_cap_rank": 114,
+              "small": "https://coin-images.coingecko.com/coins/images/52622/small/PENGU.png",
+              "data": {"price_change_percentage_24h": {"usd": 0.137}}}},
+    {"item": {"id": "bitcoin", "symbol": "btc", "name": "Bitcoin", "market_cap_rank": 1,
+              "small": "https://coin-images.coingecko.com/coins/images/1/small/bitcoin.png"}},
+    {"item": {"id": "bittensor", "symbol": "TAO", "name": "Bittensor", "market_cap_rank": 39,
+              "small": "https://coin-images.coingecko.com/coins/images/28452/small/tao.jpeg",
+              "data": {"price_change_percentage_24h": {"usd": -2.94}}}},
+    {"item": {"id": "", "symbol": "X"}}, "junk"],
+    "nfts": [{"id": "ignored"}]}
+
+
+def test_coingeckos_trending_coins_skip_the_ones_the_page_already_shows():
+    trending = sources.normalize_trending(TRENDING, ("bitcoin", "ethereum"))
+
+    assert [(coin["id"], coin["symbol"], coin["rank"], coin["change_24h"]) for coin in trending["coins"]] == [
+        ("pudgy-penguins", "PENGU", 114, 0.1), ("bittensor", "TAO", 39, -2.9)]
+    assert trending["coins"][0]["thumb"].startswith("https://coin-images.coingecko.com/")
+    assert sources.valid_trending(trending) and not sources.valid_trending({"coins": []})
+
+
+def test_trending_coins_carry_their_official_logos_from_coingeckos_image_host(monkeypatch):
+    real_logo = sources._coin_logo
+    monkeypatch.setattr(sources, "_get", lambda *_args, **_kwargs: TRENDING)
+    fetched = []
+    monkeypatch.setattr(sources, "_coin_logo", lambda url, _ctx: fetched.append(url) or "UE5H")
+
+    trending = sources.fetch_trending(("bitcoin",), None)
+
+    assert [coin["logo"] for coin in trending["coins"]] == ["UE5H", "UE5H"]
+    assert all("thumb" not in coin for coin in trending["coins"]) and len(fetched) == 2
+    # A logo comes only from CoinGecko's own image hosts.
+    assert real_logo("https://example.com/a.png", None) == ""
+
+
+def _trending_coin(symbol, colour):
+    import base64
+    from io import BytesIO
+
+    from PIL import Image
+
+    out = BytesIO()
+    Image.new("RGBA", (32, 32), colour).save(out, format="PNG")
+    return {"id": symbol.lower(), "symbol": symbol, "logo": base64.b64encode(out.getvalue()).decode("ascii")}
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_the_crypto_tiles_list_whats_trending_on_coingecko(monkeypatch, mode):
+    canvas = PageCanvas(money_render._palette({"_inkypi_theme": {"mode": mode}}), family="Microsoft YaHei")
+    drawn = []
+    original = canvas.text
+    monkeypatch.setattr(canvas, "text", lambda xy, text, *args, **kwargs: drawn.append(text) or original(
+        xy, text, *args, **kwargs))
+    coins = [{"id": "bitcoin", "symbol": "BTC", "name": "Bitcoin", "price": 84476.0, "change_24h": 2.4,
+              "change_7d": 3.5, "sparkline": [1, 2, 3]},
+             {"id": "ethereum", "symbol": "ETH", "name": "Ethereum", "price": 2323.0, "change_24h": -1.3,
+              "change_7d": -3.2, "sparkline": [3, 2, 1]}]
+    symbols = ("PENGU", "REBOOT", "DENIM", "PEARL", "ZRO", "INJ")
+    trending = [_trending_coin(symbol, (0xF2, 0x8C, 0x28, 255)) for symbol in symbols]
+    payload = {"crypto": {"data": {"coins": coins}}, "trending": {"data": {"coins": trending}}}
+
+    money_render._crypto_tiles(canvas, payload)
+    page = canvas.image
+
+    assert "热搜" in drawn
+    shown = [symbol for symbol in symbols if symbol in drawn]
+    # The bottom rows are the list's own: it runs from the first coin tile into the second, in
+    # CoinGecko's order, and the 7-day change moves to the end of its sparkline.
+    assert shown[:4] == ["PENGU", "REBOOT", "DENIM", "PEARL"]
+    assert {"7 天", "+3.5%", "-3.2%"} <= set(drawn)
+    for left, right in money_render.TILES[1:3]:
+        row = page.crop((left + 60, 180, right - 6, 195)).convert("RGB")
+        assert (0xF2, 0x8C, 0x28) in set(row.get_flattened_data())  # a logo in each tile's bottom row
+
+    drawn.clear()
+    money_render._crypto_tiles(canvas, {"crypto": {"data": {"coins": coins}}})
+    assert "热搜" not in drawn and "7 天" in drawn
+
+
+def test_trending_is_an_extra_feed_outside_the_pages_provenance(monkeypatch, tmp_path):
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr(money_module, "read_contexts", lambda *_args, **_kwargs: [])
+    _fake_sources(monkeypatch)
+    monkeypatch.setattr(sources, "fetch_trending", lambda coins, _ctx: {"coins": [
+        {"id": "bittensor", "symbol": "TAO", "logo": ""}]} if "bitcoin" in coins else pytest.fail(coins))
+    captured = {}
+    original = money_render.render_page
+    monkeypatch.setattr(money_render, "render_page", lambda size, payload, *args: captured.update(payload) or original(
+        size, payload, *args))
+
+    MoneyRadar({"id": "money_radar"}).generate_image({"_inkypi_theme": {"mode": "day"}}, Device())
+
+    assert captured["trending"]["data"]["coins"][0]["symbol"] == "TAO"
+    text = Path(money_module.__file__).read_text(encoding="utf-8")
+    assert '"trending"' in text and 'results["trending"]' not in text

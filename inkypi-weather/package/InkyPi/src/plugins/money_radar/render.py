@@ -13,7 +13,7 @@ from utils.doodle_backdrop import paint_doodles
 from utils.flat_icons import draw_icon
 from utils.local_wordmark import load_source_logo, paste_local_wordmark, paste_source_logos
 from utils.page_canvas import PageCanvas
-from utils.safe_image import ImageLimits, safe_open_image
+from utils.safe_image import ImageLimits, safe_open_base64_image, safe_open_image
 from utils.theme_utils import relative_luminance
 
 from .sources import (
@@ -140,6 +140,10 @@ DOODLE_STRENGTH = 0.18
 # The market tiles' title row, clear of the colour bar along their top (60-66).
 TITLE_Y = 83
 TILES = ((12, 200), (206, 394), (400, 588), (594, 788))
+# CoinGecko's trending coins on the coin tiles' bottom row: logo height and the gap after each.
+TRENDING_ROW_Y = 187
+TRENDING_LOGO = 13
+TRENDING_GAP = 6
 # The yield curve's card, and CNN's Fear & Greed gauge beside it.
 CURVE_CARD = (12, 204, 262, 330)
 FEAR_GREED_CARD = (268, 204, 392, 330)
@@ -345,12 +349,59 @@ def _coin_tile(canvas, coin, box):
     day, week = coin.get("change_24h"), coin.get("change_7d")
     _number(canvas, (left + 10, 114), price_text(coin["price"]), 28, right - left - 20, _direction(day)[1])
     _change_line(canvas, (left + 10, 138), day, f"{day:+.2f}%" if day is not None else "—", "24 小时")
-    sparkline(canvas, (left + 12, 150, right - 12, 176), coin.get("sparkline"))
-    if week is None:
-        canvas.text((left + 10, 187), "7 天走势", 11, "muted", anchor="lm", bold=False)
-    else:
-        label = canvas.text((left + 10, 187), "7 天", 11, "muted", anchor="lm", bold=False)
-        canvas.text((left + 10 + label + 4, 187), f"{week:+.1f}%", 11, _direction(week)[1], anchor="lm")
+    # The 7-day change stands at the end of its 7-day line, leaving the bottom row to the
+    # trending coins.
+    figure = f"{week:+.1f}%" if week is not None else "—"
+    column = max(canvas.width("7 天", 10), canvas.width(figure, 12))
+    sparkline(canvas, (left + 12, 150, right - 19 - column, 176), coin.get("sparkline"))
+    canvas.text((right - 10, 156), "7 天", 10, "muted", anchor="rm", bold=False)
+    canvas.text((right - 10, 171), figure, 12, _direction(week)[1] if week is not None else "muted", anchor="rm")
+    return left + 10
+
+
+def _coin_logo(value):
+    try:
+        return safe_open_base64_image(value or "", limits=_LIMITS).convert("RGBA")
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def _trending_row(canvas, x, right, coins, label):
+    """As many of ``coins`` as fit between ``x`` and ``right`` on a coin tile's bottom row, each
+    its official logo and symbol, after a muted label; how many it drew."""
+    y = TRENDING_ROW_Y
+    if label:
+        x += canvas.text((x, y), label, 10, "muted", anchor="lm", bold=False) + 4
+    drawn = 0
+    for coin in coins:
+        logo = _coin_logo(coin.get("logo"))
+        if logo is not None:
+            logo = ImageOps.contain(logo, (TRENDING_LOGO, TRENDING_LOGO), Image.Resampling.LANCZOS)
+        width = (logo.width + 2 if logo is not None else 0) + canvas.width(coin["symbol"], 10)
+        if x + width > right:
+            break
+        if logo is not None:
+            canvas.image.paste(logo, (int(x), int(y - logo.height / 2)), logo)
+            x += logo.width + 2
+        x += canvas.text((x, y), coin["symbol"], 10, anchor="lm") + TRENDING_GAP
+        drawn += 1
+    return drawn
+
+
+def _crypto_tiles(canvas, payload):
+    """The two coin tiles; CoinGecko's trending coins run along their bottom rows, from the
+    first tile into the second, after each tile's 7-day change."""
+    coins = ((payload.get("crypto") or {}).get("data") or {}).get("coins", [])
+    trending = [coin for coin in ((payload.get("trending") or {}).get("data") or {}).get("coins") or []
+                if isinstance(coin, dict) and coin.get("symbol")]
+    for coin, box in zip(coins[:2], TILES[1:3]):
+        end = _coin_tile(canvas, coin, box)
+        if trending:
+            first = box == TILES[1]
+            trending = trending[_trending_row(canvas, end, box[1] - 8, trending, "热搜" if first else ""):]
+    for box in TILES[1 + len(coins[:2]):3]:
+        _tile_frame(canvas, box[0], box[1], "加密货币", mark_text="C", doodles="crypto")
+        canvas.text(((box[0] + box[1]) / 2, 130), "暂不可用", 15, "muted", anchor="mm")
 
 
 def _yield_tile(canvas, payload, box):
@@ -852,12 +903,7 @@ def render_page(dimensions, payload, settings, now):
                   ((payload.get("earnings") or {}).get("data") or {}).get("source"))
     canvas.rule((12, 52, 788, 52), "ink", 2)
     _fx_tile(canvas, payload, TILES[0])
-    coins = payload["crypto"]["data"].get("coins", [])
-    for coin, box in zip(coins[:2], TILES[1:3]):
-        _coin_tile(canvas, coin, box)
-    for box in TILES[1 + len(coins[:2]):3]:
-        _tile_frame(canvas, box[0], box[1], "加密货币", mark_text="C", doodles="crypto")
-        canvas.text(((box[0] + box[1]) / 2, 130), "暂不可用", 15, "muted", anchor="mm")
+    _crypto_tiles(canvas, payload)
     _yield_tile(canvas, payload, TILES[3])
     _curve(canvas, payload)
     _fear_greed(canvas, payload)
