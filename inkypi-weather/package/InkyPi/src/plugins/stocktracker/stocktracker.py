@@ -88,7 +88,7 @@ from utils.massive_market_data import (
 )
 from utils.robinhood_mcp import RobinhoodMCPClient
 from utils.theme_utils import get_theme_palette
-from plugins.stocktracker import fundamentals, trend_chart
+from plugins.stocktracker import fundamentals, sec_filings, trend_chart
 from runtime.long_task_executor import task_context_or_default
 from runtime.refresh_contracts import TaskCancelled
 import csv
@@ -205,6 +205,8 @@ SOURCE_CACHE_SCHEMA_VERSION = "stocktracker-source-v2"
 SOURCE_CACHE_LEAF = "source"
 # Per-symbol 52-week range, ex-dividend and analyst fields for rows that bring none (fundamentals.py).
 FUNDAMENTALS_CACHE_LEAF = "fundamentals"
+# Per-company SEC filings and the ticker map (sec_filings.py).
+SEC_FILINGS_CACHE_LEAF = "sec_filings"
 WINDOW_SHORT_LABELS = {
 	"1d": "1D",
 	"5d": "1W",
@@ -328,6 +330,9 @@ RATING_COLOURS = {"strong_buy": "malachite", "buy": "malachite", "hold": "accent
 # pill, each holding by its logo and symbol (coming earnings are Money Radar's to show).
 EVENT_DAYS = 30
 EVENT_KINDS = (("ex_dividend_date", "除息", "malachite"),)
+# The week's SEC filings (sec_filings.py) follow as their own pill, each holding by its form
+# (8-K, 季报, 年报, 内部人) in place of a date.
+FILING_EVENT = ("公告", "accent_blue")
 EVENT_LOGO_SIZE = 14
 # A row's trend ends on a gold star at the window's high and a ring at its low (within
 # EXTREME_SLACK percent).
@@ -623,6 +628,13 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			raise
 		except (OSError, ValueError, TypeError) as error:
 			logging.warning(f"Holding fundamentals unavailable: {type(error).__name__}: {error}")
+		try:
+			directory = self.cache_dir(leaf=SEC_FILINGS_CACHE_LEAF, create=True)
+			sec_filings.attach(stock_data, directory, context=task_context_or_default(timeout_seconds=30))
+		except TaskCancelled:
+			raise
+		except (OSError, ValueError, TypeError) as error:
+			logging.warning(f"Holding SEC filings unavailable: {type(error).__name__}: {error}")
 
 	def _publish_holdings_context(self, stock_data):
 		"""Share only the held ticker symbols (largest first) so Money Radar can follow the portfolio."""
@@ -2916,7 +2928,17 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 					continue
 				if not item["is_cash"] and 0 <= (day - today).days <= EVENT_DAYS:
 					events.append((day, label, colour, symbol))
-		return sorted(set(events), key=lambda event: (event[0], event[3]))
+			# The week's latest SEC filing, newest first after the coming dates.
+			filing = data.get("sec_filing")
+			try:
+				filed = datetime.strptime(str(filing.get("date") or ""), "%Y-%m-%d").date()
+			except (AttributeError, ValueError):
+				continue
+			if not item["is_cash"] and 0 <= (today - filed).days <= sec_filings.WINDOW_DAYS:
+				events.append((filed, *FILING_EVENT, symbol))
+		coming = sorted({event for event in events if event[1] != FILING_EVENT[0]}, key=lambda event: (event[0], event[3]))
+		filed = sorted({event for event in events if event[1] == FILING_EVENT[0]}, key=lambda event: (-event[0].toordinal(), event[3]))
+		return coming + filed
 
 	def _draw_holding_events(self, img, draw, span, center_y, metrics, today):
 		"""The title row's coming ex-dividend dates: a solid 除息 pill, then each holding by the
@@ -2927,9 +2949,11 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		events = self._holding_events(metrics, today)
 		if not events or right - left < 80:
 			return
+		forms = {str(item["data"].get("symbol") or "").upper(): item["data"]["sec_filing"].get("label")
+				 for item in metrics if isinstance(item["data"].get("sec_filing"), dict)}
 		pill_font, date_font, symbol_font = get_base_ui_font(10, bold=True), self._font(11), self._font(11, True)
 		x = left
-		for _key, label, colour in EVENT_KINDS:
+		for _key, label, colour in (*EVENT_KINDS, (None, *FILING_EVENT)):
 			rows = [event for event in events if event[1] == label]
 			if not rows:
 				continue
@@ -2941,11 +2965,14 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 					  font=pill_font)
 			x += pill_w + 5
 			for day, _label, _colour, symbol in rows:
-				when = "TODAY" if day == today else day.strftime("%m/%d")
+				when = (forms.get(symbol) or "公告") if label == FILING_EVENT[0] else (
+					"TODAY" if day == today else day.strftime("%m/%d"))
+				# A form named in Chinese (季报, 内部人) takes the UI face: the table's has no Chinese.
+				when_font = date_font if when.isascii() else get_base_ui_font(10, bold=True)
 				logo = self._holding_logo_image(symbol, EVENT_LOGO_SIZE, width=EVENT_LOGO_SIZE + 4)
 				logo_w = logo.width + 2 if logo else 0
 				mark_w = self._text_width(draw, symbol, symbol_font)
-				if x + logo_w + mark_w + 3 + self._text_width(draw, when, date_font) > right:
+				if x + logo_w + mark_w + 3 + self._text_width(draw, when, when_font) > right:
 					return
 				if logo:
 					img.paste(logo, (round(x), round(center_y - logo.height / 2)), logo)
@@ -2953,9 +2980,9 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				draw.text((x, self._centered_text_y(draw, symbol, symbol_font, center_y)), symbol, fill=colors["ink"],
 						  font=symbol_font)
 				x += mark_w + 3
-				draw.text((x, self._centered_text_y(draw, when, date_font, center_y)), when, fill=colors["ink"],
-						  font=date_font)
-				x += self._text_width(draw, when, date_font) + 9
+				draw.text((x, self._centered_text_y(draw, when, when_font, center_y)), when, fill=colors["ink"],
+						  font=when_font)
+				x += self._text_width(draw, when, when_font) + 9
 			x += 6
 
 	def _draw_weight_bar(self, draw, span, center_y, item, max_weight):

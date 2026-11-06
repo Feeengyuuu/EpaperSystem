@@ -1788,6 +1788,10 @@ def _offline_fundamentals(monkeypatch):
         raise ValueError("offline in tests")
 
     monkeypatch.setattr(fundamentals_module, "fetch_nasdaq", offline)
+    # The holdings' SEC filings come from Nasdaq too.
+    from plugins.stocktracker import sec_filings as sec_filings_module
+
+    monkeypatch.setattr(sec_filings_module, "fetch_filings", offline)
 
 
 def _never():
