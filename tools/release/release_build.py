@@ -22,6 +22,7 @@ import zipfile
 
 from release_device import CONFIG, CURRENT_LINK, DISPLAY, RELEASES_DIR, Device, digest, release_name
 from release_checks import config_identity
+import release_delta
 from release_task import DEPLOYMENT_RECORD, PACKAGE, ReleaseError, TaskContext, require, require_commit
 
 PREVIOUS_BACKUP_DIR = ".backups/previous"
@@ -259,6 +260,8 @@ def build(ctx: TaskContext, expect_changes: set[str] | None = None,
     target = ctx.path("inkypi-" + short(commit) + ".zip")
     require(not target.exists(), f"Inspect the existing {target.name} instead of rebuilding over it")
     hashes, shebangs = package(repo, commit, target)
+    require(release_delta.MANIFEST_MEMBER not in hashes,
+            f"The package must not contain {release_delta.MANIFEST_MEMBER}: the device would read it as a delta")
     changed = changed_members(before["hashes"], hashes)
     declared = {name.removeprefix(PACKAGE + "/")
                 for name in git(repo, "diff", "--name-only", base_commit, commit, "--", PACKAGE).splitlines()}
@@ -276,12 +279,14 @@ def build(ctx: TaskContext, expect_changes: set[str] | None = None,
     lock_member = "install/requirements.txt"
     changes = dependency_changes(git(repo, "show", base_commit + ":" + lock), git(repo, "show", commit + ":" + lock))
     check_dependency_changes(changes, expect_dependency_changes)
+    delta = release_delta.round_delta(ctx, full_zip=target, full_sha256=sha256, commit=commit, base_manifest=before,
+                                      preflight=preflight, hashes=hashes, dependency_changes=changes)
     record = {"status": "passed", "commit": commit, "base_commit": base_commit,
               "base_release": preflight["base_release"], "artifact": str(target), "artifact_sha256": sha256,
               "file_count": inspection.file_count, "changed_files": sorted(changed),
               "shebangs_lf_verified": shebangs, "hashes": hashes,
               "runtime_lock_unchanged": hashes[lock_member] == before["hashes"][lock_member],
-              "built_at": datetime.now(timezone.utc).isoformat(), "runtime_dependency_changes": changes}
+              "built_at": datetime.now(timezone.utc).isoformat(), "runtime_dependency_changes": changes, **delta}
     ctx.save("current-manifest.json", record)
     return {key: value for key, value in record.items() if key != "hashes"}
 

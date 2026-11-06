@@ -1325,12 +1325,18 @@ def _write_example_distribution_record(site_packages, tool):
     )
 
 
-def test_preparer_clones_compatible_current_venv_as_independent_tree(tmp_path):
+def test_preparer_clones_compatible_current_venv_as_copy_on_write_links(tmp_path):
+    # The clone shares unchanged inodes with the live venv (hard links), so the
+    # contract is copy-on-write: every file the clone rewrites becomes a new
+    # inode and the source venv is never modified.  Nothing may write into a
+    # cloned file in place (see tests/test_update_delta.py).
     layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
     layout.ensure()
     current, source_venv, requirements, destination, source_package = (
         _compatible_venv_fixture(layout, tmp_path)
     )
+    source_tool = source_venv / "bin" / "example-tool"
+    source_tool_before = source_tool.read_bytes()
     calls = []
     preparer = ArtifactPreparer(
         layout,
@@ -1341,8 +1347,11 @@ def test_preparer_clones_compatible_current_venv_as_independent_tree(tmp_path):
     assert preparer._try_clone_current_venv(requirements, destination) is True
 
     destination_package = destination / source_package.relative_to(source_venv)
-    destination_package.write_text("VALUE = 'candidate'\n", encoding="utf-8")
+    assert os.path.samefile(destination_package, source_package)
     assert source_package.read_text(encoding="utf-8") == "VALUE = 'source'\n"
+    assert not os.path.samefile(destination / "bin" / "example-tool", source_tool)
+    assert not os.path.samefile(destination / "pyvenv.cfg", source_venv / "pyvenv.cfg")
+    assert source_tool.read_bytes() == source_tool_before
     cloned_tool = (destination / "bin" / "example-tool").read_text(encoding="utf-8")
     assert str(destination / "bin" / "python") in cloned_tool
     assert str(source_venv / "bin" / "python") not in cloned_tool

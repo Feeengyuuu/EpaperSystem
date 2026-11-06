@@ -27,6 +27,7 @@ import epaper_release  # noqa: E402
 import release_backup  # noqa: E402
 import release_build  # noqa: E402
 import release_checks  # noqa: E402
+import release_delta  # noqa: E402
 import release_deploy  # noqa: E402
 import release_device  # noqa: E402
 from release_task import ReleaseError, TaskContext, resolve_task_dir  # noqa: E402
@@ -283,6 +284,33 @@ def test_device_commands_are_pinned_and_never_echo_stderr(tmp_path):
         release_device.Device(tmp_path, "ColoredEpaperFrame.local")
 
 
+def test_device_stream_hands_over_each_line_as_it_arrives(tmp_path):
+    seen, lines = [], []
+
+    class Process:
+        def __init__(self, argv, **kwargs):
+            seen.append((argv, kwargs))
+            self.stdout = iter([b"timing: inspect 1.0s\r\n", b"caf\xc3\xa9 \xff\n"])
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def wait(self):
+            lines.append("waited")
+            return 3
+
+    device = release_device.Device(tmp_path, ADDRESS, popen=Process)
+
+    assert device.stream("update", lines.append) == 3
+    assert lines == ["timing: inspect 1.0s", "caf" + chr(0xE9) + " " + chr(0xFFFD), "waited"]
+    argv, kwargs = seen[0]
+    assert argv[-2:] == ["feeengyuuu@" + ADDRESS, "update"] and "StrictHostKeyChecking=yes" in argv
+    assert kwargs == {"stdin": subprocess.DEVNULL, "stdout": subprocess.PIPE, "stderr": subprocess.STDOUT}
+
+
 def test_source_proof_sends_a_large_releases_names_on_stdin(tmp_path):
     files = {f"src/plugins/x/assets/teams/team-{index:04d}.png": str(index).encode() for index in range(3000)}
     files["src/plugins/x/gone.py"] = None
@@ -330,13 +358,29 @@ def prepare_deploy(ctx, payload=b"release-bytes-" * 3):
     return payload
 
 
-class FakeDevice:
-    """In-memory device that hashes uploaded parts like the real shell commands do."""
+UPDATE_LINES = ("timing: inspect 1.5s format=full", "InkyPi release preflight passed",
+                "timing: wait-ready 41.0s ready=yes", "InkyPi release committed")
 
-    def __init__(self, active=ACTIVE, bad_parts=(), flaky_parts=(), collision=False, update_exit=0):
+
+class FakeDevice:
+    """In-memory device that hashes uploaded parts like the real shell commands do.
+
+    ``capabilities=None`` is an updater that predates ``--print-capabilities`` (it exits 2).
+    """
+
+    def __init__(self, active=ACTIVE, bad_parts=(), flaky_parts=(), collision=False, update_exit=0,
+                 capabilities=None, update_lines=UPDATE_LINES):
         self.active, self.bad_parts, self.flaky = active, set(bad_parts), set(flaky_parts)
         self.collision, self.update_exit = collision, update_exit
+        self.capabilities, self.update_lines = capabilities, update_lines
         self.files, self.commands, self.copies = {}, [], []
+
+    def stream(self, command, on_line):
+        self.commands.append(command)
+        assert "sudo -n /usr/local/sbin/inkypi-update --artifact" in command
+        for line in self.update_lines:
+            on_line(line)
+        return self.update_exit
 
     def copy(self, local, remote_path):
         self.copies.append(remote_path)
@@ -367,17 +411,18 @@ class FakeDevice:
             return done(0 if sha(self.files[target]) == expected else 1, b"assembled\n")
         if command.startswith("rm -f -- "):
             return done(0)
-        if "inkypi-update" in command:
-            stdout.write(b"InkyPi release preflight passed\nInkyPi release committed\n")
-            return done(self.update_exit)
+        if command == release_delta.CAPABILITIES_COMMAND:
+            if self.capabilities is None:
+                return done(2)
+            return done(0, json.dumps({"schema_version": 1, "capabilities": self.capabilities}).encode())
         raise AssertionError("unexpected command: " + command)
 
 
-def run_deploy(ctx, device, monkeypatch, chunk_bytes=16, execute=True):
+def run_deploy(ctx, device, monkeypatch, chunk_bytes=16, execute=True, force_full=False):
     monkeypatch.setattr(release_deploy, "CHUNK_BYTES", chunk_bytes)
     sleeps, printed = [], []
     result = release_deploy.deploy(ctx, "layout", execute=execute, connect=lambda: device, sleep=sleeps.append,
-                                   clock=lambda: DEPLOYED_AT, out=printed.append)
+                                   clock=lambda: DEPLOYED_AT, out=printed.append, force_full=force_full)
     return result, sleeps, printed
 
 
@@ -470,13 +515,22 @@ def test_deploy_uploads_verified_chunks_with_pauses_then_updates(ctx, monkeypatc
     assert ctx.load("upload-plan.json")["parts"] == [remote + f".part00{index}" for index in range(3)]
     assert device.copies == ctx.load("upload-plan.json")["parts"]
     assert sleeps == [5, 5, 5]
-    assert printed[:3] == ["uploaded part000", "uploaded part001", "uploaded part002"]
-    assert printed[3:] == ["InkyPi release preflight passed", "InkyPi release committed"]
+    assert printed[0] == "artifact full: the build recorded no delta artifact"
+    assert printed[1:4] == ["uploaded part000", "uploaded part001", "uploaded part002"]
+    assert printed[4:8] == ["19:54:16Z " + line for line in UPDATE_LINES]
+    assert printed[8].startswith("upload ") and printed[8].endswith("s (full)")
     assert device.files == {remote: payload}
-    assert device.commands[0] == "readlink -f /opt/inkypi/current"
+    assert device.commands[:2] == ["readlink -f /opt/inkypi/current", release_delta.CAPABILITIES_COMMAND]
     assert device.commands[-1] == release_deploy.update_command(remote, sha(payload), ACTIVE, NEW_RELEASE)
     assert not ctx.has("upload-chunks")
-    assert "InkyPi release committed" in ctx.path("deployment.log").read_text(encoding="utf-8")
+    assert ctx.path("deployment.log").read_text(encoding="utf-8").splitlines() == [
+        "19:54:16Z " + line for line in UPDATE_LINES]
+    assert result["artifact_format"] == "full" and result["artifact_sha256"] == sha(payload)
+    assert result["device_capabilities"] is None and result["upload_parts"] == 3
+    assert result["upload_seconds"] >= 0 and result["install_seconds"] >= 0
+    assert result["device_timing"] == [
+        {"phase": "inspect", "seconds": 1.5, "detail": "format=full", "at": DEPLOYED_AT.isoformat()},
+        {"phase": "wait-ready", "seconds": 41.0, "detail": "ready=yes", "at": DEPLOYED_AT.isoformat()}]
 
 
 def test_deploy_retries_an_unverified_chunk_with_backoff(ctx, monkeypatch):
@@ -532,6 +586,138 @@ def test_failed_update_is_recorded_as_a_terminal_failure(ctx, monkeypatch):
     assert record["status"] == "failed" and record["exit_code"] == 1
     with pytest.raises(ReleaseError, match="already has deployment.json"):
         run_deploy(ctx, FakeDevice(), monkeypatch)
+
+
+def prepare_delta(ctx, payload=b"delta-bytes"):
+    """Record a built delta next to the full artifact of prepare_deploy."""
+    delta = ctx.path("inkypi-85008032-delta.zip")
+    delta.write_bytes(payload)
+    manifest = ctx.load("current-manifest.json")
+    manifest["delta"] = {"format": "delta_v1", "artifact": str(delta), "artifact_sha256": sha(payload),
+                         "artifact_bytes": len(payload), "base_release": ACTIVE.rsplit("/", 1)[1],
+                         "base_commit": BASE, "changed_files": 2, "removed_files": 1}
+    ctx.save("current-manifest.json", manifest)
+    return payload
+
+
+def test_deploy_sends_the_delta_when_the_device_updater_reports_delta_v1(ctx, monkeypatch):
+    prepare_deploy(ctx)
+    delta = prepare_delta(ctx)
+    device = FakeDevice(capabilities=["delta_v1", "timing_v1"])
+
+    result, _sleeps, printed = run_deploy(ctx, device, monkeypatch)
+
+    remote = "/var/tmp/inkypi-" + NEW_RELEASE + ".zip"
+    assert device.files == {remote: delta}
+    assert device.commands[-1] == release_deploy.update_command(remote, sha(delta), ACTIVE, NEW_RELEASE, "delta_v1")
+    assert device.commands[-1].count(" --artifact-format delta_v1; ") == 1
+    assert result["artifact_format"] == "delta_v1" and result["artifact_sha256"] == sha(delta)
+    assert result["device_capabilities"] == ["delta_v1", "timing_v1"] and result["upload_parts"] == 1
+    assert ctx.load("upload-plan.json")["artifact_format"] == "delta_v1"
+    assert printed[0].startswith("artifact delta_v1: ")
+
+
+@pytest.mark.parametrize("capabilities, force_full, reason", [
+    (None, False, "does not report capabilities"),
+    (["timing_v1"], False, "lacks delta_v1"),
+    (["delta_v1"], True, "--full requested"),
+])
+def test_deploy_falls_back_to_the_full_artifact(ctx, monkeypatch, capabilities, force_full, reason):
+    payload = prepare_deploy(ctx)
+    prepare_delta(ctx)
+    device = FakeDevice(capabilities=capabilities)
+
+    result, _sleeps, _printed = run_deploy(ctx, device, monkeypatch, force_full=force_full)
+
+    remote = "/var/tmp/inkypi-" + NEW_RELEASE + ".zip"
+    assert device.files == {remote: payload}
+    assert device.commands[-1] == release_deploy.update_command(remote, sha(payload), ACTIVE, NEW_RELEASE)
+    assert result["artifact_format"] == "full" and reason in result["format_reason"]
+
+
+def test_deploy_uses_the_full_artifact_when_the_active_release_is_not_the_delta_base(ctx, monkeypatch):
+    payload = prepare_deploy(ctx)
+    prepare_delta(ctx)
+    manifest = ctx.load("current-manifest.json")
+    manifest["delta"]["base_release"] = "deploy-20261016T000000Z-other-95b4c029"
+    ctx.save("current-manifest.json", manifest)
+
+    result, _sleeps, _printed = run_deploy(ctx, FakeDevice(capabilities=["delta_v1"]), monkeypatch)
+
+    assert result["artifact_format"] == "full" and "not the delta's base" in result["format_reason"]
+    assert result["artifact_sha256"] == sha(payload)
+
+
+def test_a_tampered_delta_is_refused_before_contact(ctx, monkeypatch):
+    prepare_deploy(ctx)
+    prepare_delta(ctx)
+    ctx.path("inkypi-85008032-delta.zip").write_bytes(b"changed")
+
+    with pytest.raises(ReleaseError, match="Delta artifact hash mismatch.*--full"):
+        release_deploy.deploy(ctx, "layout", execute=True, connect=lambda: pytest.fail("contacted"))
+
+
+def test_a_failed_delta_deployment_names_the_full_retry_and_does_not_retry(ctx, monkeypatch):
+    prepare_deploy(ctx)
+    prepare_delta(ctx)
+    lines = ("InkyPi update failed: delta_v1 refused: src/a.py does not match its target sha256",
+             "timing: total 3.2s exit=1")
+    device = FakeDevice(capabilities=["delta_v1"], update_exit=1, update_lines=lines)
+
+    with pytest.raises(ReleaseError, match="new task folder .* deploy with --full"):
+        run_deploy(ctx, device, monkeypatch)
+
+    assert sum("inkypi-update --artifact" in command for command in device.commands) == 1
+    record = ctx.load("deployment.json")
+    assert record["status"] == "failed" and record["artifact_format"] == "delta_v1"
+    assert record["device_timing"] == [{"phase": "total", "seconds": 3.2, "detail": "exit=1",
+                                        "at": DEPLOYED_AT.isoformat()}]
+
+
+def test_dry_run_describes_the_delta_without_contact(ctx):
+    prepare_deploy(ctx)
+    delta = prepare_delta(ctx)
+
+    plan = release_deploy.deploy(ctx, "layout", execute=False, connect=lambda: pytest.fail("contacted"),
+                                 clock=lambda: DEPLOYED_AT)
+
+    assert plan["artifact_plan"] == "delta_v1 if the device updater reports it, else full"
+    assert plan["delta"]["artifact_bytes"] == len(delta) and plan["delta"]["chunks"] == 1
+    forced = release_deploy.deploy(ctx, "layout", execute=False, connect=lambda: pytest.fail("contacted"),
+                                   clock=lambda: DEPLOYED_AT, force_full=True)
+    assert forced["artifact_plan"] == "full: --full requested" and "delta" not in forced
+
+
+def test_timing_lines_are_parsed_strictly():
+    assert release_deploy.parse_timing("timing: delta-apply 12.4s linked=4974 written=36") == {
+        "phase": "delta-apply", "seconds": 12.4, "detail": "linked=4974 written=36"}
+    assert release_deploy.parse_timing("timing: total 600.0s") == {"phase": "total", "seconds": 600.0}
+    for line in ("timing: Total 1s", "timing: total s", "Fetching pinned jQuery...", "timing: x 1.0 s"):
+        assert release_deploy.parse_timing(line) is None
+    with pytest.raises(ReleaseError, match="Unknown artifact format"):
+        release_deploy.update_command("/var/tmp/inkypi-r.zip", "c" * 64, ACTIVE, "r", "delta_v2")
+
+
+def test_capability_answers_are_parsed_defensively():
+    def result(code, stdout):
+        return subprocess.CompletedProcess("x", code, stdout, b"")
+
+    assert release_delta.parse_capabilities(result(0, b'{"capabilities":["timing_v1","delta_v1"]}')) == [
+        "delta_v1", "timing_v1"]
+    for answer in (result(2, b""), result(0, b"usage: inkypi-update"), result(0, b'{"capabilities":"delta_v1"}'),
+                   result(0, b"[]"), result(0, b'{"capabilities":[1]}'), result(0, b"x" * (64 * 1024 + 1))):
+        assert release_delta.parse_capabilities(answer) is None
+
+
+def test_main_deploy_passes_the_full_flag(ctx, capsys, monkeypatch):
+    prepare_deploy(ctx)
+    prepare_delta(ctx)
+    monkeypatch.setattr(release_device.Device, "connect", classmethod(lambda *a, **k: pytest.fail("contacted")))
+
+    assert epaper_release.main(["deploy", "--task-dir", "outputs/round-b", "--release-label", "layout", "--full"],
+                               repo=ctx.repo) == 0
+
+    assert json.loads(capsys.readouterr().out)["artifact_plan"] == "full: --full requested"
 
 
 def test_dry_run_deploy_never_connects(ctx, monkeypatch):

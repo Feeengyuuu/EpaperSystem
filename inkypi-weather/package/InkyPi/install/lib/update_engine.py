@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import base64
+from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
 import hmac
@@ -45,13 +46,100 @@ MAX_COMPRESSION_RATIO = 1000
 DEFAULT_DISK_RESERVE_BYTES = 256 * 1024 * 1024
 BOOT_RECOVERY_UNIT_NAME = "inkypi-update-recover.service"
 
+# Reported by ``inkypi-update --print-capabilities``.  The delta code lives in
+# this module on purpose: the installed library directory only ever receives
+# this fixed set of files, so a new sibling module would not exist there for
+# the first rounds after the engine that needs it was installed.
+UPDATER_FEATURES = ("delta_v1", "timing_v1")
+FULL_ARTIFACT_FORMAT = "full"
+DELTA_ARTIFACT_FORMAT = "delta_v1"
+DELTA_FORMAT_V1 = "inkypi-delta-v1"
+DELTA_MANIFEST_MEMBER = "inkypi-delta.json"
+# Two levels deep, so an older engine's release-root search never mistakes a
+# delta payload for a complete package and refuses the artifact instead.
+DELTA_PAYLOAD_PREFIX = "delta/files/"
+MAX_DELTA_MANIFEST_BYTES = 16 * 1024 * 1024
+# Hard links cost no data blocks.  New bytes come from the payload, the few
+# copies whose mode differs, relocated venv scripts and RECORDs, vendor assets,
+# preflight bytecode and directory blocks; a changed lock needs a fresh venv.
+DELTA_OVERHEAD_BYTES = 128 * 1024 * 1024
+FRESH_VENV_RESERVE_BYTES = 1024 * 1024 * 1024
+DELTA_GENERATED_TOP_LEVEL = frozenset({"venv_inkypi", ".release-id", "cli"})
+# Kept literally (not imported) so a half-installed library cannot fail to
+# import; tests pin it to release_archive.MIGRATION_CONTROL_NAMES.
+DELTA_MIGRATION_CONTROL_NAMES = frozenset(
+    {
+        ".release-migrations.json",
+        ".nasapics-space-weather-v1.expectation.json",
+        ".headless-mode-v1.expectation.json",
+    }
+)
+DELTA_MODES = {"0644": 0o644, "0755": 0o755}
+RELEASE_EXECUTABLES = (
+    "install/inkypi",
+    "install/inkypi-update",
+    "install/preflight.py",
+    "install/bootstrap_admin.py",
+    "install/update_vendors.sh",
+    "cli/inkypi-plugin",
+)
+# Windows test hosts have no POSIX modes; tests patch these three seams.
+_MODES_ENFORCED = os.name != "nt"
+_COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}")
+_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+_VENDOR_PIN_PATTERN = re.compile(
+    r'^\s*"[^"|]+\|https://[^"|\s]+\|([0-9a-f]{64})\|([A-Za-z0-9_./-]+)"\s*$'
+)
+
 
 class ArtifactError(RuntimeError):
     pass
 
 
+class DeltaRefused(ArtifactError):
+    """A delta artifact cannot be applied; nothing outside staging changed."""
+
+    def __init__(self, message):
+        super().__init__(f"delta_v1 refused: {message}")
+
+
 class UpdateFailed(RuntimeError):
     pass
+
+
+def print_timing(line) -> None:
+    # A dropped SSH session must never turn a progress line into a failure.
+    try:
+        print(line, flush=True)
+    except (OSError, ValueError):
+        pass
+
+
+class PhaseTimer:
+    """Emit one short ``timing: <phase> <seconds>s [key=value ...]`` line per phase."""
+
+    def __init__(self, emit=None, clock=None):
+        self.emit = emit or print_timing
+        self.clock = clock or time.monotonic
+
+    @contextmanager
+    def phase(self, name):
+        started = self.clock()
+        note = {}
+        outcome = " failed"
+        try:
+            yield note
+            outcome = ""
+        finally:
+            details = "".join(f" {key}={value}" for key, value in note.items())
+            elapsed = max(0.0, self.clock() - started)
+            self.line(f"timing: {name} {elapsed:.1f}s{details}{outcome}")
+
+    def line(self, text) -> None:
+        try:
+            self.emit(text)
+        except Exception:
+            pass
 
 
 @dataclass(frozen=True)
@@ -78,6 +166,20 @@ class ManagedFile:
         object.__setattr__(self, "source_relative", relative.as_posix())
         object.__setattr__(self, "destination", Path(destination))
         object.__setattr__(self, "mode", normalized_mode)
+
+
+@dataclass(frozen=True)
+class DeltaPlan:
+    """A validated delta manifest: the complete target package plus its payload."""
+
+    base_commit: str
+    base_release: str
+    target_commit: str
+    hashes: dict
+    modes: dict
+    removed: tuple
+    changed: tuple
+    payload_bytes: int
 
 
 class FilesystemLinks:
@@ -134,12 +236,14 @@ class UpdateCoordinator:
         copy_file=None,
         fallback_release=None,
         host_migrator=None,
+        progress=None,
     ):
         self.layout = layout
         self.service = service
         self.links = links or FilesystemLinks()
         self.managed_files = tuple(managed_files)
         self.copy_file = copy_file or atomic_copy_file
+        self.timer = PhaseTimer(progress)
         # fallback_release is accepted and ignored.  Installed N-1 updaters
         # still pass the retired /usr/local/inkypi root, and boot recovery can
         # pair such a script with this library while managed files are half
@@ -194,35 +298,45 @@ class UpdateCoordinator:
             }
         journal.update_metadata(**activation_metadata)
         journal.transition(UpdatePhase.SWITCHED)
+        timer = self.timer
+        activation_started = timer.clock()
 
         try:
             if service_was_active:
-                self.service.stop()
+                with timer.phase("stop"):
+                    self.service.stop()
             if host_migration is not None:
                 journal.transition(UpdatePhase.APPLYING_HOST_MIGRATION)
-                self.host_migrator.apply(
-                    host_migration,
-                    host_migration_snapshot,
-                )
-            if legacy_source is not None:
-                self.links.migrate_legacy_directory(legacy_source, previous)
-            if previous is not None:
-                self.links.replace(previous, self.layout.previous_link)
-            self.links.replace(target, self.layout.current_link)
-            self._install_managed_files(target)
-            self.service.daemon_reload()
-            if not service_was_enabled:
-                self.service.enable()
+                with timer.phase("host-migration"):
+                    self.host_migrator.apply(
+                        host_migration,
+                        host_migration_snapshot,
+                    )
+            with timer.phase("switch"):
+                if legacy_source is not None:
+                    self.links.migrate_legacy_directory(legacy_source, previous)
+                if previous is not None:
+                    self.links.replace(previous, self.layout.previous_link)
+                self.links.replace(target, self.layout.current_link)
+                self._install_managed_files(target)
+                self.service.daemon_reload()
+                if not service_was_enabled:
+                    self.service.enable()
             journal.transition(UpdatePhase.STARTING)
-            self.service.start()
-            if not self.service.wait_ready(journal.release_id):
+            with timer.phase("start"):
+                self.service.start()
+            with timer.phase("wait-ready") as note:
+                ready = self.service.wait_ready(journal.release_id)
+                note["ready"] = "yes" if ready else "no"
+            if not ready:
                 raise UpdateFailed(
                     f"target release {journal.release_id} did not become ready"
                 )
             journal.transition(UpdatePhase.HEALTHY)
         except BaseException as error:
             try:
-                self.rollback(journal)
+                with timer.phase("rollback"):
+                    self.rollback(journal)
             except BaseException as rollback_error:
                 raise UpdateFailed(
                     f"release activation failed and rollback failed: {rollback_error}"
@@ -238,6 +352,8 @@ class UpdateCoordinator:
                 "target release is healthy but commit recording is pending recovery"
             ) from error
         self.cleanup_backups(journal)
+        elapsed = max(0.0, timer.clock() - activation_started)
+        timer.line(f"timing: activation {elapsed:.1f}s")
 
     def rollback(self, journal, *, defer_service_starts=False) -> None:
         if journal.phase in {
@@ -531,6 +647,8 @@ class ArtifactPreparer:
         disk_checker=None,
         links=None,
         updater_capabilities=(),
+        artifact_format=FULL_ARTIFACT_FORMAT,
+        progress=None,
     ):
         self.layout = layout
         self.config_path = Path(config_path)
@@ -543,6 +661,10 @@ class ArtifactPreparer:
             for capability in updater_capabilities
             if capability == "headless_mode_v1"
         )
+        if artifact_format not in {FULL_ARTIFACT_FORMAT, DELTA_ARTIFACT_FORMAT}:
+            raise ArtifactError(f"unsupported artifact format: {artifact_format}")
+        self.artifact_format = artifact_format
+        self._timer = PhaseTimer(progress)
 
     def _try_clone_current_venv(
         self,
@@ -551,20 +673,51 @@ class ArtifactPreparer:
         *,
         published_destination=None,
     ) -> bool:
-        """Clone a compatible current venv without sharing mutable files."""
+        """Clone a compatible current venv as hard links, copy-on-write.
+
+        Every file keeps the current release's inode until something must
+        change it; relocation then writes a new file and renames it into
+        place, so the live and previous releases are never modified.
+        """
+
+        with self._timer.phase("venv-check") as note:
+            source_venv = self._reusable_current_venv(requirements, destination)
+            note["reuse"] = "no" if source_venv is None else "yes"
+        if source_venv is None:
+            return False
+        destination_venv = Path(destination)
+        source_snapshot = _venv_metadata_digest(source_venv)
+        with self._timer.phase("venv-clone") as note:
+            note.update(_link_tree(source_venv, destination_venv))
+        if _venv_metadata_digest(source_venv) != source_snapshot:
+            raise ArtifactError("current virtual environment changed while it was copied")
+        if _venv_metadata_digest(destination_venv) != source_snapshot:
+            raise ArtifactError("candidate virtual environment copy is incomplete")
+        with self._timer.phase("venv-finalize") as note:
+            note["relocated"] = self._finalize_candidate_venv(
+                destination_venv,
+                Path(requirements),
+                published_destination=published_destination,
+                cwd=destination_venv,
+                environment_prevalidated=True,
+            )
+        return True
+
+    def _reusable_current_venv(self, requirements, destination):
+        """Return the current release's venv when the lock and every check allow reuse."""
 
         source = self.links.read(self.layout.current_link)
         if source is None:
-            return False
+            return None
         candidate_requirements = Path(requirements)
         destination_venv = Path(destination)
         try:
             releases_root = self.layout.releases_dir.resolve(strict=True)
             current_release = Path(source).resolve(strict=True)
         except OSError:
-            return False
+            return None
         if current_release.parent != releases_root:
-            return False
+            return None
 
         source_requirements = current_release / "install" / "requirements.txt"
         source_venv = current_release / "venv_inkypi"
@@ -577,13 +730,13 @@ class ArtifactPreparer:
         )
         regular_inputs = (source_requirements, candidate_requirements)
         if any(path.is_symlink() or not path.is_file() for path in regular_inputs):
-            return False
+            return None
         if not source_python.is_file():
-            return False
+            return None
         if source_venv.is_symlink() or not source_venv.is_dir():
-            return False
+            return None
         if not source_site_packages.is_dir() or source_site_packages.is_symlink():
-            return False
+            return None
         if destination_venv.exists() or destination_venv.is_symlink():
             raise ArtifactError("candidate release already contains a virtual environment")
         try:
@@ -594,7 +747,7 @@ class ArtifactPreparer:
                 _sha256_file(candidate_requirements),
             )
         except OSError:
-            return False
+            return None
         if (
             not locks_match
             or not _venv_uses_trusted_python(source_venv, self.python_executable)
@@ -605,7 +758,7 @@ class ArtifactPreparer:
             )
             or _venv_has_unsafe_path_file(source_venv)
         ):
-            return False
+            return None
 
         locked_versions = _locked_distribution_versions(candidate_requirements)
         try:
@@ -619,27 +772,8 @@ class ArtifactPreparer:
                 cwd=current_release,
             )
         except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-            return False
-
-        source_snapshot = _venv_metadata_digest(source_venv)
-        shutil.copytree(
-            source_venv,
-            destination_venv,
-            symlinks=True,
-            copy_function=shutil.copy2,
-        )
-        if _venv_metadata_digest(source_venv) != source_snapshot:
-            raise ArtifactError("current virtual environment changed while it was copied")
-        if _venv_metadata_digest(destination_venv) != source_snapshot:
-            raise ArtifactError("candidate virtual environment copy is incomplete")
-        self._finalize_candidate_venv(
-            destination_venv,
-            candidate_requirements,
-            published_destination=published_destination,
-            cwd=destination_venv,
-            environment_prevalidated=True,
-        )
-        return True
+            return None
+        return source_venv
 
     def _probe_venv_environment(self, venv, locked_versions, *, cwd) -> None:
         candidate_venv = Path(venv)
@@ -709,7 +843,7 @@ class ArtifactPreparer:
         published_destination=None,
         cwd,
         environment_prevalidated=False,
-    ) -> None:
+    ) -> int:
         candidate_venv = Path(venv)
         published_venv = (
             candidate_venv
@@ -735,7 +869,7 @@ class ArtifactPreparer:
                 cwd=cwd,
             )
         _normalize_venv_python_links(candidate_venv, self.python_executable)
-        _relocate_venv_paths(
+        relocated = _relocate_venv_paths(
             candidate_venv,
             published_venv,
             install_root=self.layout.install_root,
@@ -756,6 +890,7 @@ class ArtifactPreparer:
             cwd=cwd,
         )
         self._run_isolated_pip_check(candidate_venv, cwd=cwd)
+        return relocated
 
     def prepare(self, inspection, release_id, journal):
         # Resolve the default lazily because ensure_disk_reserve is defined below.
@@ -768,40 +903,72 @@ class ArtifactPreparer:
         if staging.exists() or staging.is_symlink():
             _safe_remove_tree(staging, self.layout.staging_dir)
         journal.update_metadata(staging_path=str(staging), target_path=str(target))
-        required = max(
-            inspection.uncompressed_bytes * 3,
-            inspection.uncompressed_bytes + 1024 * 1024 * 1024,
-        )
-        disk_checker(self.layout.install_root, required)
-
-        staging.mkdir(parents=True, mode=0o755)
-        archive_root = safe_extract_zip(inspection, staging / "archive")
-        package_root = find_release_root(archive_root)
         candidate = staging / "release"
-        os.replace(package_root, candidate)
-        if archive_root.exists():
-            shutil.rmtree(archive_root)
+        if self.artifact_format == DELTA_ARTIFACT_FORMAT:
+            plan = read_delta_manifest(inspection)
+            base = self._delta_base_release(plan)
+            journal.update_metadata(
+                artifact_format=DELTA_ARTIFACT_FORMAT,
+                delta_base_release=plan.base_release,
+                delta_changed_files=len(plan.changed),
+                delta_removed_files=len(plan.removed),
+            )
+            disk_checker(self.layout.install_root, delta_disk_requirement(plan, base))
+            staging.mkdir(parents=True, mode=0o755)
+            # Every check of the delta happens here, before any other step
+            # runs against the candidate and long before a pointer changes.
+            with self._timer.phase("delta-apply") as note:
+                note.update(apply_delta(inspection, plan, base, candidate))
+            with self._timer.phase("delta-verify") as note:
+                note["files"] = verify_package_tree(candidate, plan)
+        else:
+            if _zip_has_member(inspection.path, DELTA_MANIFEST_MEMBER):
+                raise ArtifactError("a delta artifact needs --artifact-format delta_v1")
+            required = max(
+                inspection.uncompressed_bytes * 3,
+                inspection.uncompressed_bytes + 1024 * 1024 * 1024,
+            )
+            disk_checker(self.layout.install_root, required)
+            staging.mkdir(parents=True, mode=0o755)
+            with self._timer.phase("extract") as note:
+                archive_root = safe_extract_zip(inspection, staging / "archive")
+                package_root = find_release_root(archive_root)
+                os.replace(package_root, candidate)
+                if archive_root.exists():
+                    shutil.rmtree(archive_root)
+                note["files"] = inspection.file_count
+        self._complete_candidate(candidate, staging, target, release_id)
+        with self._timer.phase("publish"):
+            os.replace(candidate, target)
+            fsync_directory(self.layout.releases_dir)
+            shutil.rmtree(staging)
+            fsync_directory(self.layout.staging_dir)
+        return target
+
+    def _complete_candidate(self, candidate, staging, target, release_id) -> None:
+        """Generated files, vendors, venv and preflight; identical for both formats.
+
+        Delta candidates share unchanged inodes with the live release, so no
+        step here may modify an existing file in place: every write creates a
+        new file and renames it over the old name.
+        """
+
         if not (candidate / "cli").exists() and (candidate / "install" / "cli").is_dir():
             shutil.copytree(candidate / "install" / "cli", candidate / "cli")
         _atomic_write_text(candidate / ".release-id", f"{release_id}\n", 0o644)
-        if os.name != "nt":
-            for executable in (
-                candidate / "install" / "inkypi",
-                candidate / "install" / "inkypi-update",
-                candidate / "install" / "preflight.py",
-                candidate / "install" / "bootstrap_admin.py",
-                candidate / "install" / "update_vendors.sh",
-                candidate / "cli" / "inkypi-plugin",
-            ):
-                if executable.is_file():
-                    os.chmod(executable, 0o755)
+        for relative in RELEASE_EXECUTABLES:
+            executable = candidate.joinpath(*PurePosixPath(relative).parts)
+            if executable.is_file():
+                _ensure_mode_copy_on_write(executable, 0o755)
 
         vendor_script = candidate / "install" / "update_vendors.sh"
-        self.run_command(
-            ["bash", str(vendor_script)],
-            cwd=candidate,
-            timeout=180,
-        )
+        with self._timer.phase("vendors") as note:
+            note["seeded"] = self._seed_vendor_assets(candidate)
+            self.run_command(
+                ["bash", str(vendor_script)],
+                cwd=candidate,
+                timeout=180,
+            )
         venv = candidate / "venv_inkypi"
         requirements = candidate / "install" / "requirements.txt"
         reused_venv = self._try_clone_current_venv(
@@ -810,38 +977,40 @@ class ArtifactPreparer:
             published_destination=target / "venv_inkypi",
         )
         if not reused_venv:
-            self.run_command(
-                [self.python_executable, "-m", "venv", str(venv)],
-                cwd=candidate,
-                timeout=180,
-            )
-            venv_python = venv / "bin" / "python"
-            with tempfile.TemporaryDirectory(prefix="pip-", dir=staging) as pip_tmpdir:
-                pip_environment = os.environ.copy()
-                pip_environment["TMPDIR"] = pip_tmpdir
+            with self._timer.phase("venv-pip"):
                 self.run_command(
-                    [
-                        str(venv_python),
-                        "-m",
-                        "pip",
-                        "install",
-                        "--require-hashes",
-                        "--no-deps",
-                        "--no-compile",
-                        "--disable-pip-version-check",
-                        "-r",
-                        str(requirements),
-                    ],
+                    [self.python_executable, "-m", "venv", str(venv)],
                     cwd=candidate,
-                    timeout=1200,
-                    env=pip_environment,
+                    timeout=180,
                 )
-            self._finalize_candidate_venv(
-                venv,
-                requirements,
-                published_destination=target / "venv_inkypi",
-                cwd=candidate,
-            )
+                venv_python = venv / "bin" / "python"
+                with tempfile.TemporaryDirectory(prefix="pip-", dir=staging) as pip_tmpdir:
+                    pip_environment = os.environ.copy()
+                    pip_environment["TMPDIR"] = pip_tmpdir
+                    self.run_command(
+                        [
+                            str(venv_python),
+                            "-m",
+                            "pip",
+                            "install",
+                            "--require-hashes",
+                            "--no-deps",
+                            "--no-compile",
+                            "--disable-pip-version-check",
+                            "-r",
+                            str(requirements),
+                        ],
+                        cwd=candidate,
+                        timeout=1200,
+                        env=pip_environment,
+                    )
+            with self._timer.phase("venv-finalize") as note:
+                note["relocated"] = self._finalize_candidate_venv(
+                    venv,
+                    requirements,
+                    published_destination=target / "venv_inkypi",
+                    cwd=candidate,
+                )
         venv_python = venv / "bin" / "python"
         config_source = self.config_path
         if not config_source.is_file():
@@ -858,18 +1027,83 @@ class ArtifactPreparer:
             ]
         for capability in self.updater_capabilities:
             preflight_command.extend(("--updater-capability", capability))
-        self.run_command(
-            preflight_command,
-            cwd=candidate,
-            timeout=600,
-        )
+        with self._timer.phase("preflight"):
+            self.run_command(
+                preflight_command,
+                cwd=candidate,
+                timeout=600,
+            )
 
-        _fsync_tree(candidate)
-        os.replace(candidate, target)
-        fsync_directory(self.layout.releases_dir)
-        shutil.rmtree(staging)
-        fsync_directory(self.layout.staging_dir)
-        return target
+        with self._timer.phase("fsync"):
+            _fsync_tree(candidate)
+
+    def _current_release_root(self):
+        source = self.links.read(self.layout.current_link)
+        if source is None:
+            return None
+        try:
+            releases_root = self.layout.releases_dir.resolve(strict=True)
+            current_release = Path(source).resolve(strict=True)
+        except OSError:
+            return None
+        if current_release.parent != releases_root or not current_release.is_dir():
+            return None
+        return current_release
+
+    def _delta_base_release(self, plan):
+        """The active release, which must be exactly the delta's base release."""
+
+        base = self._current_release_root()
+        if base is None:
+            raise DeltaRefused("no active release to apply the delta to")
+        if base.name != plan.base_release:
+            raise DeltaRefused(
+                f"active release {base.name} is not the delta base {plan.base_release}"
+            )
+        identity = base / ".release-id"
+        try:
+            if identity.is_symlink() or not identity.is_file():
+                raise DeltaRefused("active release has no release identity")
+            with identity.open(encoding="utf-8") as stream:
+                recorded = stream.readline(66).rstrip("\r\n")
+        except (OSError, UnicodeError) as error:
+            raise DeltaRefused("active release identity cannot be read") from error
+        if recorded != plan.base_release:
+            raise DeltaRefused("active release identity does not match the delta base")
+        return base
+
+    def _seed_vendor_assets(self, candidate) -> int:
+        """Reuse pinned vendor files the live release already holds.
+
+        update_vendors.sh then verifies their pinned hashes instead of
+        downloading; any file that is absent or differs is still downloaded.
+        """
+
+        source = self._current_release_root()
+        if source is None:
+            return 0
+        seeded = 0
+        for relative, expected in _vendor_pins(candidate / "install" / "update_vendors.sh"):
+            parts = PurePosixPath(relative).parts
+            destination = candidate.joinpath(*parts)
+            created = False
+            try:
+                if os.path.lexists(destination) or not _real_directory_chain(candidate, parts[:-1]):
+                    continue
+                origin = _regular_file_below(source, parts)
+                if origin is None or not hmac.compare_digest(_sha256_file(origin), expected):
+                    continue
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                _link_or_copy(origin, destination)
+                created = True
+                _ensure_mode_copy_on_write(destination, 0o644)
+            except (OSError, ArtifactError):
+                # Seeding only saves a download; the vendor script still fetches it.
+                if created:
+                    destination.unlink(missing_ok=True)
+                continue
+            seeded += 1
+        return seeded
 
     def ensure_bootstrap_token(self, release_path) -> None:
         release = Path(release_path)
@@ -1339,6 +1573,444 @@ def find_release_root(extracted_root) -> Path:
     if len(unique) != 1:
         raise ArtifactError("release archive must contain exactly one InkyPi package root")
     return unique[0]
+
+
+_DELTA_REQUIRED_KEYS = frozenset(
+    {
+        "format",
+        "base_commit",
+        "base_release",
+        "target_commit",
+        "hashes",
+        "modes",
+        "removed",
+        "changed",
+    }
+)
+_DELTA_OPTIONAL_KEYS = frozenset({"full_artifact_sha256"})
+
+
+def read_delta_manifest(inspection) -> DeltaPlan:
+    """Read and validate the manifest of an inspected delta artifact.
+
+    The manifest is covered by the artifact SHA256 the caller verified, and
+    it lists the complete target package, so the candidate can be proven
+    file by file against it after it is built.
+    """
+
+    current = _sha256_file(inspection.path)
+    if not hmac.compare_digest(current, inspection.sha256):
+        raise ArtifactError("release artifact changed after SHA256 verification")
+    try:
+        with zipfile.ZipFile(inspection.path) as archive:
+            infos = archive.infolist()
+            names = [info.filename for info in infos]
+            if len(set(names)) != len(names):
+                raise DeltaRefused("the artifact repeats an archive member")
+            manifests = [info for info in infos if info.filename == DELTA_MANIFEST_MEMBER]
+            if len(manifests) != 1:
+                raise DeltaRefused("the artifact has no delta manifest")
+            if manifests[0].file_size > MAX_DELTA_MANIFEST_BYTES:
+                raise DeltaRefused("the delta manifest is too large")
+            with archive.open(manifests[0]) as stream:
+                raw = stream.read(MAX_DELTA_MANIFEST_BYTES + 1)
+            payload = {}
+            for info in infos:
+                if info.filename == DELTA_MANIFEST_MEMBER:
+                    continue
+                if info.is_dir() or not info.filename.startswith(DELTA_PAYLOAD_PREFIX):
+                    raise DeltaRefused(f"unexpected archive member {info.filename}")
+                payload[info.filename[len(DELTA_PAYLOAD_PREFIX):]] = info.file_size
+    except ArtifactError:
+        raise
+    except (OSError, zipfile.BadZipFile, RuntimeError) as error:
+        raise DeltaRefused("the artifact is not a readable ZIP archive") from error
+    if len(raw) > MAX_DELTA_MANIFEST_BYTES:
+        raise DeltaRefused("the delta manifest is too large")
+    try:
+        document = json.loads(raw.decode("utf-8"), object_pairs_hook=_strict_json_object)
+    except (UnicodeError, ValueError) as error:
+        raise DeltaRefused("the delta manifest is not strict JSON") from error
+    return _validated_delta_plan(document, payload)
+
+
+def _validated_delta_plan(document, payload) -> DeltaPlan:
+    if not isinstance(document, dict):
+        raise DeltaRefused("the delta manifest must be a JSON object")
+    keys = set(document)
+    if not _DELTA_REQUIRED_KEYS <= keys or keys - _DELTA_REQUIRED_KEYS - _DELTA_OPTIONAL_KEYS:
+        raise DeltaRefused("the delta manifest has missing or unexpected keys")
+    if document["format"] != DELTA_FORMAT_V1:
+        raise DeltaRefused("unsupported delta format")
+    for key in ("base_commit", "target_commit"):
+        if not isinstance(document[key], str) or not _COMMIT_PATTERN.fullmatch(document[key]):
+            raise DeltaRefused(f"{key} is not a full commit id")
+    try:
+        base_release = validate_release_id(document["base_release"])
+    except ValueError as error:
+        raise DeltaRefused("base_release is not a release id") from error
+    full_sha256 = document.get("full_artifact_sha256")
+    if full_sha256 is not None and (
+        not isinstance(full_sha256, str) or not _SHA256_PATTERN.fullmatch(full_sha256)
+    ):
+        raise DeltaRefused("full_artifact_sha256 is malformed")
+    hashes = document["hashes"]
+    if not isinstance(hashes, dict) or not hashes or len(hashes) > MAX_ARCHIVE_FILES:
+        raise DeltaRefused("the target hash map is empty or too large")
+    for name, digest in hashes.items():
+        _validated_delta_path(name)
+        if not isinstance(digest, str) or not _SHA256_PATTERN.fullmatch(digest):
+            raise DeltaRefused(f"invalid sha256 for {name}")
+    directories = {
+        parent.as_posix()
+        for name in hashes
+        for parent in PurePosixPath(name).parents
+        if parent.as_posix() != "."
+    }
+    clashes = directories & set(hashes)
+    if clashes:
+        raise DeltaRefused(f"{sorted(clashes)[0]} is both a file and a directory")
+    modes = document["modes"]
+    if (
+        not isinstance(modes, dict)
+        or set(modes) != set(hashes)
+        or any(not isinstance(value, str) or value not in DELTA_MODES for value in modes.values())
+    ):
+        raise DeltaRefused("the mode map must give 0644 or 0755 for every target file")
+    removed = _validated_delta_path_list(document["removed"], "removed")
+    if set(removed) & set(hashes):
+        raise DeltaRefused("a removed path is still part of the target")
+    changed = _validated_delta_path_list(document["changed"], "changed")
+    if not set(changed) <= set(hashes):
+        raise DeltaRefused("a changed path is not part of the target")
+    if set(changed) != set(payload):
+        raise DeltaRefused("the delta payload does not match its manifest")
+    return DeltaPlan(
+        base_commit=document["base_commit"],
+        base_release=base_release,
+        target_commit=document["target_commit"],
+        hashes=dict(hashes),
+        modes={name: DELTA_MODES[value] for name, value in modes.items()},
+        removed=tuple(removed),
+        changed=tuple(changed),
+        payload_bytes=sum(payload.values()),
+    )
+
+
+def _validated_delta_path_list(value, label) -> list:
+    if not isinstance(value, list) or len(value) > MAX_ARCHIVE_FILES:
+        raise DeltaRefused(f"{label} must be a bounded list of paths")
+    for name in value:
+        _validated_delta_path(name)
+    if len(set(value)) != len(value):
+        raise DeltaRefused(f"{label} repeats a path")
+    return value
+
+
+def _validated_delta_path(name) -> PurePosixPath:
+    """A package-relative POSIX path a delta may name (never a generated file)."""
+
+    if (
+        not isinstance(name, str)
+        or not name
+        or len(name) > 1024
+        or "\\" in name
+        or any(ord(character) < 32 or ord(character) == 127 for character in name)
+    ):
+        raise DeltaRefused("unsafe package path")
+    parts = name.split("/")
+    path = PurePosixPath(name)
+    if path.is_absolute() or any(part in {"", ".", ".."} or ":" in part for part in parts):
+        raise DeltaRefused(f"unsafe package path {name!r}")
+    if (
+        parts[0] in DELTA_GENERATED_TOP_LEVEL
+        or "__pycache__" in parts
+        or path.suffix == ".pyc"
+        or path.name in DELTA_MIGRATION_CONTROL_NAMES
+        or is_device_owned_yahei_font(path)
+    ):
+        raise DeltaRefused(f"{name} is not a package file a delta may carry")
+    return path
+
+
+def delta_disk_requirement(plan, base) -> int:
+    """Bytes a delta install writes: payload and overhead, plus a venv if the lock changed."""
+
+    required = plan.payload_bytes * 2 + DELTA_OVERHEAD_BYTES
+    lock = Path(base) / "install" / "requirements.txt"
+    try:
+        lock_matches = (
+            not lock.is_symlink()
+            and lock.is_file()
+            and hmac.compare_digest(
+                _sha256_file(lock),
+                plan.hashes.get("install/requirements.txt", ""),
+            )
+        )
+    except OSError:
+        lock_matches = False
+    if not lock_matches:
+        required += FRESH_VENV_RESERVE_BYTES
+    return required
+
+
+def apply_delta(inspection, plan, base, candidate) -> dict:
+    """Build the candidate package from the base release plus the delta payload.
+
+    Unchanged files become hard links to the base release's inodes (a copy
+    when linking is impossible or the mode differs); changed files are new
+    files written from the payload; removed files are simply not created.
+    Nothing outside ``candidate`` is written and no existing entry is ever
+    followed or replaced: every destination is created exclusively.
+    """
+
+    current = _sha256_file(inspection.path)
+    if not hmac.compare_digest(current, inspection.sha256):
+        raise ArtifactError("release artifact changed after SHA256 verification")
+    root = Path(candidate)
+    root.mkdir(mode=0o755)
+    counts = {"linked": 0, "written": 0, "copied": 0, "removed": len(plan.removed)}
+    changed = set(plan.changed)
+    checked_directories = set()
+    try:
+        with zipfile.ZipFile(inspection.path) as archive:
+            payload = {
+                info.filename[len(DELTA_PAYLOAD_PREFIX):]: info
+                for info in archive.infolist()
+                if info.filename.startswith(DELTA_PAYLOAD_PREFIX)
+            }
+            if set(payload) != changed:
+                raise DeltaRefused("the delta payload does not match its manifest")
+            for name in sorted(plan.hashes):
+                parts = PurePosixPath(name).parts
+                destination = root.joinpath(*parts)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                mode = plan.modes[name]
+                if name in changed:
+                    _write_delta_member(archive, payload[name], destination, plan.hashes[name])
+                    _set_mode(destination, mode)
+                    counts["written"] += 1
+                    continue
+                source = _base_package_file(base, parts, checked_directories)
+                if _MODES_ENFORCED and _file_mode(source) != mode:
+                    _copy_to_new_file(source, destination, mode)
+                    counts["copied"] += 1
+                elif _link_or_copy(source, destination) == "linked":
+                    counts["linked"] += 1
+                else:
+                    _set_mode(destination, mode)
+                    counts["copied"] += 1
+        fsync_directory(root)
+    except ArtifactError:
+        raise
+    except (OSError, zipfile.BadZipFile, RuntimeError) as error:
+        raise DeltaRefused(f"the candidate cannot be built: {error}") from error
+    return counts
+
+
+def verify_package_tree(root, plan) -> int:
+    """Prove the candidate holds exactly the target package: names, hashes and modes."""
+
+    root_path = Path(root)
+    seen = set()
+    try:
+        for current, directories, files in os.walk(root_path, onerror=_raise_walk_error):
+            current_path = Path(current)
+            for name in directories:
+                if os.path.islink(current_path / name):
+                    raise DeltaRefused(f"symlink {name} in the candidate")
+            for name in files:
+                path = current_path / name
+                relative = path.relative_to(root_path).as_posix()
+                expected = plan.hashes.get(relative)
+                if expected is None:
+                    raise DeltaRefused(f"unlisted file {relative} in the candidate")
+                if not stat.S_ISREG(os.lstat(path).st_mode):
+                    raise DeltaRefused(f"{relative} is not a regular file")
+                if not hmac.compare_digest(_sha256_file(path), expected):
+                    raise DeltaRefused(f"{relative} does not match its target sha256")
+                if _MODES_ENFORCED and _file_mode(path) != plan.modes[relative]:
+                    raise DeltaRefused(f"{relative} does not have its target mode")
+                seen.add(relative)
+    except ArtifactError:
+        raise
+    except OSError as error:
+        raise DeltaRefused(f"the candidate cannot be verified: {error}") from error
+    missing = set(plan.hashes) - seen
+    if missing:
+        raise DeltaRefused(f"{len(missing)} target files are missing, e.g. {sorted(missing)[0]}")
+    if not _is_release_root(root_path):
+        raise DeltaRefused("the candidate is not a complete InkyPi package")
+    return len(seen)
+
+
+def _write_delta_member(archive, info, destination, expected_sha256) -> None:
+    digest = hashlib.sha256()
+    copied = 0
+    with archive.open(info, "r") as source, Path(destination).open("xb") as output:
+        while True:
+            chunk = source.read(1024 * 1024)
+            if not chunk:
+                break
+            copied += len(chunk)
+            if copied > info.file_size or copied > MAX_ARCHIVE_FILE_BYTES:
+                raise DeltaRefused(f"{info.filename} exceeded its declared size")
+            digest.update(chunk)
+            output.write(chunk)
+        output.flush()
+        os.fsync(output.fileno())
+    if copied != info.file_size:
+        raise DeltaRefused(f"{info.filename} does not match its declared size")
+    if not hmac.compare_digest(digest.hexdigest(), expected_sha256):
+        raise DeltaRefused(f"{info.filename} does not match its target sha256")
+
+
+def _base_package_file(base, parts, checked_directories) -> Path:
+    """A regular file of the base release reached through real directories only."""
+
+    name = "/".join(parts)
+    current = Path(base)
+    for index, part in enumerate(parts[:-1]):
+        current = current / part
+        key = parts[: index + 1]
+        if key in checked_directories:
+            continue
+        try:
+            info = os.lstat(current)
+        except FileNotFoundError as error:
+            raise DeltaRefused(f"the base release lacks {name}") from error
+        if not stat.S_ISDIR(info.st_mode):
+            raise DeltaRefused(f"{'/'.join(key)} in the base release is not a directory")
+        checked_directories.add(key)
+    source = current / parts[-1]
+    try:
+        info = os.lstat(source)
+    except FileNotFoundError as error:
+        raise DeltaRefused(f"the base release lacks {name}") from error
+    if not stat.S_ISREG(info.st_mode):
+        raise DeltaRefused(f"{name} in the base release is not a regular file")
+    return source
+
+
+def _regular_file_below(root, parts):
+    try:
+        return _base_package_file(root, parts, set())
+    except ArtifactError:
+        return None
+
+
+def _real_directory_chain(root, parts) -> bool:
+    current = Path(root)
+    for part in parts:
+        current = current / part
+        try:
+            info = os.lstat(current)
+        except FileNotFoundError:
+            return True
+        if not stat.S_ISDIR(info.st_mode):
+            return False
+    return True
+
+
+def _vendor_pins(script) -> tuple:
+    """(relative path, sha256) of every pinned asset in an update_vendors.sh."""
+
+    path = Path(script)
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > 256 * 1024:
+            return ()
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
+        return ()
+    pins = []
+    for line in lines:
+        match = _VENDOR_PIN_PATTERN.match(line)
+        if match is None:
+            continue
+        relative = match.group(2)
+        if relative.startswith("/") or any(part in {"", ".", ".."} for part in relative.split("/")):
+            continue
+        if relative.split("/")[0] in DELTA_GENERATED_TOP_LEVEL:
+            continue
+        pins.append((relative, match.group(1)))
+    return tuple(pins)
+
+
+def _link_tree(source, destination) -> dict:
+    """Recreate ``source`` at ``destination``; regular files share their inodes.
+
+    Symlinks are recreated as symlinks (never followed), directories are new
+    and get the source's modes, and any other file type is refused.
+    """
+
+    source_root = Path(source)
+    destination_root = Path(destination)
+    counts = {"linked": 0, "copied": 0}
+    destination_root.mkdir(mode=0o700)
+    directory_modes = [(destination_root, stat.S_IMODE(os.lstat(source_root).st_mode))]
+    for current, directories, files in os.walk(source_root, onerror=_raise_walk_error):
+        current_path = Path(current)
+        target_directory = destination_root.joinpath(*current_path.relative_to(source_root).parts)
+        descend = []
+        for name in sorted(directories):
+            origin = current_path / name
+            info = os.lstat(origin)
+            if stat.S_ISLNK(info.st_mode):
+                os.symlink(os.readlink(origin), target_directory / name, target_is_directory=True)
+            elif stat.S_ISDIR(info.st_mode):
+                (target_directory / name).mkdir(mode=0o700)
+                directory_modes.append((target_directory / name, stat.S_IMODE(info.st_mode)))
+                descend.append(name)
+            else:
+                raise ArtifactError(f"virtual environment contains an unsupported entry: {origin}")
+        directories[:] = descend
+        for name in sorted(files):
+            origin = current_path / name
+            info = os.lstat(origin)
+            if stat.S_ISLNK(info.st_mode):
+                os.symlink(os.readlink(origin), target_directory / name)
+            elif stat.S_ISREG(info.st_mode):
+                counts[_link_or_copy(origin, target_directory / name)] += 1
+            else:
+                raise ArtifactError(f"virtual environment contains an unsupported file: {origin}")
+    if os.name != "nt":
+        for path, mode in reversed(directory_modes):
+            os.chmod(path, mode)
+    return counts
+
+
+def _link_or_copy(source, destination) -> str:
+    """Hard-link a regular file, or copy it to a new file when linking fails."""
+
+    try:
+        os.link(source, destination)
+    except FileExistsError:
+        raise
+    except OSError:
+        _copy_to_new_file(source, destination, stat.S_IMODE(os.lstat(source).st_mode))
+        return "copied"
+    return "linked"
+
+
+def _zip_has_member(path, name) -> bool:
+    try:
+        with zipfile.ZipFile(path) as archive:
+            return any(info.filename == name for info in archive.infolist())
+    except (OSError, zipfile.BadZipFile, RuntimeError) as error:
+        raise ArtifactError("release artifact is not a readable ZIP archive") from error
+
+
+def _raise_walk_error(error) -> None:
+    raise error
+
+
+def _strict_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
 
 
 def atomic_copy_file(source, destination, mode) -> None:
@@ -1830,7 +2502,7 @@ def _render_record_rows(rows) -> str:
     return output.getvalue()
 
 
-def _relocate_venv_paths(root, published_destination, *, install_root) -> None:
+def _relocate_venv_paths(root, published_destination, *, install_root) -> int:
     venv = Path(root).resolve(strict=True)
     final_venv = Path(published_destination).resolve(strict=False)
     managed_root = Path(install_root).resolve(strict=True)
@@ -1893,10 +2565,10 @@ def _relocate_venv_paths(root, published_destination, *, install_root) -> None:
         row[2] = str(len(relocated))
         record_updates[record] = _render_record_rows(record_documents[record])
 
+    # A cloned venv shares inodes with the live and previous releases: write
+    # each relocated file as a new inode instead of modifying it in place.
     for path, relocated in planned.items():
-        path_mode = stat.S_IMODE(path.stat().st_mode)
-        path.write_bytes(relocated)
-        os.chmod(path, path_mode)
+        _atomic_write_bytes(path, relocated, _file_mode(path))
     for record, payload in record_updates.items():
         _atomic_write_text(record, payload, stat.S_IMODE(record.stat().st_mode))
 
@@ -1914,6 +2586,7 @@ def _relocate_venv_paths(root, published_destination, *, install_root) -> None:
         has_staging_source = source_bytes != final_bytes and source_pattern.search(payload)
         if next(stale_matches, None) is not None or has_staging_source:
             raise ArtifactError("virtual environment still references a staging release")
+    return len(planned)
 
 
 def _sha256_file(path) -> str:
@@ -1984,3 +2657,92 @@ def _atomic_write_text(path, text, mode) -> None:
             temporary.unlink()
         except FileNotFoundError:
             pass
+
+
+def _file_mode(path) -> int:
+    return stat.S_IMODE(os.lstat(path).st_mode)
+
+
+def _set_mode(path, mode) -> None:
+    if _MODES_ENFORCED:
+        os.chmod(path, int(mode))
+
+
+def _ensure_mode_copy_on_write(path, mode) -> bool:
+    """Give a regular file ``mode`` without changing an inode another release shares.
+
+    chmod changes the inode, so on a hard link it would also change the live
+    and previous releases; a shared file is replaced by a private copy.
+    """
+
+    target = Path(path)
+    info = os.lstat(target)
+    if not stat.S_ISREG(info.st_mode):
+        raise ArtifactError(f"refusing to change the mode of a non-regular file: {target}")
+    if not _MODES_ENFORCED or _file_mode(target) == int(mode):
+        return False
+    if info.st_nlink > 1:
+        _replace_with_private_copy(target, mode)
+    else:
+        _set_mode(target, mode)
+    return True
+
+
+def _copy_to_new_file(source, destination, mode) -> None:
+    """Copy into a destination that must not exist yet (never follows an entry)."""
+
+    info = os.lstat(source)
+    with Path(source).open("rb") as input_stream, Path(destination).open("xb") as output:
+        shutil.copyfileobj(input_stream, output, length=1024 * 1024)
+        output.flush()
+        os.fsync(output.fileno())
+    os.utime(destination, ns=(info.st_atime_ns, info.st_mtime_ns))
+    _set_mode(destination, mode)
+
+
+def _replace_with_private_copy(path, mode) -> None:
+    target = Path(path)
+    info = os.lstat(target)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=target.parent,
+        prefix=f".{target.name}.",
+        suffix=".tmp",
+    )
+    temporary = Path(temporary_name)
+    try:
+        with target.open("rb") as source, os.fdopen(descriptor, "wb") as output:
+            descriptor = -1
+            shutil.copyfileobj(source, output, length=1024 * 1024)
+            output.flush()
+            os.fsync(output.fileno())
+        os.utime(temporary, ns=(info.st_atime_ns, info.st_mtime_ns))
+        _set_mode(temporary, mode)
+        os.replace(temporary, target)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+
+
+def _atomic_write_bytes(path, payload, mode) -> None:
+    """Write a new inode and rename it over ``path``; the old inode is never modified."""
+
+    target = Path(path)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=target.parent,
+        prefix=f".{target.name}.",
+        suffix=".tmp",
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = -1
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        _set_mode(temporary, mode)
+        os.replace(temporary, target)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)

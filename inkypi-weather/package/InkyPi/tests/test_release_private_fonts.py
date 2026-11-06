@@ -205,6 +205,22 @@ def test_execute_streams_original_font_and_records_only_metadata(ctx, font, stat
     assert {p.suffix for p in ctx.task_dir.iterdir()} == {".json"}
 
 
+def test_a_delta_round_names_the_delta_artifact_the_device_committed(ctx, font):
+    delta_sha = "e" * 64
+    manifest, deployment = ctx.load("current-manifest.json"), ctx.load("deployment.json")
+    manifest["delta"] = {"format": "delta_v1", "artifact_sha256": delta_sha}
+    ctx.save("current-manifest.json", manifest)
+    ctx.save("deployment.json", {**deployment, "artifact_format": "delta_v1", "artifact_sha256": delta_sha})
+    device = FakeDevice()
+
+    result = private.install(ctx, "nba", font, execute=True, connect=lambda: device)
+
+    assert shlex.split(device.calls[0][0])[-1] == delta_sha and result["artifact_sha256"] == delta_sha
+    ctx.save("deployment.json", {**deployment, "artifact_sha256": "f" * 64})
+    with pytest.raises(ReleaseError, match="not an artifact of this round's build"):
+        private.install(ctx, "nba", font, execute=True, connect=no_device)
+
+
 def test_changed_active_release_refuses_without_upload(ctx, font):
     device = FakeDevice(active="another-release")
     with pytest.raises(ReleaseError, match="no longer"):

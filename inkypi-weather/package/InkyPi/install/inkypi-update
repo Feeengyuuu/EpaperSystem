@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 
 
@@ -66,6 +67,46 @@ from update_engine import (  # noqa: E402
     inspect_artifact,
     prune_releases,
 )
+import update_engine as _engine  # noqa: E402
+
+FULL_ARTIFACT_FORMAT = "full"
+DELTA_ARTIFACT_FORMAT = "delta_v1"
+
+
+def _library_features():
+    """Features of the library actually loaded, which may predate this script."""
+
+    return tuple(
+        feature
+        for feature in getattr(_engine, "UPDATER_FEATURES", ())
+        if isinstance(feature, str)
+    )
+
+
+def print_capabilities() -> int:
+    """Report what this updater can install; older updaters fail this call."""
+
+    features = _library_features()
+    formats = [FULL_ARTIFACT_FORMAT]
+    if DELTA_ARTIFACT_FORMAT in features:
+        formats.append(DELTA_ARTIFACT_FORMAT)
+    document = {
+        "schema_version": 1,
+        "capabilities": sorted(set(features)),
+        "artifact_formats": formats,
+        "library": str(LIB_DIR),
+    }
+    print(json.dumps(document, sort_keys=True, separators=(",", ":")))
+    return 0
+
+
+def _timing(phase, started, detail=""):
+    # Mirrors update_engine.PhaseTimer so timing survives an older library.
+    elapsed = max(0.0, time.monotonic() - started)
+    try:
+        print(f"timing: {phase} {elapsed:.1f}s{' ' + detail if detail else ''}", flush=True)
+    except (OSError, ValueError):
+        pass
 
 
 def _managed_files(args, *, include_boot_recovery=True):
@@ -580,6 +621,24 @@ def _record_pre_switch_failure(layout, coordinator, journal, error):
 
 
 def run_update(args) -> int:
+    started = time.monotonic()
+    outcome = "failed"
+    try:
+        result = _run_update(args)
+        outcome = "committed" if result == 0 else f"exit={result}"
+        return result
+    finally:
+        _timing("total", started, outcome)
+
+
+def _run_update(args) -> int:
+    artifact_format = getattr(args, "artifact_format", None) or FULL_ARTIFACT_FORMAT
+    preparer_options = {}
+    if artifact_format != FULL_ARTIFACT_FORMAT:
+        # Refuse before any state changes when the loaded library predates it.
+        if artifact_format != DELTA_ARTIFACT_FORMAT or artifact_format not in _library_features():
+            raise RuntimeError(f"updater library does not support {artifact_format}")
+        preparer_options["artifact_format"] = artifact_format
     layout = ReleaseLayout(args.install_root, args.state_root)
     layout.ensure()
     service = SystemdService(
@@ -600,10 +659,12 @@ def run_update(args) -> int:
         layout,
         config_path=args.config,
         python_executable=args.python,
+        **preparer_options,
     )
     journal = None
     updater_capabilities = ()
     durable_attestation = None
+    bootstrap_started = time.monotonic()
     # Consume an older durable journal and install/enable every recovery file
     # under the same lock.  Starting the oneshot is nonblocking here: its
     # recover-only process waits for this lock after we leave the context.
@@ -617,6 +678,7 @@ def run_update(args) -> int:
 
     if updater_capabilities:
         _wait_boot_recovery_capability(args)
+    _timing("recovery-bootstrap", bootstrap_started)
 
     with UpdateLock(layout.lock_path):
         if layout.journal_path.exists():
@@ -640,23 +702,30 @@ def run_update(args) -> int:
             )
         if hasattr(preparer, "updater_capabilities"):
             preparer.updater_capabilities = updater_capabilities
+        inspect_started = time.monotonic()
         inspection = inspect_artifact(args.artifact, args.sha256)
+        _timing("inspect", inspect_started, f"format={artifact_format}")
         target = layout.release_path(args.release_id)
+        journal_metadata = {
+            "artifact": str(Path(args.artifact).resolve()),
+            "artifact_sha256": inspection.sha256,
+            "staging_path": str(layout.staging_path(args.release_id)),
+            "target_path": str(target),
+        }
+        if artifact_format != FULL_ARTIFACT_FORMAT:
+            journal_metadata["artifact_format"] = artifact_format
         journal = UpdateJournal.create(
             layout.journal_path,
             release_id=args.release_id,
-            metadata={
-                "artifact": str(Path(args.artifact).resolve()),
-                "artifact_sha256": inspection.sha256,
-                "staging_path": str(layout.staging_path(args.release_id)),
-                "target_path": str(target),
-            },
+            metadata=journal_metadata,
         )
         try:
             journal.transition(UpdatePhase.DOWNLOADED)
             release = preparer.prepare(inspection, args.release_id, journal)
             journal.transition(UpdatePhase.PREFLIGHTED)
+            token_started = time.monotonic()
             preparer.ensure_bootstrap_token(release)
+            _timing("bootstrap-token", token_started)
             coordinator.activate(journal, release)
         except BaseException as error:
             if isinstance(error, (KeyboardInterrupt, SystemExit)):
@@ -674,10 +743,12 @@ def run_update(args) -> int:
             )
             return 2
 
+        prune_started = time.monotonic()
         try:
             prune_releases(layout, coordinator.links)
         except Exception as error:
             print(f"Release pruning warning: {error}", file=sys.stderr)
+        _timing("prune", prune_started)
 
     print(f"InkyPi release committed: {args.release_id}")
     return 0
@@ -775,9 +846,20 @@ def build_parser():
         action="store_true",
         help="verify and archive a deferred boot recovery",
     )
+    parser.add_argument(
+        "--print-capabilities",
+        action="store_true",
+        help="print the artifact formats and features this updater supports as JSON",
+    )
     parser.add_argument("--artifact", type=Path, required=True)
     parser.add_argument("--sha256", required=True)
     parser.add_argument("--release-id", required=True)
+    parser.add_argument(
+        "--artifact-format",
+        choices=(FULL_ARTIFACT_FORMAT, DELTA_ARTIFACT_FORMAT),
+        default=FULL_ARTIFACT_FORMAT,
+        help="delta_v1 applies only on top of the exact base release it names",
+    )
     parser.add_argument(
         "--install-root",
         type=Path,
@@ -811,6 +893,11 @@ def build_parser():
 def main(argv=None) -> int:
     parser = build_parser()
     raw_arguments = tuple(sys.argv[1:] if argv is None else argv)
+    if "--print-capabilities" in raw_arguments:
+        # Read-only and exact, so it is safe without root and never updates.
+        if raw_arguments != ("--print-capabilities",):
+            parser.error("--print-capabilities cannot be combined with other arguments")
+        return print_capabilities()
     if raw_arguments and raw_arguments[0] == "--private-score-font":
         if os.name != "nt" and os.geteuid() != 0:
             parser.error("inkypi-update must run as root")

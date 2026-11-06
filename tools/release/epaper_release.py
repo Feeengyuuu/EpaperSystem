@@ -7,9 +7,10 @@ holds deployment.json:
 
   tools/release/run_test_shards.ps1 -TaskDir outputs/<task>
   baseline       prove the live release against its round's manifest; record preflight + predeploy health
-  build          package committed HEAD and prove its change set against the live release
+  build          package committed HEAD (full ZIP, plus a delta ZIP against the live release when possible)
   backup         re-package the live release as the next .backups/previous candidate
-  deploy         16 MiB verified chunks + transactional inkypi-update (dry run unless --execute)
+  deploy         16 MiB verified chunks + transactional inkypi-update (dry run unless --execute);
+                 sends the delta when the device updater reports delta_v1 (--full forces the full ZIP)
   private-fonts  install one registered owner font after a passed deploy (dry run unless --execute)
   health-gate    record postdeploy health and compare it with predeploy
   rebaseline-config  only when the release itself migrates saved settings: accept that
@@ -67,6 +68,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_argument("--release-label", required=True,
                      help="short release name, e.g. layout -> deploy-<UTC>-layout-<commit8>")
     sub.add_argument("--execute", action="store_true", help="contact and change the device (default: dry run)")
+    sub.add_argument("--full", action="store_true",
+                     help="send the full ZIP even when the device updater could apply this round's delta")
     sub = command("private-fonts", "Install one device-only registered font into the deployed release's durable data.")
     role = sub.add_mutually_exclusive_group(required=True)
     role.add_argument("--league", choices=font_policy().LEAGUES)
@@ -137,7 +140,8 @@ def run(args: argparse.Namespace, ctx: TaskContext) -> tuple[object, int]:
     if args.command == "backup":
         return release_build.backup(ctx), 0
     if args.command == "deploy":
-        return release_deploy.deploy(ctx, args.release_label, execute=args.execute, connect=device), 0
+        return release_deploy.deploy(ctx, args.release_label, execute=args.execute, connect=device,
+                                     force_full=args.full), 0
     if args.command == "private-fonts":
         return release_private_fonts.install(ctx, args.league, args.font, purpose=args.purpose, execute=args.execute, connect=device), 0
     if args.command == "health-gate":

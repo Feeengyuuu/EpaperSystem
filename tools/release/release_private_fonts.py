@@ -36,9 +36,13 @@ def _plan(ctx, league, source, *, purpose=None):
     release_id = deployment.get("release_id")
     require(isinstance(release_id, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", release_id)
             and release_id.endswith("-" + commit[:8]), "Invalid deployed release id")
-    artifact_sha = manifest.get("artifact_sha256")
+    # The device's committed journal records the artifact it installed: the
+    # delta ZIP when the round sent one, otherwise the full ZIP.
+    artifact_sha = deployment.get("artifact_sha256", manifest.get("artifact_sha256"))
     require(isinstance(artifact_sha, str) and re.fullmatch(r"[0-9a-f]{64}", artifact_sha),
             "Deployed artifact SHA256 is missing")
+    built = {manifest.get("artifact_sha256"), (manifest.get("delta") or {}).get("artifact_sha256")}
+    require(artifact_sha in built, "Deployed artifact SHA256 is not an artifact of this round's build")
     hashes = manifest.get("hashes", {})
     require(all(re.fullmatch(r"[0-9a-f]{64}", hashes.get(path, "")) for path in (HELPER, UPDATER)),
             "The deployed release does not contain the private-font installer capability")

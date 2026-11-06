@@ -7,6 +7,12 @@ backed-off retries. Parts keep fixed numbered names, so retrying an ambiguous
 copy overwrites that exact part and can never duplicate bytes. The parts are
 joined and re-hashed only after all of them verified; then ``inkypi-update``
 installs the release transactionally and the transport file is removed.
+
+The device's updater is asked for its capabilities first: when it reports
+``delta_v1`` and runs the delta's base release, only the delta ZIP is sent
+(see release_delta); otherwise, or with ``--full``, the full ZIP is. The
+updater's ``timing:`` lines are stamped with local time as they arrive and
+recorded in deployment.json with the upload and install durations.
 """
 
 from __future__ import annotations
@@ -16,11 +22,11 @@ from datetime import datetime, timezone
 import os
 from pathlib import Path
 import re
-import subprocess
 import sys
 import time
 
 from release_build import file_sha256, short
+import release_delta
 from release_device import CURRENT_LINK, Device, release_name
 from release_task import DEPLOYMENT_RECORD, ReleaseError, TaskContext, require, require_commit, same_path
 
@@ -34,6 +40,8 @@ RELEASE_LABEL = re.compile(r"[a-z0-9][a-z0-9-]{0,23}")
 RELEASE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 REMOTE_PART = re.compile(r"/var/tmp/inkypi-deploy-[A-Za-z0-9._-]+\.zip\.part[0-9]{3,}")
 SHA256 = re.compile(r"[0-9a-f]{64}")
+TIMING_LINE = re.compile(r"timing: (?P<phase>[a-z][a-z0-9-]{0,31}) (?P<seconds>\d+(?:\.\d+)?)s(?: (?P<detail>.{1,200}))?")
+ARTIFACT_FORMATS = (release_delta.FULL_FORMAT, release_delta.ARTIFACT_FORMAT)
 
 
 @dataclass(frozen=True)
@@ -112,14 +120,28 @@ def cleanup_command(remote_path: str, chunks: list[Chunk]) -> str:
     return "rm -f -- " + " ".join([remote_path, *(chunk.remote_path for chunk in chunks)])
 
 
-def update_command(remote_path: str, sha256: str, expected_active: str, release_id: str) -> str:
+def update_command(remote_path: str, sha256: str, expected_active: str, release_id: str,
+                   artifact_format: str = release_delta.FULL_FORMAT) -> str:
     """Re-check the transport hash and the active release, then run the transactional updater."""
+    require(artifact_format in ARTIFACT_FORMATS, f"Unknown artifact format: {artifact_format!r}")
+    format_option = "" if artifact_format == release_delta.FULL_FORMAT else " --artifact-format " + artifact_format
     return (f"set -Eeuo pipefail; trap 'rm -f -- {remote_path}' EXIT; "
             f"test \"$(sha256sum {remote_path} | cut -d' ' -f1)\" = '{sha256}'; "
             f"test \"$(readlink -f {CURRENT_LINK})\" = '{expected_active}'; "
             f"sudo -n /usr/local/sbin/inkypi-update --artifact {remote_path} --sha256 {sha256} "
-            f"--release-id {release_id}; "
+            f"--release-id {release_id}{format_option}; "
             "systemctl is-active --quiet inkypi.service")
+
+
+def parse_timing(line: str) -> dict | None:
+    """One ``timing: <phase> <seconds>s [detail]`` line of the device updater, or None."""
+    match = TIMING_LINE.fullmatch(line.strip())
+    if match is None:
+        return None
+    record = {"phase": match["phase"], "seconds": float(match["seconds"])}
+    if match["detail"]:
+        record["detail"] = match["detail"]
+    return record
 
 
 def validate_inputs(ctx: TaskContext) -> tuple[dict, dict, Path]:
@@ -161,33 +183,61 @@ def upload(device: Device, chunks: list[Chunk], remote_path: str, sha256: str, s
             "Final transport assembly or checksum failed.")
 
 
+def dry_run_plan(label: str, manifest: dict, before: dict, artifact: Path,
+                 delta: dict | None, delta_reason: str, clock) -> dict:
+    """What deploy would send; which artifact goes is decided only once the device answers."""
+    size = artifact.stat().st_size
+    plan = {"status": "dry_run", "commit": manifest["commit"], "base_commit": manifest["base_commit"],
+            "expected_active": before["active"], "artifact_sha256": manifest["artifact_sha256"],
+            "artifact_bytes": size, "chunks": -(-size // CHUNK_BYTES), "chunk_bytes": CHUNK_BYTES,
+            "release_id_example": compose_release_id(label, manifest["commit"], clock())}
+    if delta is None:
+        plan["artifact_plan"] = "full: " + delta_reason
+    else:
+        plan["artifact_plan"] = "delta_v1 if the device updater reports it, else full"
+        plan["delta"] = {"artifact_sha256": delta["artifact_sha256"], "artifact_bytes": delta["artifact_bytes"],
+                         "chunks": -(-delta["artifact_bytes"] // CHUNK_BYTES), "base_release": delta["base_release"],
+                         "changed_files": delta["changed_files"], "removed_files": delta["removed_files"]}
+    return plan
+
+
 def deploy(ctx: TaskContext, label: str, *, execute: bool, connect, sleep=time.sleep,
-           clock=lambda: datetime.now(timezone.utc), out=print) -> dict:
-    """Deploy the task's built artifact; without ``execute`` only validate and describe the plan."""
+           clock=lambda: datetime.now(timezone.utc), out=print, force_full: bool = False,
+           timer=time.monotonic) -> dict:
+    """Deploy the task's built artifact; without ``execute`` only validate and describe the plan.
+
+    The delta is sent when the build made one, ``force_full`` is not set and the
+    device's updater reports ``delta_v1``; every other case sends the full ZIP.
+    """
     require_label(label)
     manifest, before, artifact = validate_inputs(ctx)
-    sha256 = manifest["artifact_sha256"]
+    if force_full:
+        delta, delta_reason = None, "--full requested"
+    else:
+        delta, delta_reason = release_delta.delta_candidate(ctx, manifest, before)
     if not execute:
-        size = artifact.stat().st_size
-        return {"status": "dry_run", "commit": manifest["commit"], "base_commit": manifest["base_commit"],
-                "expected_active": before["active"], "artifact_sha256": sha256, "artifact_bytes": size,
-                "chunks": -(-size // CHUNK_BYTES), "chunk_bytes": CHUNK_BYTES,
-                "release_id_example": compose_release_id(label, manifest["commit"], clock())}
+        return dry_run_plan(label, manifest, before, artifact, delta, delta_reason, clock)
 
     device = connect()
     active = device.run("readlink -f " + CURRENT_LINK)
     require(active.returncode == 0 and active.stdout.decode().strip() == before["active"],
             "Active release changed after preflight.")
+    capabilities = release_delta.parse_capabilities(device.run(release_delta.CAPABILITIES_COMMAND, timeout=60))
+    choice = release_delta.choose_artifact(manifest, artifact, delta, delta_reason, capabilities, force_full)
+    out(f"artifact {choice['format']}: {choice['reason']}")
+    sha256 = choice["sha256"]
     release_id = compose_release_id(label, manifest["commit"], clock())
     remote_path = remote_artifact_path(release_id)
     chunk_dir = ctx.path(CHUNK_DIR)
-    chunks = split_artifact(artifact, chunk_dir, remote_path, CHUNK_BYTES)
+    chunks = split_artifact(choice["path"], chunk_dir, remote_path, CHUNK_BYTES)
     try:
         cleanup = cleanup_command(remote_path, chunks)
         ctx.save("upload-plan.json", {"release_id": release_id, "artifact": remote_path,
+                                      "artifact_format": choice["format"],
                                       "parts": [chunk.remote_path for chunk in chunks], "cleanup_command": cleanup})
         require(device.run(collision_check_command(remote_path, chunks)).returncode == 0,
                 "Remote upload paths already exist or could not be checked; inspect before retrying.")
+        upload_started = timer()
         try:
             upload(device, chunks, remote_path, sha256, sleep, out)
         except BaseException:
@@ -195,23 +245,42 @@ def deploy(ctx: TaskContext, label: str, *, execute: bool, connect, sleep=time.s
                 print("warning: transport cleanup could not be confirmed; inspect the exact paths in upload-plan.json",
                       file=sys.stderr)
             raise
+        upload_seconds = round(timer() - upload_started, 1)
     finally:
         remove_chunks(chunk_dir, chunks)
 
     started = clock().isoformat()
-    ctx.save(DEPLOYMENT_RECORD, {"status": "deploying", "release_id": release_id, "commit": manifest["commit"],
-                                 "started_at": started, "remote_path": remote_path,
-                                 "upload": "16MiB chunks, per-chunk sha256"})
+    common = {"release_id": release_id, "commit": manifest["commit"], "started_at": started,
+              "remote_path": remote_path, "artifact_format": choice["format"], "artifact_sha256": sha256,
+              "artifact_bytes": Path(choice["path"]).stat().st_size, "format_reason": choice["reason"],
+              "device_capabilities": capabilities, "upload_parts": len(chunks), "upload_seconds": upload_seconds}
+    ctx.save(DEPLOYMENT_RECORD, {"status": "deploying", **common, "upload": "16MiB chunks, per-chunk sha256"})
     log_path = ctx.path("deployment.log")
-    with log_path.open("wb") as log:
-        exit_code = device.run(update_command(remote_path, sha256, before["active"], release_id),
-                               stdout=log, stderr=subprocess.STDOUT).returncode
-    record = {"status": "passed" if exit_code == 0 else "failed", "release_id": release_id,
-              "commit": manifest["commit"], "started_at": started, "completed_at": clock().isoformat(),
-              "exit_code": exit_code, "remote_path": remote_path}
+    phases: list[dict] = []
+    install_started = timer()
+    with log_path.open("w", encoding="utf-8", newline="\n") as log:
+        def on_line(line: str) -> None:
+            now = clock().astimezone(timezone.utc)
+            log.write(now.strftime("%H:%M:%SZ") + " " + line + "\n")
+            log.flush()
+            timing = parse_timing(line)
+            if timing is not None:
+                phases.append({**timing, "at": now.isoformat()})
+
+        exit_code = device.stream(update_command(remote_path, sha256, before["active"], release_id,
+                                                 choice["format"]), on_line)
+    install_seconds = round(timer() - install_started, 1)
+    record = {"status": "passed" if exit_code == 0 else "failed", **common, "completed_at": clock().isoformat(),
+              "exit_code": exit_code, "install_seconds": install_seconds, "device_timing": phases}
     ctx.save(DEPLOYMENT_RECORD, record)
     for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-LOG_TAIL_LINES:]:
         out(line)
+    out(f"upload {upload_seconds:.1f}s in {len(chunks)} parts, install {install_seconds:.1f}s ({choice['format']})")
     if exit_code != 0:
+        if choice["format"] == release_delta.ARTIFACT_FORMAT:
+            raise ReleaseError(
+                f"Delta deployment returned exit {exit_code}; inspect deployment.log and rollback state "
+                "(a refused delta stops before any release switch). To retry with the full artifact, "
+                "start a new task folder (baseline, build) and run deploy with --full.")
         raise ReleaseError(f"Transactional deployment returned exit {exit_code}; inspect rollback state.")
     return record

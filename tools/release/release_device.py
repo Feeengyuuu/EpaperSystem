@@ -98,11 +98,12 @@ def release_name(path: str) -> str:
 class Device:
     """SSH/SCP/HTTP access to one resolved device address."""
 
-    def __init__(self, repo: Path, address: str, runner=subprocess.run):
+    def __init__(self, repo: Path, address: str, runner=subprocess.run, popen=subprocess.Popen):
         require(is_ipv4(address), "Device address must be an IPv4 address")
         self.repo = Path(repo)
         self.address = address
         self.runner = runner
+        self.popen = popen
         self.options = ssh_options(self.repo)
         self.target = SSH_USER + "@" + address
         self._client = None
@@ -133,6 +134,16 @@ class Device:
         """Run one remote command and return the completed process without raising."""
         return self.runner([openssh_program("ssh"), *self.options, self.target, command],
                            stdout=stdout, stderr=stderr, input=input, timeout=timeout)
+
+    def stream(self, command: str, on_line) -> int:
+        """Run one remote command, handing each output line (stdout and stderr merged) to
+        ``on_line`` as it arrives; return the exit code without raising."""
+        process = self.popen([openssh_program("ssh"), *self.options, self.target, command],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        with process:
+            for raw in process.stdout:
+                on_line(raw.decode("utf-8", "replace").rstrip("\r\n"))
+            return process.wait()
 
     def copy(self, local: Path, remote_path: str) -> int:
         """Copy one file with the legacy SCP protocol, pinned like every SSH call."""

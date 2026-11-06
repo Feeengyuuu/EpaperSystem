@@ -36,6 +36,16 @@ for vendor in "${VENDORS[@]}"; do
   output="$PROJECT_DIR/$relative_output"
   output_dir=$(dirname "$output")
   mkdir -p "$output_dir"
+  # The updater seeds unchanged assets from the live release; a regular file
+  # with the pinned hash needs no download. Anything else is fetched and
+  # renamed over the old name, so a shared (hard-linked) file is never edited.
+  if [[ -f "$output" && ! -L "$output" ]]; then
+    existing_sha=$(sha256sum "$output" | awk '{print $1}')
+    if [[ "$existing_sha" == "$expected_sha" ]]; then
+      echo "Verified $relative_output (already present)"
+      continue
+    fi
+  fi
   temporary=$(mktemp "$output_dir/.vendor.XXXXXX")
   cleanup() {
     rm -f "$temporary"
