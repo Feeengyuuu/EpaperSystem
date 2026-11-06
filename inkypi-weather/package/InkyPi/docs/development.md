@@ -114,6 +114,42 @@ exit                                 # Exit devbox shell and deactivates Python 
 3. Check `mock_display_output/latest.png` for result
 4. Iterate quickly without deployment
 
+## Updating a Device: Full and Delta Releases
+
+A device keeps its releases under `/opt/inkypi/releases`, with one `current`
+and one `previous` release for rollback. `inkypi-update` installs a new release
+from one of two artifact formats:
+
+- **full**: a ZIP of the whole package. Any updater accepts it, and it is the
+  only choice when the device's active release is not the one a delta was built
+  against.
+- **delta_v1**: only the added or changed package files, plus a manifest of the
+  whole target package (hashes, modes and removed paths). The device builds the
+  candidate release from hard links into the active one, writes the changed
+  files as new files and verifies the hash and mode of every file before any
+  other step runs, so the previous release stays intact. A delta whose base is
+  not the active release, or whose verification fails, is refused before the
+  release switch.
+
+Ask a device which formats its updater supports:
+
+```bash
+inkypi-update --print-capabilities
+```
+
+It prints one JSON line such as
+`{"artifact_formats":["full","delta_v1"],"capabilities":["delta_v1","timing_v1"],...}`
+and never changes anything, so it does not need root. An updater too old to know
+the option fails instead; treat that as full-only.
+
+During an update the device prints `timing: <phase> <seconds>s` lines
+(for example `delta-verify`, `venv-clone`, `preflight`, `switch`,
+`wait-ready` and `total`), which show where the install time goes.
+
+The release toolkit in the repository's `tools/release` builds both artifacts
+and picks the delta automatically when the device reports `delta_v1`; pass
+`--full` to force a full release.
+
 ## Other Requirements
 
 InkyPi relies on system packages for some features, which are normally installed via the `install.sh` script. **(Skip if using devbox method)**
