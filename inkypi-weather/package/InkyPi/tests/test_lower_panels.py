@@ -1522,6 +1522,72 @@ def test_a_league_header_shows_its_stage_before_the_status(monkeypatch):
     assert SportsDashboard._f1_country_flag_path({"country": "Atlantis"}) is None
 
 
+def test_a_games_note_is_named_by_its_official_logo_and_its_stage():
+    note = SportsDashboard._sport_note_mark
+    path, stage = note("NBA", {"headline": "NBA Cup - Group Play", "start": _at(2026, 11, 6)})
+    assert path.endswith("nba_cup.png") and stage == "小组赛"
+    assert note("NBA", {"headline": "Emirates NBA Cup - Quarterfinals", "start": _at(2026, 12, 9)})[1] == "1/4决赛"
+    assert note("NBA", {"headline": "Emirates NBA Cup - Championship", "start": _at(2026, 12, 16)})[1] == "决赛"
+    assert note("NBA", {"headline": "NBA Mexico City Game", "start": _at(2026, 11, 7)}) == (
+        note("NBA", {"headline": "NBA Mexico City Game", "start": _at(2026, 11, 7)})[0], "")
+    assert note("NBA", {"headline": "NBA Mexico City Game", "start": _at(2026, 11, 7)})[0].endswith(
+        "2026_mexico_city_game.png")
+    assert note("NHL", {"headline": "NHL Global Series", "start": _at(2026, 11, 12)})[0].endswith(
+        "2026_global_series.png")
+    for city, slug in (("Munich", "munich"), ("Madrid", "madrid"), ("London", "london"), ("Paris", "paris"),
+                       ("Melbourne", "melbourne"), ("Rio", "rio"), ("Mexico City", "mexico_city")):
+        path, stage = note("NFL", {"headline": f"NFL {city} Game", "start": _at(2026, 11, 15)})
+        assert path.endswith(f"2026_{slug}_game.png") and stage == "", city
+    # Another edition's game, a note with no logo, or no note keeps its words.
+    assert note("NFL", {"headline": "NFL Munich Game", "start": _at(2028, 11, 12)}) is None
+    assert note("NBA", {"headline": "Christmas Day", "start": _at(2026, 12, 25)}) is None
+    assert note("NBA", {"headline": "", "start": _at(2026)}) is None
+    assert note("NBA", None) is None
+
+
+def test_a_scheduled_games_note_reads_as_its_logo_before_the_arena(boxes):
+    plugin = _plugin()
+    spec = plugin._basketball_spec("NBA")
+    game = _game("NBA", headline="NBA Cup - Group Play", venue="State Farm Arena", city="Atlanta",
+                 start=_at(2026, 11, 6))
+    image, _draw = _render(lambda plugin, image, draw: plugin._draw_basketball_period_strip(
+        draw, (20, 200, 520, 216), game, "scheduled", spec, image=image))
+    texts = [text for _box, text, _font in boxes]
+    assert "小组赛" in texts and not any("NBA Cup" in text for text in texts)
+    # The cup's logo leads the line, before its stage's words.
+    stage_left = next(box for box, text, _font in boxes if text == "小组赛")[0]
+    lead = image.crop((20, 200, stage_left, 216))
+    assert len(set(lead.get_flattened_data())) > 12
+
+
+def test_a_football_games_note_reads_as_its_logo(boxes):
+    game = _game("NFL", headline="NFL Munich Game", venue="Chase Center", city="Munich", start=_at(2026, 11, 15))
+    image, _draw = _render(lambda plugin, image, draw: plugin._draw_football_footer(
+        image, draw, (20, 200, 320, 214), game, "NFL", include_tv=False))
+    texts = [text for _box, text, _font in boxes]
+    assert not any("Munich Game" in text for text in texts) and "Munich" in texts
+    # The game's shield (its navy and its colours) leads the centred line.
+    strip = image.crop((20, 200, 320, 214))
+    paper = strip.getpixel((0, 0))
+    first = next(x for x in range(strip.width) if any(strip.getpixel((x, y)) != paper for y in range(strip.height)))
+    lead = strip.crop((first, 0, first + 12, strip.height)).get_flattened_data()
+    assert any(blue > 90 and red < 70 for red, _green, blue in lead)
+
+
+def test_a_live_wall_cards_context_is_its_notes_logo(boxes):
+    game = {"sport": "NHL", "event": _game("NHL", "in", _at(2026, 11, 12), headline="NHL Global Series",
+                                            team_a_code="CAR", team_b_code="SEA")}
+    _render(lambda plugin, image, draw: plugin._draw_wall_card(image, draw, (0, 0, 270, 130), game, NOW))
+    assert not any("GLOBAL SERIES" in text.upper() for _box, text, _font in boxes)
+    boxes.clear()
+    cup = {"sport": "NBA", "event": _game("NBA", "in", _at(2026, 11, 6), headline="NBA Cup - Group Play",
+                                          team_a_code="WSH", team_b_code="ATL")}
+    for draw_game in ("_draw_wall_card", "_draw_wall_feature"):
+        _render(lambda plugin, image, draw: getattr(plugin, draw_game)(image, draw, (0, 0, 270, 130), cup, NOW))
+    texts = [text for _box, text, _font in boxes]
+    assert texts.count("小组赛") == 2 and not any("NBA CUP" in text.upper() for text in texts)
+
+
 @pytest.mark.parametrize("colors", [DAY_COLORS, DEEP_NIGHT_COLORS], ids=["day", "night"])
 def test_circuit_outline_is_reinked_in_the_theme_colours(colors):
     plugin = _plugin()

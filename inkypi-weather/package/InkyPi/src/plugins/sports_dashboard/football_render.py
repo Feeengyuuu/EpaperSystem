@@ -526,12 +526,16 @@ class FootballRenderMixin:
 
     def _draw_football_footer(self, image, draw, box, event, sport, include_tv=True):
         """The card's foot line, the stadium as its official logo where it has one, else as the
-        football stadium icon and its name."""
+        football stadium icon and its name; a showcase game's note ('NFL Munich Game') leads it as
+        that game's logo."""
         venue = str((event or {}).get("venue") or "").strip()
-        rest = SportsDashboard._football_footer_label({**(event or {}), "venue": ""}, sport, include_tv=include_tv)
+        note = SportsDashboard._sport_note_mark(sport, event)
+        labelled = {**(event or {}), "venue": "", **({"headline": note[1]} if note else {})}
+        rest = SportsDashboard._football_footer_label(labelled, sport, include_tv=include_tv)
         weather = SportsDashboard._football_weather_label(event)
         rest = "  ·  ".join(part for part in (rest, weather) if part)
-        if not self._draw_kit_venue_line(image, draw, box, venue, after=rest, kind="football"):
+        if not self._draw_kit_venue_line(image, draw, box, venue, after=rest, kind="football",
+                                         mark=note[0] if note else None):
             label = SportsDashboard._football_footer_label(event, sport, include_tv=include_tv)
             self._draw_kit_footer(draw, box, "  ·  ".join(part for part in (label, weather) if part))
 

@@ -47,6 +47,9 @@ KIT_SCOREBOARD_TV_HEIGHT, KIT_STATUS_TV_HEIGHT = 9, 13
 # KIT_VENUE_ICON_WIDE times as wide, KIT_VENUE_ICON_GAP before the name.
 VENUE_ICON_KINDS = ("football", "arena", "ballpark", "soccer")
 KIT_VENUE_ICON_HEIGHT, KIT_VENUE_ICON_WIDE, KIT_VENUE_ICON_GAP = 13, 1.6, 3
+# A game note's logo (the NBA Cup's, an international game's) leads a venue line, its stage's
+# words this far after it.
+KIT_NOTE_MARK_GAP = 4
 # A game yet to start shows its stadium's logo at the row's right, at most this wide, when its team
 # names leave at least the minimum (past this gap after the longer name).
 KIT_ROW_VENUE_MAX_W, KIT_ROW_VENUE_MIN_W, KIT_ROW_VENUE_GAP = 72, 24, 8
@@ -609,11 +612,12 @@ class ScorebugKitMixin:
         self._draw_kit_footer(draw, box, venue)
 
     def _draw_kit_venue_line(self, image, draw, box, venue, before="", after="", *, size=9, bold=False,
-                             align="center", separator="·", logo_height=None, fill=None, kind=None):
+                             align="center", separator="·", logo_height=None, fill=None, kind=None, mark=None):
         """``before``, the venue's official logo in place of its name, and ``after`` on one line in
-        ``box`` (centred, or from its left), parted by ``separator``. A venue without a logo reads as
-        ``kind``'s venue icon and its name; False, with nothing drawn, when it has neither, so the
-        caller keeps its text line."""
+        ``box`` (centred, or from its left), parted by ``separator``; ``mark`` (a game note's logo,
+        _sport_note_mark) leads the line, ``before`` (its stage) right after it. A venue without a logo
+        reads as ``kind``'s venue icon and its name; False, with nothing drawn, when it has neither, so
+        the caller keeps its text line."""
         x1, y1, x2, y2 = [int(value) for value in box]
         before, after = str(before or "").strip(), str(after or "").strip()
         height = int(logo_height or (y2 - y1))
@@ -626,11 +630,14 @@ class ScorebugKitMixin:
             return False
         join_font = self._font(size, bold)
         join_w = self._text_width(draw, separator, join_font) + 12
+        lead = self._note_mark_image(mark, y2 - y1, (x2 - x1) // 4) if mark else None
+        lead_gap = KIT_NOTE_MARK_GAP if before else join_w
         # The home city after the venue, as its official emblem when it has one.
         city = self._kit_city_logo(after, (height * 3, height + 2)) if after else None
         if city is not None:
             after = ""
-        room = x2 - x1 - logo.width - (join_w + city.width if city is not None else 0)
+        room = x2 - x1 - logo.width - (join_w + city.width if city is not None else 0) - \
+            (lead.width + lead_gap if lead is not None else 0)
         # (text, font, width) for the text before the logo and the text after it.
         pieces = []
         for text in (before, after):
@@ -642,7 +649,16 @@ class ScorebugKitMixin:
             pieces.append((text, font, width))
             room -= width + join_w
         total = logo.width + sum(piece[2] + join_w for piece in pieces if piece) + (join_w + city.width if city is not None else 0)
+        if lead is not None:
+            lead_gap = KIT_NOTE_MARK_GAP if pieces[0] else join_w
+            total += lead.width + lead_gap
         x = x1 if align == "left" else x1 + (x2 - x1 - total) // 2
+        if lead is not None:
+            image.paste(lead, (x, y1 + (y2 - y1 - lead.height) // 2), lead)
+            x += lead.width
+            if not pieces[0]:
+                self._draw_centered_in_box(draw, (x, y1, x + join_w, y2), separator, join_font, fill)
+            x += lead_gap
         for index, piece in enumerate(pieces):
             if index == 1:
                 if isinstance(logo, _VenueName):

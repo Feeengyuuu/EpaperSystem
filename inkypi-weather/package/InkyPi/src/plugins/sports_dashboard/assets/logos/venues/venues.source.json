@@ -2894,6 +2894,59 @@
         48
       ],
       "use": "PGL Major Singapore 2026 finals at the Singapore Indoor Stadium (10-13 Dec 2026); the stadium is run and branded by The Kallang and has no mark of its own on its official page"
+    },
+    "arena_cdmx": {
+      "file": "Arena CDMX slogan logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Arena_CDMX_slogan_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/21/Arena_CDMX_slogan_logo.svg/960px-Arena_CDMX_slogan_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "510758928d4e108e2a13b281be64ea801b07f30b",
+      "source_png_sha256": "212b3e4fd5db9b004e34accb5e41777152db6bfacbfe7f7285a495a8f35ee870",
+      "sha256": "c604a1a3bd15325c8c184ed208fcbe2ee6f31857a7055dcc40ebc7bd0cf1dfbe",
+      "size": [
+        100,
+        48
+      ],
+      "processing": "the name only (the city line and slogan under it cut away), cropped to the alpha bounding box, scaled to 48 px high"
+    },
+    "geodis_park": {
+      "file": "Geodis Park.png",
+      "page": "https://en.wikipedia.org/wiki/File:Geodis_Park.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/7/76/Geodis_Park.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "5e9e08bdb50ad1392fe431567f767e685cc54834",
+      "source_png_sha256": "827518421afc24777d86cb2be5bcc4f5a209b87b64728a6019234b0fc076c6b7",
+      "sha256": "03cc28f71d40b2004876c19358e253afa126844465a03d9389ff3bb042559fa6",
+      "size": [
+        37,
+        47
+      ]
+    },
+    "nissan_stadium": {
+      "file": "Nissan Stadium Logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Nissan_Stadium_Logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d1/Nissan_Stadium_Logo.svg/960px-Nissan_Stadium_Logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "5bafef7ad110d4e5daa6df6a15de33c1367e531b",
+      "source_png_sha256": "fea2283b3a28baa38e3b5c56e748d0fffa8ebff9be8b539060d438b1ff2c4e88",
+      "sha256": "cf58a9e31a064505cc9ff21860595c910c6b4a7c1fa0edabfed44a6a6c63e3b8",
+      "size": [
+        185,
+        48
+      ]
+    },
+    "toyota_stadium": {
+      "file": "Toyota Stadium Texas logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Toyota_Stadium_Texas_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/be/Toyota_Stadium_Texas_logo.svg/960px-Toyota_Stadium_Texas_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "8c153cda3313d42983eb9495ae074b1c0620fe04",
+      "source_png_sha256": "34394692583b8c9d7aa5267f1a05ff8e3ebc402bc7579ea62b23a0efd682c81c",
+      "sha256": "2b9aeb71dacb70a3f1fcd1ca7bfbf5b796809995c026e1d15e9f2b83748f577d",
+      "size": [
+        42,
+        48
+      ]
     }
   }
 }

@@ -440,10 +440,14 @@ class BasketballRenderMixin:
         if state == "scheduled":
             headline = str(event.get("headline") or "").strip()
             venue = str(event.get("venue") or "").strip()
-            # The arena as its official logo after the headline (and the city after it).
+            # The arena as its official logo after the headline (and the city after it); a note
+            # naming a competition with a logo ("NBA Cup - Group Play") reads as that logo and its stage.
+            note = SportsDashboard._sport_note_mark(spec.sport, event)
             rest = SportsDashboard._kit_venue_label({**event, "venue": ""}, include_tv=False)
-            if image is not None and self._draw_kit_venue_line(image, draw, (x1 + 4, y1, x2 - 4, y2), venue, headline, rest, size=10,
-                                         logo_height=min(14, y2 - y1), kind="arena"):
+            if image is not None and self._draw_kit_venue_line(image, draw, (x1 + 4, y1, x2 - 4, y2), venue,
+                                                               note[1] if note else headline, rest, size=10,
+                                                               logo_height=min(14, y2 - y1), kind="arena",
+                                                               mark=note[0] if note else None):
                 return
             parts = [
                 headline,

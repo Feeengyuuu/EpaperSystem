@@ -14,7 +14,7 @@ from .card_backdrops import SPORT_BACKDROP_KINDS, card_backdrop_box, paint_card_
 from PIL import ImageStat
 
 from .common import *
-from .scorebug_kit import _kit_luminance
+from .scorebug_kit import KIT_NOTE_MARK_GAP, _kit_luminance
 
 SportsDashboard = None
 
@@ -207,7 +207,14 @@ class LowerWallRenderMixin:
         # The league's logo is the card's title: bare on the card's colours, at its left edge.
         self._draw_sport_logo(image, draw, sport, inner_x1, y1 + 4, 40, 24, align="left")
         context_left = inner_x2
-        if context:
+        # A note naming a competition with a logo ("NHL Global Series") is that logo (and its stage),
+        # bare on the band.
+        note = SportsDashboard._wall_note_mark(sport, event) if spec is not None else None
+        drawn = self._draw_note_mark_label(image, draw, (inner_x1 + 46, y1 + 6, inner_x2 + 2, y1 + 26), note,
+                                           align="right") if note else None
+        if drawn:
+            context_left = drawn[0]
+        elif context:
             context, font = self._fit_text_ellipsis(draw, context, inner_x2 - inner_x1 - 46, 11, bold=True, min_size=8)
             if spec is not None:
                 context_w = self._text_width(draw, context, font)
@@ -580,9 +587,11 @@ class LowerWallRenderMixin:
         if kind:
             paint_card_backdrop(image, card_backdrop_box(x1, y1, x2, y2), kind, COLORS["panel"])
         self._draw_sport_logo(image, draw, sport, x1 + 14, y1 + 6, 40, 22)
-        context = self._wall_context_label(sport, event) or sport
-        context, font = self._fit_text_ellipsis(draw, context, 150, 11, bold=True, min_size=8)
-        self._draw_text_in_box(draw, (x1 + 14, y1 + 31, x1 + 170, y1 + 47), context, font, COLORS["text"])
+        note = SportsDashboard._wall_note_mark(sport, event)
+        if not (note and self._draw_note_mark_label(image, draw, (x1 + 14, y1 + 30, x1 + 170, y1 + 48), note)):
+            context = self._wall_context_label(sport, event) or sport
+            context, font = self._fit_text_ellipsis(draw, context, 150, 11, bold=True, min_size=8)
+            self._draw_text_in_box(draw, (x1 + 14, y1 + 31, x1 + 170, y1 + 47), context, font, COLORS["text"])
         clock = self._wall_clock_label(event, now, spec)
         clock, clock_font = self._fit_text_ellipsis(draw, clock, 110, 13, bold=True, min_size=9)
         clock_w = self._text_width(draw, clock, clock_font)
@@ -708,6 +717,41 @@ class LowerWallRenderMixin:
         'Q4 · 2:31', 'TOP 7 · 2 OUT'."""
         top, bottom, _key = spec.hook("state_labels", event, now, default=("LIVE", "", "text"))
         return " · ".join(part for part in (str(top or "").strip(), str(bottom or "").strip()) if part) or "LIVE"
+
+    @staticmethod
+    def _wall_note_mark(sport, event):
+        """The game note's logo and stage (_sport_note_mark) when the note is what names the game here
+        (no series game ahead of it), else None."""
+        if str((event or {}).get("series_game") or "").strip():
+            return None
+        return SportsDashboard._sport_note_mark(sport, event)
+
+    def _draw_note_mark_label(self, image, draw, box, note, align="left", size=11):
+        """A note's logo, its stage's words after it, bare on whatever ``box`` holds (a card's band or
+        its art), from its left or its right: the words in the theme's ink or paper, whichever stands
+        out from that ground, the logo with a light contour on a dark one. The (left, right) it took,
+        else None (nothing drawn)."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        path, stage = note
+        ground = tuple(round(value) for value in ImageStat.Stat(image.convert("RGB").crop((x1, y1, x2, y2))).mean[:3])
+        mark = self._note_mark_image(path, y2 - y1, (x2 - x1) // 2, ground=ground)
+        if mark is None:
+            return None
+        font, width = None, mark.width
+        if stage:
+            stage, font = self._fit_text_ellipsis(draw, stage, max(0, x2 - x1 - mark.width - KIT_NOTE_MARK_GAP), size,
+                                                  bold=True, min_size=8)
+            width += KIT_NOTE_MARK_GAP + self._text_width(draw, stage, font)
+        left = x2 - width if align == "right" else x1
+        image.paste(mark, (left, y1 + (y2 - y1 - mark.height) // 2), mark)
+        if stage:
+            def contrast(colour):
+                lighter, darker = sorted((_kit_luminance(colour), _kit_luminance(ground)), reverse=True)
+                return (lighter + 0.05) / (darker + 0.05)
+
+            ink = max((COLORS["text"], COLORS["panel"]), key=contrast)
+            self._draw_text_in_box(draw, (left + mark.width + KIT_NOTE_MARK_GAP, y1, left + width + 1, y2), stage, font, ink)
+        return left, left + width
 
     @staticmethod
     def _wall_context_label(sport, event):

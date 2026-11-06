@@ -675,6 +675,89 @@
         183,
         48
       ]
+    },
+    "nba/2026_mexico_city_game.png": {
+      "source_url": "https://cdn.nba.com/teams/uploads/sites/1610612743/2026/05/DN-26-MC-Lockup-1028x1231-1.png",
+      "source_sha256": "8914efc89d7847e0a262ebdf7703b805cd58af1c3a4b2960a4c8283342b7b9f7",
+      "runtime_sha256": "122136972c64a8bd14a42585b03925ea065e7c0c2df7d5f8b2a19c82711cca67",
+      "runtime_dimensions": [
+        240,
+        109
+      ],
+      "processing": "the lockup's head (NBA logo and title) without the players; white title set dark"
+    },
+    "nfl/2026_london_game.png": {
+      "source_url": "https://static.www.nfl.com/league/apps/shared/png/logo-events-londongames-2026.png",
+      "source_sha256": "715ef15cbf3c991eb2633f711f380392f3a7c88ce6f1d83783b8ea983a4fd2f3",
+      "runtime_sha256": "a6cf944f98f368bcf06f3238a0a93b54b81662e661df09336ef3f14fbfa0e277",
+      "runtime_dimensions": [
+        185,
+        240
+      ]
+    },
+    "nfl/2026_madrid_game.png": {
+      "source_url": "https://static.www.nfl.com/league/apps/shared/png/logo-events-madridgames-2026.png",
+      "source_sha256": "d657251f5ff745b88bd7e944291a45373e145096757827562fa957470dc3a6e0",
+      "runtime_sha256": "26a5351eb4646361fd8444b3f19db9c435b63bed3d266c2b5938cd1d13922846",
+      "runtime_dimensions": [
+        184,
+        240
+      ]
+    },
+    "nfl/2026_melbourne_game.png": {
+      "source_url": "https://static.www.nfl.com/league/apps/shared/png/logo-events-melbournegames-2026.png",
+      "source_sha256": "8c8c2e4f593ddee14781aab70d312e01706eca88365b3357ad629f8f9e39efe1",
+      "runtime_sha256": "e3767cf9fa20da5478d43b49df0a1a76b086231da907b86d0d3c76306f6f861b",
+      "runtime_dimensions": [
+        185,
+        240
+      ]
+    },
+    "nfl/2026_mexico_city_game.png": {
+      "source_url": "https://static.www.nfl.com/league/apps/shared/png/logo-events-mexicocitygames-2026.png",
+      "source_sha256": "3324fcdadb0622d93770c0b75b301796c32ea673d2aac9a3b18827bf7803eabb",
+      "runtime_sha256": "dc0df0bb1aed256499b82bfa01696849be1f4c5ebdc45f9b10a3492c8eedf7b8",
+      "runtime_dimensions": [
+        185,
+        240
+      ]
+    },
+    "nfl/2026_munich_game.png": {
+      "source_url": "https://static.www.nfl.com/league/apps/shared/png/logo-events-munichgames-2026.png",
+      "source_sha256": "7616fc73743834d2c79598285744aa82ef640840c8a530019abb574bc4d8b499",
+      "runtime_sha256": "456cf32e07d086700bbf6685e0134e199044915d8338e57c591540e660abc5ef",
+      "runtime_dimensions": [
+        184,
+        240
+      ]
+    },
+    "nfl/2026_paris_game.png": {
+      "source_url": "https://static.www.nfl.com/league/apps/shared/png/logo-events-parisgames-2026.png",
+      "source_sha256": "e1074cd9a26f5c86fef35e214173b8f9f76279031e47276b3c6bd76dad7d9384",
+      "runtime_sha256": "1d1205febefcb01d216ca3a5ebc0d85fde06aa2b987e8aaa78b44efa772cfb63",
+      "runtime_dimensions": [
+        185,
+        240
+      ]
+    },
+    "nfl/2026_rio_game.png": {
+      "source_url": "https://static.www.nfl.com/league/apps/shared/png/logo-events-riogames-2026.png",
+      "source_sha256": "6dce6794a166eb4404a119355461bdeebbbdbe7a84911b1ae21835c779d4be3e",
+      "runtime_sha256": "8436e6d0ea503b06692490db091536fe92a3b944a0b16e63bb0867866d86d6ef",
+      "runtime_dimensions": [
+        185,
+        240
+      ]
+    },
+    "nhl/2026_global_series.png": {
+      "source_url": "https://assets.nhle.com/special_event_season/20262027/svg/gs-fin-2026020309-matchup-en-light.svg",
+      "source_sha256": "a2fa37520a27b3a8c90fb8f47a0c15ee203271547fe8ef3520e1cd5e2e733f3d",
+      "runtime_sha256": "a36f7dde52fe8c35f2b9223918bdd1c03f279ad319828f010b7d514658966e36",
+      "runtime_dimensions": [
+        240,
+        210
+      ],
+      "processing": "the matchup lockup's centre shield only: the side banners and both teams' marks removed from the SVG, rendered and cropped"
     }
   }
 }

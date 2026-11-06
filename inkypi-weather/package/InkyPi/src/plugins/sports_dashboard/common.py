@@ -600,6 +600,11 @@ VENUE_LOGO_KEYS = {
     "asiaworldexpo": "asiaworld_expo",
     # The Kallang runs and brands the stadium, which has no mark of its own.
     "singaporeindoorstadium": "the_kallang",
+    # Neutral sites and a club ground found with the game-note logos; the Allianz Arena by the name
+    # ESPN's NFL feed gives it.
+    "arenacdmx": "arena_cdmx", "fcbayernmunichstadium": "allianz_arena",
+    "geodispark": "geodis_park", "nissanstadium": "nissan_stadium",
+    "toyotastadium": "toyota_stadium",
 }
 # A home city's official emblem (its seal, else its arms, logo or flag) stands in for its name after a
 # venue logo, by every scoreboard spelling of it with only its letters and digits, lower case

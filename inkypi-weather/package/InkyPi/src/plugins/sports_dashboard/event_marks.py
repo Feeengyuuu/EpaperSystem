@@ -57,6 +57,24 @@ STAGE_MARKS = {
     "NCAA": {None: (("college football playoff", "ncaa/cfp.png"), ("cfp ", "ncaa/cfp.png"))},
 }
 
+# A game's ESPN note ("NBA Cup - Group Play", "NFL Munich Game") as its competition's or showcase
+# game's official logo: by league and season (None: any season), a phrase in the note and the logo;
+# first match wins. What the note says after the phrase is its stage (NOTE_STAGES).
+NOTE_MARKS = {
+    "NBA": {None: (("nba cup", "nba/nba_cup.png"),),
+            2026: (("mexico city game", "nba/2026_mexico_city_game.png"),)},
+    "NHL": {2026: (("global series", "nhl/2026_global_series.png"),)},
+    "NFL": {2026: tuple((f"{city} game", f"nfl/2026_{slug}_game.png") for city, slug in (
+        ("london", "london"), ("madrid", "madrid"), ("melbourne", "melbourne"), ("mexico city", "mexico_city"),
+        ("munich", "munich"), ("paris", "paris"), ("rio", "rio")))},
+}
+# A note's stage words in Chinese ("Group Play" -> "小组赛"); first match wins, others are left out.
+NOTE_STAGES = (
+    (r"\bgroup play\b", "小组赛"), (r"\b(east|west)(?:ern)? group ([a-c])\b", None),
+    (r"\bquarter-?finals?\b", "1/4决赛"), (r"\bsemi-?finals?\b", "半决赛"),
+    (r"\bchampionship\b|\bfinals?\b", "决赛"),
+)
+
 
 # Jolpica's Location.country -> ISO code of the bundled host flag (F1's own
 # race cards identify each Grand Prix by its host flag).
@@ -129,6 +147,52 @@ class EventMarksMixin:
             if keyword in name:
                 return SportsDashboard._event_mark_file(relative)
         return None
+
+    @staticmethod
+    def _sport_note_mark(sport, event):
+        """(logo path, stage) for a game whose ESPN note names a competition or a showcase game with an
+        official logo (NOTE_MARKS), the stage in Chinese ('小组赛') or ''; None otherwise, so the note
+        keeps its words."""
+        headline = str((event or {}).get("headline") or "").strip()
+        if not headline:
+            return None
+        text = headline.lower()
+        marks = NOTE_MARKS.get(str(sport or "").upper(), {})
+        for phrase, relative in (*marks.get(SportsDashboard._event_mark_year(event), ()), *marks.get(None, ())):
+            if phrase not in text:
+                continue
+            path = SportsDashboard._event_mark_file(relative)
+            if path:
+                return path, SportsDashboard._note_stage_label(text.split(phrase, 1)[1])
+        return None
+
+    @staticmethod
+    def _note_stage_label(rest):
+        """The stage a note names after its competition ('- Group Play'), in Chinese, else ''."""
+        rest = str(rest or "").lower()
+        for pattern, label in NOTE_STAGES:
+            match = re.search(pattern, rest)
+            if not match:
+                continue
+            if label is None:  # "East Group A" -> "东部A组"
+                return ("东部" if match.group(1) == "east" else "西部") + match.group(2).upper() + "组"
+            return label
+        return ""
+
+    def _note_mark_image(self, path, height, max_width=None, ground=None):
+        """The note's logo ``height`` px tall (at most ``max_width`` wide), with the thin light contour
+        a colour mark wears on a dark ground (``ground``, else the theme's panel); None when it cannot
+        be loaded."""
+        mark = self._load_local_logo(path, (max_width or height * 4, height), alpha_threshold=8) if path else None
+        if not mark:
+            return None
+        red, green, blue = (COLORS["panel"] if ground is None else ground)[:3]
+        if 0.299 * red + 0.587 * green + 0.114 * blue < 96:
+            light = max((COLORS["text"], COLORS["panel"]), key=lambda colour: sum(colour[:3]))
+            halo = SportsDashboard._event_mark_halo(mark, light, pad=1)
+            halo.alpha_composite(mark, (1, 1))
+            return halo
+        return mark
 
     @staticmethod
     def _f1_circuit_mark_path(race):
