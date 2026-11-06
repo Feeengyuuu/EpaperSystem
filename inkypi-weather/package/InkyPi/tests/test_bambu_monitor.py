@@ -1,3 +1,4 @@
+import logging
 import sys
 from io import BytesIO
 from pathlib import Path
@@ -1235,7 +1236,9 @@ def test_no_cache_error_keeps_known_machine_identity(tmp_path, monkeypatch):
     image = plugin.generate_image(settings, _BambuDeviceConfig())
 
     assert image.info["inkypi_skip_cache"] is True
-    assert rendered["source"] == "error"
+    # An unreachable printer is switched off: the page says offline, not error.
+    assert rendered["source"] == "offline" and rendered["state"] == "OFFLINE"
+    assert read_source_provenance(image) is SourceProvenance.LIVE
     assert rendered["machine_name"] == "Current Device"
     assert rendered["machine_model"] == "P1S"
     assert rendered["host"] == settings["host"]
@@ -1260,13 +1263,59 @@ def test_bambu_connection_failure_preserves_cached_status(tmp_path, monkeypatch)
     plugin._write_cache(cache_file, {"fetched_at": 0, "status": status})
     monkeypatch.setattr(plugin, "_fetch_report", _raise_no_route)
 
+    rendered = {}
+    original = plugin._render_status
+    monkeypatch.setattr(plugin, "_render_status",
+                        lambda status, dimensions: rendered.update(status) or original(status, dimensions))
+
     image = plugin.generate_image(settings, _BambuDeviceConfig())
 
+    # The last job stays on the page under an OFFLINE state; a switched-off printer is a reading,
+    # not a failing source, so the page is live and the readiness check stays clear of it.
     assert image.info["inkypi_skip_cache"] is True
-    assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
+    assert read_source_provenance(image) is SourceProvenance.LIVE
+    assert rendered["source"] == "offline" and rendered["state"] == "OFFLINE"
+    assert rendered["file"] == status["file"] and rendered["progress"] == status["progress"]
     cached = plugin._read_cache(cache_file)
     assert cached["status"]["source"] == "live"
     assert "warning" not in cached["status"]
+
+
+def test_a_switched_off_printer_is_logged_once_until_it_returns(tmp_path, monkeypatch, caplog):
+    plugin = _plugin(tmp_path)
+    settings = _connected_settings()
+    monkeypatch.setattr(plugin, "_fetch_report", _raise_no_route)
+    with caplog.at_level(logging.INFO, logger=bambu_module.__name__):
+        for _ in range(3):
+            plugin.generate_image(settings, _BambuDeviceConfig())
+    warnings = [record for record in caplog.records if record.levelno >= logging.WARNING]
+    assert len(warnings) == 1 and "offline" in warnings[0].getMessage()
+
+
+def test_a_theme_redraw_keeps_a_switched_off_printer_offline(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    settings = _connected_settings()
+    cache_file = plugin._cache_file(settings["host"], settings["serialNumber"])
+    plugin._write_cache(cache_file, {"fetched_at": 0, "status": _cached_status(), "offline_since": 1})
+    rendered = {}
+    monkeypatch.setattr(plugin, "_render_status", lambda status, dimensions: rendered.update(status) or Image.new("RGB", dimensions))
+    image = plugin.generate_image({**settings, "_theme_render_only": True}, _BambuDeviceConfig())
+    assert rendered["source"] == "offline" and rendered["state"] == "OFFLINE"
+    assert read_source_provenance(image) is SourceProvenance.LIVE
+
+
+def test_an_auth_refusal_is_still_an_error_not_offline(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    rendered = {}
+
+    def refuse(*_args, **_kwargs):
+        raise bambu_module.MqttProtocolError("MQTT connection refused with code 5")
+
+    monkeypatch.setattr(plugin, "_fetch_report", refuse)
+    monkeypatch.setattr(plugin, "_render_status", lambda status, dimensions: rendered.update(status) or Image.new("RGB", dimensions))
+    image = plugin.generate_image(_connected_settings(), _BambuDeviceConfig())
+    assert rendered["source"] == "error"
+    assert read_source_provenance(image) is SourceProvenance.LOCAL_FALLBACK
 
 
 def test_force_refresh_aliases_bypass_fresh_bambu_cache(tmp_path, monkeypatch):

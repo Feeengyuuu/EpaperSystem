@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from contextvars import ContextVar
 from functools import lru_cache
 import colorsys
+import errno
 import json
 import logging
 import os
@@ -261,6 +262,14 @@ PRINT_STAGE_NAMES = {
 
 class MqttProtocolError(RuntimeError):
     pass
+
+
+# Socket errors that mean nothing answers at the printer's address: it is switched off.
+PRINTER_OFFLINE_ERRNOS = frozenset(
+    code for code in (getattr(errno, name, None) for name in ("EHOSTUNREACH", "ENETUNREACH", "EHOSTDOWN",
+                                                             "ECONNREFUSED", "ETIMEDOUT", "ECONNRESET"))
+    if code is not None
+) | {113}  # EHOSTUNREACH on Linux, which the device runs
 
 
 def _encode_utf8(value):
@@ -560,12 +569,16 @@ class BambuMonitor(BasePlugin):
             status = self._normalize_report(report, host, serial, settings)
             if camera_enabled:
                 self._attach_camera_frame(status, host, camera_port, access_code, camera_timeout)
+            if (cached or {}).get("offline_since"):
+                logger.info("Bambu printer is back online")
             self._write_cache(cache_file, {"fetched_at": now, "status": status})
             return attach_source_provenance(
                 self._render_status(status, dimensions),
                 SourceProvenance.LIVE,
             )
         except Exception as exc:
+            if self._is_printer_switched_off(exc):
+                return self._render_switched_off(cached, cache_file, exc, settings, host, serial, dimensions, now)
             if self._is_expected_connection_failure(exc):
                 logger.warning(f"Bambu printer unavailable; preserving previous cache: {exc}")
             else:
@@ -613,6 +626,13 @@ class BambuMonitor(BasePlugin):
                     host=host,
                     serial=serial,
                 )
+                if cached.get("offline_since"):
+                    # Switched off when last asked: the redraw keeps saying so (a reading, not a stale one).
+                    status.update(source="offline", state="OFFLINE")
+                    return attach_source_provenance(
+                        self._non_cacheable_image(self._render_status(status, dimensions)),
+                        SourceProvenance.LIVE,
+                    )
                 if self._cache_entry_is_fresh(cached, cache_seconds, now):
                     status["source"] = "cache"
                     return attach_source_provenance(
@@ -1338,10 +1358,39 @@ class BambuMonitor(BasePlugin):
         )
         return self._render_status(status, dimensions)
 
-    def _render_error(self, dimensions, message, host="", serial="", settings=None):
+    def _render_switched_off(self, cached, cache_file, exc, settings, host, serial, dimensions, now):
+        """A printer that does not answer on the network is switched off: a reading, not a failing
+        source. The page keeps its last job under an OFFLINE state (else an offline card) and stays
+        live; the change is logged once, when the printer goes away."""
+        cached = dict(cached or {})
+        if not cached.get("offline_since"):
+            logger.warning(f"Bambu printer went offline (switched off or off the network): {exc}")
+            cached["offline_since"] = now
+            self._write_cache(cache_file, cached)
+        if cached.get("status"):
+            status = dict(cached["status"])
+            self._apply_machine_identity(status, settings, host=host, serial=serial)
+            status.update(source="offline", state="OFFLINE")
+            image = self._render_status(status, dimensions)
+        else:
+            image = self._render_error(dimensions, "Printer offline", host=host, serial=serial, settings=settings,
+                                       source="offline")
+        return attach_source_provenance(self._non_cacheable_image(image), SourceProvenance.LIVE)
+
+    @staticmethod
+    def _is_printer_switched_off(exc):
+        """No answer on the network (refused, unreachable, timed out): the printer is off. A TLS or
+        MQTT refusal (a wrong access code) is not."""
+        if isinstance(exc, (ssl.SSLError, MqttProtocolError)):
+            return False
+        if isinstance(exc, (socket.timeout, TimeoutError, ConnectionRefusedError, ConnectionResetError)):
+            return True
+        return isinstance(exc, OSError) and exc.errno in PRINTER_OFFLINE_ERRNOS
+
+    def _render_error(self, dimensions, message, host="", serial="", settings=None, source="error"):
         status = {
             "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "source": "error",
+            "source": source,
             "state": "OFFLINE",
             "stage": "Unable to read printer",
             "progress": 0,
