@@ -308,3 +308,23 @@ def test_the_cards_and_rows_show_each_makers_avatar_and_name(monkeypatch):
     assert colour in set(last.get_flattened_data())
     column = page.crop((render.RIGHT[0] + render.THUMB[0], render.RIGHT[1], render.RIGHT[2], render.RIGHT[3]))
     assert colour in set(grid.get_flattened_data()) and colour in set(column.get_flattened_data())
+
+
+def test_a_short_named_card_fills_its_spare_line_with_category_and_rating(monkeypatch):
+    shown = []
+    original = render.PageCanvas.text
+    monkeypatch.setattr(render.PageCanvas, "text", lambda canvas, xy, text, *args, **kwargs: shown.append(str(text))
+                        or original(canvas, xy, text, *args, **kwargs))
+    payload = _payload()
+    payload["week"][2] = {**_with_avatar(payload["week"][2], 2), "name": "Mrs. Claus",
+                          "category": "家居 · 节庆", "rating": 4.9, "ratings": 12}
+    payload["week"][3] = {**payload["week"][3], "name": "Articulated Baby Dragon Printed In Place",
+                          "category": "玩具游戏", "rating": 3.9, "ratings": 3}
+    payload["week"][4] = {**payload["week"][4], "name": "Gadget", "category": "", "tags": ["fidget", "toy"]}
+
+    render.render_page((800, 480), payload, {}, NOW, {})
+
+    # A one-line name leaves a line: its category and rating fill it (a model without a category
+    # shows its first tag); a name that needs the room keeps it.
+    assert {"家居 · 节庆", "4.9", "#fidget"} <= set(shown)
+    assert "玩具游戏" not in shown and "3.9" not in shown

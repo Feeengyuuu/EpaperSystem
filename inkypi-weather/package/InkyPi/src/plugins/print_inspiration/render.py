@@ -424,6 +424,19 @@ def _maker(canvas, x, middle, model, images, right, avatar_size=14, size=10):
         canvas.text((x, middle), model["maker"], size, "muted", anchor="lm", bold=False, width=right - x)
 
 
+def _card_tags(canvas, x, middle, model, right):
+    """A card's category (else its first tag) as an outlined label, and its rating after it."""
+    rating = f"{model['rating']:.1f}" if model.get("ratings") else ""
+    rating_width = (16 + canvas.width(rating, 10)) if rating else 0
+    tags = [tag for tag in model.get("tags") or [] if tag]
+    label = model.get("category") or (f"#{tags[0]}" if tags else "")
+    room = right - x - rating_width - 10
+    if label and room > 24:
+        x += _pill(canvas, x, middle, canvas.fit(label, 9, room), size=9) + 6
+    if rating and x + rating_width <= right:
+        _stat(canvas, x, middle, "star", rating, size=10, icon=10)
+
+
 def _card(canvas, box, model, rank, images, chinese):
     x1, y1, x2, y2 = box
     canvas.draw.rounded_rectangle(box, radius=7, fill=canvas.color("card"), outline=canvas.color("rule"), width=1)
@@ -447,6 +460,9 @@ def _card(canvas, box, model, rank, images, chinese):
     for line in lines:
         canvas.text((x1 + 5, y), line, 12)
         y += CARD_TITLE_LINE
+    # A line still to spare (a short name) carries its category, else a tag, and its rating.
+    if room - len(lines) - (1 if maker_line else 0) >= 1:
+        _card_tags(canvas, x1 + 5, bottom - 7 - (18 if maker_line else 0), model, x2 - 4)
     if maker_line:
         _maker(canvas, x1 + 5, bottom - 7, model, images, x2 - 4)
     elif images.get(model.get("avatar")) is not None:
