@@ -10,7 +10,8 @@
     "*_wall_slot_filler.png": "full colour mascot scene for an empty live-wall tile or a short, wide spare band",
     "club_supporters_strip.png": "fills the room between a club or CSL page's fixtures and results, contained and standing on its floor",
     "*_band_*_filler.png": "full colour mascot scenes laid side by side with the wall slot filler to fill a wide spare band",
-    "mlb_wall_band_strip.png": "full colour, transparent, drawn frameless at the live wall spare band size (in place of the mascot scenes)"
+    "mlb_wall_band_strip.png": "full colour, transparent, drawn frameless at the live wall spare band size (in place of the mascot scenes)",
+    "{ufc,tennis,motogp}_header_cutout.png": "alpha-only art (2112x704 source, 2026-11-07), tinted with the sport's accent in the UFC, tennis and MotoGP panel headers"
   },
   "assets": {
     "club_pl_header_cutout.png": {
@@ -212,6 +213,36 @@
       "size": [
         2972,
         774
+      ]
+    },
+    "ufc_header_cutout.png": {
+      "scene": "high kick and block, takedown, referee raising the winner's arm, octagon cage",
+      "job_id": "46f25a1d-3190-4827-b4eb-4deb95cf04cf",
+      "source_sha256": "3a54e8433c64bf7b9c5125eef47627768abb733dbf49736db734c9e7f83eab16",
+      "sha256": "d1922dd94fd38caf4f88bb6d205ed440b00b0eb1990c6f39520489bde3498bc4",
+      "size": [
+        173,
+        38
+      ]
+    },
+    "tennis_header_cutout.png": {
+      "scene": "serve with the ball's dotted flight over the net, lunging forehand, two-handed backhand",
+      "job_id": "ec909635-0a7e-420a-97d0-d8a7edfc157b",
+      "source_sha256": "2b3b63f5c43c2563bf76415f2189d2f72df54904f990ae93e41548c584492278",
+      "sha256": "aaa4d3914b29adf13a272097b8d82921601a1765edbcd0b0304903aec2e13d22",
+      "size": [
+        153,
+        38
+      ]
+    },
+    "motogp_header_cutout.png": {
+      "scene": "tucked on the straight, two bikes leaning into a corner on the kerb, wheelie, chequered flag",
+      "job_id": "f52bec3c-459d-4505-8752-7b596322f921",
+      "source_sha256": "9f633b25257a13472345ffcb95923e0ef95704fcb75d5ea81a3505b312b3cb4a",
+      "sha256": "6d9a073a6d828278bc924d485f673258aaca6354faa996aca59777993aa717db",
+      "size": [
+        199,
+        38
       ]
     }
   },

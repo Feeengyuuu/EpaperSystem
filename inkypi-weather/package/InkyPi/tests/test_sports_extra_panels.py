@@ -116,17 +116,18 @@ def test_tournaments_are_named_by_their_official_marks():
     assert tennis.tournament_mark({"tour": "ATP", "name": "Swiss Indoors Basel"}) == "tennis_atp_500"
     assert tennis.tournament_mark({"tour": "ATP", "name": "Moselle Open"}) == "tennis_atp_250"
     assert tennis.tournament_mark({"tour": "WTA", "name": "Australian Open"}) == "tennis_australian_open"
-    # A WTA event carries the tour's wordmark with its tier as a badge; Wimbledon and the Finals have no
-    # bundled mark.
+    # A WTA event carries the WTA's own tier tag; Wimbledon its crest, the ATP Finals their logo.
     hong_kong = {"tour": "WTA", "name": "Prudential Hong Kong Tennis Open"}
-    assert (tennis.tournament_category(hong_kong), tennis.tournament_mark(hong_kong)) == ("250", None)
-    assert tennis.tournament_category({"tour": "WTA", "name": "Wuhan Open"}) == "1000"
-    assert tennis.tournament_mark({"tour": "ATP", "name": "Wimbledon"}) is None
-    assert tennis.tournament_mark({"tour": "ATP", "name": "Nitto ATP Finals"}) is None
+    assert (tennis.tournament_category(hong_kong), tennis.tournament_mark(hong_kong)) == ("250", "tennis_wta_250")
+    assert tennis.tournament_mark({"tour": "WTA", "name": "Wuhan Open"}) == "tennis_wta_1000"
+    assert tennis.tournament_mark({"tour": "WTA", "name": "Wimbledon"}) == "tennis_wimbledon"
+    assert tennis.tournament_mark({"tour": "ATP", "name": "Nitto ATP Finals"}) == "tennis_atp_finals"
+    assert tennis.tournament_mark({"tour": "WTA", "name": "WTA Finals Riyadh"}) is None
     from plugins.sports_dashboard.common import LOCAL_TEAM_LOGO_DIR
 
     for key in ("tennis_atp_1000", "tennis_atp_500", "tennis_atp_250", "tennis_australian_open", "tennis_roland_garros",
-                "tennis_us_open", "motogp_ducati", "motogp_ktm", "motogp_aprilia", "motogp_honda", "motogp_yamaha"):
+                "tennis_us_open", "tennis_wimbledon", "tennis_atp_finals", "tennis_wta_1000", "tennis_wta_500",
+                "tennis_wta_250", "motogp_ducati", "motogp_ktm", "motogp_aprilia", "motogp_honda", "motogp_yamaha"):
         assert (Path(LOCAL_TEAM_LOGO_DIR) / f"{key}.png").is_file(), key
 
 
@@ -174,3 +175,24 @@ def test_an_upcoming_tennis_match_shows_both_players_headshots(monkeypatch):
     asked.clear()
     plugin._draw_tennis_match(image, ImageDraw.Draw(image), (0, 0, 260, 58), played, feeds.NOW, DAY_COLORS["blue"])
     assert asked == []
+
+
+def test_a_player_espn_has_no_photo_of_shows_the_tours_own(monkeypatch):
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    asked = []
+
+    def load(url, size):
+        asked.append(url)
+        return None if "espncdn" in url else Image.new("RGBA", (size, size), (200, 40, 160, 255))
+
+    monkeypatch.setattr(plugin, "_load_team_logo_for_render", load)
+    monkeypatch.setattr(plugin, "_load_icon_flag", lambda url, size: Image.new("RGBA", size, (0, 80, 200, 255)))
+    event = tennis.parse_scoreboard(feeds.ATP, "ATP")["tournaments"][0]
+    upcoming = next(match for match in event["matches"] if match["state"] == "pre")
+    upcoming["players"][0]["photo"] = "https://photoresources.wtatennis.com/photo-resources/x/Eala-Torso_330332.png?width=480"
+    image = Image.new("RGB", (270, 70), DAY_COLORS["paper"])
+
+    plugin._draw_tennis_match(image, ImageDraw.Draw(image), (0, 0, 260, 58), upcoming, feeds.NOW, DAY_COLORS["blue"])
+
+    assert asked[:2] == [upcoming["players"][0]["headshot"], upcoming["players"][0]["photo"]]
+    assert (200, 40, 160) in set(image.crop((170, 16, 258, 58)).get_flattened_data())

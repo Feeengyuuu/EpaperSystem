@@ -175,6 +175,62 @@
         64
       ],
       "sha256": "6432288e6bdffa862947e695437f964eca7e73f0fa41ab674c807bb59d767c29"
+    },
+    "tennis_wimbledon": {
+      "source": "https://www.wimbledon.com/_next/static/media/Logo-Wimbledon.2wyelfplbl7j4.svg",
+      "page": "https://www.wimbledon.com/",
+      "licence": "Wimbledon's official logo from its own site, shown to name the tournament",
+      "source_sha256": "1a54a289fab10d8f3b00ee90898d0491169c01dad1cf2e0abc46c13435e43362",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "48ea30e3ea6a5e37b0c18f9a76a4dd966a4d1d364f904d77f058498fcfc665de"
+    },
+    "tennis_atp_finals": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/9/90/Nitto_ATP_Finals_logo.jpg",
+      "page": "https://commons.wikimedia.org/wiki/File:Nitto_ATP_Finals_logo.jpg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "157ac4938700dcea397f62a4b771d813480635d92264e7245bd3f4bcd1e09ad7",
+      "processing": "the white ground cleared",
+      "size": [
+        108,
+        64
+      ],
+      "sha256": "d8fabc55bdea24d703d051959e992748d90454c1c9312531f03d5a8a523df34e"
+    },
+    "tennis_wta_1000": {
+      "source": "https://www.wtatennis.com/resources/v7.55.3/i/elements/1000k-tag.svg",
+      "page": "https://www.wtatennis.com/tournaments",
+      "licence": "The WTA's WTA 1000 tier tag from its own site, shown to name the tournament's tier",
+      "source_sha256": "9d8cbad91c78f4c67e8642e911d30bde46294bcfe26b028ba78848ddc49f2ca8",
+      "size": [
+        225,
+        64
+      ],
+      "sha256": "751e11bc25768083b5acc721842e64bb93f9a62d8a4b9601101a312c2a60f20d"
+    },
+    "tennis_wta_500": {
+      "source": "https://www.wtatennis.com/resources/v7.55.3/i/elements/500k-tag.svg",
+      "page": "https://www.wtatennis.com/tournaments",
+      "licence": "The WTA's WTA 500 tier tag from its own site, shown to name the tournament's tier",
+      "source_sha256": "02991b9bf9f34e5957f40c0375a56f12a87f139e9371d19a6e9fa98a66040443",
+      "size": [
+        213,
+        64
+      ],
+      "sha256": "8764e1ae964072e255e700f6d3cb93978b883a7b48772ca20a481dc4c8a6eab5"
+    },
+    "tennis_wta_250": {
+      "source": "https://www.wtatennis.com/resources/v7.55.3/i/elements/250k-tag.svg",
+      "page": "https://www.wtatennis.com/tournaments",
+      "licence": "The WTA's WTA 250 tier tag from its own site, shown to name the tournament's tier",
+      "source_sha256": "e34426833c7b7671d6a07be87e75d73fa304f18d6e405b3aa645e3e869eb92d6",
+      "size": [
+        211,
+        64
+      ],
+      "sha256": "e7cddd8c9b608ac68a5e3c9cbf8f756601b4499720892e0ff55d4e7097ee6488"
     }
   }
 }

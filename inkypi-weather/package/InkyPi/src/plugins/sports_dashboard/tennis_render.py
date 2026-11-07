@@ -20,6 +20,8 @@ HEAD_HEIGHT = 24
 SET_W = 20
 # The two headshots of a match still to be played, side by side at the block's right edge.
 HEADSHOT_PAIR_W = 84
+# The share of a WTA torso cut-out kept to match a headshot's framing (head and shoulders).
+TORSO_BUST_SHARE = 0.5
 
 
 def match_state_label(match, now):
@@ -60,7 +62,7 @@ class TennisRenderMixin:
         # event by the tour's wordmark and its tier as a badge.
         key = tennis.tournament_mark(tournament)
         path = os.path.join(LOCAL_TEAM_LOGO_DIR, f"{key}.png") if key else TOUR_MARKS[tour]
-        mark = self._load_local_logo(path, (52, 20) if key else (40, 14), alpha_threshold=8)
+        mark = self._load_local_logo(path, (66, 20) if key else (40, 14), alpha_threshold=8)
         x = x1 + 8
         if mark:
             mark = SportsDashboard._night_inked_mark(mark)
@@ -115,8 +117,9 @@ class TennisRenderMixin:
         players = match.get("players") or []
         sets = max((len(player.get("sets") or []) for player in players), default=0)
         # A match still to be played has no set scores: its two players' headshots stand there instead.
-        faces = [player.get("headshot") for player in players[:2]] if match.get("state") == "pre" and not sets else []
-        reserve = HEADSHOT_PAIR_W if any(faces) else 0
+        faces = ([(player.get("headshot"), player.get("photo")) for player in players[:2]]
+                 if match.get("state") == "pre" and not sets else [])
+        reserve = HEADSHOT_PAIR_W if any(url for pair in faces for url in pair) else 0
         row_h = (y2 - y1 - 17) // 2
         for index, player in enumerate(players[:2]):
             top = y1 + 16 + index * row_h
@@ -125,16 +128,40 @@ class TennisRenderMixin:
             self._draw_tennis_headshots(image, (x2 - 4 - reserve, y1 + 18, x2 - 3, y2 - 1), faces)
 
     def _draw_tennis_headshots(self, image, box, faces):
-        """The players' headshots side by side, standing on the block's bottom edge."""
+        """The players' headshots side by side, standing on the block's bottom edge: ESPN's, else the
+        tour's own photo (a WTA torso cut-out cropped to head and shoulders)."""
         x1, y1, x2, y2 = [int(value) for value in box]
         height = y2 - y1
         slot = (x2 - x1) // 2
-        for index, url in enumerate(faces):
-            face = self._load_team_logo_for_render(url, int(height * 1.22)) if url else None
+        for index, urls in enumerate(faces):
+            face = None
+            for url in urls:
+                if url and face is None:
+                    face = self._tennis_face(url, height)
             if face is None:
                 continue
             left = x1 + index * slot + (slot - face.width) // 2
             image.paste(face, (left, y2 - face.height), face)
+
+    def _tennis_face(self, url, height):
+        size = int(height * 1.22)
+        if url.lower().endswith(".jpg"):
+            # A photo with its own ground (the WTA's plain headshot) is shown as a round avatar.
+            photo = self._load_icon_flag(url, (height * 3, height * 3))
+            if photo is None or min(photo.size) < 2:
+                return None
+            photo = ImageOps.fit(photo.convert("RGBA"), (height - 2, height - 2), Image.LANCZOS, centering=(0.5, 0.2))
+            mask = Image.new("L", photo.size, 0)
+            ImageDraw.Draw(mask).ellipse((0, 0, photo.width - 1, photo.height - 1), fill=255)
+            photo.putalpha(mask)
+            return photo
+        if "-Torso_" not in url:
+            return self._load_team_logo_for_render(url, size)
+        torso = self._load_team_logo_for_render(url, size * 3)
+        if torso is None:
+            return None
+        bust = torso.crop((0, 0, torso.width, int(torso.height * TORSO_BUST_SHARE)))
+        return ImageOps.contain(bust, (size, height), Image.LANCZOS)
 
     def _draw_tennis_player(self, image, draw, box, player, match, sets):
         x1, y1, x2, y2 = [int(value) for value in box]

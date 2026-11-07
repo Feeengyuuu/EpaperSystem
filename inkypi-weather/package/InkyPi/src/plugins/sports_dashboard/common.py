@@ -689,6 +689,8 @@ LOCAL_WNBA_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "wnba_header_cutou
 LOCAL_NHL_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "nhl_header_cutout.png")
 LOCAL_NHL_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "nhl_title_wordmark.png")
 LOCAL_PGA_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "pga_header_cutout.png")
+LOCAL_EXTRA_HEADER_CUTOUT_PATHS = {sport: os.path.join(LOCAL_DECOR_DIR, f"{sport.lower()}_header_cutout.png")
+                                   for sport in ("UFC", "TENNIS", "MOTOGP")}
 LOCAL_NFL_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "nfl_header_cutout.png")
 LOCAL_NFL_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "nfl_title_wordmark.png")
 LOCAL_NCAA_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "ncaa_header_cutout.png")
@@ -3906,6 +3908,7 @@ class SportsDashboardCommonMixin:
             title_x = x1 + 98 if sport in {"MLB", "WNBA"} else x1 + 66
         title_text = "PGA TOUR" if sport == "PGA" else ("NCAA FB" if sport == "NCAA" else sport)
         title_drawn = False
+        title_end = title_x
         if wordmarks:
             x = title_x
             for path in wordmarks:
@@ -3915,6 +3918,7 @@ class SportsDashboardCommonMixin:
                     image.paste(mark, (int(x), int(header_y + (22 - mark.height) / 2)), mark)
                     x += mark.width + 10
                     title_drawn = True
+            title_end = x
         elif sport == "MLB":
             title_drawn = self._draw_mlb_title_wordmark(image, title_x, header_y - 1, 154, 24)
         elif sport == "WNBA":
@@ -3950,7 +3954,7 @@ class SportsDashboardCommonMixin:
         strip_drawn = self._draw_standalone_sport_header_cutout(
             image,
             sport,
-            title_x + SPORT_HEADER_CUTOUT_TITLE_GAP,
+            max(title_x + SPORT_HEADER_CUTOUT_TITLE_GAP, title_end + 6),
             header_y - 6,
             stage[0] - 8 if stage else x2 - 92,
             y1 + 48,

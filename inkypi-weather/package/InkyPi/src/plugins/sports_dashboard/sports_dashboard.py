@@ -878,6 +878,7 @@ class SportsDashboard(
             "PGA": LOCAL_PGA_HEADER_CUTOUT_PATH,
             "NFL": LOCAL_NFL_HEADER_CUTOUT_PATH,
             "NCAA": LOCAL_NCAA_HEADER_CUTOUT_PATH,
+            **LOCAL_EXTRA_HEADER_CUTOUT_PATHS,
             **{f"CLUB_{code}": path for code, path in LOCAL_CLUB_HEADER_CUTOUT_PATHS.items()},
         }
         return paths.get(str(sport or "").upper())

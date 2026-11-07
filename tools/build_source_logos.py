@@ -284,6 +284,16 @@ LOGOS = {
     "tennis_us_open": ((COMMONS.format(path="c/cd/Usopen-horizontal-logo.svg", name="Usopen-horizontal-logo.svg"),
                         COMMONS_FILE.format(name="Usopen-horizontal-logo.svg"), PUBLIC_DOMAIN),
                        [PLUGINS / "sports_dashboard" / "assets" / "logos"], 1.0),
+    "tennis_wimbledon": (("https://www.wimbledon.com/_next/static/media/Logo-Wimbledon.2wyelfplbl7j4.svg",
+                          "https://www.wimbledon.com/", "Wimbledon's official logo from its own site, shown to name "
+                          "the tournament"), [PLUGINS / "sports_dashboard" / "assets" / "logos"], 1.0),
+    "tennis_atp_finals": (("https://upload.wikimedia.org/wikipedia/commons/9/90/Nitto_ATP_Finals_logo.jpg",
+                           COMMONS_FILE.format(name="Nitto_ATP_Finals_logo.jpg"), PUBLIC_DOMAIN),
+                          [PLUGINS / "sports_dashboard" / "assets" / "logos"], "white_ground"),
+    **{f"tennis_wta_{tier}": ((f"https://www.wtatennis.com/resources/v7.55.3/i/elements/{tier}k-tag.svg",
+                               "https://www.wtatennis.com/tournaments",
+                               f"The WTA's WTA {tier} tier tag from its own site, shown to name the tournament's tier"),
+                              [PLUGINS / "sports_dashboard" / "assets" / "logos"], 1.0) for tier in ("1000", "500", "250")},
     # The MotoGP panel's manufacturers, one mark beside each rider.
     "motogp_ducati": ((COMMONS.format(path="3/36/Ducati_red_logo.svg", name="Ducati_red_logo.svg"),
                        COMMONS_FILE.format(name="Ducati_red_logo.svg"), PUBLIC_DOMAIN),

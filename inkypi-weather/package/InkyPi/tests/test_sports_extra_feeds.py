@@ -278,3 +278,72 @@ def test_the_loader_keeps_a_fresh_reading_and_falls_back_to_it_when_the_feed_fai
         {}, "DEMO NO DATA")
     # With nothing kept, a failing feed gives no data and the panel stays out.
     assert extra_feeds.load(plugin, {}, "third", "v1", broken, 600, NOW, label="DEMO") == ({}, "DEMO NO DATA")
+
+
+class _Response:
+    def __init__(self, data):
+        self.data = data
+
+
+class _TourClient:
+    """ATP's site search, WTA's player search and a WTA player page, as the tours answer them."""
+
+    def __init__(self):
+        self.asked = []
+
+    def request_json(self, method, url, **kwargs):
+        self.asked.append(url)
+        if "atptour.com" in url:
+            return _Response({"Players": [{"FirstName": "Luca", "LastName": "Van Assche",
+                                           "PlayerHeadshotUrl": "https://www.atptour.com/-/media/alias/player-headshot/V0DZ"}]})
+        return _Response({"content": [{"id": 330332, "fullName": "Alexandra Eala"}]})
+
+    def request_text(self, method, url, **kwargs):
+        self.asked.append(url)
+        return _Response('<img src="https://photoresources.wtatennis.com/photo-resources/2026/04/08/c67/Eala-Torso_330332.png'
+                         '?width=790&height=740">')
+
+
+def test_a_player_without_an_espn_photo_gets_the_tours_official_one(tmp_path, monkeypatch):
+    from plugins.sports_dashboard import tennis_photos
+
+    client = _TourClient()
+    import contextlib
+
+    monkeypatch.setattr(extra_feeds, "create_single_attempt_http_client", lambda: contextlib.nullcontext(client))
+    plugin = _Plugin(tmp_path)
+    players = [{"name": "Luca Van Assche", "tour": "ATP"}, {"name": "Alexandra Eala", "tour": "WTA"},
+               {"name": "Nobody Known", "tour": "ATP"}]
+
+    found = tennis_photos.official_photos(plugin, {}, players, NOW)
+
+    assert found["ATP:luca van assche"] == "https://www.atptour.com/-/media/alias/player-headshot/V0DZ"
+    assert found["WTA:alexandra eala"].startswith("https://photoresources.wtatennis.com/") \
+        and found["WTA:alexandra eala"].endswith("Eala-Torso_330332.png?width=480&height=450")
+    assert found["ATP:nobody known"] == ""
+    # Kept: the next refresh asks nothing; a cache-only redraw reads the same answers.
+    client.asked.clear()
+    assert tennis_photos.official_photos(plugin, {"_theme_render_only": True}, players, NOW) == found
+    assert tennis_photos.official_photos(plugin, {}, players, NOW) == found and client.asked == []
+
+
+def test_a_wta_player_without_a_cut_out_gets_the_tours_plain_headshot(tmp_path, monkeypatch):
+    from plugins.sports_dashboard import tennis_photos
+    import contextlib
+
+    class Client(_TourClient):
+        def request_json(self, method, url, **kwargs):
+            self.asked.append((url, kwargs.get("params")))
+            return _Response({"content": [{"id": 323966, "fullName": "Claire Liu"}]})
+
+        def request_text(self, method, url, **kwargs):
+            return _Response('<img src="https://wtafiles.blob.core.windows.net/images/headshots/323966.jpg">')
+
+    client = Client()
+    monkeypatch.setattr(extra_feeds, "create_single_attempt_http_client", lambda: contextlib.nullcontext(client))
+
+    found = tennis_photos.official_photos(_Plugin(tmp_path), {}, [{"name": "Claire Liu", "tour": "WTA"}], NOW)
+
+    assert found == {"WTA:claire liu": "https://wtafiles.blob.core.windows.net/images/headshots/323966.jpg"}
+    # The tour's search matches any part of a name: it is asked for the full name.
+    assert client.asked[0][1]["name"] == "Claire Liu"

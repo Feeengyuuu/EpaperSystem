@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 
 from runtime.refresh_contracts import TaskCancelled
 
-from . import event_ranking, extra_feeds
+from . import event_ranking, extra_feeds, tennis_photos
 
 logger = logging.getLogger(__name__)
 SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/tennis/{tour}/scoreboard"
@@ -52,8 +52,9 @@ WTA_1000 = ("qatar|doha|dubai|indian wells|bnp paribas|miami|madrid|internaziona
 WTA_500 = ("brisbane|adelaide|abu dhabi|linz|charleston|credit one|stuttgart|porsche|berlin|queen|bad homburg|eastbourne|"
            "washington|citi open|monterrey|san diego|seoul|korea open|pan pacific|toray|tokyo|ningbo|strasbourg|"
            "guadalajara|zhengzhou")
-# The bundled official marks: the Grand Slams' logos and the ATP's tier stamps.
-MARKS = {"australian_open", "roland_garros", "us_open"}
+# The bundled official marks: the Grand Slams' logos, the ATP Finals' logo and the tours' own tier
+# stamps and tags.
+MARKS = {"australian_open", "roland_garros", "wimbledon", "us_open"}
 
 
 def tournament_category(tournament):
@@ -76,14 +77,15 @@ def tournament_category(tournament):
 
 
 def tournament_mark(tournament):
-    """The bundled official mark naming the tournament: a Grand Slam's logo, or for an ATP event its
-    tier stamp (tennis_atp_1000 / 500 / 250); None for a WTA event or the Finals."""
+    """The bundled official mark naming the tournament: a Grand Slam's logo, the ATP Finals' logo, or
+    the tour's tier stamp or tag (tennis_atp_1000 / tennis_wta_250 ...); None for the WTA Finals."""
     category = tournament_category(tournament)
+    tour = "wta" if (tournament or {}).get("tour") == "WTA" else "atp"
     if category in MARKS:
         return f"tennis_{category}"
-    if (tournament or {}).get("tour") != "WTA" and category in ("1000", "500", "250"):
-        return f"tennis_atp_{category}"
-    return None
+    if category == "finals":
+        return "tennis_atp_finals" if tour == "atp" else None
+    return f"tennis_{tour}_{category}"
 
 
 def _date(value):
@@ -254,4 +256,17 @@ def load_card(plugin, settings, now):
         return data
 
     data, state = extra_feeds.load(plugin, settings, "tennis", VERSION, fetch, TTL_SECONDS, now, label="ESPN TENNIS")
-    return build_card(data, now), state
+    card = build_card(data, now)
+    if card:
+        attach_photos(plugin, settings, card, now)
+    return card, state
+
+
+def attach_photos(plugin, settings, card, now):
+    """Give each player of a match still to be played the tour's own photo (``photo``), for when
+    ESPN has no headshot of them."""
+    upcoming = [(tour, player) for tour, entry in card["tours"].items() for match in entry["shown"]
+                if match["state"] == "pre" for player in match["players"]]
+    photos = tennis_photos.official_photos(plugin, settings, [dict(player, tour=tour) for tour, player in upcoming], now)
+    for tour, player in upcoming:
+        player["photo"] = photos.get(f"{tour}:{tennis_photos.name_key(player.get('name'))}", "")
