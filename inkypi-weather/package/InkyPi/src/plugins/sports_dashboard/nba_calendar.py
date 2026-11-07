@@ -124,20 +124,20 @@ def load_calendar(plugin, settings, tz, now, session):
     updated = set()
     used = {}
 
-    def snapshot(token, ttl):
+    def snapshot(token, ttl, forced):
         old = snapshots.get(token) or {}
         fetched = _stamp(old.get("fetched_at"))
         retry = _stamp(old.get("retry_until"))
         fresh = bool(fetched and timedelta(0) <= now - fetched < timedelta(seconds=ttl) and not retry)
-        if fresh and not force:
+        if fresh and not forced:
             used[token] = (old, True)
             return old
-        if cache_only or (retry and retry > now and not force):
+        if cache_only or (retry and retry > now and not forced):
             used[token] = (old, fresh)
             return old
         response = None
         try:
-            if not force and plugin._nba_scoreboard_calls_left(settings, now) <= 0:
+            if not forced and plugin._nba_scoreboard_calls_left(settings, now) <= 0:
                 raise RuntimeError("NBA request budget exhausted")
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -197,16 +197,19 @@ def load_calendar(plugin, settings, tz, now, session):
         event["start"].astimezone(ESPN_TIMEZONE).strftime("%Y%m%d")
         for event in candidates if not plugin._is_nba_finished_event(event)
     }
-    # Scores get the remaining daily request budget before schedule maintenance.
+    # Scores get the remaining daily request budget before schedule maintenance. A forced refresh
+    # reads the match days again but leaves each month's schedule to its own twelve hours: the
+    # months of a season run to a thousand games, and reading them all again held tens of MB in
+    # the Sports worker and pushed it past its memory guard.
     for token in sorted(day_tokens):
         ttl = MONTH_TTL_SECONDS
         if token in scheduled_days:
             ttl = plugin._int_setting(settings, "nbaCacheHours", 1, 1, 12) * 3600
         if token in live_days:
             ttl = plugin._nba_live_refresh_seconds(settings)
-        snapshot(token, ttl)
+        snapshot(token, ttl, force)
     for token in month_tokens:
-        snapshot(token, MONTH_TTL_SECONDS)
+        snapshot(token, MONTH_TTL_SECONDS, False)
 
     merged = {}
     for token in month_tokens:

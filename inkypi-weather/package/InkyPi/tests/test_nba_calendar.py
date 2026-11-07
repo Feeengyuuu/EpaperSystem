@@ -141,6 +141,22 @@ def test_live_scores_refresh_only_match_day_and_stop_fast_polling_after_final(tm
     assert plugin._read_json_file(plugin._nba_scoreboard_state_path())["count"] == 3
 
 
+def test_a_forced_refresh_reads_the_match_days_again_not_the_fresh_month_schedule(tmp_path):
+    now = datetime(2026, 10, 20, 23, 30, tzinfo=timezone.utc)
+    session = ESPN({"202610": {"events": [match(state="pre")]}, "20261020": {"events": [match()]}})
+    plugin, load = calendar(tmp_path, session)
+    load(now)
+    session.calls.clear()
+
+    forced = load(now + timedelta(seconds=30), {"forceRefresh": True})
+
+    # The scores are read again; the month's schedule, good for twelve hours, is not (re-reading
+    # every month of the season is what pushed the Sports worker past its memory guard).
+    assert [call["dates"] for call in session.calls] == ["20261020"]
+    assert forced["source_state"] == "ESPN LIVE"
+    assert [event["id"] for event in forced["scoreboard"]["events"]] == ["game"]
+
+
 def test_cross_year_months_deduplicate_and_filter_in_device_timezone(tmp_path):
     now = datetime(2026, 12, 31, 20, tzinfo=timezone.utc)
     january = match("jan", "2027-01-01T16:00:00Z", "pre")
