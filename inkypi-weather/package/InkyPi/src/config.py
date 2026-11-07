@@ -312,7 +312,6 @@ class Config:
         self._add_hot_and_odds_pages()
         self._add_ai_papers_page()
         self._add_daily_digest_page()
-        self._add_print_inspiration_page()
 
     def _migrate_aggregate_pages_playlist(self):
         from aggregate_pages_migration import apply_aggregate_pages_playlist_migration
@@ -358,11 +357,6 @@ class Config:
         from daily_digest_page_migration import apply_daily_digest_page_migration
 
         apply_daily_digest_page_migration(self)
-
-    def _add_print_inspiration_page(self):
-        from print_inspiration_page_migration import apply_print_inspiration_page_migration
-
-        apply_print_inspiration_page_migration(self)
 
     def _add_starter_rotation(self):
         from starter_rotation_migration import apply_starter_rotation_migration
