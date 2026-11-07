@@ -413,6 +413,17 @@ def _lead(canvas, model, images, chinese, doodle_key):
     _lead_stats(canvas, model, text_left, right, stats_middle)
 
 
+def _maker(canvas, x, middle, model, images, right, avatar_size=14, size=10):
+    """The maker's round avatar (when it loaded) and name from ``x`` on, centred on ``middle``."""
+    avatar = images.get(model.get("avatar"))
+    if avatar is not None and x + avatar_size + 20 < right:
+        top = round(middle - avatar_size / 2)
+        _picture(canvas, avatar, (x, top, x + avatar_size, top + avatar_size), radius=avatar_size // 2)
+        x += avatar_size + 4
+    if model.get("maker") and x + 16 < right:
+        canvas.text((x, middle), model["maker"], size, "muted", anchor="lm", bold=False, width=right - x)
+
+
 def _card(canvas, box, model, rank, images, chinese):
     x1, y1, x2, y2 = box
     canvas.draw.rounded_rectangle(box, radius=7, fill=canvas.color("card"), outline=canvas.color("rule"), width=1)
@@ -421,16 +432,28 @@ def _card(canvas, box, model, rank, images, chinese):
     _badge(canvas, x1 + 8, y1 + 8, rank, 18)
     name, _summary, _translated = shown_name(model, chinese)
     # How it prints (else what comes with it) and its counts sit at the foot; the name runs down
-    # into all the room above them.
+    # into the room above them, and its maker (avatar and name) takes the line a short name leaves.
+    # A name that needs the whole room keeps it, and the maker's avatar sits on the picture instead.
     width = x2 - x1 - 10
     detail = _fitted_line(canvas, print_specs(model)[:3], 10, width) or card_line(model)
     stats_middle = y2 - 12
     detail_middle = y2 - 30
     y = picture_bottom + 5
     bottom = (detail_middle - 8) if detail else (stats_middle - 9)
-    for line in canvas.wrap(name, 12, width, max(1, int((bottom - y) // CARD_TITLE_LINE))):
+    room = max(1, int((bottom - y) // CARD_TITLE_LINE))
+    lines = canvas.wrap(name, 12, width, room)
+    has_maker = bool(model.get("maker") or images.get(model.get("avatar")))
+    maker_line = has_maker and len(lines) < room
+    for line in lines:
         canvas.text((x1 + 5, y), line, 12)
         y += CARD_TITLE_LINE
+    if maker_line:
+        _maker(canvas, x1 + 5, bottom - 7, model, images, x2 - 4)
+    elif images.get(model.get("avatar")) is not None:
+        size = 22
+        left, top = x2 - 8 - size, picture_bottom - 4 - size
+        canvas.draw.ellipse((left - 2, top - 2, left + size + 2, top + size + 2), fill=canvas.color("card"))
+        _picture(canvas, images[model["avatar"]], (left, top, left + size, top + size), radius=size // 2)
     if detail:
         canvas.text((x1 + 5, detail_middle), detail, 10, "muted", anchor="lm", width=width, bold=False)
     # Likes, prints and downloads: all three share the row, closer set when the counts run long.
@@ -461,7 +484,7 @@ def _row(canvas, y, model, images, chinese, stat):
     left = x1 + THUMB[0] + 8
     lines = canvas.wrap(name, 12, x2 - left, 2)
     maker_line_below = len(lines) < 2 and bool(model.get("maker"))
-    block = len(lines) * 15 + 15 + (13 if maker_line_below else 0)
+    block = len(lines) * 15 + 15 + (15 if maker_line_below else 0)
     top = top_picture + (THUMB[1] - block) / 2
     for index, line in enumerate(lines):
         canvas.text((left, top + index * 15), line, 12)
@@ -470,11 +493,12 @@ def _row(canvas, y, model, images, chinese, stat):
     kind, value = stat
     x += _stat(canvas, x, middle, kind, value, size=10, icon=10) + 8
     x += _stat(canvas, x, middle, "heart", count_text(model["likes"]), size=10, icon=10) + 8
-    # Who made it: on a line of its own under a one-line name, else after the counts where it fits.
+    # Who made it, avatar and name: on a line of its own under a one-line name, else after the
+    # counts where it fits.
     if maker_line_below:
-        canvas.text((left, middle + 13), model["maker"], 9, "muted", anchor="lm", bold=False, width=x2 - left)
-    elif model.get("maker") and x + 30 < x2:
-        canvas.text((x, middle), model["maker"], 9, "muted", anchor="lm", bold=False, width=x2 - x)
+        _maker(canvas, left, middle + 14, model, images, x2, avatar_size=13, size=9)
+    elif model.get("maker") and x + 40 < x2:
+        _maker(canvas, x, middle, model, images, x2, avatar_size=12, size=9)
 
 
 def render_page(size, payload, settings, now, images):

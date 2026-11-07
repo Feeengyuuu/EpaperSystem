@@ -253,3 +253,58 @@ def test_a_cards_title_runs_on_into_the_room_under_it(monkeypatch):
     render.render_page((800, 480), payload, {}, NOW, {})
 
     assert any(text.rstrip().endswith("Place") for text in shown)
+
+
+def _with_avatar(model, index):
+    return {**model, "maker": f"Maker {index}",
+            "avatar": f"https://makerworld.bblmw.com/makerworld/user/{index}/a.jpg?x-oss-process=image/resize,w_64"}
+
+
+def test_every_shown_models_maker_avatar_is_fetched(monkeypatch, tmp_path):
+    monkeypatch.setenv("PRINT_INSPIRATION_CACHE_DIR", str(tmp_path))
+    from plugins.print_inspiration import print_inspiration as module
+
+    asked = []
+    monkeypatch.setattr(module, "load_thumbnails", lambda urls, *args, **kwargs: asked.append(
+        (tuple(urls), kwargs.get("size"))) or {url: Image.new("RGB", (4, 4)) for url in urls})
+    payload = _payload()
+    payload = {key: [_with_avatar(model, f"{key}{index}") for index, model in enumerate(payload[key])]
+               for key in ("week", "makes", "classics")}
+    plugin = PrintInspiration({"id": "print_inspiration"})
+    context = TaskContext.never_cancelled(deadline_monotonic=time.monotonic() + 60)
+
+    images = plugin._images(payload, allow_network=True, context=context)
+
+    shown = payload["week"][:render.CARDS + 1] + payload["makes"][:render.MAKES_ROWS] + payload["classics"]
+    avatars = [url for urls, size in asked if size == module.AVATAR_PIXELS for url in urls]
+    assert sorted(avatars) == sorted(model["avatar"] for model in shown)
+    assert all(model["avatar"] in images for model in shown)
+
+
+def test_the_cards_and_rows_show_each_makers_avatar_and_name(monkeypatch):
+    shown = []
+    original = render.PageCanvas.text
+    monkeypatch.setattr(render.PageCanvas, "text", lambda canvas, xy, text, *args, **kwargs: shown.append(str(text))
+                        or original(canvas, xy, text, *args, **kwargs))
+    payload = _payload()
+    payload = {**payload, **{key: [_with_avatar(model, f"{key}{index}") for index, model in enumerate(payload[key])]
+                             for key in ("week", "makes", "classics")}}
+    # Short names leave a line for the maker; card 5's long name keeps all its room.
+    for index in (1, 2, 3):
+        payload["week"][index]["name"] = f"Model {index}"
+    payload["week"][4]["name"] = "Articulated Baby Dragon Printed In Place"
+    colour = (200, 30, 160)
+    images = {model["avatar"]: Image.new("RGB", (64, 64), colour)
+              for key in ("week", "makes", "classics") for model in payload[key]}
+
+    page = render.render_page((800, 480), payload, {}, NOW, images).convert("RGB")
+
+    assert {"Maker week1", "Maker week3", "Maker makes0", "Maker classics2"} <= set(shown)
+    assert "Maker week4" not in shown and any(text.rstrip().endswith("Place") for text in shown)
+    grid = page.crop(render.GRID)
+    # The long-named card still shows its maker, by the avatar on its picture.
+    width = (render.GRID[2] - render.GRID[0] - render.CARD_GAP * 3) / 4
+    last = page.crop((round(render.GRID[0] + 3 * (width + render.CARD_GAP)), render.GRID[1], render.GRID[2], render.GRID[3]))
+    assert colour in set(last.get_flattened_data())
+    column = page.crop((render.RIGHT[0] + render.THUMB[0], render.RIGHT[1], render.RIGHT[2], render.RIGHT[3]))
+    assert colour in set(grid.get_flattened_data()) and colour in set(column.get_flattened_data())

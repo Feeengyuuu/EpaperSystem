@@ -126,7 +126,7 @@ class PrintInspiration(BasePlugin):
     def _images(self, payload, *, allow_network, context):
         """The pictures the page shows (large for the lead and cards, small for the right column), each
         under its model's first picture URL though it may come from a later one (an old upload can have
-        no thumbnail), and the lead's maker's avatar."""
+        no thumbnail), and each shown model's maker's avatar."""
         common = {"cached_only": not allow_network, "http": get_http_client(), "context": context,
                   "safe_url": sources.safe_image_url, "user_agent": sources.USER_AGENT}
         images = {}
@@ -141,12 +141,14 @@ class PrintInspiration(BasePlugin):
                     return
 
         week = payload["week"][:render.CARDS + 1]
-        for model in payload["makes"] + payload["classics"]:
+        rows = payload["makes"][:render.MAKES_ROWS] + payload["classics"][:render.CLASSIC_ROWS]
+        for model in rows:
             first(model, "pictures_small", "image_small", "small", SMALL_PICTURE_PIXELS)
         for model in week:
             first(model, "pictures", "image", "pictures", PICTURE_PIXELS)
-        images.update(load_thumbnails([model["avatar"] for model in week[:1] if model.get("avatar")],
-                                      self._cache_subdir("avatars"), size=AVATAR_PIXELS, **common))
+        # Every shown model's maker, by their avatar (64 px; one maker may stand on several rows).
+        avatars = list(dict.fromkeys(model["avatar"] for model in week + rows if model.get("avatar")))
+        images.update(load_thumbnails(avatars, self._cache_subdir("avatars"), size=AVATAR_PIXELS, **common))
         # The lead's next pictures, small, in the column beside its cover.
         gallery = [url for model in week[:1] for url in model.get("gallery") or []]
         if gallery:
