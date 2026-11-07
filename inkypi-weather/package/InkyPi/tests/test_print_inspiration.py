@@ -123,3 +123,106 @@ def test_a_model_whose_cover_has_no_thumbnail_shows_its_next_picture(monkeypatch
     context = TaskContext.never_cancelled(deadline_monotonic=time.monotonic() + 60)
     images = plugin._images({"week": [model], "makes": [], "classics": []}, allow_network=True, context=context)
     assert images[model["image"]] is loaded
+
+
+GALLERY = ["media/prints/7a946055/images/2_b/second.jpg", "media/prints/7a946055/images/3_c/third.png",
+           "media/prints/7a946055/images/4_d/fourth.jpg", "media/prints/7a946055/images/5_e/fifth.jpg"]
+
+
+def rich(**fields):
+    return raw(gcodes=[{"id": "9", "printer": {"name": "Prusa MK4"}, "material": {"name": "PETG"}, "printDuration": "1.05",
+                        "weight": 13, "layerHeight": "0.15", "nozzleDiameter": "0.40"}],
+               tags=[{"name": "reuse"}, {"name": "cartridge"}, {"name": "cap"}], remixCount=4, mmu=True,
+               license={"name": "Creative Commons — Attribution  — Noncommercial  — Share Alike"},
+               stls=[{"id": "1"}, {"id": "2"}], slas=[], otherFiles=[{"id": "3"}],
+               user={"publicUsername": "VC Design", "avatarFilePath": "media/auth/avatars/2f/2f8b.png", "level": 24,
+                     "followersCount": 20327},
+               images=[{"filePath": PICTURE}] + [{"filePath": path} for path in GALLERY], **fields)
+
+
+def test_a_model_carries_its_print_settings_files_licence_tags_and_makers_standing():
+    model = sources.normalize_model(rich())
+
+    assert model["print"] == {"printer": "Prusa MK4", "material": "PETG", "minutes": 63, "weight": 13, "layer": "0.15",
+                              "nozzle": "0.40"}
+    assert (model["remixes"], model["files"], model["multi_material"], model["license"]) == (4, 4, True, "CC BY-NC-SA")
+    assert model["tags"] == ["reuse", "cartridge", "cap"]
+    assert (model["maker_level"], model["maker_followers"]) == (24, 20327)
+    # The lead's gallery: the next three pictures after the cover, as small thumbnails.
+    assert len(model["gallery"]) == 3 and model["gallery"][0].endswith("/thumbs/inside/320x240/jpg/second.jpg")
+    plain = sources.normalize_model(raw())
+    assert plain["print"] == {} and plain["license"] == "" and plain["gallery"] == [] and plain["tags"] == []
+
+
+def test_licences_read_short():
+    assert [sources.license_label(name) for name in (
+        "Creative Commons — Attribution", "Creative Commons — Attribution  — Noncommercial",
+        "Creative Commons — Attribution  — No Derivatives", "Standard Digital File License",
+        "Creative Commons — Public Domain", "GNU General Public License v3.0", "")] == [
+        "CC BY", "CC BY-NC", "CC BY-ND", "标准授权", "CC0", "GPL", ""]
+
+
+def test_print_settings_and_files_read_as_short_lines():
+    model = sources.normalize_model(rich())
+    assert render.duration_text(63) == "1小时3分" and render.duration_text(45) == "45分" and render.duration_text(0) == ""
+    assert render.print_specs(model) == ["PETG", "1小时3分", "13 g", "层高 0.15", "Prusa MK4"]
+    assert render.card_line(model) == "PETG · 1小时3分 · 13 g"
+    plain = sources.normalize_model(raw(stls=[{"id": "1"}], gcodes=[], license={"name": "Creative Commons — Attribution"}))
+    assert render.print_specs(plain) == [] and render.card_line(plain) == "1 个文件 · CC BY"
+    assert render.maker_line(model) == "Lv24 · 2.0万关注" and render.maker_line(plain) == ""
+
+
+def test_the_header_sums_the_weeks_list():
+    payload = {"week": [sources.normalize_model(raw(str(1000 + index))) for index in range(7)]}
+    assert render.week_totals(payload) == "本周热门 7 款 · 合计 6.6k 赞 · 133 次打印 · 21k 下载"
+    assert render.week_totals({"week": []}) == ""
+
+
+def test_the_page_shows_the_new_details(monkeypatch):
+    shown = []
+    original = render.PageCanvas.text
+    monkeypatch.setattr(render.PageCanvas, "text", lambda canvas, xy, text, *args, **kwargs: shown.append(str(text))
+                        or original(canvas, xy, text, *args, **kwargs))
+    payload = _payload()
+    payload["week"][0] = sources.normalize_model(rich(id="1000"))
+    payload["week"][1] = sources.normalize_model(rich(id="1001"))
+    gallery = {url: Image.new("RGB", (320, 240), (20, 160, 90)) for url in payload["week"][0]["gallery"]}
+
+    page = render.render_page((800, 480), payload, {}, NOW, gallery)
+
+    assert any(text.startswith("本周热门 7 款") for text in shown)
+    assert {"PETG", "1小时3分", "13 g", "Prusa MK4", "Lv24 · 2.0万关注", "PETG · 1小时3分 · 13 g"} <= set(shown)
+    assert any("4 改版" in text for text in shown) and any("CC BY-NC-SA" in text for text in shown)
+    # The gallery strip beside the lead's picture shows its next pictures.
+    strip = page.crop((render.LEAD[0], render.LEAD[1], render.LEAD[0] + render.LEAD_PICTURE[0] + 10, render.LEAD[3]))
+    assert (20, 160, 90) in set(strip.convert("RGB").get_flattened_data())
+
+
+def test_the_leads_gallery_pictures_are_fetched_small(monkeypatch, tmp_path):
+    monkeypatch.setenv("PRINT_INSPIRATION_CACHE_DIR", str(tmp_path))
+    from plugins.print_inspiration import print_inspiration as module
+
+    asked = []
+    monkeypatch.setattr(module, "load_thumbnails", lambda urls, *args, **kwargs: asked.append(
+        (tuple(urls), kwargs.get("size"))) or {url: Image.new("RGB", (4, 4)) for url in urls})
+    lead = sources.normalize_model(rich())
+    plugin = PrintInspiration({"id": "print_inspiration"})
+    context = TaskContext.never_cancelled(deadline_monotonic=time.monotonic() + 60)
+
+    images = plugin._images({"week": [lead], "makes": [], "classics": []}, allow_network=True, context=context)
+
+    assert all(url in images for url in lead["gallery"])
+    assert (tuple(lead["gallery"]), module.SMALL_PICTURE_PIXELS) in asked
+
+
+def test_a_lead_without_print_settings_shows_its_tags_instead(monkeypatch):
+    shown = []
+    original = render.PageCanvas.text
+    monkeypatch.setattr(render.PageCanvas, "text", lambda canvas, xy, text, *args, **kwargs: shown.append(str(text))
+                        or original(canvas, xy, text, *args, **kwargs))
+    payload = _payload()
+    payload["week"][0] = {**sources.normalize_model(rich(id="1000")), "print": {}, "gcode": False}
+
+    render.render_page((800, 480), payload, {}, NOW, {})
+
+    assert {"#reuse", "#cartridge", "#cap"} <= set(shown) and "PETG" not in shown

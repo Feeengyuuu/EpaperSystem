@@ -49,6 +49,9 @@ ROW_HEIGHT = 44
 SECTION_HEIGHT = 24
 LEAD_PICTURE = (276, 190)
 SUMMARY_LINES = 3
+# The lead's next pictures stand in a column this wide at its picture's right.
+GALLERY_WIDTH = 66
+GALLERY_GAP = 4
 
 
 def _rgb(value):
@@ -81,6 +84,66 @@ def shown_name(model, chinese):
     translated = (chinese or {}).get(model["id"]) or {}
     return (translated.get("title") or model["name"], translated.get("summary") or model["summary"],
             bool(translated.get("title")))
+
+
+def duration_text(minutes):
+    """63 -> "1小时3分", 45 -> "45分", 120 -> "2小时"; "" without a time."""
+    minutes = int(minutes or 0)
+    if minutes <= 0:
+        return ""
+    hours, rest = divmod(minutes, 60)
+    if not hours:
+        return f"{rest}分"
+    return f"{hours}小时{rest}分" if rest else f"{hours}小时"
+
+
+def print_specs(model):
+    """The model's print settings as short labels, most telling first: material, time, filament,
+    layer height, printer."""
+    settings = model.get("print") or {}
+    return [text for text in (settings.get("material") or "", duration_text(settings.get("minutes")),
+                              f"{settings['weight']} g" if settings.get("weight") else "",
+                              f"层高 {settings['layer']}" if settings.get("layer") else "",
+                              settings.get("printer") or "") if text]
+
+
+def file_facts(model):
+    """What comes with the model: its files, remixes, licence and whether it prints in several colours."""
+    return [text for text in (f"{model['files']} 个文件" if model.get("files") else "",
+                              f"{model['remixes']} 改版" if model.get("remixes") else "",
+                              model.get("license") or "", "多色打印" if model.get("multi_material") else "") if text]
+
+
+def card_line(model):
+    """A card's line of detail: its first three print settings, else its files and licence."""
+    specs = print_specs(model)
+    if specs:
+        return " · ".join(specs[:3])
+    return " · ".join(text for text in (f"{model['files']} 个文件" if model.get("files") else "",
+                                        model.get("license") or "") if text)
+
+
+def follower_text(value):
+    value = int(value or 0)
+    return f"{value / 10000:.1f}万" if value >= 10000 else count_text(value)
+
+
+def maker_line(model):
+    """The maker's standing on Printables: "Lv24 · 2.0万关注"."""
+    return " · ".join(text for text in (f"Lv{model['maker_level']}" if model.get("maker_level") else "",
+                                        f"{follower_text(model['maker_followers'])}关注"
+                                        if model.get("maker_followers") else "") if text)
+
+
+def week_totals(payload):
+    """The header's sum of the week's list: "本周热门 7 款 · 合计 6.6k 赞 · 133 次打印 · 21k 下载"."""
+    week = [model for model in payload.get("week") or [] if model]
+    if not week:
+        return ""
+    likes, makes, downloads = (sum(int(model.get(key) or 0) for model in week)
+                               for key in ("likes", "makes", "downloads"))
+    return (f"本周热门 {len(week)} 款 · 合计 {count_text(likes)} 赞 · {count_text(makes)} 次打印 · "
+            f"{count_text(downloads)} 下载")
 
 
 def draw_mark(canvas, x, y, size, color=ORANGE):
@@ -148,16 +211,40 @@ def _date_text(value):
     return f"{published.month}月{published.day}日"
 
 
-def _header(canvas, now):
+def _pill(canvas, x, middle, text, size=10):
+    """An outlined spec label in Printables' orange; returns its width."""
+    width = canvas.width(text, size) + 10
+    canvas.draw.rounded_rectangle((x, middle - 8, x + width, middle + 8), radius=8, outline=ORANGE, width=1)
+    canvas.text((x + width / 2, middle), text, size, anchor="mm")
+    return width
+
+
+def _header(canvas, now, totals=""):
     x1, y1, x2, y2 = HEADER
     placed = paste_local_wordmark(canvas.image, TITLE, (x1 + 2, y1, x1 + 210, y2), align="left")
     left = (placed[2] if placed else x1 + canvas.text((x1, (y1 + y2) / 2), "打印灵感", 26, anchor="lm")) + 14
     draw_mark(canvas, left, y1 + 9, 20)
     canvas.text((left + 22, y1 + 19), "Printables", 16, anchor="lm")
-    canvas.text((left, y1 + 40), "本周 3D 打印模型热门 · 社区点赞与打印数", 10, "muted", anchor="lm", bold=False)
+    canvas.text((left, y1 + 40), totals or "本周 3D 打印模型热门 · 社区点赞与打印数", 10, "muted", anchor="lm",
+                bold=False, width=x2 - 120 - left)
     canvas.text((x2, y1 + 19), f"{now:%m.%d} 周{WEEKDAYS[now.weekday()]}", 18, anchor="rm")
     canvas.text((x2, y1 + 40), f"更新 {now:%H:%M}", 10, "muted", anchor="rm", bold=False)
     canvas.rule((x1, y2 + 2, x2, y2 + 2))
+
+
+def _lead_pictures(canvas, model, images, box):
+    """The cover with, when its next pictures are at hand, a column of them at its right."""
+    x1, y1, x2, y2 = box
+    gallery = [images[url] for url in model.get("gallery") or [] if images.get(url) is not None]
+    if not gallery:
+        _picture(canvas, images.get(model["image"]), box)
+        return
+    split = x2 - GALLERY_WIDTH
+    _picture(canvas, images.get(model["image"]), (x1, y1, split - GALLERY_GAP, y2))
+    height = (y2 - y1 - GALLERY_GAP * 2) / 3
+    for index, picture in enumerate(gallery[:3]):
+        top = y1 + index * (height + GALLERY_GAP)
+        _picture(canvas, picture, (split, round(top), x2, round(top + height)), radius=5)
 
 
 def _lead(canvas, model, images, chinese, doodle_key):
@@ -166,12 +253,16 @@ def _lead(canvas, model, images, chinese, doodle_key):
     text_left = x1 + 10 + LEAD_PICTURE[0] + 12
     paint_doodles(canvas.image, (text_left - 4, y1 + 3, x2 - 3, y2 - 3), DOODLES, ORANGE,
                   strength=DOODLE_STRENGTH[doodle_key], grounds=[canvas.color("lead")])
-    _picture(canvas, images.get(model["image"]), (x1 + 6, y1 + 6, x1 + 6 + LEAD_PICTURE[0], y2 - 6))
+    _lead_pictures(canvas, model, images, (x1 + 6, y1 + 6, x1 + 6 + LEAD_PICTURE[0], y2 - 6))
     _badge(canvas, x1 + 12, y1 + 12, 1, 24)
     width = x2 - 10 - text_left
     name, summary, translated = shown_name(model, chinese)
+    # The top row: the list's own tag and the model's category.
     y = y1 + 10
-    _chip(canvas, text_left, y + 8, "本周最受欢迎")
+    chips_x = text_left + _chip(canvas, text_left, y + 8, "本周最受欢迎") + 6
+    if model.get("category"):
+        _chip(canvas, chips_x, y + 8, canvas.fit(model["category"], 10, text_left + width - chips_x - 12),
+              fill=canvas.color("ink"), color=canvas.color("paper"))
     y += 22
     for line in canvas.wrap(name, 17, width, 2):
         canvas.text((text_left, y), line, 17)
@@ -179,31 +270,45 @@ def _lead(canvas, model, images, chinese, doodle_key):
     if translated:
         canvas.text((text_left, y), model["name"], 10, "muted", width=width, bold=False)
         y += 15
-    for line in canvas.wrap(summary, 11, width, SUMMARY_LINES, bold=False):
+    # The rows under the summary are laid from the card's foot up; the summary takes the room left.
+    stats_middle, maker_y = y2 - 16, y2 - 36
+    files_middle, facts_middle, specs_middle = y2 - 54, y2 - 68, y2 - 86
+    # How it prints when a sliced file says so, else what its maker tagged it.
+    specs = (print_specs(model) or (["含 G-code"] if model.get("gcode") else [])
+             or [f"#{tag}" for tag in model.get("tags") or []])
+    summary_bottom = (specs_middle - 10) if specs else (facts_middle - 8)
+    lines = max(0, min(SUMMARY_LINES, int((summary_bottom - y) // 15)))
+    for line in canvas.wrap(summary, 11, width, lines, bold=False) if lines else []:
         canvas.text((text_left, y), line, 11, "muted", bold=False)
         y += 15
-    y += 4
-    chips_x = text_left
-    if model.get("category"):
-        chips_x += _chip(canvas, chips_x, y + 8, canvas.fit(model["category"], 10, width - 60),
-                         fill=canvas.color("ink"), color=canvas.color("paper")) + 6
-    if model.get("gcode"):
-        _chip(canvas, chips_x, y + 8, "含 G-code")
-    # When it was published and how many have looked at it and talked about it.
+    # How it prints (its first sliced file), as many settings as the line holds; the layer height
+    # gives way first.
+    x = text_left
+    for text in sorted(specs, key=lambda text: text.startswith("层高")):
+        if x + canvas.width(text, 10) + 10 > text_left + width:
+            continue
+        x += _pill(canvas, x, specs_middle, text) + 4
+    # When it was published and how many have looked at it and talked about it; then what comes with it.
     facts = [text for text in (f"{_date_text(model.get('published'))}发布" if _date_text(model.get("published")) else "",
                                f"{count_text(model.get('views'))} 浏览" if model.get("views") else "",
                                f"{count_text(model.get('comments'))} 评论" if model.get("comments") else "") if text]
     if facts:
-        canvas.text((text_left, y + 26), " · ".join(facts), 10, "muted", width=width, bold=False)
-    maker_y = y2 - 42
+        canvas.text((text_left, facts_middle), " · ".join(facts), 10, "muted", width=width, bold=False, anchor="lm")
+    extras = file_facts(model)
+    if extras:
+        canvas.text((text_left, files_middle), " · ".join(extras), 10, "muted", width=width, bold=False, anchor="lm")
     avatar = images.get(model.get("avatar"))
     maker_x = text_left
     if avatar is not None:
         _picture(canvas, avatar, (maker_x, maker_y - 9, maker_x + 18, maker_y + 9), radius=9)
         maker_x += 23
-    canvas.text((maker_x, maker_y), f"by {model.get('maker') or 'Printables'}", 11, anchor="lm", width=x2 - 10 - maker_x)
+    maker_x += canvas.text((maker_x, maker_y), f"by {model.get('maker') or 'Printables'}", 11, anchor="lm",
+                           width=x2 - 10 - maker_x) + 6
+    standing = maker_line(model)
+    if standing and maker_x + 40 < x2 - 10:
+        canvas.text((maker_x, maker_y), standing, 10, "muted", anchor="lm", bold=False, width=x2 - 10 - maker_x)
     x = text_left
-    middle = y2 - 16
+    middle = stats_middle
     for kind, value in (("heart", count_text(model["likes"])), ("download", count_text(model["downloads"])),
                         ("nozzle", count_text(model["makes"])),
                         ("star", f"{model['rating']:.1f}" if model.get("ratings") else "–"),
@@ -226,6 +331,10 @@ def _card(canvas, box, model, rank, images, chinese):
         y += 16
     if model.get("category"):
         canvas.text((x1 + 5, y + 2), model["category"], 10, "muted", width=x2 - x1 - 10, bold=False)
+    # How it prints (else what comes with it), in the room above its counts.
+    detail = card_line(model)
+    if detail:
+        canvas.text((x1 + 5, y2 - 47), detail, 10, anchor="lm", width=x2 - x1 - 10, bold=False)
     # Who printed it and how it rates, over its likes and downloads.
     middle = y2 - 30
     x = x1 + 5
@@ -259,7 +368,10 @@ def _row(canvas, y, model, images, chinese, stat):
     x = left
     kind, value = stat
     x += _stat(canvas, x, middle, kind, value, size=10, icon=10) + 8
-    _stat(canvas, x, middle, "heart", count_text(model["likes"]), size=10, icon=10)
+    x += _stat(canvas, x, middle, "heart", count_text(model["likes"]), size=10, icon=10) + 8
+    # Who made it, where the row has room.
+    if model.get("maker") and x + 30 < x2:
+        canvas.text((x, middle), model["maker"], 9, "muted", anchor="lm", bold=False, width=x2 - x)
 
 
 def render_page(size, payload, settings, now, images):
@@ -267,7 +379,7 @@ def render_page(size, payload, settings, now, images):
     canvas = PageCanvas(palette, family=str((settings or {}).get("fontFamily") or "Microsoft YaHei"), size=(800, 480))
     doodle_key = "night" if _night(canvas) else "day"
     chinese = payload.get("chinese") or {}
-    _header(canvas, now)
+    _header(canvas, now, week_totals(payload))
     week = list(payload.get("week") or [])
     if week:
         _lead(canvas, week[0], images, chinese, doodle_key)

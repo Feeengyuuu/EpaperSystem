@@ -131,6 +131,10 @@ class PrintInspiration(BasePlugin):
             first(model, "pictures", "image", "pictures", PICTURE_PIXELS)
         images.update(load_thumbnails([model["avatar"] for model in week[:1] if model.get("avatar")],
                                       self._cache_subdir("avatars"), size=AVATAR_PIXELS, **common))
+        # The lead's next pictures, small, in the column beside its cover.
+        gallery = [url for model in week[:1] for url in model.get("gallery") or []]
+        if gallery:
+            images.update(load_thumbnails(gallery, self._cache_subdir("small"), size=SMALL_PICTURE_PIXELS, **common))
         return images
 
     def render_cached_display(self, settings, device_config, *, resolved_theme_context):
