@@ -2,7 +2,7 @@
   "generator": "image/gpt-image-2.5-sunburst (Creative Claw), 1232 px, styled on LiveRadar's doodle tiles",
   "generated": "2026-11-06",
   "processing": "greyscale, 480 px square tile, LANCZOS, paper above 232 set to white",
-  "rendering": "density map tinted Printables orange by utils.doodle_backdrop",
+  "rendering": "density map tinted MakerWorld green by utils.doodle_backdrop",
   "assets": {
     "workshop.png": {
       "motifs": "desktop 3D printers, filament spools, nozzles, a boat model, gears, calipers, nuts and bolts, layered cubes and vases, wrenches, stars",

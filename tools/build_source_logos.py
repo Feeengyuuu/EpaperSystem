@@ -284,6 +284,10 @@ LOGOS = {
     "tennis_us_open": ((COMMONS.format(path="c/cd/Usopen-horizontal-logo.svg", name="Usopen-horizontal-logo.svg"),
                         COMMONS_FILE.format(name="Usopen-horizontal-logo.svg"), PUBLIC_DOMAIN),
                        [PLUGINS / "sports_dashboard" / "assets" / "logos"], 1.0),
+    # 打印灵感's source: MakerWorld's cube-stack mark (white art in Bambu Lab's wiki, kept as a mask).
+    "makerworld": (("https://wiki.bambulab.com/makerworld/makerworld.svg", "https://wiki.bambulab.com/en/makerworld",
+                    "MakerWorld's mark from Bambu Lab's wiki, shown to name the source"),
+                   [PLUGINS / "print_inspiration" / "assets"], "knockout"),
     "tennis_wimbledon": (("https://www.wimbledon.com/_next/static/media/Logo-Wimbledon.2wyelfplbl7j4.svg",
                           "https://www.wimbledon.com/", "Wimbledon's official logo from its own site, shown to name "
                           "the tournament"), [PLUGINS / "sports_dashboard" / "assets" / "logos"], 1.0),

@@ -1,7 +1,8 @@
-"""打印灵感: what 3D-printing makers like and print most this week on Printables. The week's most
-liked model leads with its picture, maker, category, summary and counts; the next ones stand in
-cards beneath it; the right column lists the week's most printed models and the all-time classics.
-With an OpenAI key the model names and summaries read in Chinese.
+"""打印灵感: what 3D-printing makers like and print most right now on MakerWorld (Bambu Lab's model
+site). Its hottest model leads with its picture, gallery, maker, category, summary, default print
+profile and counts; the next ones stand in cards beneath it; the right column lists the most printed
+of the trending models and the all-time classics. With an OpenAI key the model names and summaries
+read in Chinese.
 """
 
 from __future__ import annotations
@@ -26,16 +27,18 @@ from . import render, sources
 
 logger = logging.getLogger(__name__)
 PLUGIN_ID = "print_inspiration"
-CACHE_SCHEMA = 1
+CACHE_SCHEMA = 2
 CACHE_BUDGET = CacheBudget(14 * 86400, 32, 2 * 1024 * 1024)
 DEFAULT_FONT = "Microsoft YaHei"
 TASK_SECONDS = 55
-# The week's lists move through the day: a reading stands for three hours.
+# MakerWorld's hot ranking moves through the day: a reading stands for three hours; the all-time
+# classics barely move and a lead's page changes little once it is read.
 FRESH_SECONDS = 3 * 3600
+CLASSICS_FRESH_SECONDS = 86400
+DETAILS_FRESH_SECONDS = 12 * 3600
 USABLE_SECONDS = 4 * 86400
 PICTURE_PIXELS = (480, 360)
 SMALL_PICTURE_PIXELS = (160, 120)
-# A PNG model picture's thumbnail runs to about 760 KB at 640 x 480.
 AVATAR_PIXELS = (64, 64)
 TRANSLATE_MIN_SECONDS = 30
 INSTRUCTIONS = (
@@ -74,14 +77,27 @@ class PrintInspiration(BasePlugin):
         force = allow_network and coerce_bool(settings.get("forceRefresh"), default=False)
         book = SourceBook(self._cache_subdir("sources"), CACHE_BUDGET, schema=CACHE_SCHEMA, max_bytes=256 * 1024,
                           checkpoint=_checkpoint)
-        results = {key: book.load(Source(f"list-{key}", {"ordering": sources.LISTS[key][0]},
-                                         lambda ctx, key=key: sources.fetch_list(key, ctx),
-                                         fresh_seconds=FRESH_SECONDS, usable_seconds=USABLE_SECONDS,
-                                         validate=sources.valid_list, timeout_seconds=15),
-                                  now, allow_network=allow_network, context=context, force=force)
-                   for key in sources.LISTS}
-        lists = {key: (result.get("data") or {}).get("models") or [] for key, result in results.items()}
-        return {**lists, "provenance": combined_provenance(list(results.values()))}
+
+        def load(source):
+            return book.load(source, now, allow_network=allow_network, context=context, force=force)
+
+        pool = load(Source("makerworld-pool", {"order": sources.POOL[0], "limit": sources.POOL[1]},
+                           sources.fetch_pool, fresh_seconds=FRESH_SECONDS, usable_seconds=USABLE_SECONDS,
+                           validate=sources.valid_list, timeout_seconds=15))
+        classics = load(Source("makerworld-classics", {"order": sources.CLASSICS[0], "limit": sources.CLASSICS[1]},
+                               sources.fetch_classics, fresh_seconds=CLASSICS_FRESH_SECONDS,
+                               usable_seconds=USABLE_SECONDS, validate=sources.valid_list, timeout_seconds=15))
+        models = (pool.get("data") or {}).get("models") or []
+        details = {}
+        for model in models[:sources.DETAILED]:
+            found = load(Source(f"makerworld-design-{model['id']}", {"id": model["id"]},
+                                lambda ctx, model_id=model["id"]: sources.fetch_details(model_id, ctx),
+                                fresh_seconds=DETAILS_FRESH_SECONDS, usable_seconds=USABLE_SECONDS,
+                                validate=sources.valid_details, timeout_seconds=12))
+            details[model["id"]] = (found.get("data") or {}).get("details") or {}
+        lists = sources.lists(models, (classics.get("data") or {}).get("models") or [], details)
+        # A design's page only adds detail; the lists alone decide whether the page is current.
+        return {**lists, "provenance": combined_provenance([pool, classics])}
 
     def _translations(self, models, device_config, *, allow_network, context, settings):
         kept = translate.Translations(self._cache_root() / "translations.json")

@@ -1,0 +1,16 @@
+{
+  "logos": {
+    "makerworld": {
+      "source": "https://wiki.bambulab.com/makerworld/makerworld.svg",
+      "page": "https://wiki.bambulab.com/en/makerworld",
+      "licence": "MakerWorld's mark from Bambu Lab's wiki, shown to name the source",
+      "source_sha256": "a9eb912180d9f302080e6c7aec575a861ace44b3d6e343d213f37a1615b3f039",
+      "processing": "white artwork kept as a black mask the page tints",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "613a15e9748f7d2e3342b2c6a60af0ee305401dedc4bd6cbfd12b95a239ac9f4"
+    }
+  }
+}
