@@ -22,6 +22,8 @@ SET_W = 20
 HEADSHOT_PAIR_W = 84
 # The share of a WTA torso cut-out kept to match a headshot's framing (head and shoulders).
 TORSO_BUST_SHARE = 0.5
+# The share of a Wikidata photo's width, from its top middle, kept as the player's head.
+WIKI_HEAD_SHARE = 0.62
 # A match under way or played shows each player's face in its row, in this slot after the seed.
 ROW_FACE_W = 24
 # The place beside the tournament's name, by its logo (tennis.place_mark), in this box at most.
@@ -157,6 +159,19 @@ class TennisRenderMixin:
 
     def _tennis_face(self, url, height):
         size = int(height * 1.22)
+        if "upload.wikimedia.org/" in url:
+            # A Wikidata photo shows the player at play: its top middle (the head) is shown round.
+            photo = self._load_icon_flag(url, (height * 6, height * 6))
+            if photo is None or min(photo.size) < 4:
+                return None
+            side = max(2, round(photo.width * WIKI_HEAD_SHARE))
+            left = (photo.width - side) // 2
+            photo = photo.convert("RGBA").crop((left, 0, left + side, min(photo.height, side)))
+            photo = ImageOps.fit(photo, (height - 2, height - 2), Image.LANCZOS, centering=(0.5, 0.3))
+            mask = Image.new("L", photo.size, 0)
+            ImageDraw.Draw(mask).ellipse((0, 0, photo.width - 1, photo.height - 1), fill=255)
+            photo.putalpha(mask)
+            return photo
         if url.lower().endswith(".jpg"):
             # A photo with its own ground (the WTA's plain headshot) is shown as a round avatar.
             photo = self._load_icon_flag(url, (height * 3, height * 3))

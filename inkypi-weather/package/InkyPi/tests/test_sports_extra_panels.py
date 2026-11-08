@@ -227,3 +227,16 @@ def test_a_tournaments_place_is_its_logo_and_every_shown_player_gets_a_photo(mon
     # Paris by the city's own logo (its navy ship and letters), no longer its name in words.
     assert "Paris" not in drawn and "巴黎大师赛" in drawn
     assert image.getbbox() is not None
+
+
+def test_a_wikidata_photo_is_cut_to_the_head_and_shown_round(monkeypatch):
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    photo = Image.new("RGBA", (120, 180), (30, 60, 200, 255))
+    ImageDraw.Draw(photo).rectangle((40, 0, 80, 60), fill=(220, 170, 140, 255))  # the head, top middle
+    monkeypatch.setattr(plugin, "_load_icon_flag", lambda url, size: photo.copy())
+
+    face = plugin._tennis_face("https://upload.wikimedia.org/wikipedia/commons/thumb/d/da/P.jpg/250px-P.jpg", 20)
+
+    assert face.size == (18, 18)
+    assert face.getpixel((0, 0))[3] == 0 and face.getpixel((9, 9))[3] == 255
+    assert face.getpixel((9, 6))[:3] == (220, 170, 140)

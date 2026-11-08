@@ -2,13 +2,17 @@
 
 ATP: its site search answers a player's official headshot URL (a transparent face cut-out). WTA: its
 player search gives the player's id, whose page carries the official torso cut-out
-(<Name>-Torso_<id>.png), else its plain headshot photo (a JPG, shown round). Each answer, a photo or none, is kept in the dashboard's cache (a found
-photo for 60 days, a miss for 7), so a player is looked up about once; a cache-only redraw only
-reads what is kept.
+(<Name>-Torso_<id>.png), else its plain headshot photo (a JPG, shown round). A player the tour's
+site does not answer for (ATP's site refuses the frame's requests with 403 though a desktop's pass)
+takes their Wikidata photo instead: the tennis player's image (P18), a Commons photo the panel
+crops to the head and shows round. Each answer, a photo or none, is kept in the dashboard's cache
+(a found photo for 60 days, a miss for 7), so a player is looked up about once; a cache-only redraw
+only reads what is kept.
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import time
@@ -28,8 +32,14 @@ WTA_SIZE = "?width=480&height=450"
 WTA_HEADSHOT = "https://wtafiles.blob.core.windows.net/images/headshots/{id}.jpg"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
                          "Chrome/130.0 Safari/537.36"}
+WIKIDATA_API = "https://www.wikidata.org/w/api.php"
+COMMONS_THUMB = "https://upload.wikimedia.org/wikipedia/commons/thumb/{a}/{ab}/{name}/{width}px-{name}"
+# Wikimedia asks automated clients to name themselves.
+WIKI_HEADERS = {"User-Agent": "InkyPi/1.0 (https://github.com/Feeengyuuu/EpaperSystem)"}
+WIKI_PHOTO_WIDTH = 250
 CACHE_FILE = "extra_tennis_photos.json"
-VERSION = 1
+# 2: the Wikidata fallback; the tours' old misses are looked up again.
+VERSION = 2
 FOUND_TTL, MISSED_TTL = timedelta(days=60), timedelta(days=7)
 LOOKUPS_PER_REFRESH = 6
 MAX_BYTES = 768 * 1024
@@ -72,6 +82,39 @@ def _wta(client, name, deadline):
     return headshot if headshot in text else ""
 
 
+def commons_thumb(file_name, width=WIKI_PHOTO_WIDTH):
+    """A Commons photo's thumbnail URL ``width`` px wide; "" for a file that is not a JPEG or PNG."""
+    name = str(file_name or "").strip().replace(" ", "_")
+    if not name.lower().endswith((".jpg", ".jpeg", ".png")):
+        return ""
+    digest = hashlib.md5(name.encode("utf-8")).hexdigest()  # noqa: S324 - Commons' own path scheme
+    quoted = quote(name, safe="")
+    return COMMONS_THUMB.format(a=digest[0], ab=digest[:2], name=quoted, width=int(width))
+
+
+def _wikidata(client, name, deadline):
+    """The tennis player's Wikidata photo (P18) as a Commons thumbnail URL, else ""."""
+    found = client.request_json("GET", WIKIDATA_API, params={"action": "wbsearchentities", "search": name, "language": "en",
+                                                             "type": "item", "limit": 5, "format": "json"},
+                                headers=WIKI_HEADERS, timeout=extra_feeds.remaining(deadline), max_bytes=MAX_BYTES)
+    wanted = name_key(name)
+    hit = next((item for item in (found.data or {}).get("search") or [] if isinstance(item, dict)
+                and "tennis" in str(item.get("description") or "").lower()
+                and name_key(item.get("label")) == wanted), None)
+    if not hit or not re.fullmatch(r"Q\d+", str(hit.get("id") or "")):
+        return ""
+    entity = client.request_json("GET", WIKIDATA_API, params={"action": "wbgetentities", "ids": hit["id"], "props": "claims",
+                                                              "format": "json"},
+                                 headers=WIKI_HEADERS, timeout=extra_feeds.remaining(deadline), max_bytes=MAX_BYTES)
+    claims = (((entity.data or {}).get("entities") or {}).get(hit["id"]) or {}).get("claims") or {}
+    for claim in claims.get("P18") or []:
+        value = ((claim.get("mainsnak") or {}).get("datavalue") or {}).get("value") if isinstance(claim, dict) else None
+        url = commons_thumb(value)
+        if url:
+            return url
+    return ""
+
+
 def official_photos(plugin, settings, players, now):
     """{"<TOUR>:<name key>": photo URL or ""} for ``players`` ({"name", "tour"}): the kept answers, with
     up to LOOKUPS_PER_REFRESH new lookups when the network is allowed."""
@@ -98,15 +141,25 @@ def official_photos(plugin, settings, players, now):
                 deadline = time.monotonic() + extra_feeds.DEADLINE_SECONDS
                 for key in wanted[:LOOKUPS_PER_REFRESH]:
                     tour, name = keys[key]["tour"], keys[key]["name"]
+                    url = ""
                     try:
                         url = (_atp if tour == "ATP" else _wta)(client, name, deadline)
                     except TaskCancelled:
                         raise
-                    except Exception as exc:  # noqa: BLE001 - this player is looked up again next time.
+                    except Exception as exc:  # noqa: BLE001 - Wikidata answers in its place.
                         logger.info("No %s photo for a player: %s", tour, type(exc).__name__)
                         if isinstance(exc, TimeoutError):
                             break
-                        continue
+                    if not url:
+                        try:
+                            url = _wikidata(client, name, deadline)
+                        except TaskCancelled:
+                            raise
+                        except Exception as exc:  # noqa: BLE001 - this player is looked up again next time.
+                            logger.info("No Wikidata photo for a player: %s", type(exc).__name__)
+                            if isinstance(exc, TimeoutError):
+                                break
+                            continue
                     kept[key] = {"url": url, "at": now.isoformat()}
                     changed = True
         except TaskCancelled:

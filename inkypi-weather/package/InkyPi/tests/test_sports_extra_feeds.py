@@ -354,3 +354,41 @@ def test_a_wta_player_without_a_cut_out_gets_the_tours_plain_headshot(tmp_path, 
     assert found == {"WTA:claire liu": "https://wtafiles.blob.core.windows.net/images/headshots/323966.jpg"}
     # The tour's search matches any part of a name: it is asked for the full name.
     assert client.asked[0][1]["name"] == "Claire Liu"
+
+
+def test_a_player_the_tours_refuse_takes_their_wikidata_photo(tmp_path, monkeypatch):
+    """ATP's site answers the frame 403 (a desktop passes): Wikidata's photo of the player stands in."""
+    from plugins.sports_dashboard import tennis_photos
+    import contextlib
+
+    class Client:
+        def __init__(self):
+            self.asked = []
+
+        def request_json(self, method, url, **kwargs):
+            self.asked.append(url)
+            params = kwargs.get("params") or {}
+            if "atptour.com" in url:
+                raise RuntimeError("GET atptour.com returned HTTP 403")
+            if params.get("action") == "wbsearchentities":
+                hits = {"Ben Shelton": [{"id": "Q99", "label": "Ben Shelton", "description": "American football player"},
+                                        {"id": "Q108532383", "label": "Ben Shelton",
+                                         "description": "American tennis player (born 2002)"}]}
+                return _Response({"search": hits.get(params["search"], [])})
+            assert kwargs["headers"]["User-Agent"].startswith("InkyPi/")
+            claim = {"mainsnak": {"datavalue": {"value": "Shelton MCM23 (27) (52883150181).jpg"}}}
+            return _Response({"entities": {params["ids"]: {"claims": {"P18": [claim]}}}})
+
+    client = Client()
+    monkeypatch.setattr(extra_feeds, "create_single_attempt_http_client", lambda: contextlib.nullcontext(client))
+    players = [{"name": "Ben Shelton", "tour": "ATP"}, {"name": "Nobody Known", "tour": "ATP"}]
+
+    found = tennis_photos.official_photos(_Plugin(tmp_path), {}, players, NOW)
+
+    # Commons' own thumbnail path (the file name's MD5) for a 250 px wide copy; the football player
+    # of the same name is passed over.
+    assert found["ATP:ben shelton"] == ("https://upload.wikimedia.org/wikipedia/commons/thumb/d/da/"
+                                        "Shelton_MCM23_%2827%29_%2852883150181%29.jpg/"
+                                        "250px-Shelton_MCM23_%2827%29_%2852883150181%29.jpg")
+    assert found["ATP:nobody known"] == ""
+    assert tennis_photos.commons_thumb("Crest.svg") == ""
