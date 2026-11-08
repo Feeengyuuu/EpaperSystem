@@ -279,8 +279,9 @@ class NewsPage:
         photo = lead.get("photo")
         if photo is not None:
             # The picture reaches under the headline, clear of the outlets' logos at the band's right.
+            # Its left edge lines up with the column cards' below (CARD_BLEED past the text).
             span = min(LEAD_PHOTO_SPAN, art_left - 12 - MARGIN)
-            self.lead_photo(photo, (MARGIN, top + 1, MARGIN + span, bottom - 1))
+            self.lead_photo(photo, (MARGIN - CARD_BLEED, top + 1, MARGIN + span, bottom - 1))
         # The generated 头条 badge is 1:2; drawn as a plain seal when the file is missing.
         if not news_art.paste_badge(self.img, "seal", MARGIN + seal_w / 2, top + 9 + seal_h / 2, seal_h // 2, seal_h):
             self.d.rounded_rectangle((MARGIN, top + 9, MARGIN + seal_w, top + 9 + seal_h), radius=3, fill=c["lead"])
