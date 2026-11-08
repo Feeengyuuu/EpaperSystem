@@ -210,8 +210,8 @@ def test_long_price_keeps_all_digits_and_the_original_clear_of_discount(mode):
     assert card["sale_price"] == "$99999.99"
     assert card["prices_right"] <= card["badge_left"] - 4
     assert card["price_tag_box"][2] < card["badge_left"]
-    # Shrunk from the hero's 50 px to keep every digit beside the struck original.
-    assert card["price_font_size"] < 40
+    # Shrunk from the hero's 64 px to keep every digit beside the struck original.
+    assert card["price_font_size"] < 50
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])

@@ -23,9 +23,9 @@ ASSETS = Path(__file__).with_name("assets")
 # their official marks, and a line of Steam's verdict.
 HERO = (14, 74, 378, 442)
 HERO_ART = (14, 78, 378, 250)
-HERO_TITLE_Y, HERO_PRICE = 258, (298, 350)
-HERO_FACTS_Y, HERO_NOTE_Y = 364, 398
-HERO_BADGE_W = 104
+HERO_TITLE_Y, HERO_PRICE = 258, (294, 364)
+HERO_FACTS_Y, HERO_NOTE_Y = 376, 410
+HERO_BADGE_W, HERO_PRICE_SIZE = 112, 64
 # The other nine offers, one row each down the right column: its rank, its capsule, its name with
 # its marks under it, its sale price over the struck original, and its discount block.
 LIST_LEFT, LIST_RIGHT = 396, 785
@@ -259,8 +259,8 @@ def _hero(image, draw, deal, cover, price_tags, mode, ink, muted):
     line, title_font = _one_line(name, right - left, 30, 18)
     draw.text((left, HERO_TITLE_Y), line, font=title_font, fill=ink, anchor="lt")
     facts = _price_row(image, draw, price_tags, deal, (left, HERO_PRICE[0], right, HERO_PRICE[1]),
-                       badge_w=HERO_BADGE_W, original_size=21, badge_size=34, muted=muted, stacked=False,
-                       price_size=50)
+                       badge_w=HERO_BADGE_W, original_size=20, badge_size=40, muted=muted, stacked=False,
+                       price_size=HERO_PRICE_SIZE)
     marks = _marks(image, draw, deal, left, HERO_FACTS_Y + 12, right, mode, ink if mode == "night" else None,
                    mark_height=HERO_MARK_HEIGHT, font=_font(15, True))
     note = _verdict(image, draw, deal, left, HERO_NOTE_Y + 10, right, ink if mode == "night" else None, muted)
