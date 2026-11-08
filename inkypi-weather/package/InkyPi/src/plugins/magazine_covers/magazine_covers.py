@@ -66,6 +66,8 @@ REQUEST_HEADERS = {
 # Shops whose collections publish a product feed naming each issue (magazine, headline, date, price).
 SHOP_FEED_HOSTS = {"magazineshop.us"}
 SHOP_FEED_PAGES = 4
+# A feed page read for one refresh serves that refresh's other covers, then is read afresh.
+SHOP_FEED_MEMO_SECONDS = 30 * 60
 SHOP_FACT_KEYS = ("publication", "issue", "issue_date", "year", "price")
 _SHOP_ISSUE_CODE = re.compile(r"^(\d{2})(\d{2})(\d{2})$")
 
@@ -1672,8 +1674,14 @@ class MagazineCovers(BasePlugin):
                                                for item in found.get("images") or [] if isinstance(item, dict)):
                 return _shop_product_facts(found)
         # The feed pages 250 products at a time, not as the collection's own pages do, so walk
-        # its first pages (each fetched once per run) until the cover's file turns up.
-        feeds = self.__dict__.setdefault("_shop_feed_pages", {})
+        # its first pages until the cover's file turns up. A page is read once per refresh and
+        # kept only as file name -> facts for SHOP_FEED_MEMO_SECONDS: the plugin object lives as
+        # long as the service, and whole pages (descriptions included) held about 5 MB there.
+        now = self._monotonic()
+        feeds = self.__dict__.setdefault("_shop_feed_index", {})
+        for stale in [feed for feed, (read_at, _count, _index) in feeds.items()
+                      if not 0 <= now - read_at <= SHOP_FEED_MEMO_SECONDS]:
+            del feeds[stale]
         for number in range(1, SHOP_FEED_PAGES + 1):
             feed = f"https://{page.hostname}/collections/{collection.group(1)}/products.json?limit=250&page={number}"
             if feed not in feeds:
@@ -1684,12 +1692,20 @@ class MagazineCovers(BasePlugin):
                 except Exception as exc:
                     logger.info("Magazine shop feed unavailable for %s: %s", source.get("name"), exc)
                     return {}
-                feeds[feed] = products if isinstance(products, list) else []
-            for product in feeds[feed]:
-                images = [item.get("src") for item in product.get("images") or [] if isinstance(item, dict)]
-                if any(_shop_file_key(src) == wanted for src in images):
-                    return _shop_product_facts(product)
-            if len(feeds[feed]) < 250:
+                products = [item for item in products if isinstance(item, dict)] if isinstance(products, list) else []
+                index = {}
+                for item in products:
+                    keys = [_shop_file_key(image.get("src")) for image in item.get("images") or []
+                            if isinstance(image, dict)]
+                    keys = [key for key in keys if key and key not in index]
+                    if keys:
+                        facts = _shop_product_facts(item)
+                        index.update(dict.fromkeys(keys, facts))
+                feeds[feed] = (now, len(products), index)
+            _read_at, count, index = feeds[feed]
+            if wanted in index:
+                return dict(index[wanted])
+            if count < 250:
                 break
         return {}
 
