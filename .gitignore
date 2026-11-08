@@ -109,4 +109,7 @@ inkypi-weather/package/InkyPi/src/static/images/current_image.png
 # Owner-supplied Beaufort for LOL (Riot brand face): source and installed names stay private.
 **/lol-beaufort-*.ttf
 **/BeaufortforLOL-*.ttf
+# Owner-supplied Motiva Sans (Valve's Steam brand face): source and installed names stay private.
+**/steam-motiva-*.ttf
+**/MotivaSans-*.ttf
 **/[Bb][Aa][Nn][Kk][Nn][Oo][Tt][Ee] [Rr][Ee][Gg][Uu][Ll][Aa][Rr].[Tt][Tt][Ff]

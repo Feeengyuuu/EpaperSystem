@@ -10,10 +10,10 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from plugins.context_cache import write_context
-from utils.app_utils import get_base_ui_font
 from utils.http_client import get_http_client, get_http_session
 from utils.safe_image import safe_open_image
 from utils.secret_redaction import redact_sensitive_text
+from utils.steam_font import steam_font
 from utils.theme_utils import get_theme_context, get_theme_palette
 from PIL import Image, ImageDraw, ImageOps
 from datetime import datetime, timezone
@@ -1446,7 +1446,8 @@ class SteamProfileDashboard(BasePlugin):
         )
 
     def _font(self, size, bold=False):
-        return get_base_ui_font(int(size), bold=bool(bold))
+        # Steam's own Motiva Sans when installed on the device (utils.steam_font), else the UI font.
+        return steam_font(int(size), bold=bool(bold))
 
     def _text(self, draw, position, text, font, fill):
         draw.text(position, str(text), font=font, fill=fill)

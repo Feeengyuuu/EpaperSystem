@@ -39,6 +39,11 @@ PURPOSES = {
                      "glyphs": "0123456789/.%"},
     "lol_pro_medium": {"basename": "lol-beaufort-medium.ttf", "family": "Beaufort for LOL", "style": "Medium",
                        "glyphs": "0123456789/.%"},
+    # Game Deals and the Steam profile in Steam's own Motiva Sans (its store serves the TTFs).
+    "steam_regular": {"basename": "steam-motiva-regular.ttf", "family": "Motiva Sans", "style": "Regular",
+                      "glyphs": "0123456789$%.,"},
+    "steam_bold": {"basename": "steam-motiva-bold.ttf", "family": "Motiva Sans", "style": "Bold",
+                   "glyphs": "0123456789$%.,"},
 }
 FONT_NAMES = frozenset(
     f"sports-{league}-score.{extension}"

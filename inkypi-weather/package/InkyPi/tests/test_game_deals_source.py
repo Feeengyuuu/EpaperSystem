@@ -255,6 +255,21 @@ def test_reviews_come_from_the_offer_row_and_survive_the_cache(tmp_path):
         assert (odd["metacritic"], odd["steam_rating"], odd["steam_rating_percent"]) == (0, "", 0)
 
 
+def test_deal_rating_and_release_day_come_from_the_row_and_survive_the_cache(tmp_path):
+    rows = [row(gameID="1", dealRating="9.40", releaseDate="1347321600"),
+            row(gameID="2", dealRating="11", releaseDate="0"),
+            row(gameID="3", dealRating="nope", releaseDate="-5")]
+    repo = DealRepository(tmp_path, http=StoreHTTP(rows, steam_items()))
+    live = repo.load({}, now=NOW)
+    cached = repo.load({}, now=NOW + timedelta(minutes=5), cached_only=True)
+    for snapshot in (live, cached):
+        rated, high, odd = snapshot.deals
+        assert (rated["deal_rating"], rated["release_date"]) == ("9.4", 1347321600)
+        # Out-of-range or malformed values are absent, never shown.
+        assert (high["deal_rating"], high["release_date"]) == ("", 0)
+        assert (odd["deal_rating"], odd["release_date"]) == ("", 0)
+
+
 def test_all_time_lows_come_from_one_games_request_and_the_store_list_is_kept(tmp_path):
     rows = [row(gameID="1", salePrice="1.99"), row(gameID="2", salePrice="2.99"), row(gameID="3", salePrice="4.99")]
     games = {"1": {"cheapestPriceEver": {"price": "1.99", "date": 1793651134}},

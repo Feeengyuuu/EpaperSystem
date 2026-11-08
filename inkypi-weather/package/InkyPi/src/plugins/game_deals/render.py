@@ -2,14 +2,15 @@
 nine as a numbered list on the right (the owner's chosen design A, 2026-11-08)."""
 
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from PIL import Image, ImageDraw
 
-from utils.app_utils import get_base_ui_font
 from utils.doodle_backdrop import paint_doodles
 from utils.local_wordmark import load_source_logo, paste_local_wordmark
+from utils.steam_font import steam_font
 
 from .facts import STEAM_RATINGS, low_mark
 from .price_tag import PriceTags
@@ -22,10 +23,15 @@ ASSETS = Path(__file__).with_name("assets")
 # its price row (sale price, struck original, discount block), the reviews and the all-time low by
 # their official marks, and a line of Steam's verdict.
 HERO = (14, 74, 378, 442)
-HERO_ART = (14, 78, 378, 250)
-HERO_TITLE_Y, HERO_PRICE = 258, (294, 364)
-HERO_FACTS_Y, HERO_NOTE_Y = 376, 410
+# The art's top meets the list's first row; the name sits on a baseline a clear gap under the art,
+# the price row just under the name, and the verdict's line centres on the list's last row, so the
+# card and the list start and end together.
+HERO_ART = (14, 74, 378, 246)
+HERO_TITLE_BASELINE, HERO_PRICE = 284, (292, 362)
+HERO_FACTS_MIDDLE, HERO_NOTE_MIDDLE = 390, 422
 HERO_BADGE_W, HERO_PRICE_SIZE = 112, 64
+# The card's right foot, beside the marks and the verdict: savings, deal rating, when the low was seen.
+HERO_ASIDE_LEFT, HERO_ASIDE_Y = 262, 376
 # The other nine offers, one row each down the right column: its rank, its capsule, its name with
 # its marks under it, its sale price over the struck original, and its discount block.
 LIST_LEFT, LIST_RIGHT = 396, 785
@@ -35,6 +41,8 @@ RANK_W, THUMB = 20, (84, 32)
 LIST_TEXT_X = LIST_LEFT + RANK_W + 6 + THUMB[0] + 6
 LIST_BADGE = (48, 24)
 LIST_PRICE_W = 62
+# A row's name baseline and its marks' centre, from the row's top.
+ROW_TITLE_BASELINE, ROW_MARKS_MIDDLE = 18, 29
 # Quiet discount doodles (percent tags, snipped price tags, falling arrows, sale stickers) in the
 # badges' green under the hero's text and the list's names and prices; the art keeps the plain page.
 DEAL_DOODLES = ASSETS / "doodles" / "deals.png"
@@ -52,7 +60,8 @@ DEAL_GREEN = (20, 108, 58)
 
 
 def _font(size, bold=False):
-    return get_base_ui_font(size, bold=bold)
+    # Steam's own Motiva Sans when installed on the device (utils.steam_font), else the UI font.
+    return steam_font(size, bold=bold)
 
 
 def _mark(name, height, ink=None):
@@ -249,6 +258,33 @@ def _verdict(image, draw, deal, x, middle, right, ink, muted):
     return line
 
 
+def _aside(image, draw, deal, right, ink, muted):
+    """The hero's foot at its right: what the sale saves, CheapShark's deal rating by its mark, and
+    when the all-time low was seen (or the release year). The lines drawn, for the layout record."""
+    lines = []
+    saved = Decimal(deal["normal_price"]) - Decimal(deal["sale_price"])
+    if saved > 0:
+        lines.append(("saved", f"立省 ${saved:.2f}", _font(17, True), ink, None))
+    if deal.get("deal_rating"):
+        shark = _mark("cheapshark_mark", 15)
+        lines.append(("deal_rating", f"好价 {deal['deal_rating']}/10", _font(14, True), ink, shark))
+    when = ""
+    if deal.get("lowest_at") and low_mark(deal)[0]:
+        when = "史低见于 " + datetime.fromtimestamp(deal["lowest_at"], LOCAL_ZONE).strftime("%Y-%m")
+    elif deal.get("release_date"):
+        when = datetime.fromtimestamp(deal["release_date"], LOCAL_ZONE).strftime("%Y 年发售")
+    if when:
+        lines.append(("when", when, _font(13, True), muted, None))
+    y = HERO_ASIDE_Y
+    for _kind, text, font, colour, mark in lines:
+        width = font.getlength(text)
+        draw.text((right, y), text, font=font, fill=colour, anchor="rt")
+        if mark is not None:
+            image.paste(mark, (round(right - width - 4 - mark.width), y + 1), mark)
+        y += font.size + 6
+    return [(kind, text) for kind, text, *_rest in lines]
+
+
 def _hero(image, draw, deal, cover, price_tags, mode, ink, muted):
     left, _top, right, _bottom = HERO
     art = _fit_art(image, cover, HERO_ART)
@@ -256,17 +292,20 @@ def _hero(image, draw, deal, cover, price_tags, mode, ink, muted):
         art = (HERO_ART[0], HERO_ART[1] + 20, HERO_ART[2], HERO_ART[3] - 20)
         _placeholder(draw, art, 30)
     name = deal.get("title_zh") or deal["title"]
-    line, title_font = _one_line(name, right - left, 30, 18)
-    draw.text((left, HERO_TITLE_Y), line, font=title_font, fill=ink, anchor="lt")
+    line, title_font = _one_line(name, right - left, 28, 18)
+    draw.text((left, HERO_TITLE_BASELINE), line, font=title_font, fill=ink, anchor="ls")
     facts = _price_row(image, draw, price_tags, deal, (left, HERO_PRICE[0], right, HERO_PRICE[1]),
                        badge_w=HERO_BADGE_W, original_size=20, badge_size=40, muted=muted, stacked=False,
                        price_size=HERO_PRICE_SIZE)
-    marks = _marks(image, draw, deal, left, HERO_FACTS_Y + 12, right, mode, ink if mode == "night" else None,
-                   mark_height=HERO_MARK_HEIGHT, font=_font(15, True))
-    note = _verdict(image, draw, deal, left, HERO_NOTE_Y + 10, right, ink if mode == "night" else None, muted)
+    # The marks and Steam's verdict keep to the card's left; its right foot holds the aside.
+    marks = _marks(image, draw, deal, left, HERO_FACTS_MIDDLE, HERO_ASIDE_LEFT - 8, mode,
+                   ink if mode == "night" else None, mark_height=HERO_MARK_HEIGHT, font=_font(15, True))
+    note = _verdict(image, draw, deal, left, HERO_NOTE_MIDDLE, HERO_ASIDE_LEFT - 8,
+                    ink if mode == "night" else None, muted)
+    aside = _aside(image, draw, deal, right, ink, muted)
     return {"role": "hero", "title": deal["title"], "lines": [line], "text_width": right - left,
             "title_widths": [title_font.getlength(line)], "box": HERO, "art_rect": art, "marks": marks,
-            "note": note, **facts}
+            "note": note, "aside": aside, **facts}
 
 
 def _row(image, draw, deal, rank, top, cover, price_tags, mode, ink, muted):
@@ -285,9 +324,10 @@ def _row(image, draw, deal, rank, top, cover, price_tags, mode, ink, muted):
     text_right = price_left - 6
     name = deal.get("title_zh") or deal["title"]
     line, title_font = _one_line(name, text_right - LIST_TEXT_X, 15, 12)
-    draw.text((LIST_TEXT_X, top + 3), line, font=title_font, fill=ink, anchor="lt")
-    marks = _marks(image, draw, deal, LIST_TEXT_X, top + 29, text_right, mode, ink if mode == "night" else None,
-                   mark_height=ROW_MARK_HEIGHT, font=_font(10, True))
+    # The name on a baseline and its marks under it, the pair centred in the row clear of its rules.
+    draw.text((LIST_TEXT_X, top + ROW_TITLE_BASELINE), line, font=title_font, fill=ink, anchor="ls")
+    marks = _marks(image, draw, deal, LIST_TEXT_X, top + ROW_MARKS_MIDDLE, text_right, mode,
+                   ink if mode == "night" else None, mark_height=ROW_MARK_HEIGHT, font=_font(10, True))
     badge_top = round(middle - LIST_BADGE[1] / 2)
     facts = _price_row(image, draw, price_tags, deal, (price_left, badge_top, LIST_RIGHT, badge_top + LIST_BADGE[1]),
                        badge_w=LIST_BADGE[0], original_size=12, badge_size=17, muted=muted, stacked=True)
@@ -312,7 +352,7 @@ def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
     layout = []
     deals = list(snapshot.deals[:1 + LIST_ROWS])
     if deals:
-        for region in ((HERO[0], HERO_TITLE_Y - 4, HERO[2], HERO[3]), (LIST_TEXT_X - 4, 70, LIST_RIGHT, 442)):
+        for region in ((HERO[0], HERO_ART[3] + 4, HERO[2], HERO[3]), (LIST_TEXT_X - 4, 70, LIST_RIGHT, 442)):
             paint_doodles(image, region, DEAL_DOODLES, DEAL_GREEN, offset=region[:2])
         price_tags = PriceTags(night)
         hero_index = pick_hero(deals)

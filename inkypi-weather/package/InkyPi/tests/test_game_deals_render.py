@@ -242,6 +242,9 @@ def test_reviews_and_all_time_low_are_named_by_their_marks_beside_the_offer(mode
     assert hero["title"] == marked["title"]  # at its all-time low, it leads
     assert hero["marks"] == [("low", "史低"), ("metacritic", "89"), ("steam_rating", "90%")]
     assert hero["note"] == "特别好评 ‧ 12.3 万 篇评测"
+    # The card's right foot: what the sale saves, then (when the offer has them) CheapShark's rating
+    # and when the all-time low was seen.
+    assert hero["aside"][0] == ("saved", "立省 $297.00")
     assert second["marks"] == [("low", "史低 $1.49"), ("metacritic", "62"), ("steam_rating", "55%")]
     assert third["marks"] == []
     # The art keeps its own pixels: no mark is drawn on it any more.

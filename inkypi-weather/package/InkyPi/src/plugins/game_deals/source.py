@@ -50,6 +50,26 @@ def _money(value):
     return number.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+def _deal_rating(value):
+    """CheapShark's deal rating as one-decimal text from "0.0" to "10.0", or ""."""
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
+        return ""
+    if not number.is_finite() or not 0 < number <= 10:
+        return ""
+    return str(number.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
+
+
+def _release_date(value):
+    """The release day as Unix seconds (1980 through 2100), or 0."""
+    try:
+        number = int(str(value).strip())
+    except (TypeError, ValueError):
+        return 0
+    return number if 315532800 <= number <= 4102444800 else 0
+
+
 def safe_thumbnail_url(value):
     if not isinstance(value, str) or len(value) > 2048:
         return ""
@@ -101,6 +121,9 @@ def normalize_deals(payload, *, scope="steam", store_names=None):
             "discount_percent": min(discount, 100),
             "thumbnail_url": safe_thumbnail_url(row.get("thumb")),
             "redirect_url": redirect_url(deal_id),
+            # CheapShark's own verdict on the deal (0-10) and the game's release day, as the row gives them.
+            "deal_rating": _deal_rating(row.get("dealRating")),
+            "release_date": _release_date(row.get("releaseDate")),
             # Metacritic and Steam's review summary from the row; the all-time low from /games
             # (cached offers carry it already).
             **ratings(row),
@@ -149,6 +172,7 @@ class DealRepository:
                      "metacriticScore": item.get("metacritic"), "steamRatingText": item.get("steam_rating"),
                      "steamRatingPercent": item.get("steam_rating_percent"),
                      "steamRatingCount": item.get("steam_rating_count"),
+                     "dealRating": item.get("deal_rating"), "releaseDate": item.get("release_date"),
                      "lowest_price": item.get("lowest_price"), "lowest_at": item.get("lowest_at")}
                     for item in deals]
             names = {item["store_id"]: item["store_name"] for item in deals

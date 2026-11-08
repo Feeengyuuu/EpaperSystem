@@ -123,6 +123,14 @@
       "license": "Riot Games brand typeface, not offered for licence"
     },
     {
+      "key": "steam_regular", "font": "Motiva Sans Regular", "use": "Game Deals and Steam profile text (TTF only)", "kind": "brand",
+      "license": "Valve (Steam) brand typeface, not offered for licence"
+    },
+    {
+      "key": "steam_bold", "font": "Motiva Sans Bold", "use": "Game Deals and Steam profile headings and figures (TTF only)", "kind": "brand",
+      "license": "Valve (Steam) brand typeface, not offered for licence"
+    },
+    {
       "key": "esports-esl-heading", "font": "ESL Legendary Bold", "use": "ESL event headings", "kind": "brand",
       "license": "ESL FACEIT Group brand typeface, not offered for licence"
     },
