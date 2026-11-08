@@ -4249,17 +4249,13 @@ def _avatar_on_paper(card, size):
 
 
 @pytest.mark.parametrize("platform, room_id", QUIN_ROOMS)
-def test_every_mr_quin_room_draws_his_avatar_in_a_gold_ring(platform, room_id):
-    gold = live_radar_module.TOP_FAVORITE_RING_GOLD
-
+def test_every_mr_quin_room_draws_his_avatar_edge_in_gold_at_the_usual_width(platform, room_id):
     for size in (18, 32):
         image = _avatar_on_paper({"platform": platform, "id": room_id, "avatar": "https://img.test/quin.png"}, size)
         middle = 10 + size // 2
-        row = [image.getpixel((x, middle)) for x in range(10, 10 + size // 2)]
 
-        assert row[0] == (0, 0, 0)  # the ink outer edge
-        assert row[1] == gold and row[2] == gold  # a band the panel's dither keeps
-        assert (40, 120, 200) in row  # his photo still fills the middle
+        assert image.getpixel((10, middle)) == live_radar_module.TOP_FAVORITE_RING_GOLD
+        assert image.getpixel((11, middle)) == (40, 120, 200)  # still 1 px: his photo starts right inside
 
 
 def test_other_streamers_keep_a_thin_ink_avatar_edge():
@@ -4267,6 +4263,7 @@ def test_other_streamers_keep_a_thin_ink_avatar_edge():
 
     colours = {colour for _count, colour in image.getcolors(1 << 16)}
     assert live_radar_module.TOP_FAVORITE_RING_GOLD not in colours
+    assert image.getpixel((10, 26)) == (0, 0, 0)
     assert image.getpixel((11, 26)) == (40, 120, 200)
 
 

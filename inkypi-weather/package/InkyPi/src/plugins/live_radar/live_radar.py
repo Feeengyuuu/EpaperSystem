@@ -329,12 +329,8 @@ TOP_FAVORITE_ROOMS = (
     ("kick", "quin3614"),
     ("douyin", "200525029536"),  # 摸鱼奎恩
 )
-# His avatar wears a gold ring, in the favourite star's gold, wherever it is drawn: an ink outer
-# edge, then a gold band this share of the avatar wide (at least 2 px, so the panel's dither keeps
-# it), and on larger avatars an ink line inside it, like a coin's rim. Other avatars keep a 1 px edge.
+# His avatar's 1 px edge is drawn in the favourite star's gold instead of ink, wherever it is drawn.
 TOP_FAVORITE_RING_GOLD = (254, 194, 3)
-TOP_FAVORITE_RING_SHARE = 0.11
-TOP_FAVORITE_RING_RIM_MIN_SIZE = 26
 FAVORITE_PRIORITY = {
     **{room: rank for rank, room in enumerate(TOP_FAVORITE_ROOMS)},
     ("douyu", "60937"): 3,
@@ -3012,24 +3008,12 @@ class LiveRadar(BasePlugin):
                 font=label_font,
             )
 
-        if self._is_top_favorite(card.get("platform"), card.get("id")):
-            self._draw_gold_avatar_ring(draw, bounds, avatar_size, ink)
-        else:
-            draw.ellipse(bounds, outline=ink, width=1)
+        edge = TOP_FAVORITE_RING_GOLD if self._is_top_favorite(card.get("platform"), card.get("id")) else ink
+        draw.ellipse(bounds, outline=edge, width=1)
         if show_fav_badge and card.get("is_fav"):
             badge_size = max(10, int(avatar_size * 0.38))
             badge = (avatar_x + avatar_size - badge_size, avatar_y + avatar_size - badge_size, avatar_x + avatar_size + 1, avatar_y + avatar_size + 1)
             self._draw_icon_badge(image, draw, badge, "fav", fill=ink, ink=fill, outline=ink)
-
-    @staticmethod
-    def _draw_gold_avatar_ring(draw, bounds, avatar_size, ink):
-        band = max(2, round(avatar_size * TOP_FAVORITE_RING_SHARE))
-        draw.ellipse(bounds, outline=TOP_FAVORITE_RING_GOLD, width=band + 1)
-        draw.ellipse(bounds, outline=ink, width=1)
-        if avatar_size >= TOP_FAVORITE_RING_RIM_MIN_SIZE:
-            left, top, right, bottom = bounds
-            inset = band + 1
-            draw.ellipse((left + inset, top + inset, right - inset, bottom - inset), outline=ink, width=1)
 
     def _draw_quiet_panel(self, draw, box, tracked_count, theme):
         x, y, w, h = box
