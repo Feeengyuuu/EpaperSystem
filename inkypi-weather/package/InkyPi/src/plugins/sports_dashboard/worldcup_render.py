@@ -17,7 +17,9 @@ CLUB_CARD_VENUE_LOGO_HEIGHT = 12
 # ball, a yellow card with the count, a red card with the player), then possession as a share bar.
 CLUB_FORM_CELL, CLUB_FORM_GAP = 7, 2
 # The clear gap between a team's name (its letters) and its last-five cells under it.
-CLUB_FORM_NAME_GAP = 4
+CLUB_FORM_NAME_GAP = 6
+# The last-five cells end this far above the card's foot (its 2 px border and a clear gap).
+CLUB_FORM_FOOT = 5
 CLUB_EVENT_ICON, CLUB_EVENT_GAP = 8, 6
 CLUB_YELLOW_CARD = (240, 192, 32)
 
@@ -1064,7 +1066,7 @@ class WorldCupRenderMixin:
             # gap above them, its name a clear gap above that; the name's letters, not its line box,
             # keep the gaps. The crest's box runs below its art, so only its upper part bounds the name.
             foot = 18 if probabilities or self._worldcup_event_has_odds(event) else 0
-            form_top = y2 - 7 - foot - CLUB_FORM_CELL
+            form_top = y2 - CLUB_FORM_FOOT - foot - CLUB_FORM_CELL
             ink = [draw.textbbox((0, 0), name, font=font, anchor="lt") for name, font in names]
             ink_h = max(box[3] - box[1] for box in ink)
             name_bottom = max(form_top - CLUB_FORM_NAME_GAP, round(flag_y + flag_h * 0.7) + ink_h)
@@ -1105,14 +1107,15 @@ class WorldCupRenderMixin:
                                           odds.get("team_b"), max_size=9)
 
     def _draw_club_form(self, draw, center, form):
-        """A team's last five results as solid cells, oldest first: a win emerald, a draw in the
-        rule colour, a loss crimson."""
+        """A team's last five results as solid cells, oldest first (the latest at the right): a win
+        emerald, a draw the page's muted grey (the rule colour vanished on the night page), a loss
+        crimson."""
         cx, cy = center
         width = len(form) * (CLUB_FORM_CELL + CLUB_FORM_GAP) - CLUB_FORM_GAP
         left, top = round(cx - width / 2), round(cy - CLUB_FORM_CELL / 2)
         for index, result in enumerate(form):
             x = left + index * (CLUB_FORM_CELL + CLUB_FORM_GAP)
-            fill = _kit_result_ink("win") if result == "W" else _kit_result_ink("loss") if result == "L" else COLORS["line"]
+            fill = _kit_result_ink("win") if result == "W" else _kit_result_ink("loss") if result == "L" else COLORS["muted"]
             draw.rounded_rectangle((x, top, x + CLUB_FORM_CELL - 1, top + CLUB_FORM_CELL - 1), radius=2, fill=fill)
 
     def _draw_club_match_events(self, draw, box, center_x, event):
