@@ -21,6 +21,21 @@
       "value_type": "secret"
     },
     {
+      "key": "ANTHROPIC_API_KEY",
+      "service": "Anthropic Claude",
+      "features": [
+        "Daily AI News",
+        "Telegram Digest"
+      ],
+      "required": false,
+      "aliases": [
+        "CLAUDE_API_KEY"
+      ],
+      "signup_url": "https://platform.claude.com/",
+      "notes": "Optional: Claude Opus 5.5 writes the AI news brief and ranks Telegram messages first; OpenAI and Groq stay as backups. Billed to the Claude Console credit.",
+      "value_type": "secret"
+    },
+    {
       "key": "GROQ_API_KEY",
       "service": "Groq",
       "features": [

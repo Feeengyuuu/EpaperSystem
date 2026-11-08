@@ -353,7 +353,8 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
                 matched_updates += 1
 
         candidates = sorted(messages.values(), key=lambda item: (int(item.get("date") or 0), int(item.get("message_id") or 0)), reverse=True)
-        curator = Curator(settings, cache.get("curation"), now, api_key=self._openai_key(settings, device_config))
+        curator = Curator(settings, cache.get("curation"), now, api_key=self._openai_key(settings, device_config),
+                          claude_key=self._claude_key(settings, device_config))
         ordered = curator.curate(candidates)[:max_messages]
         payload = self._build_payload(settings, ordered, now, "live", max_update_id, matched_updates)
         payload["stats"].update(curator.stats(), scanned_count=len(candidates))
@@ -397,7 +398,8 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
             "cache": cache,
             "now": now.isoformat(),
             "max_messages": max_messages,
-            "config": {key: config.get(key) for key in ("session_path", "api_id", "api_hash", "openai_key")},
+            "config": {key: config.get(key) for key in ("session_path", "api_id", "api_hash", "openai_key",
+                                                        "claude_key")},
             "cache_dir": str(self._cache_dir()),
         }
         return account_worker.run_account_fetch_in_child(request, context=current_task_context())
@@ -418,7 +420,8 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
         include_text = self._enabled(settings.get("includeText"), default=True)
         display_read_keys = self._display_read_key_set(cache)
         display_cursors = self._display_cursors(display_read_keys)
-        curator = Curator(settings, cache.get("curation"), now, api_key=config.get("openai_key"))
+        curator = Curator(settings, cache.get("curation"), now, api_key=config.get("openai_key"),
+                          claude_key=config.get("claude_key"))
         budget = config.get("budget_seconds")
         deadline = time.monotonic() + float(budget) if budget else None
         curator.deadline = deadline
@@ -803,7 +806,17 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
             ),
             "session_candidates": [str(candidate) for candidate in session_candidates],
             "openai_key": self._openai_key(settings, device_config),
+            "claude_key": self._claude_key(settings, device_config),
         }
+
+    def _claude_key(self, settings, device_config):
+        """The Anthropic key the AI ranking asks Claude with first, when the mode uses the AI."""
+        if str(settings.get("curationMode") or "ai").strip().casefold() != "ai":
+            return ""
+        return (
+            self._load_env_key("ANTHROPIC_API_KEY", device_config)
+            or self._load_env_key("CLAUDE_API_KEY", device_config)
+        )
 
     def _openai_key(self, settings, device_config):
         if str(settings.get("curationMode") or "ai").strip().casefold() != "ai":

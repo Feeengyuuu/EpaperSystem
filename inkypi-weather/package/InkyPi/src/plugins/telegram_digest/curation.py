@@ -14,6 +14,9 @@ import logging
 import re
 import time
 
+from runtime.refresh_contracts import TaskCancelled
+from utils import claude_http
+
 logger = logging.getLogger(__name__)
 
 TAGS = ("时事", "财经", "科技", "游戏", "体育", "本地", "生活", "娱乐", "私聊", "群聊", "其他")
@@ -26,6 +29,12 @@ LEGACY_AI_MODELS = ("gpt-5-mini", "gpt-5-nano")
 PREVIOUS_AI_MODEL = "gpt-5-mini"
 DEFAULT_AI_DAILY_LIMIT = 12
 AI_TIMEOUT_SECONDS = 45
+# With ANTHROPIC_API_KEY set, Claude ranks first at low effort (the owner's Console credit,
+# 2026-11-07); OpenAI is asked only when Claude fails and a full OpenAI call still fits.
+# OpenAI took 22-35 s for 9-35 messages on the device, so Claude gets a little more.
+CLAUDE_MODEL = claude_http.DEFAULT_MODEL
+CLAUDE_EFFORT = "low"
+CLAUDE_TIMEOUT_SECONDS = 60
 # What a refresh keeps after the AI call for media and the reply.
 AI_REPLY_RESERVE_SECONDS = 15
 AI_MAX_ITEMS = 40
@@ -229,7 +238,7 @@ def _today(now):
 class Curator:
     """Ranks one refresh's candidates and carries the AI cache and daily counter between refreshes."""
 
-    def __init__(self, settings, previous_state, now, api_key="", ai_client_factory=None):
+    def __init__(self, settings, previous_state, now, api_key="", ai_client_factory=None, claude_key=""):
         settings = settings or {}
         previous = previous_state if isinstance(previous_state, dict) else {}
         self.mode = str(settings.get("curationMode") or "ai").strip().casefold()
@@ -239,6 +248,7 @@ class Curator:
         self.now = now
         self.now_ts = int(now.timestamp())
         self.api_key = str(api_key or "").strip()
+        self.claude_key = str(claude_key or "").strip()
         model = str(settings.get("aiModel") or "").strip()
         self.model = DEFAULT_AI_MODEL if not model or model in LEGACY_AI_MODELS else model
         try:
@@ -347,14 +357,15 @@ class Curator:
         if not pending:
             self.ai_used = any(str(item.get("key")) in self.ai_cache for item in items)
             return
-        if not self.api_key:
-            self.ai_error = "未配置 OpenAI 密钥"
+        if not self.api_key and not self.claude_key:
+            self.ai_error = "未配置 AI 密钥"
             return
         if self.ai_calls["count"] >= self.daily_limit:
             self.ai_error = "今日 AI 次数已用完"
             self.ai_used = any(str(item.get("key")) in self.ai_cache for item in items)
             return
-        if self.deadline is not None and self.deadline - time.monotonic() < AI_TIMEOUT_SECONDS + AI_REPLY_RESERVE_SECONDS:
+        shortest = AI_TIMEOUT_SECONDS if self.api_key else CLAUDE_TIMEOUT_SECONDS
+        if self._time_left() < shortest + AI_REPLY_RESERVE_SECONDS:
             # No time left for a full AI call this refresh: rules now, the AI on a later one.
             self.ai_error = "本次时间不够，先按规则排序"
             self.ai_used = any(str(item.get("key")) in self.ai_cache for item in items)
@@ -375,9 +386,26 @@ class Curator:
         self.ai_used = True
         logger.info("Telegram Digest AI ranked %d messages in %.1fs.", len(verdicts), time.monotonic() - started)
 
+    def _time_left(self):
+        return float("inf") if self.deadline is None else self.deadline - time.monotonic()
+
     def _ask_ai(self, items):
         ids = {str(index): str(item.get("key")) for index, item in enumerate(items, 1)}
         request = {"items": [ai_item(index, item, self.now_ts) for index, item in zip(ids, items)]}
+        if self.claude_key and self._time_left() >= CLAUDE_TIMEOUT_SECONDS + AI_REPLY_RESERVE_SECONDS:
+            try:
+                reply = claude_http.ask_json(self.claude_key, system=SYSTEM_PROMPT,
+                                             prompt=json.dumps(request, ensure_ascii=False), schema=AI_SCHEMA,
+                                             effort=CLAUDE_EFFORT, model=CLAUDE_MODEL, timeout=CLAUDE_TIMEOUT_SECONDS)
+                return checked_verdicts(reply.text, ids)
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                if not self.api_key or self._time_left() < AI_TIMEOUT_SECONDS + AI_REPLY_RESERVE_SECONDS:
+                    raise
+                logger.warning("Telegram Digest Claude ranking failed; asking OpenAI: %s", str(exc)[:160])
+        if not self.api_key:
+            raise RuntimeError("no time left for a Claude ranking")
         client = self._client()
 
         def ask(model):

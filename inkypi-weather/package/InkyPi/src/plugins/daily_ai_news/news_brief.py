@@ -9,6 +9,7 @@ import re
 from datetime import datetime
 from typing import Any
 
+from utils import claude_http
 from utils.openai_http import OpenAI
 
 from . import news_common as common
@@ -33,6 +34,10 @@ LEGACY_DEFAULT_MODELS = ("gpt-5-nano", "gpt-5-mini", "gpt-6-luna")
 PREVIOUS_MODEL = "gpt-6-luna"
 # How long each model family thinks: gpt-6 at its default, gpt-5 briefly.
 REASONING_EFFORTS = {"gpt-6": "medium", "gpt-5": "low"}
+# Asked first when ANTHROPIC_API_KEY is set (the owner's Claude Console credit, 2026-11-07);
+# OpenAI and Groq stay behind it. Medium effort matches the OpenAI flagship's think.
+CLAUDE_MODEL = claude_http.DEFAULT_MODEL
+CLAUDE_EFFORT = "medium"
 DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
 # Groq shut llama-3.3-70b-versatile down for free use on 2026-08-16; a saved one follows the default.
 LEGACY_GROQ_MODELS = ("llama-3.3-70b-versatile", "llama-3.1-8b-instant")
@@ -265,8 +270,11 @@ class NewsBriefMixin:
         market_snapshot: dict[str, Any],
         now: datetime,
         recent_titles: list[str] | None = None,
+        claude_key: str = "",
     ) -> dict[str, Any]:
         backends = []
+        if claude_key:
+            backends.append({"provider": "claude", "api_key": claude_key, "model": CLAUDE_MODEL, "base_url": None})
         if openai_key:
             backends.append({
                 "provider": "openai",
@@ -296,18 +304,23 @@ class NewsBriefMixin:
             if backend.get("only_after_refusal") and not refused:
                 continue
             try:
-                brief = self._summarize_with_openai(
-                    backend["api_key"],
-                    backend["model"],
-                    settings,
-                    items,
-                    market_snapshot,
-                    now,
-                    recent_titles=recent_titles,
-                    provider=backend["provider"],
-                    base_url=backend["base_url"],
-                )
-                brief["_model"] = backend["model"] if backend["provider"] == "openai" else f"groq:{backend['model']}"
+                if backend["provider"] == "claude":
+                    brief = self._summarize_with_claude(backend["api_key"], backend["model"], settings, items,
+                                                        market_snapshot, now, recent_titles=recent_titles)
+                else:
+                    brief = self._summarize_with_openai(
+                        backend["api_key"],
+                        backend["model"],
+                        settings,
+                        items,
+                        market_snapshot,
+                        now,
+                        recent_titles=recent_titles,
+                        provider=backend["provider"],
+                        base_url=backend["base_url"],
+                    )
+                brief["_model"] = (backend["model"] if backend["provider"] == "openai"
+                                   else f"{backend['provider']}:{backend['model']}")
                 brief["_used_ai"] = True
                 return brief
             except Exception as exc:
@@ -317,6 +330,28 @@ class NewsBriefMixin:
                 logger.warning("Daily AI news provider failed: %s", errors[-1])
 
         raise RuntimeError("; ".join(errors) or "No AI provider is configured.")
+
+    def _summarize_with_claude(
+        self,
+        api_key: str,
+        model: str,
+        settings,
+        items: list[dict[str, str]],
+        market_snapshot: dict[str, Any],
+        now: datetime,
+        recent_titles: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """The brief from Claude: the same prompt, request and schema the OpenAI path sends."""
+        user_text = json.dumps(news_request(items, recent_titles, now, settings.get("region_focus")),
+                               ensure_ascii=False)
+        reply = claude_http.ask_json(api_key, system=NEWS_SYSTEM_PROMPT, prompt=user_text, schema=NEWS_JSON_SCHEMA,
+                                     effort=CLAUDE_EFFORT, model=model, timeout=DEFAULT_AI_TIMEOUT_SECONDS)
+        brief = self._checked_brief(reply.text, items, recent_titles)
+        usage = reply.usage if all(isinstance(value, int) for value in reply.usage.values()) else None
+        if usage:
+            logger.info("Daily AI news %s used %s input + %s output tokens", model, usage["input"], usage["output"])
+            brief["_usage"] = usage
+        return brief
 
     def _summarize_with_openai(
         self,

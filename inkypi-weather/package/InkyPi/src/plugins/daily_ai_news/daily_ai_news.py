@@ -297,10 +297,11 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
         market_snapshot = self._fetch_market_snapshot(now, device_config)
         openai_key = device_config.load_env_key("OPEN_AI_SECRET") or device_config.load_env_key("OPENAI_API_KEY")
         groq_key = device_config.load_env_key("GROQ_API_KEY")
+        claude_key = device_config.load_env_key("ANTHROPIC_API_KEY") or device_config.load_env_key("CLAUDE_API_KEY")
         can_call_ai = self._allow_api_call(settings, date_key)
         rss_needs_translation = self._rss_items_need_translation(items)
 
-        if openai_key or groq_key:
+        if openai_key or groq_key or claude_key:
             if not can_call_ai:
                 if stale_matches_current_settings or (stale and rss_needs_translation):
                     stale["from_cache"] = True
@@ -309,7 +310,8 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
                 brief = self._rss_only_brief(items, "已达到今日 API 调用上限，使用 RSS 兜底。", recent_titles)
             else:
                 try:
-                    brief = self._summarize_with_ai(openai_key, groq_key, model, settings, items, market_snapshot, now, recent_titles)
+                    brief = self._summarize_with_ai(openai_key, groq_key, model, settings, items, market_snapshot, now,
+                                                    recent_titles, claude_key=claude_key)
                 except Exception as exc:
                     logger.warning("AI summary failed; using RSS fallback: %s", exc)
                     if stale_matches_current_settings or (stale and rss_needs_translation):
