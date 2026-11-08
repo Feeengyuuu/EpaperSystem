@@ -81,9 +81,9 @@ class PriceTags:
         self._colors = DOLLAR_GOLD[mode], SALE_GREEN[mode]
         self._edges = ENGRAVING[mode]
 
-    def _fit(self, amount, width, height):
+    def _fit(self, amount, width, height, largest=30):
         gap, margin = 2 * SCALE, MARGIN * SCALE
-        for size in range(30 * SCALE, 0, -1):
+        for size in range(largest * SCALE, 0, -1):
             font = self._fonts.get(size)
             if font is None:
                 font = self._face.font_variant(size=size)
@@ -99,13 +99,13 @@ class PriceTags:
                 return font, offset, (left, top, right, bottom)
         return font, offset, (left, top, right, bottom)
 
-    def render(self, amount, size):
-        """Retain every digit and decimal point; shrink the type inside its slot, left-aligned on a
-        transparent ground so it sits straight on the page."""
+    def render(self, amount, size, largest=30):
+        """Retain every digit and decimal point; shrink the type inside its slot (from ``largest`` px
+        down), left-aligned on a transparent ground so it sits straight on the page."""
         amount = str(amount)
         width, height = (int(value) * SCALE for value in size)
         image = Image.new("RGBA", (width, height))
-        font, offset, (left, top, right, bottom) = self._fit(amount, width, height)
+        font, offset, (left, top, right, bottom) = self._fit(amount, width, height, largest)
         x = MARGIN * SCALE - left
         baseline = (height - (bottom - top)) / 2 - top
         dollar, digits = self._colors

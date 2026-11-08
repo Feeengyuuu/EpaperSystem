@@ -1,5 +1,5 @@
 {
-  "built_at": "2026-10-26T16:34:22+00:00",
+  "built_at": "2026-11-08T19:10:08+00:00",
   "logos": {
     "steam_logo": {
       "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Steam_2016_logo_black.svg/960px-Steam_2016_logo_black.svg.png",
@@ -11,6 +11,17 @@
         64
       ],
       "sha256": "d68f7fd46eae51c04cad924b7c218cd1eba621c7eca6b13799312c6eecb03b38"
+    },
+    "steam_mark": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Steam_2016_logo_black.svg/960px-Steam_2016_logo_black.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Steam_2016_logo_black.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "0fae24ad8d8a5970e8d72dc2f029176e853796736c92afe488a889934d78a67f",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "dd7978919392661307290d02dc08b475e65e6b25e0dd0edb3b4ae2dc912316dd"
     },
     "cheapshark_mark": {
       "source": "https://www.cheapshark.com/img/logo_image.png",
@@ -34,6 +45,17 @@
       ],
       "sha256": "447db7e8b08dd89c0621b22e959e321bce9ae8f26b9df00481d2a1587516912b",
       "processing": "white strokes kept (luminance > 150), the shadow dropped, closed 3 px, black on transparent: tinted with the page's ink"
+    },
+    "metacritic_mark": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e1/Metacritic_logo_Roundel.svg/500px-Metacritic_logo_Roundel.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Metacritic_logo_Roundel.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "ef267476ede78af31ae4b19b276c526c2cf645aa564adc0c0761fde42655515c",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "3e7199c4d5faab6e56aa10dd4868f2964f27ee3d7237824f3a75c9bbe092f9bf"
     }
   }
 }

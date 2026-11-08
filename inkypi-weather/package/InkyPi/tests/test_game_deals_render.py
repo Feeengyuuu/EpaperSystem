@@ -8,7 +8,7 @@ import pytest
 
 from plugins.base_plugin.render_provenance import SourceProvenance, read_source_provenance
 from plugins.game_deals.game_deals import GameDeals
-from plugins.game_deals.render import render_page
+from plugins.game_deals.render import HERO_ART, LIST_LEFT, LIST_TOP, ROW_PITCH, THUMB, pick_hero, render_page
 from plugins.game_deals.source import DealRepository, DealSnapshot
 
 
@@ -35,11 +35,11 @@ def test_ten_realistic_and_extreme_titles_fit_day_and_night():
     for card in layout:
         assert len(card["lines"]) == 1
         assert max(card["title_widths"]) <= card["text_width"]
-        # Sale and struck original prices share one line and never run into the badge.
+        # The prices never run into the discount block.
         assert card["prices_right"] <= card["badge_left"] - 4
-    assert layout[1]["lines"] == ["Ori and the Will of the Wisps"]
-    assert layout[3]["lines"][0].endswith("…")
-    assert layout[4]["lines"][0].endswith("…")
+    titles = {card["title"]: card["lines"][0] for card in layout}
+    assert titles["Short"] == "Short"
+    assert titles["A Very Long Game Title With Many Actual Words " * 4].endswith("…")
 
 
 def test_chinese_store_name_replaces_only_the_title_line():
@@ -48,29 +48,39 @@ def test_chinese_store_name_replaces_only_the_title_line():
     plain = render_page(DealSnapshot(english[:3], NOW, "live", "steam"), {}, theme={"mode": "day"}, now=NOW)
     named = render_page(DealSnapshot(chinese, NOW, "live", "steam"), {}, theme={"mode": "day"}, now=NOW)
     layout = named.info["game_deals_layout"]
-    assert [card["lines"] for card in layout] == [["巫师2：国王刺客 加强版"], ["Ori and the Will of the Wisps"], ["无尽传奇2"]]
+    lines = {card["title"]: card["lines"][0] for card in layout}
+    assert lines[english[0]["title"]] == "巫师2：国王刺客 加强版"
+    assert lines[english[2]["title"]] == "无尽传奇2"
     assert all(max(card["title_widths"]) <= card["text_width"] for card in layout)
-    # Covers are untouched and prices/badges keep their columns; only the existing
-    # title-plus-price centring may move the price row by a couple of pixels.
+    # The art and the price columns stay where they were; only the name changes.
     for card, before in zip(layout, plain.info["game_deals_layout"]):
-        assert card["prices_right"] == before["prices_right"] and card["badge_left"] == before["badge_left"]
-        assert abs(card["price_row"] - before["price_row"]) <= 2
-        x0, y0, _, y1 = card["box"]
-        cover = (x0, y0, x0 + 150, y1)
-        assert ImageChops.difference(named.crop(cover), plain.crop(cover)).getbbox() is None
+        assert card["box"] == before["box"] and card["art_rect"] == before["art_rect"]
+        assert card["badge_left"] == before["badge_left"]
+        assert ImageChops.difference(named.crop(card["art_rect"]), plain.crop(card["art_rect"])).getbbox() is None
 
 
-def test_five_rows_per_column_fill_the_page_in_reading_order():
+def test_the_best_value_leads_and_the_other_nine_are_ranked_down_the_right():
     snapshot = DealSnapshot(offers(), NOW, "live", "steam")
     layout = render_page(snapshot, {}, theme={"mode": "day"}, now=NOW).info["game_deals_layout"]
-    boxes = [card["box"] for card in layout]
-    left, right = boxes[0::2], boxes[1::2]
-    assert {box[0] for box in left} == {14} and {box[0] for box in right} == {413}
-    assert [box[1] for box in left] == [box[1] for box in right]
-    tops = [box[1] for box in left]
-    assert tops[0] > 67 and boxes[-1][3] < 445
-    assert all(later - earlier == tops[1] - tops[0] for earlier, later in zip(tops, tops[1:]))
-    assert all(box[3] - box[1] >= 60 for box in boxes)
+    hero, rows = layout[0], layout[1:]
+    assert hero["role"] == "hero" and hero["box"][0] == 14 and hero["box"][2] < LIST_LEFT
+    assert [row["rank"] for row in rows] == list(range(2, 11))
+    assert {row["box"][0] for row in rows} == {LIST_LEFT}
+    tops = [row["box"][1] for row in rows]
+    assert tops[0] == LIST_TOP and all(later - earlier == ROW_PITCH for earlier, later in zip(tops, tops[1:]))
+    assert rows[-1]["box"][3] < 445
+    # The rows keep the source's order, the hero taken out.
+    assert [row["title"] for row in rows] == [deal["title"] for deal in offers() if deal["title"] != hero["title"]]
+
+
+def test_hero_prefers_an_all_time_low_then_the_reviews_then_the_discount():
+    plain = dict(offers()[0], discount_percent=95)
+    reviewed = dict(offers()[1], metacritic=94, steam_rating="Very Positive", steam_rating_percent=92)
+    lowest = dict(offers()[2], sale_price="2.99", lowest_price="2.99", metacritic=80)
+    assert pick_hero([plain, reviewed, lowest]) == 2
+    assert pick_hero([plain, reviewed]) == 1
+    assert pick_hero([plain, dict(offers()[1], discount_percent=50)]) == 0
+    assert pick_hero([]) is None
 
 
 def test_empty_and_unavailable_have_different_messages_and_no_invented_cards():
@@ -90,15 +100,15 @@ def test_wide_cover_is_complete_proportional_and_surrounded_by_page_background(m
     source.rectangle((560, 0, 599, 99), fill=(255, 255, 0))
     snapshot = DealSnapshot(offers()[:1], NOW, "live", "steam")
     result = render_page(snapshot, {"0": cover}, theme={"mode": mode}, now=NOW)
-    frame = result.crop((14, 76, 164, 138))
-    assert frame.size == (150, 62)
+    frame = result.crop(HERO_ART)
     background = result.getpixel((0, 0))
     visible = ImageChops.difference(frame, Image.new("RGB", frame.size, background)).getbbox()
-    assert visible == (0, 18, 150, 43)
+    # The hero's art spans its card's width, its height following the source's ratio, centred.
+    assert visible[0] == 0 and visible[2] == frame.width
+    assert abs((visible[2] - visible[0]) / (visible[3] - visible[1]) - 6) < 0.2
     artwork = frame.crop(visible)
-    assert artwork.getpixel((0, 12)) == (0, 255, 0)
-    assert artwork.getpixel((149, 12)) == (255, 255, 0)
-    assert artwork.getpixel((35, 0)) == artwork.getpixel((35, 24)) == (0, 0, 255)
+    assert artwork.getpixel((0, artwork.height // 2)) == (0, 255, 0)
+    assert artwork.getpixel((artwork.width - 1, artwork.height // 2)) == (255, 255, 0)
     # Subtract green so the yellow right edge does not count as the red square.
     mask = ImageChops.subtract(artwork.getchannel("R"), artwork.getchannel("G")).point(
         lambda value: 255 if value > 200 else 0)
@@ -106,29 +116,36 @@ def test_wide_cover_is_complete_proportional_and_surrounded_by_page_background(m
     assert abs((right - left) - (bottom - top)) <= 2
 
 
+def _thumb_frame(result, row):
+    box = result.info["game_deals_layout"][row]["box"]
+    left = box[0] + 26
+    middle = (box[1] + box[3]) // 2
+    return result.crop((left, middle - THUMB[1] // 2, left + THUMB[0], middle + THUMB[1] // 2))
+
+
 @pytest.mark.parametrize("mode", ["day", "night"])
 def test_small_cover_is_not_enlarged_and_keeps_every_source_pixel(mode):
     cover = Image.new("RGB", (60, 20), (27, 144, 233))
     ImageDraw.Draw(cover).rectangle((0, 0, 5, 19), fill=(200, 25, 40))
-    snapshot = DealSnapshot(offers()[:1], NOW, "live", "steam")
-    result = render_page(snapshot, {"0": cover}, theme={"mode": mode}, now=NOW)
-    frame = result.crop((14, 76, 164, 138))
+    snapshot = DealSnapshot(offers()[:2], NOW, "live", "steam")
+    result = render_page(snapshot, {"1": cover}, theme={"mode": mode}, now=NOW)
+    frame = _thumb_frame(result, 1)
     background = Image.new("RGB", frame.size, result.getpixel((0, 0)))
     visible = ImageChops.difference(frame, background).getbbox()
-    assert visible == (45, 21, 105, 41)
+    assert (visible[2] - visible[0], visible[3] - visible[1]) == (60, 20)
     assert ImageChops.difference(frame.crop(visible), cover).getbbox() is None
 
 
-def test_steam_capsule_keeps_its_ratio_at_full_column_width():
+def test_steam_capsule_keeps_its_ratio_at_full_thumbnail_width():
     # CheapShark serves 231x87 Steam capsules; they must shrink, not crop or stretch.
     cover = Image.new("RGB", (231, 87), (27, 144, 233))
-    snapshot = DealSnapshot(offers()[:1], NOW, "live", "steam")
-    result = render_page(snapshot, {"0": cover}, theme={"mode": "day"}, now=NOW)
-    frame = result.crop((14, 76, 164, 138))
+    snapshot = DealSnapshot(offers()[:2], NOW, "live", "steam")
+    result = render_page(snapshot, {"1": cover}, theme={"mode": "day"}, now=NOW)
+    frame = _thumb_frame(result, 1)
     background = Image.new("RGB", frame.size, result.getpixel((0, 0)))
     left, top, right, bottom = ImageChops.difference(frame, background).getbbox()
-    assert right - left == 150
-    assert abs((right - left) / (bottom - top) - 231 / 87) < 0.06
+    assert right - left == THUMB[0]
+    assert abs((right - left) / (bottom - top) - 231 / 87) < 0.1
 
 
 class Device:
@@ -193,7 +210,8 @@ def test_long_price_keeps_all_digits_and_the_original_clear_of_discount(mode):
     assert card["sale_price"] == "$99999.99"
     assert card["prices_right"] <= card["badge_left"] - 4
     assert card["price_tag_box"][2] < card["badge_left"]
-    assert card["price_font_size"] < 22
+    # Shrunk from the hero's 50 px to keep every digit beside the struck original.
+    assert card["price_font_size"] < 40
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])
@@ -211,7 +229,7 @@ def test_the_store_and_the_price_source_are_named_by_their_official_marks(mode):
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])
-def test_reviews_and_all_time_low_sit_on_the_capsule_corners(mode):
+def test_reviews_and_all_time_low_are_named_by_their_marks_beside_the_offer(mode):
     cover = Image.new("RGB", (231, 87), (120, 120, 120))
     marked = dict(offers()[0], metacritic=89, steam_rating="Very Positive", steam_rating_percent=90,
                   steam_rating_count=123165, sale_price="2.99", lowest_price="2.99")
@@ -220,27 +238,19 @@ def test_reviews_and_all_time_low_sit_on_the_capsule_corners(mode):
     plain = offers()[2]
     page = render_page(DealSnapshot((marked, above, plain), NOW, "live", "steam"),
                        {"0": cover, "1": cover, "2": cover}, theme={"mode": mode}, now=NOW)
-    first, second, third = page.info["game_deals_layout"]
-    assert first["marks"] == [("low", "史低"), ("metacritic", "89"), ("steam_rating", "90%")]
+    hero, second, third = page.info["game_deals_layout"]
+    assert hero["title"] == marked["title"]  # at its all-time low, it leads
+    assert hero["marks"] == [("low", "史低"), ("metacritic", "89"), ("steam_rating", "90%")]
+    assert hero["note"] == "特别好评 ‧ 12.3 万 篇评测"
     assert second["marks"] == [("low", "史低 $1.49"), ("metacritic", "62"), ("steam_rating", "55%")]
     assert third["marks"] == []
-    # Each mark stays on its own capsule: the page around it is untouched, and the title column too.
-    left, top, right, bottom = first["art_rect"]
-    paper = page.getpixel((0, 0))
-    assert page.getpixel((left + 3, top + 3)) != (120, 120, 120)
-    assert page.getpixel((left + 3, bottom - 3)) != (120, 120, 120)
-    assert page.getpixel((right - 3, bottom - 3)) != (120, 120, 120)
-    assert all(page.getpixel((x, top - 2)) == paper for x in range(left, right))
-    # Metacritic's band colours: green from 75, yellow below.
-    assert page.getpixel((left + 2, bottom - 2))[1] > 120
-    second_left, _, _, second_bottom = second["art_rect"]
-    red, green, blue = page.getpixel((second_left + 2, second_bottom - 2))
-    assert red > 200 and green > 140 and blue < 60
-
-
-def test_marks_leave_a_small_capsule_alone():
-    cover = Image.new("RGB", (60, 20), (27, 144, 233))
-    deal = dict(offers()[0], metacritic=89, steam_rating="Very Positive", steam_rating_percent=90,
-                steam_rating_count=10, lowest_price="2.99")
-    page = render_page(DealSnapshot((deal,), NOW, "live", "steam"), {"0": cover}, theme={"mode": "day"}, now=NOW)
-    assert page.info["game_deals_layout"][0]["marks"] == []
+    # The art keeps its own pixels: no mark is drawn on it any more.
+    left, top, right, bottom = hero["art_rect"]
+    assert {page.getpixel((x, y)) for x in (left + 3, right - 3) for y in (top + 3, bottom - 3)} == {(120, 120, 120)}
+    # Metacritic's yellow roundel names the score in the second offer's row; the figures sit on the
+    # page with no coloured chip (only the all-time low keeps one).
+    row = second["box"]
+    pixels = [page.getpixel((x, y)) for x in range(row[0], row[2]) for y in range(row[1] + 20, row[3])]
+    assert any(red > 200 and 140 < green < 200 and blue < 70 for red, green, blue in pixels)
+    cobalt = {(37, 84, 199), (59, 110, 230)}
+    assert not cobalt & {page.getpixel((x, y)) for x in range(0, 800) for y in range(row[1], row[3])}

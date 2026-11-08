@@ -9,13 +9,13 @@ from runtime.long_task_executor import current_task_context
 from runtime.refresh_contracts import TaskContext
 from utils.http_client import get_http_client
 
-from .media import load_covers
+from .media import load_covers, load_hero_cover
 from .source import DealRepository
 
 
 class GameDeals(BasePlugin):
     def generate_image(self, settings, device_config):
-        from .render import render_page
+        from .render import pick_hero, render_page
 
         cached_only = bool(settings.get("_theme_render_only"))
         context = current_task_context() or TaskContext.never_cancelled(
@@ -32,6 +32,13 @@ class GameDeals(BasePlugin):
                                    cached_only=cached_only, force=force)
         covers = load_covers(snapshot.deals, root / "covers", http=http, context=context,
                              cached_only=cached_only)
+        hero_index = pick_hero(list(snapshot.deals[:10]))
+        if hero_index is not None:
+            # The day's best value gets its Steam store header for the large card.
+            hero = snapshot.deals[hero_index]
+            hero_cover = load_hero_cover(hero, root / "covers", http=http, context=context, cached_only=cached_only)
+            if hero_cover is not None:
+                covers[f"hero:{hero['game_id']}"] = hero_cover
         try:
             theme = settings.get("_inkypi_theme") or self.resolve_theme(settings, device_config)
             image = render_page(snapshot, covers, dimensions=self.get_dimensions(device_config),

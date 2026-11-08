@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from PIL import Image
 
-from plugins.game_deals.media import load_covers
+from plugins.game_deals.media import STEAM_HEADER, load_covers, load_hero_cover
 from plugins.game_deals.source import normalize_deals
 
 
@@ -62,6 +62,21 @@ def test_cache_only_missing_cover_does_not_create_directory(tmp_path):
     assert load_covers(normalize_deals([row()]), target, http=http, cached_only=True) == {}
     assert http.calls == []
     assert not target.exists()
+
+
+def test_hero_takes_its_steam_store_header_once_and_cache_only_never_fetches(tmp_path):
+    http = ImagesHTTP()
+    deal = dict(normalize_deals([row()])[0], steam_app_id="49520")
+    cover = load_hero_cover(deal, tmp_path / "covers", http=http)
+    assert cover is not None and cover.width <= 460 and cover.height <= 215
+    cover.close()
+    assert http.calls[0][0] == ("GET", STEAM_HEADER.format(app_id="49520"))
+    again = load_hero_cover(deal, tmp_path / "covers", http=http, cached_only=True)
+    again.close()
+    assert len(http.calls) == 1
+    # Without a Steam app id there is no header to ask for.
+    assert load_hero_cover(dict(deal, steam_app_id=""), tmp_path / "covers", http=http) is None
+    assert len(http.calls) == 1
 
 
 def test_untrusted_image_host_is_never_contacted(tmp_path):
