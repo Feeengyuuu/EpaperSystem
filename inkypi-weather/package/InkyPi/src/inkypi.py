@@ -33,6 +33,7 @@ from plugins.plugin_registry import load_plugins, register_plugin_blueprints
 from plugins.registry import PluginRegistry
 from refresh_task import RefreshTask
 from runtime.long_task_executor import shutdown_long_task_executors
+from runtime.malloc_tuning import limit_malloc_arenas
 from runtime_paths import RuntimePaths
 from security.request_limits import (
     WAITRESS_MAX_REQUEST_BODY_BYTES,
@@ -379,7 +380,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     dev_mode = bool(args.dev)
     port = 8080 if dev_mode else 80
 
+    # Before any service thread exists, so every later allocation uses the bounded arenas.
+    malloc_settings = limit_malloc_arenas()
     _configure_process_logging()
+    if malloc_settings:
+        logger.info("Bounded process malloc. | %s",
+                    " | ".join(f"{name}: {value}" for name, value in malloc_settings.items()))
     if dev_mode:
         logger.info("Starting InkyPi in DEVELOPMENT mode on port %s", port)
     else:
