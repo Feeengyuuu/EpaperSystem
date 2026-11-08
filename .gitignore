@@ -100,6 +100,17 @@ inkypi-weather/package/InkyPi/src/static/images/current_image.png
 **/sports-f1-score.otf
 **/sports-f1-score.woff
 **/sports-f1-score.woff2
+**/sports-motogp-score.ttf
+**/sports-motogp-score.otf
+**/sports-motogp-score.woff
+**/sports-motogp-score.woff2
+**/sports-motogp-text-score.ttf
+**/sports-motogp-text-score.otf
+**/sports-motogp-text-score.woff
+**/sports-motogp-text-score.woff2
+# Owner-supplied MGP Display/Text (Dorna's MotoGP faces): source names stay private too.
+**/MGPDisplay-*.woff2
+**/MGPText-*.woff2
 **/sports-esports-*-score.ttf
 **/sports-esports-*-score.otf
 **/sports-esports-*-score.woff

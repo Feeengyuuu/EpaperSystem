@@ -92,7 +92,7 @@ def is_device_owned_score_font(path: PurePath) -> bool:
                                     "steam-motiva-regular.ttf", "steam-motiva-bold.ttf"} | {
         f"sports-{league}-score.{extension}"
         for league in (
-            "nba", "wnba", "mls", "epl", "laliga", "bundesliga", "seriea", "ligue1", "f1",
+            "nba", "wnba", "mls", "epl", "laliga", "bundesliga", "seriea", "ligue1", "f1", "motogp", "motogp-text",
             "esports-cs2", "esports-cs2-regular", "esports-dota", "esports-dota-regular",
             "esports-riot-heading", "esports-riot", "esports-riot-regular",
             "esports-blast-heading", "esports-blast", "esports-esl-heading", "esports-iem-heading",

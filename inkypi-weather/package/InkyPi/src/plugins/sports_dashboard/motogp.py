@@ -1,11 +1,12 @@
 """MotoGP for the lower panel: the keyless Pulselive results API behind motogp.com (a handful of
 small requests: the season, its events, the weekend's sessions, a race classification and the
-riders' standings).
+riders' standings), with the shown riders' official profiles (faces, team colours) from
+motogp_riders.
 
 The panel follows the Grand Prix weekend under way, else the next one: its sessions with their
 times (a session in progress makes the panel live), the latest race or sprint result (the
 weekend's own once one has run, else the last Grand Prix's race) and the championship's top
-riders. A race ranks with the leagues' big games, a sprint or qualifying above practice.
+riders with their race wins. A race ranks with the leagues' big games, a sprint or qualifying above practice.
 """
 
 from __future__ import annotations
@@ -13,13 +14,15 @@ from __future__ import annotations
 import re
 from datetime import date, datetime, time, timedelta, timezone
 
-from . import event_ranking, extra_feeds
+from . import event_ranking, extra_feeds, motogp_riders
 
 API = "https://api.motogp.pulselive.com/motogp/v1/results"
-VERSION = "motogp-results-v1"
+VERSION = "motogp-results-v2"
 MAX_BYTES = 512 * 1024
 WEEKEND_TTL, QUIET_TTL = 15 * 60, 6 * 3600
 RESULT_ROWS, STANDING_ROWS = 10, 10
+# The riders whose profiles are looked up: the rows the panel can show.
+PROFILE_ROWS = 7
 SESSION_LABELS = {"PR": "练习", "SPR": "冲刺赛", "RAC": "正赛", "WUP": "热身"}
 SESSION_LENGTH = {"FP": 45, "PR": 60, "Q": 20, "SPR": 30, "RAC": 50, "WUP": 15}
 SESSION_TIERS = {"RAC": "A", "SPR": "B", "Q": "B"}
@@ -96,8 +99,13 @@ def _rider_row(raw):
     rider = raw.get("rider") if isinstance(raw.get("rider"), dict) else {}
     country = rider.get("country") if isinstance(rider.get("country"), dict) else {}
     return {"pos": raw.get("position"), "number": rider.get("number"), "name": str(rider.get("full_name") or "")[:32],
+            "uuid": str(rider.get("riders_api_uuid") or rider.get("riders_id") or "")[:36],
             "iso": str(country.get("iso") or "")[:2], "team": str((raw.get("team") or {}).get("name") or "")[:40],
             "constructor": str((raw.get("constructor") or {}).get("name") or "")[:20]}
+
+
+def _count(value):
+    return value if isinstance(value, int) and value >= 0 else 0
 
 
 def normalize_classification(payload):
@@ -119,6 +127,8 @@ def normalize_standings(payload):
         if isinstance(raw, dict) and isinstance(raw.get("position"), int):
             row = _rider_row(raw)
             row["points"] = raw.get("points") if isinstance(raw.get("points"), (int, float)) else 0
+            row.update(wins=_count(raw.get("race_wins")), podiums=_count(raw.get("podiums")),
+                       sprint_wins=_count(raw.get("sprint_wins")))
             rows.append(row)
     return sorted(rows, key=lambda row: row["pos"])[:STANDING_ROWS]
 
@@ -129,7 +139,7 @@ def _length(session):
 
 def build_card(data, now):
     """{"sport": "MOTOGP", "status", "weekend", "sessions", "live_session", "next_session",
-    "result", "standings", "next_event"} or None without a weekend to show."""
+    "result", "standings", "next_event", "riders"} or None without a weekend to show."""
     data = data or {}
     weekend = data.get("current") or data.get("next")
     if not weekend:
@@ -142,7 +152,7 @@ def build_card(data, now):
     status = "LIVE" if live else ("NEXT" if upcoming or not data.get("current") else "RECENT")
     return {"sport": "MOTOGP", "status": status, "weekend": weekend, "sessions": sessions, "live_session": live,
             "next_session": upcoming, "result": data.get("result") or {}, "standings": data.get("standings") or [],
-            "next_event": data.get("next") if data.get("current") else None}
+            "next_event": data.get("next") if data.get("current") else None, "riders": {}}
 
 
 def candidate(card, now):
@@ -210,4 +220,8 @@ def load_card(plugin, settings, now):
     ttl = WEEKEND_TTL if weekend else QUIET_TTL
     data, state = extra_feeds.load(plugin, settings, "motogp", VERSION, lambda client, deadline: fetch(client, deadline, now),
                                    ttl, now, label="MOTOGP")
-    return build_card(data, now), state
+    card = build_card(data, now)
+    if card:
+        shown = ((card["result"].get("rows") or [])[:PROFILE_ROWS] + card["standings"][:PROFILE_ROWS])
+        card["riders"] = motogp_riders.rider_profiles(plugin, settings, shown, now)
+    return card, state

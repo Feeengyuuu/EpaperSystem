@@ -36,6 +36,9 @@ def _render(plugin, drawer, card, now, colours, monkeypatch, drawn):
     original = plugin._draw_text_in_box
     monkeypatch.setattr(plugin, "_draw_text_in_box", lambda draw, box, text, *args, **kwargs: drawn.append(text) or
                         original(draw, box, text, *args, **kwargs))
+    centred = plugin._draw_centered_in_box
+    monkeypatch.setattr(plugin, "_draw_centered_in_box", lambda draw, box, text, *args, **kwargs: drawn.append(text) or
+                        centred(draw, box, text, *args, **kwargs))
     monkeypatch.setattr(plugin, "_load_icon_flag", lambda url, size: Image.new("RGBA", size, (0, 80, 200, 255)))
     monkeypatch.setattr(plugin, "_load_team_logo_for_render", lambda url, size: Image.new("RGBA", (size, size // 2), (90, 60, 40, 255)))
     token = _ACTIVE_COLORS.set(colours)
@@ -51,7 +54,8 @@ def _render(plugin, drawer, card, now, colours, monkeypatch, drawn):
 @pytest.mark.parametrize("key, drawer, expected", [
     ("UFC", "_draw_ufc_panel", {"UFC 334", "Gane vs. Hokit", "Ciryl Gane", "13-3-0"}),
     ("TENNIS", "_draw_tennis_panel", {"巴黎大师赛", "1/4决赛", "Carlos Alcaraz", "进行中"}),
-    ("MOTOGP", "_draw_motogp_panel", {"卡塔尔大奖赛", "冲刺赛", "正赛成绩 · 马来西亚大奖赛", "车手积分榜", "399"}),
+    ("MOTOGP", "_draw_motogp_panel", {"卡塔尔大奖赛", "冲刺赛", "正赛成绩 · 马来西亚大奖赛", "车手积分榜", "399",
+                                       "MARQUEZ", "ACOSTA", "+0.865"}),
 ])
 def test_each_extra_panel_draws_its_card_by_day_and_night(monkeypatch, key, drawer, expected, colours):
     plugin = SportsDashboard({"id": "sports_dashboard"})

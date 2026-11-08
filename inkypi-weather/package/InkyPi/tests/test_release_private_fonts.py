@@ -160,7 +160,7 @@ def test_dry_run_validates_original_bytes_without_transport_or_copy(ctx, font):
     assert ctx.load("private-fonts-nba-plan.json")["source"] == str(font)
 
 
-@pytest.mark.parametrize("league", ["mls", "epl", "laliga", "bundesliga", "seriea", "ligue1", "f1"])
+@pytest.mark.parametrize("league", ["mls", "epl", "laliga", "bundesliga", "seriea", "ligue1", "f1", "motogp", "motogp-text"])
 def test_new_fixed_leagues_keep_exact_private_destinations(ctx, font, league):
     result = private.install(ctx, league, font, connect=no_device)
     assert result["destination"] == f"/var/lib/inkypi/data/fonts/sports-{league}-score.ttf"

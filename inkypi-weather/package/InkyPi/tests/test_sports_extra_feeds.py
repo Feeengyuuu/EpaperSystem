@@ -202,8 +202,15 @@ def test_motogp_reads_the_weekend_its_sessions_the_last_race_and_the_standings()
     result = motogp.normalize_classification(CLASSIFICATION)
     assert [(row["pos"], row["number"], row["gap"]) for row in result] == [(1, 93, ""), (2, 37, "+0.865"), (3, 73, "+2.766")]
     standings = motogp.normalize_standings(STANDINGS)
-    assert standings[0] == {"pos": 1, "number": 93, "name": "Marc Marquez", "iso": "ES", "team": "Ducati Lenovo Team",
-                            "constructor": "Ducati", "points": 399}
+    assert standings[0] == {"pos": 1, "number": 93, "name": "Marc Marquez", "uuid": "", "iso": "ES",
+                            "team": "Ducati Lenovo Team", "constructor": "Ducati", "points": 399, "wins": 0, "podiums": 0,
+                            "sprint_wins": 0}
+    # A rider's id for their profile, and their wins and podiums of the season, come with their row.
+    row = dict(STANDINGS["classification"][0], race_wins=7, podiums=8, sprint_wins=10)
+    row["rider"] = dict(row["rider"], riders_api_uuid="23e50438-a657-4fb0-a190-3262b5472f29")
+    ranked = motogp.normalize_standings({"classification": [row]})[0]
+    assert (ranked["uuid"], ranked["wins"], ranked["podiums"], ranked["sprint_wins"]) == (
+        "23e50438-a657-4fb0-a190-3262b5472f29", 7, 8, 10)
 
 
 def test_the_motogp_weekend_ranks_its_race_above_its_practice():

@@ -99,6 +99,14 @@
       "license": "Formula 1 brand typeface, not offered for licence"
     },
     {
+      "key": "motogp", "font": "MGP Display Bold", "use": "MotoGP numbers, places and timing", "kind": "brand",
+      "license": "Dorna (MotoGP) brand typeface, not offered for licence"
+    },
+    {
+      "key": "motogp-text", "font": "MGP Text Bold", "use": "MotoGP rider names and gaps", "kind": "brand",
+      "license": "Dorna (MotoGP) brand typeface, not offered for licence"
+    },
+    {
       "key": "esports-dota", "font": "Radiance Bold", "use": "Dota 2 headings and scores", "kind": "brand",
       "license": "Valve (Dota 2) brand typeface, not offered for licence"
     },

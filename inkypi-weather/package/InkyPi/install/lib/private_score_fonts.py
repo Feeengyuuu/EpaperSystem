@@ -20,7 +20,7 @@ import sys
 MAX_BYTES = 2 * 1024 * 1024
 FONT_DIRECTORY = Path("/var/lib/inkypi/data/fonts")
 LEAGUES = (
-    "nba", "wnba", "mls", "epl", "laliga", "bundesliga", "seriea", "ligue1", "f1",
+    "nba", "wnba", "mls", "epl", "laliga", "bundesliga", "seriea", "ligue1", "f1", "motogp", "motogp-text",
     "esports-cs2", "esports-cs2-regular", "esports-dota", "esports-dota-regular",
     "esports-riot-heading", "esports-riot", "esports-riot-regular",
     "esports-blast-heading", "esports-blast", "esports-esl-heading", "esports-iem-heading",

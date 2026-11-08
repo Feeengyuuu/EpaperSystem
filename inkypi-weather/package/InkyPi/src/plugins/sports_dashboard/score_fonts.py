@@ -11,7 +11,10 @@ from .render_fonts import render_font
 
 
 FONT_DIR = Path(__file__).resolve().parent / "assets" / "fonts"
-SCORE_SPORTS = frozenset({"NBA", "WNBA", "NHL", "MLB", "NFL", "NCAA", "SOCCER", "PGA", "F1"})
+SCORE_SPORTS = frozenset({"NBA", "WNBA", "NHL", "MLB", "NFL", "NCAA", "SOCCER", "PGA", "F1", "MOTOGP", "MOTOGP_TEXT"})
+# The sports whose owner-supplied face (sports-<key>-score.*) is looked up without a league:
+# MotoGP has two, MGP Display for figures and MGP Text for riders' names.
+PRIVATE_FONT_KEYS = {"NBA": "nba", "WNBA": "wnba", "F1": "f1", "MOTOGP": "motogp", "MOTOGP_TEXT": "motogp-text"}
 CLUB_PRIVATE_FONT_KEYS = {
     "MLS": "mls", "PL": "epl", "PD": "laliga", "BL1": "bundesliga",
     "SA": "seriea", "FL1": "ligue1",
@@ -33,8 +36,8 @@ def _load_score_font(size, bold=False, *, sport, private_key=None):
     reference = render_font(get_base_ui_font, size, bold)
     data = os.environ.get("INKYPI_DATA_DIR", "").strip()
     paths = []
-    if private_key is None and sport in {"NBA", "WNBA", "F1"}:
-        private_key = sport.lower()
+    if private_key is None:
+        private_key = PRIVATE_FONT_KEYS.get(sport)
     if data and private_key:
         candidates = [Path(data) / "fonts" / f"sports-{private_key}-score.{suffix}"
                       for suffix in ("ttf", "otf", "woff", "woff2")]

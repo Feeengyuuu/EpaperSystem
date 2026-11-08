@@ -760,7 +760,7 @@ def run_private_score_font(arguments):
         raise ValueError("private font needs name, font SHA256, size, release id, commit and artifact SHA256")
     name, font_sha, size, release_id, commit, artifact_sha = arguments
     registry = (
-        "nba|wnba|mls|epl|laliga|bundesliga|seriea|ligue1|f1|"
+        "nba|wnba|mls|epl|laliga|bundesliga|seriea|ligue1|f1|motogp|motogp-text|"
         "esports-cs2|esports-cs2-regular|esports-dota|esports-dota-regular|"
         "esports-riot-heading|esports-riot|esports-riot-regular|"
         "esports-blast-heading|esports-blast|esports-esl-heading|esports-iem-heading|"
