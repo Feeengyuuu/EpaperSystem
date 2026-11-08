@@ -4239,6 +4239,37 @@ def test_mr_quins_simultaneous_rooms_lead_in_a_fixed_order():
     assert ordered == [*QUIN_ROOMS, ("douyu", "60937")]
 
 
+def _avatar_on_paper(card, size):
+    plugin = _plugin()
+    plugin._load_avatar_source = lambda *args, **kwargs: Image.new("RGB", (64, 64), (40, 120, 200))
+    image = Image.new("RGB", (size + 20, size + 20), (255, 255, 255))
+    plugin._draw_avatar(image, ImageDraw.Draw(image), (10, 10, size), card, live_radar_module.PLATFORMS[card["platform"]],
+                        (255, 255, 255), (0, 0, 0), (200, 200, 200), 3600, show_fav_badge=False)
+    return image
+
+
+@pytest.mark.parametrize("platform, room_id", QUIN_ROOMS)
+def test_every_mr_quin_room_draws_his_avatar_in_a_gold_ring(platform, room_id):
+    gold = live_radar_module.TOP_FAVORITE_RING_GOLD
+
+    for size in (18, 32):
+        image = _avatar_on_paper({"platform": platform, "id": room_id, "avatar": "https://img.test/quin.png"}, size)
+        middle = 10 + size // 2
+        row = [image.getpixel((x, middle)) for x in range(10, 10 + size // 2)]
+
+        assert row[0] == (0, 0, 0)  # the ink outer edge
+        assert row[1] == gold and row[2] == gold  # a band the panel's dither keeps
+        assert (40, 120, 200) in row  # his photo still fills the middle
+
+
+def test_other_streamers_keep_a_thin_ink_avatar_edge():
+    image = _avatar_on_paper({"platform": "douyu", "id": "60937", "avatar": "https://img.test/other.png"}, 32)
+
+    colours = {colour for _count, colour in image.getcolors(1 << 16)}
+    assert live_radar_module.TOP_FAVORITE_RING_GOLD not in colours
+    assert image.getpixel((11, 26)) == (40, 120, 200)
+
+
 KICK_SRCSET = (
     "https://images.kick.com/video_thumbnails/a/b/1080.webp?v=1 1920w, "
     "https://images.kick.com/video_thumbnails/a/b/720.webp?v=2 1280w, "
