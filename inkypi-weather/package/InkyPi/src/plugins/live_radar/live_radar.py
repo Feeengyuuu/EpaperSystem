@@ -2870,12 +2870,11 @@ class LiveRadar(BasePlugin):
         draw.text((chip[0] + 3, chip[1] - 1), text, fill=placeholder_art.WHITE, font=font)
 
     def _draw_replay_chip(self, draw, right, top):
-        """An amber 'REPLAY' tag pinned to a replay tile's cover."""
+        """The word 'REPLAY' straight on a replay tile's cover: amber letters with an ink edge, no tag behind."""
         font = self._font(8, "bold")
         text_w = int(draw.textlength("REPLAY", font=font))
-        chip = (right - text_w - 8, top, right, top + 12)
-        self._rounded_rectangle(draw, chip, radius=3, fill=STATUS_TOTAL_FILLS["replay"], outline=placeholder_art.BLACK)
-        draw.text((chip[0] + 4, chip[1]), "REPLAY", fill=placeholder_art.BLACK, font=font)
+        draw.text((right - text_w - 4, top), "REPLAY", fill=STATUS_TOTAL_FILLS["replay"], font=font,
+                  stroke_width=1, stroke_fill=placeholder_art.BLACK)
 
     @staticmethod
     def _clip_outside_round(image, box, radius, colour):
