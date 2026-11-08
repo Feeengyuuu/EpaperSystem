@@ -3,6 +3,8 @@ bronze for the first three, ink on the paper below them, a tie marked with a sma
 nationality as its flag, framed by a hairline so a white flag still reads on the paper.
 """
 
+import time
+
 from PIL import ImageChops
 
 from .common import *
@@ -13,6 +15,11 @@ ESPN_FLAG_URL = "https://a.espncdn.com/i/teamlogos/countries/500/{code}.png"
 FLAGCDN_URL = "https://flagcdn.com/w160/{iso}.png"
 # Metallic medal fills: gold, silver, bronze (refined tones, not the panel's pure inks).
 MEDAL_FILLS = {1: (212, 160, 23), 2: (168, 176, 186), 3: (176, 112, 60)}
+# A flag or photo that failed to load (a host busy for a moment: Commons answers 429 at times) is
+# asked for again after this long, not left missing until the process restarts.
+FLAG_RETRY_SECONDS = 30 * 60
+FLAG_FAILURES_KEPT = 256
+_flag_failures = {}
 
 
 def espn_flag_url(code):
@@ -121,6 +128,9 @@ class IconMarksMixin:
         key = (url, size, "icon-flag-v1")
         if key in FLAG_IMAGE_CACHE:
             return FLAG_IMAGE_CACHE[key]
+        failed = _flag_failures.get(key)
+        if failed is not None and time.monotonic() - failed < FLAG_RETRY_SECONDS:
+            return None
         flag = None
         try:
             path = SportsDashboard._team_logo_disk_cache_path(self._team_logo_disk_cache_dir(), f"flag:{url}")
@@ -135,6 +145,11 @@ class IconMarksMixin:
                 source.close()
         except Exception as exc:  # noqa: BLE001 - a missing flag leaves its country code instead.
             logger.warning("Flag icon unavailable %s: %s", url, type(exc).__name__)
+            if len(_flag_failures) >= FLAG_FAILURES_KEPT:
+                _flag_failures.pop(next(iter(_flag_failures)))
+            _flag_failures[key] = time.monotonic()
+            return None
+        _flag_failures.pop(key, None)
         FLAG_IMAGE_CACHE[key] = flag
         return flag
 

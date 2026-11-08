@@ -736,6 +736,7 @@ LOLESPORTS_LIVE_STATS_WINDOW_URL = "https://feed.lolesports.com/livestats/v1/win
 BO3_API_BASE_URL = "https://api.bo3.gg/api/v1"
 TEAM_LOGO_CACHE = ImageLRUCache(max_entries=128, max_bytes=20 * 1024 * 1024)
 FLAG_IMAGE_CACHE = ImageLRUCache(max_entries=128, max_bytes=20 * 1024 * 1024)
+WIKIMEDIA_AGENT = "InkyPi/1.0 (https://github.com/Feeengyuuu/EpaperSystem)"
 
 EWC_MONTHS = {
     "JAN": 1,
@@ -4399,7 +4400,8 @@ class SportsDashboardCommonMixin:
     def _fetch_remote_image_bytes(url, timeout):
         response = get_http_session().get(
             url,
-            headers={"User-Agent": "InkyPi/1.0"},
+            # Wikimedia asks automated clients to name themselves with a way to reach them.
+            headers={"User-Agent": WIKIMEDIA_AGENT if "wikimedia.org/" in str(url) else "InkyPi/1.0"},
             timeout=timeout,
             stream=True,
         )

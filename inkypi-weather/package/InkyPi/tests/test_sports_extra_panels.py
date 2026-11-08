@@ -240,3 +240,34 @@ def test_a_wikidata_photo_is_cut_to_the_head_and_shown_round(monkeypatch):
     assert face.size == (18, 18)
     assert face.getpixel((0, 0))[3] == 0 and face.getpixel((9, 9))[3] == 255
     assert face.getpixel((9, 6))[:3] == (220, 170, 140)
+
+
+def test_a_photo_that_failed_to_load_is_asked_for_again_later(monkeypatch, tmp_path):
+    """Commons answers 429 at times: the face comes back on a later render, not after a restart."""
+    import io
+
+    from plugins.sports_dashboard import icon_marks
+
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    monkeypatch.setattr(plugin, "_team_logo_disk_cache_dir", lambda: None)
+    clock = [1000.0]
+    monkeypatch.setattr(icon_marks.time, "monotonic", lambda: clock[0])
+    buffer = io.BytesIO()
+    Image.new("RGB", (40, 60), (30, 60, 200)).save(buffer, format="PNG")
+    answers = [RuntimeError("429 Too Many Requests"), buffer.getvalue()]
+    asked = []
+
+    def fetch(url, timeout):
+        asked.append(url)
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(SportsDashboard, "_fetch_remote_image_bytes", staticmethod(fetch))
+    url = "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Retry.jpg/250px-Retry.jpg"
+    assert plugin._load_icon_flag(url, (60, 60)) is None
+    clock[0] += 60
+    assert plugin._load_icon_flag(url, (60, 60)) is None and len(asked) == 1
+    clock[0] += icon_marks.FLAG_RETRY_SECONDS
+    assert plugin._load_icon_flag(url, (60, 60)) is not None and len(asked) == 2
