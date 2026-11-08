@@ -1259,10 +1259,26 @@ def test_f1_finished_sessions_show_their_winners_and_the_last_race_its_tyres_and
                                   start + timedelta(hours=20))
 
     texts = [text for _box, text, _font in boxes]
-    assert {"VER", "1:17.912", "SC", "VSC", "×2"} <= set(texts)
+    # A session's winner goes by the Chinese name the standings use.
+    assert {"维斯塔潘", "1:17.912", "SC", "VSC", "×2"} <= set(texts)
+    assert "VER" not in texts
     assert not any(text.startswith("FRI") for text in texts)
     row = image.crop((285, 185, 548, 205)).get_flattened_data()
     assert F1_TYRE_COLOURS["M"] in row and F1_TYRE_COLOURS["H"] in row
+
+
+def test_f1_session_winner_falls_back_to_the_code_in_a_narrow_slot(boxes):
+    plugin = _plugin()
+    image = Image.new("RGB", (200, 40), DAY_COLORS["panel"])
+    digest = {"race": False, "top": [{"code": "ANT", "team": "", "best": 70.763}]}
+    draw = ImageDraw.Draw(image)
+
+    assert plugin._draw_f1_session_top(image, draw, (0, 0, 160, 13), 80, digest)
+    assert "安东内利" in [text for _box, text, _font in boxes]
+    boxes.clear()
+    # Too narrow for the name and the lap: the code keeps the lap beside it.
+    assert plugin._draw_f1_session_top(image, draw, (0, 0, 66, 13), 33, digest)
+    assert "ANT" in [text for _box, text, _font in boxes]
 
 
 def test_f1_flags_keep_their_white_fields():

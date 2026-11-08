@@ -333,8 +333,8 @@ class F1RenderMixin:
 
     def _draw_f1_session_top(self, image, draw, slot, centre, digest):
         """A finished session's winner centred on its node within ``slot``: the team's logo, the
-        driver's code (as F1's own graphics give it, so every node reads alike) and their best lap
-        (a race's: 冠军); False without a summary or the room."""
+        driver's Chinese name (a size smaller, then F1's three-letter code, when the slot is too
+        narrow for it) and their best lap (a race's: 冠军); False without a summary or the room."""
         top = ((digest or {}).get("top") or [None])[0]
         if not top or not top.get("code"):
             return False
@@ -344,10 +344,14 @@ class F1RenderMixin:
         logo_w = logo.width + 3 if logo is not None else 0
         detail, detail_font = self._fit_f1_metric(draw, detail, 60, 9, False, max_height=12) if detail else ("", None)
         detail_w = self._text_width(draw, detail, detail_font) + 3 if detail else 0
-        name_font = self._font(9, True)
-        name = top["code"]
-        width = logo_w + self._text_width(draw, name, name_font) + detail_w
-        if width > x2 - x1:
+        code = str(top["code"]).strip().upper()
+        zh = F1_DRIVER_ZH.get(code)
+        for name, size in ([(zh, 9), (zh, 8)] if zh else []) + [(code, 9)]:
+            name_font = self._font(size, True)
+            width = logo_w + self._text_width(draw, name, name_font) + detail_w
+            if width <= x2 - x1:
+                break
+        else:
             return False
         x = int(min(max(x1, centre - width / 2), x2 - width))
         if logo is not None:
