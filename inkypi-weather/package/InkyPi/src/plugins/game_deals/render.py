@@ -49,7 +49,9 @@ DEAL_DOODLES = ASSETS / "doodles" / "deals.png"
 # The official marks' heights: Steam's logo in the header, CheapShark's shark and lettering in the
 # footer, and the review sources' marks in the hero and the rows.
 STEAM_LOGO_HEIGHT, CHEAPSHARK_MARK_HEIGHT, CHEAPSHARK_LETTERS_HEIGHT = 30, 22, 13
-HERO_MARK_HEIGHT, ROW_MARK_HEIGHT = 18, 12
+HERO_MARK_HEIGHT, ROW_MARK_HEIGHT = 24, 12
+# The hero's marks row stands out: its figures and the all-time-low chip at this size.
+HERO_MARK_TEXT = 20
 # The all-time low on a small solid chip with white words (day hues, then the brighter night ones);
 # Metacritic's score and Steam's review share are each its source's mark and the figure in the ink.
 CRIMSON = {"day": (200, 30, 50), "night": (226, 54, 72)}
@@ -276,13 +278,16 @@ def _aside(image, draw, deal, right, ink, muted):
     if when:
         lines.append(("when", when, _font(13, True), muted, None))
     y = HERO_ASIDE_Y
+    left = right
     for _kind, text, font, colour, mark in lines:
         width = font.getlength(text)
         draw.text((right, y), text, font=font, fill=colour, anchor="rt")
+        left = min(left, right - width)
         if mark is not None:
             image.paste(mark, (round(right - width - 4 - mark.width), y + 1), mark)
+            left = min(left, right - width - 4 - mark.width)
         y += font.size + 6
-    return [(kind, text) for kind, text, *_rest in lines]
+    return [(kind, text) for kind, text, *_rest in lines], left
 
 
 def _hero(image, draw, deal, cover, price_tags, mode, ink, muted):
@@ -297,12 +302,13 @@ def _hero(image, draw, deal, cover, price_tags, mode, ink, muted):
     facts = _price_row(image, draw, price_tags, deal, (left, HERO_PRICE[0], right, HERO_PRICE[1]),
                        badge_w=HERO_BADGE_W, original_size=20, badge_size=40, muted=muted, stacked=False,
                        price_size=HERO_PRICE_SIZE)
-    # The marks and Steam's verdict keep to the card's left; its right foot holds the aside.
-    marks = _marks(image, draw, deal, left, HERO_FACTS_MIDDLE, HERO_ASIDE_LEFT - 8, mode,
-                   ink if mode == "night" else None, mark_height=HERO_MARK_HEIGHT, font=_font(15, True))
+    # The marks and Steam's verdict keep to the card's left; its right foot holds the aside, and the
+    # large marks row may run on to a clear gap before the aside's widest line.
+    aside, aside_left = _aside(image, draw, deal, right, ink, muted)
+    marks = _marks(image, draw, deal, left, HERO_FACTS_MIDDLE, max(HERO_ASIDE_LEFT - 8, round(aside_left) - 12), mode,
+                   ink if mode == "night" else None, mark_height=HERO_MARK_HEIGHT, font=_font(HERO_MARK_TEXT, True))
     note = _verdict(image, draw, deal, left, HERO_NOTE_MIDDLE, HERO_ASIDE_LEFT - 8,
                     ink if mode == "night" else None, muted)
-    aside = _aside(image, draw, deal, right, ink, muted)
     return {"role": "hero", "title": deal["title"], "lines": [line], "text_width": right - left,
             "title_widths": [title_font.getlength(line)], "box": HERO, "art_rect": art, "marks": marks,
             "note": note, "aside": aside, **facts}
