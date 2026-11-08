@@ -46,6 +46,10 @@ SEAL_SIZE = (28, 54)
 LEAD_PHOTO_SPAN = 340
 LEAD_PHOTO_FADE = 0.35
 LEAD_HALO = 2
+# The headline's letters start LEAD_HEADLINE_TOP px into the band; over a photo, the seal and they
+# sit LEAD_PHOTO_PAD px in from its left and top edges (the column cards' own bleed).
+LEAD_HEADLINE_TOP = 4
+LEAD_PHOTO_PAD = 7
 COLUMN_TOP = 150
 COLUMN_GAP = 24
 COLUMN_BOTTOM = 390
@@ -277,17 +281,21 @@ class NewsPage:
             return
         seal_w, seal_h = SEAL_SIZE
         photo = lead.get("photo")
+        seal_top = top + 9
         if photo is not None:
             # The picture reaches under the headline, clear of the outlets' logos at the band's right.
-            # Its left edge lines up with the column cards' below (CARD_BLEED past the text).
+            # The seal and the headline sit the same LEAD_PHOTO_PAD in from its left and top edges: its
+            # left edge lines up with the column cards' below (CARD_BLEED past the text), its top
+            # stands that far above the headline's letters, and the seal's top is level with them.
             span = min(LEAD_PHOTO_SPAN, art_left - 12 - MARGIN)
-            self.lead_photo(photo, (MARGIN - CARD_BLEED, top + 1, MARGIN + span, bottom - 1))
+            seal_top = top + LEAD_HEADLINE_TOP
+            self.lead_photo(photo, (MARGIN - LEAD_PHOTO_PAD, seal_top - LEAD_PHOTO_PAD, MARGIN + span, bottom - 1))
         # The generated 头条 badge is 1:2; drawn as a plain seal when the file is missing.
-        if not news_art.paste_badge(self.img, "seal", MARGIN + seal_w / 2, top + 9 + seal_h / 2, seal_h // 2, seal_h):
-            self.d.rounded_rectangle((MARGIN, top + 9, MARGIN + seal_w, top + 9 + seal_h), radius=3, fill=c["lead"])
+        if not news_art.paste_badge(self.img, "seal", MARGIN + seal_w / 2, seal_top + seal_h / 2, seal_h // 2, seal_h):
+            self.d.rounded_rectangle((MARGIN, seal_top, MARGIN + seal_w, seal_top + seal_h), radius=3, fill=c["lead"])
             seal_ink = self.p._contrast_ink(c["lead"], c)
             for index, char in enumerate("头条"):
-                self.text((MARGIN + seal_w / 2, top + 9 + seal_h * (1 + 2 * index) / 4), char, 17, True, seal_ink,
+                self.text((MARGIN + seal_w / 2, seal_top + seal_h * (1 + 2 * index) / 4), char, 17, True, seal_ink,
                           "mm")
         text_x = MARGIN + seal_w + (12 if photo is not None else 14)
         brief_w = art_left - 12 - text_x
@@ -311,7 +319,8 @@ class NewsPage:
         ink_top = font.getbbox(headline, anchor="la")[1] if headline else 0
         # Over the photo, the headline and its dek carry a halo of the page's colour.
         self.halo = c["background"] if photo is not None else None
-        self.d.text((text_x, top + 4 - ink_top), headline, font=font, fill=c["ink"], anchor="la", **self.halo_args())
+        self.d.text((text_x, top + LEAD_HEADLINE_TOP - ink_top), headline, font=font, fill=c["ink"], anchor="la",
+                    **self.halo_args())
         y = top + size + 6
         # The dek under it opens like a newspaper's: the section in its accent and the topic, then the
         # story's fact running on, every word of it where the band allows.
