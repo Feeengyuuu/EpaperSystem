@@ -231,7 +231,7 @@ FOOTER_LOGO_HEIGHT = 15
 FOOTER_LOGO_GAP = (10, 26)
 STATUS_ICON_FILES = {
     kind: os.path.join(PLUGIN_DIR, "status_icons", f"{kind}.png")
-    for kind in ("live", "fav")
+    for kind in ("live", "fav", "superfav")
 }
 TITLE_LOGO_FILE = "liveradar_logo.png"
 TITLE_WORDMARK_FILE = "liveradar_wordmark.png"
@@ -329,8 +329,12 @@ TOP_FAVORITE_ROOMS = (
     ("kick", "quin3614"),
     ("douyin", "200525029536"),  # 摸鱼奎恩
 )
-# His avatar's 1 px edge is drawn in the favourite star's gold instead of ink, wherever it is drawn.
-TOP_FAVORITE_RING_GOLD = (254, 194, 3)
+# His avatar's 1 px edge is drawn in the favourite star's gold instead of ink, wherever it is drawn,
+# and his rooms wear the super-favourite star (status_icons/superfav.png) where others wear fav.png.
+TOP_FAVORITE_RING_GOLD = (254, 182, 1)
+# The super-favourite star sits inside a burst of rays; drawn this much larger than a plain star's
+# slot, its own star comes out the same size as the plain one beside it.
+SUPERFAV_BADGE_SCALE = 1.4
 FAVORITE_PRIORITY = {
     **{room: rank for rank, room in enumerate(TOP_FAVORITE_ROOMS)},
     ("douyu", "60937"): 3,
@@ -2097,7 +2101,7 @@ class LiveRadar(BasePlugin):
                 image,
                 draw,
                 (icon_right - 23, icon_y, icon_right, icon_y + 23),
-                "fav",
+                self._fav_icon_kind(card),
                 fill=fill,
                 ink=ink,
                 outline=muted,
@@ -2134,7 +2138,7 @@ class LiveRadar(BasePlugin):
                 image,
                 draw,
                 (star_right - star, star_top, star_right, star_top + star),
-                "fav",
+                self._fav_icon_kind(card),
                 fill=fill,
                 ink=ink,
                 outline=muted,
@@ -2380,8 +2384,8 @@ class LiveRadar(BasePlugin):
         if card.get("is_fav"):
             star = 11
             star_top = y + (h - star) // 2
-            self._draw_icon_badge(image, draw, (right - star, star_top, right, star_top + star), "fav",
-                                  fill=panel, ink=ink, outline=ink)
+            self._draw_icon_badge(image, draw, (right - star, star_top, right, star_top + star),
+                                  self._fav_icon_kind(card), fill=panel, ink=ink, outline=ink)
             right -= star + 3
         text_x = avatar_x + avatar + 6
         text_w = max(12, right - 2 - text_x)
@@ -2815,7 +2819,7 @@ class LiveRadar(BasePlugin):
                 image,
                 draw,
                 (right - star, star_top, right, star_top + star),
-                "fav",
+                self._fav_icon_kind(card),
                 fill=theme["panel"],
                 ink=theme["ink"],
                 outline=theme["ink"],
@@ -2923,7 +2927,7 @@ class LiveRadar(BasePlugin):
                 image,
                 draw,
                 (badge_right - icon_size, platform_y, badge_right, platform_y + icon_size),
-                "fav",
+                self._fav_icon_kind(card),
                 fill=fill,
                 ink=ink,
                 outline=muted,
@@ -3013,7 +3017,7 @@ class LiveRadar(BasePlugin):
         if show_fav_badge and card.get("is_fav"):
             badge_size = max(10, int(avatar_size * 0.38))
             badge = (avatar_x + avatar_size - badge_size, avatar_y + avatar_size - badge_size, avatar_x + avatar_size + 1, avatar_y + avatar_size + 1)
-            self._draw_icon_badge(image, draw, badge, "fav", fill=ink, ink=fill, outline=ink)
+            self._draw_icon_badge(image, draw, badge, self._fav_icon_kind(card), fill=ink, ink=fill, outline=ink)
 
     def _draw_quiet_panel(self, draw, box, tracked_count, theme):
         x, y, w, h = box
@@ -3463,6 +3467,12 @@ class LiveRadar(BasePlugin):
 
     def _draw_icon_badge(self, image, draw, box, kind, fill, ink, outline):
         left, top, right, bottom = [int(v) for v in box]
+        if kind == "superfav":
+            # Its rays ring the star, so it is drawn larger: its star matches the plain one in the
+            # same slot and the rays reach a little past it.
+            grow_x = round((right - left) * (SUPERFAV_BADGE_SCALE - 1) / 2)
+            grow_y = round((bottom - top) * (SUPERFAV_BADGE_SCALE - 1) / 2)
+            left, top, right, bottom = left - grow_x, top - grow_y, right + grow_x, bottom + grow_y
         size = max(1, min(right - left, bottom - top))
         asset = self._load_status_icon_asset(kind)
         if asset is not None:
@@ -3494,7 +3504,7 @@ class LiveRadar(BasePlugin):
             arc_pad = max(3, size // 4)
             arc_box = (left + arc_pad, top + arc_pad - 1, right - arc_pad, bottom - arc_pad + 1)
             draw.arc(arc_box, start=290, end=70, fill=ink, width=max(1, size // 14))
-        elif kind == "fav":
+        elif kind in ("fav", "superfav"):
             draw.polygon(self._star_points(cx, cy, size * 0.33, size * 0.15), fill=ink)
         return left
 
@@ -3829,6 +3839,11 @@ class LiveRadar(BasePlugin):
     @staticmethod
     def _is_top_favorite(platform, room_id):
         return (str(platform or "").lower(), str(room_id or "")) in TOP_FAVORITE_ROOMS
+
+    @staticmethod
+    def _fav_icon_kind(card):
+        """Mr.Quin's rooms wear the super-favourite star; every other favourite the plain one."""
+        return "superfav" if LiveRadar._is_top_favorite(card.get("platform"), card.get("id")) else "fav"
 
     @staticmethod
     def _status_kind(status):

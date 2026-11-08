@@ -2628,7 +2628,7 @@ def test_live_radar_uses_local_transparent_color_icon_assets():
     plugin_dir = Path(live_radar_module.PLUGIN_DIR)
     expected = {
         "platform_icons": ("bilibili.png", "douyu.png", "twitch.png"),
-        "status_icons": ("fav.png", "live.png"),
+        "status_icons": ("fav.png", "superfav.png", "live.png"),
     }
 
     for directory, names in expected.items():
@@ -4256,6 +4256,42 @@ def test_every_mr_quin_room_draws_his_avatar_edge_in_gold_at_the_usual_width(pla
 
         assert image.getpixel((10, middle)) == live_radar_module.TOP_FAVORITE_RING_GOLD
         assert image.getpixel((11, middle)) == (40, 120, 200)  # still 1 px: his photo starts right inside
+
+
+def _star_kinds_on_a_dashboard(monkeypatch, rooms):
+    plugin = _plugin()
+    kinds = []
+    draw_status = plugin._draw_icon_badge
+
+    def capture(image, draw, box, kind, *args, **kwargs):
+        kinds.append(kind)
+        return draw_status(image, draw, box, kind, *args, **kwargs)
+
+    monkeypatch.setattr(plugin, "_draw_icon_badge", capture)
+    cards = [
+        {"platform": platform, "id": room_id, "owner": room_id, "label": "", "title": "stream", "status": status,
+         "is_fav": True, "heat": 10, "start_time": None, "cover": "", "avatar": "",
+         "favorite_rank": LiveRadar._favorite_priority(platform, room_id)}
+        for platform, room_id, status in rooms
+    ]
+    plugin._render_dashboard(cards, (800, 480), plugin._theme({}, FakeDeviceConfig()), datetime.now(timezone.utc),
+                             False, None, {"show_snapshots": False})
+    return kinds
+
+
+def test_mr_quins_rooms_wear_the_super_favourite_star_and_others_the_plain_one(monkeypatch):
+    assert [LiveRadar._fav_icon_kind({"platform": p, "id": i}) for p, i in QUIN_ROOMS] == ["superfav"] * 3
+    assert LiveRadar._fav_icon_kind({"platform": "douyu", "id": "60937"}) == "fav"
+
+    with_quin = _star_kinds_on_a_dashboard(monkeypatch, [
+        ("bilibili", "545318", "live"), ("douyu", "60937", "live"),
+        ("kick", "quin3614", "offline"), ("douyu", "12306", "offline"),
+    ])
+    without_quin = _star_kinds_on_a_dashboard(monkeypatch, [("douyu", "60937", "live"), ("douyu", "12306", "offline")])
+
+    assert "superfav" in with_quin and "fav" in with_quin
+    assert "superfav" not in without_quin and "fav" in without_quin
+    assert LiveRadar._load_status_icon_asset("superfav") is not None
 
 
 def test_other_streamers_keep_a_thin_ink_avatar_edge():
