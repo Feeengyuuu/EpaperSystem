@@ -267,6 +267,8 @@ class Curator:
         self.deadline = None
         self.ai_used = False
         self.ai_error = ""
+        # The model that answered this refresh's ranking, for the log.
+        self.ai_model = ""
         self.blocked = []
 
     def is_known_filtered(self, key):
@@ -384,7 +386,8 @@ class Curator:
             if verdict:
                 self.ai_cache[str(item.get("key"))] = verdict
         self.ai_used = True
-        logger.info("Telegram Digest AI ranked %d messages in %.1fs.", len(verdicts), time.monotonic() - started)
+        logger.info("Telegram Digest AI ranked %d messages in %.1fs with %s.", len(verdicts),
+                    time.monotonic() - started, self.ai_model)
 
     def _time_left(self):
         return float("inf") if self.deadline is None else self.deadline - time.monotonic()
@@ -392,12 +395,17 @@ class Curator:
     def _ask_ai(self, items):
         ids = {str(index): str(item.get("key")) for index, item in enumerate(items, 1)}
         request = {"items": [ai_item(index, item, self.now_ts) for index, item in zip(ids, items)]}
-        if self.claude_key and self._time_left() >= CLAUDE_TIMEOUT_SECONDS + AI_REPLY_RESERVE_SECONDS:
+        if self.claude_key and self._time_left() < CLAUDE_TIMEOUT_SECONDS + AI_REPLY_RESERVE_SECONDS:
+            logger.info("Telegram Digest Claude ranking skipped: %.0fs left in this refresh, it needs %ds.",
+                        self._time_left(), CLAUDE_TIMEOUT_SECONDS + AI_REPLY_RESERVE_SECONDS)
+        elif self.claude_key:
             try:
                 reply = claude_http.ask_json(self.claude_key, system=SYSTEM_PROMPT,
                                              prompt=json.dumps(request, ensure_ascii=False), schema=AI_SCHEMA,
                                              effort=CLAUDE_EFFORT, model=CLAUDE_MODEL, timeout=CLAUDE_TIMEOUT_SECONDS)
-                return checked_verdicts(reply.text, ids)
+                verdicts = checked_verdicts(reply.text, ids)
+                self.ai_model = getattr(reply, "model", "") or CLAUDE_MODEL
+                return verdicts
             except TaskCancelled:
                 raise
             except Exception as exc:
@@ -421,12 +429,14 @@ class Curator:
 
         try:
             response = ask(self.model)
+            self.ai_model = self.model
         except Exception as exc:
             refused = getattr(exc, "status_code", None) in (403, 404) or "model_not_found" in str(exc).casefold()
             if not refused or self.model == PREVIOUS_AI_MODEL:
                 raise
             logger.warning("Telegram Digest AI model %s refused; asking %s", self.model, PREVIOUS_AI_MODEL)
             response = ask(PREVIOUS_AI_MODEL)
+            self.ai_model = PREVIOUS_AI_MODEL
         content = (getattr(response, "output_text", "") or "").strip()
         if not content:
             raise RuntimeError("AI returned no ranking")

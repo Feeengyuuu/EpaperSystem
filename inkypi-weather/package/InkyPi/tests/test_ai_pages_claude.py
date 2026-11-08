@@ -184,6 +184,35 @@ def test_telegram_needs_either_key(monkeypatch, openai_key, claude_key, asks):
     assert (curator.ai_error == "未配置 AI 密钥") is (not asks)
 
 
+def test_the_telegram_log_names_the_model_that_ranked_and_a_skipped_claude(monkeypatch, caplog):
+    now = datetime(2026, 11, 7, 15, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(claude_http, "ask_json", FakeClaude())
+    with caplog.at_level("INFO", logger=curation.logger.name):
+        Curator({}, None, now, api_key="sk", claude_key="sk-ant").curate([telegram_message("a", "美联储维持利率不变")])
+    assert "AI ranked 1 messages in" in caplog.text and "with claude-opus-5-5" in caplog.text
+
+    # Too little time for Claude but enough for OpenAI: OpenAI ranks, and the log says why.
+    caplog.clear()
+    clock = [1000.0]
+    monkeypatch.setattr(curation.time, "monotonic", lambda: clock[0])
+
+    class OpenAIReplies:
+        def __init__(self):
+            self.responses = self
+
+        def create(self, **kwargs):
+            entries = json.loads(kwargs["input"])["items"]
+            items = [{"id": entry["id"], "ad": False, "score": 66, "tag": "时事", "headline": "标题",
+                      "summary": "摘要"} for entry in entries]
+            return SimpleNamespace(output_text=json.dumps({"items": items}, ensure_ascii=False))
+
+    curator = Curator({}, None, now, api_key="sk", claude_key="sk-ant", ai_client_factory=lambda _key: OpenAIReplies())
+    curator.deadline = clock[0] + curation.AI_TIMEOUT_SECONDS + curation.AI_REPLY_RESERVE_SECONDS + 5
+    with caplog.at_level("INFO", logger=curation.logger.name):
+        curator.curate([telegram_message("b", "新闻")])
+    assert "Claude ranking skipped" in caplog.text and "with gpt-6-luna" in caplog.text
+
+
 def test_the_telegram_page_passes_the_anthropic_key_to_its_account_worker():
     from plugins.telegram_digest.telegram_digest import TelegramDigest
 
