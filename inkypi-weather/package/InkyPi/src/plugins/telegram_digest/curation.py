@@ -407,7 +407,7 @@ class Curator:
     def _client(self):
         if self.ai_client_factory is not None:
             return self.ai_client_factory(self.api_key)
-        from openai import OpenAI
+        from utils.openai_http import OpenAI
 
         return OpenAI(api_key=self.api_key, timeout=AI_TIMEOUT_SECONDS, max_retries=0)
 

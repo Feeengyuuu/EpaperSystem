@@ -38,7 +38,7 @@ def context(tmp_path, monkeypatch):
 
 
 def install_sdk(monkeypatch, *, content=None, failure=None, finish="stop", refusal=None):
-    import openai
+    from utils import openai_http as openai
 
     calls = []
 

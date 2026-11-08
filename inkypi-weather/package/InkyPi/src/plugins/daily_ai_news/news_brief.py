@@ -9,7 +9,7 @@ import re
 from datetime import datetime
 from typing import Any
 
-from openai import OpenAI
+from utils.openai_http import OpenAI
 
 from . import news_common as common
 from .news_common import MAINLAND_NEWS_MAX, WORLD_NEWS_MAX

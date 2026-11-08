@@ -111,7 +111,7 @@ def request_lines(sources, api_key, *, max_width=752):
     """One Groq chat request, no retries or provider substitution. Caller owns the budget."""
     if not api_key or not sources:
         return {}
-    from openai import OpenAI
+    from utils.openai_http import OpenAI
 
     rows = [{**source, "description": source["description"][:240]} for source in sources.values()]
     if len(rows) > BATCH_SIZE:

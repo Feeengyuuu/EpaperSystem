@@ -2091,7 +2091,7 @@ def test_a_flat_block_too_short_for_every_row_is_left_to_the_fading_band():
 
 
 def test_the_free_translation_uses_groq_chat_strict_json_without_responses_parameters(tmp_path, monkeypatch):
-    import openai
+    from utils import openai_http as openai
     import time
     from plugins.steam_daily_art import blurb_ai
 
@@ -2134,7 +2134,7 @@ def test_the_free_translation_uses_groq_chat_strict_json_without_responses_param
 
 
 def test_an_openai_key_never_enables_a_paid_translation_fallback(tmp_path, monkeypatch):
-    import openai
+    from utils import openai_http as openai
 
     plugin = make_plugin(tmp_path, monkeypatch)
     plugin._active_device_config = SimpleNamespace(load_env_key=lambda name: "sk-secret-123" if name == "OPEN_AI_SECRET" else "")

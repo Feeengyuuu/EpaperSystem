@@ -103,7 +103,7 @@ def translate(papers, api_key, *, client_factory=None, model=DEFAULT_MODEL, inst
     if client_factory is not None:
         client = client_factory(api_key)
     else:
-        from openai import OpenAI
+        from utils.openai_http import OpenAI
 
         client = OpenAI(api_key=api_key, timeout=TIMEOUT_SECONDS, max_retries=0)
     request = [{"id": paper["id"], "title": paper["title"], "summary": paper["summary"]} for paper in papers]
