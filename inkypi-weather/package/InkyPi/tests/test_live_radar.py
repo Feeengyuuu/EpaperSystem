@@ -567,7 +567,7 @@ def test_default_rooms_match_latest_backup_and_favorite_order():
         ("bilibili", "733"),
     ]
     # 不死鸟总监 joined the favourites last, so it sorts after the earlier ones.
-    assert LiveRadar._favorite_priority("bilibili", "22747736") == 11
+    assert LiveRadar._favorite_priority("bilibili", "22747736") == max(live_radar_module.FAVORITE_PRIORITY.values())
     assert ("bilibili", "7586498") not in favorite_keys
     assert ("bilibili", "173551") not in favorite_keys
 
@@ -4183,6 +4183,60 @@ def test_kick_quin_sorts_right_behind_mr_quin_among_favourites():
         ("kick", "quin3614"),
         ("douyu", "60937"),
     ]
+
+
+QUIN_ROOMS = [("bilibili", "545318"), ("kick", "quin3614"), ("douyin", "200525029536")]
+
+
+def test_every_mr_quin_room_is_a_favourite_without_its_marker():
+    plugin = _plugin()
+
+    rooms = plugin._parse_rooms({"roomsText": "twitch|xqc\nkick|quin3614\ndouyin|200525029536\nbilibili|545318"})
+    by_room = {(room["platform"], room["id"]): room["isFav"] for room in rooms}
+
+    assert all(by_room[room] for room in QUIN_ROOMS)
+    assert by_room[("twitch", "xqc")] is False
+    assert [LiveRadar._favorite_priority(*room) for room in QUIN_ROOMS] == [0, 1, 2]
+    others = [rank for room, rank in live_radar_module.FAVORITE_PRIORITY.items() if room not in QUIN_ROOMS]
+    assert min(others) > 2
+
+
+def test_a_live_mr_quin_room_opens_live_now_ahead_of_every_other_stream():
+    def card(platform, room_id, status, heat, is_fav):
+        return {"platform": platform, "id": room_id, "status": status, "is_fav": is_fav, "heat": heat,
+                "owner": room_id, "label": "", "favorite_rank": LiveRadar._favorite_priority(platform, room_id)}
+
+    cards = [
+        card("twitch", "xqc", "live", 99999, False),
+        card("douyu", "60937", "live", 900, True),
+        card("douyin", "200525029536", "live", 1, False),  # even a card saved without its star
+        card("bilibili", "22747736", "live", 5000, True),
+        card("kick", "quin3614", "offline", 0, True),
+    ]
+
+    ordered = [(c["platform"], c["id"]) for c in LiveRadar._sort_cards(cards)]
+
+    assert ordered[0] == ("douyin", "200525029536")
+    assert ordered[1:4] == [("douyu", "60937"), ("bilibili", "22747736"), ("twitch", "xqc")]
+    # Off air he waits with the offline rooms; live streams still come first.
+    assert ordered[-1] == ("kick", "quin3614")
+
+
+def test_mr_quins_simultaneous_rooms_lead_in_a_fixed_order():
+    cards = [
+        {"platform": platform, "id": room_id, "status": "live", "is_fav": True, "heat": heat, "owner": room_id,
+         "label": "", "favorite_rank": LiveRadar._favorite_priority(platform, room_id)}
+        for platform, room_id, heat in (
+            ("douyu", "60937", 900),
+            ("douyin", "200525029536", 800),
+            ("kick", "quin3614", 10),
+            ("bilibili", "545318", 5),
+        )
+    ]
+
+    ordered = [(c["platform"], c["id"]) for c in LiveRadar._sort_cards(cards)]
+
+    assert ordered == [*QUIN_ROOMS, ("douyu", "60937")]
 
 
 KICK_SRCSET = (

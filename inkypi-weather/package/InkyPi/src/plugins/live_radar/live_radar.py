@@ -321,19 +321,26 @@ STATUS_RANK = {
 
 # The favourite star at the right of a live card's text panel.
 CARD_BODY_FAV_SIZE = 26
+# Mr.Quin is the favourite of favourites. Each of his rooms counts as a favourite whatever the
+# saved list marks, and whichever of them is live opens LIVE NOW ahead of every other stream,
+# favourites included (several at once keep this order).
+TOP_FAVORITE_ROOMS = (
+    ("bilibili", "545318"),  # Mr.Quin
+    ("kick", "quin3614"),
+    ("douyin", "200525029536"),  # 摸鱼奎恩
+)
 FAVORITE_PRIORITY = {
-    ("bilibili", "545318"): 0,  # Mr.Quin stays first inside the favorites group.
-    ("kick", "quin3614"): 1,  # ... with his Kick channel right behind.
-    ("douyu", "60937"): 2,
-    ("douyu", "6979222"): 3,
-    ("douyu", "12306"): 4,
-    ("douyu", "57321"): 5,
-    ("bilibili", "5229"): 6,
-    ("twitch", "jinnytty"): 7,
-    ("douyu", "10639765"): 8,
-    ("douyu", "3507497"): 9,
-    ("bilibili", "733"): 10,
-    ("bilibili", "22747736"): 11,  # 不死鸟总监
+    **{room: rank for rank, room in enumerate(TOP_FAVORITE_ROOMS)},
+    ("douyu", "60937"): 3,
+    ("douyu", "6979222"): 4,
+    ("douyu", "12306"): 5,
+    ("douyu", "57321"): 6,
+    ("bilibili", "5229"): 7,
+    ("twitch", "jinnytty"): 8,
+    ("douyu", "10639765"): 9,
+    ("douyu", "3507497"): 10,
+    ("bilibili", "733"): 11,
+    ("bilibili", "22747736"): 12,  # 不死鸟总监
 }
 
 
@@ -3804,6 +3811,7 @@ class LiveRadar(BasePlugin):
             cards,
             key=lambda card: (
                 STATUS_RANK.get(card["status"], 9),
+                0 if LiveRadar._is_top_favorite(card.get("platform"), card.get("id")) else 1,
                 0 if card.get("is_fav") else 1,
                 card.get("favorite_rank") if card.get("favorite_rank") is not None else 9999,
                 -int(card.get("heat") or 0),
@@ -3814,6 +3822,10 @@ class LiveRadar(BasePlugin):
     @staticmethod
     def _favorite_priority(platform, room_id):
         return FAVORITE_PRIORITY.get((str(platform or "").lower(), str(room_id or "")))
+
+    @staticmethod
+    def _is_top_favorite(platform, room_id):
+        return (str(platform or "").lower(), str(room_id or "")) in TOP_FAVORITE_ROOMS
 
     @staticmethod
     def _status_kind(status):
