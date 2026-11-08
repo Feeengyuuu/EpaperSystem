@@ -12,7 +12,7 @@ from pathlib import Path
 from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from PIL import Image, ImageChops, ImageDraw, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.presentation import PresentationMode
 from plugins.base_plugin.render_provenance import (
@@ -66,6 +66,12 @@ MARKET_MARK_CACHE_BUDGET = CacheBudget(30 * 24 * 60 * 60, 96, 8 * 1024 * 1024)
 MATCHUP_LOGO, LEAGUE_ICON, LEADER_LOGO = 38, 14, 14
 LEAGUE_ICON_PAPER = (255, 252, 244)
 MATCHUP_PAD = 4
+# Under the art a matchup reads like a scoreboard in the question's band: one row per team (its
+# colour bar, crest and name, the names flush left as a centred block), a hairline between them
+# carrying a small VS. Rows are MATCHUP_ROW px tall, the divider MATCHUP_DIVIDER.
+MATCHUP_ROW, MATCHUP_DIVIDER, MATCHUP_CREST, MATCHUP_BAR = 17, 11, 15, 3
+# A team name too long for its row first drops a generic word ("Bilibili Gaming" -> "BILIBILI").
+TEAM_NAME_GENERIC_WORDS = frozenset({"GAMING", "ESPORTS", "E-SPORTS", "TEAM", "CLUB", "FC", "CF", "SC"})
 # Each market column is themed by its event's art: kept at EVENT_ART_SIDE px, laid ART_H px tall
 # across the column's top, its lowest ART_FADE share fading into the paper; the question is printed
 # over the fade, haloed in the paper colour. The leading option shows its picture (Polymarket's own,
@@ -255,6 +261,12 @@ def _flag(country_code):
             return source.convert("RGB")
     except (OSError, ValueError):
         return None
+
+
+def _hex_color(value):
+    """A team's '#RRGGBB' colour as an RGB tuple, or None when it is missing or malformed."""
+    match = re.fullmatch(r"#?([0-9A-Fa-f]{6})", str(value or "").strip())
+    return tuple(int(match[1][i:i + 2], 16) for i in (0, 2, 4)) if match else None
 
 
 class OrbitalSignal(BasePlugin):
@@ -1635,8 +1647,9 @@ class OrbitalSignal(BasePlugin):
                 image.paste(logo, (round(slot - logo.width / 2), round(middle - logo.height / 2)), logo)
             draw.text((cx - vs_box[2] / 2, middle - (vs_box[1] + vs_box[3]) / 2), "VS", font=vs_font,
                       fill=palette["ink"], stroke_width=2, stroke_fill=palette["paper"])
-            title = " vs ".join(str(team.get("alias") or team.get("name")) for team in teams[:2]).upper()
-        self._draw_question(draw, title, cx, width, top + QUESTION_TOP, palette, family)
+            self._draw_matchup(draw, image, teams[:2], cx, width, top + QUESTION_TOP, palette, family)
+        else:
+            self._draw_question(draw, title, cx, width, top + QUESTION_TOP, palette, family)
         self._draw_league_tag(draw, market, cx, width, top + TAG_TOP, palette, family, image)
 
         probability = max(0.0, min(1.0, float(market.get("probability") or 0.0)))
@@ -1657,6 +1670,66 @@ class OrbitalSignal(BasePlugin):
             facts.append(("ends", "ENDS", f"{ends:%d %b}".upper()))
         self._draw_market_facts(draw, facts, col_left + 6, col_left + column_w - 6, top + FACTS_TOP, palette, family,
                                 image)
+
+    def _draw_matchup(self, draw, image, teams, cx, width, y, palette, family):
+        """The two teams as scoreboard rows in the question's band: each row a bar in the team's
+        colour, its crest and its short name (a long one steps down a size, then ends in "..."), the
+        names flush left in a block centred on the column, a hairline with VS between the rows."""
+        crests = [self._outlined_crest(self._market_mark(team.get("mark"), MATCHUP_CREST), palette) for team in teams]
+        full = [str(team.get("alias") or team.get("name") or "").upper() for team in teams]
+        short = [" ".join(word for word in name.split() if word not in TEAM_NAME_GENERIC_WORDS) or name
+                 for name in full]
+        lead = MATCHUP_BAR + 3 + MATCHUP_CREST + 4
+        room = max(1, width - lead)
+
+        def fits(name, font):
+            return draw.textbbox((0, 0), name, font=font)[2] <= room
+
+        # The rows share one size: the largest at which every name fits, whole or without its
+        # generic word; failing that the smallest size, each name cut short.
+        for size in (12, 11, 10, 9):
+            font = self._font(size, True, family)
+            names = [name if fits(name, font) else brief for name, brief in zip(full, short)]
+            if all(fits(name, font) for name in names):
+                break
+        names = [self._fit_text(draw, name, font, room) for name in names]
+        block_w = lead + max(draw.textbbox((0, 0), name, font=font)[2] for name in names)
+        left = round(cx - block_w / 2)
+        band_h = QUESTION_LINES * QUESTION_LINE
+        top = round(y + (band_h - (2 * MATCHUP_ROW + MATCHUP_DIVIDER)) / 2)
+        rows = (top, top + MATCHUP_ROW + MATCHUP_DIVIDER)
+        for team, crest, name, row_top in zip(teams, crests, names, rows):
+            draw.rectangle((left, row_top + 1, left + MATCHUP_BAR - 1, row_top + MATCHUP_ROW - 2),
+                           fill=_hex_color(team.get("color")) or palette["ink"])
+            crest_x = left + MATCHUP_BAR + 3
+            if crest is not None:
+                # The crest may carry a 1 px contour beyond its MATCHUP_CREST box; centre it all.
+                image.paste(crest, (crest_x + (MATCHUP_CREST - crest.width) // 2,
+                                    row_top + (MATCHUP_ROW - crest.height) // 2), crest)
+            box = draw.textbbox((0, 0), name, font=font)
+            draw.text((left + lead, row_top + MATCHUP_ROW / 2 - (box[1] + box[3]) / 2), name, font=font,
+                      fill=palette["ink"], stroke_width=2, stroke_fill=palette["paper"])
+        middle = top + MATCHUP_ROW + MATCHUP_DIVIDER // 2
+        vs_font = self._font(8, True, family)
+        vs_box = draw.textbbox((0, 0), "VS", font=vs_font)
+        vs_w = vs_box[2] - vs_box[0]
+        draw.line((left, middle, round(cx - vs_w / 2 - 4), middle), fill=palette["rule"], width=1)
+        draw.line((round(cx + vs_w / 2 + 4), middle, left + block_w, middle), fill=palette["rule"], width=1)
+        draw.text((cx - vs_w / 2 - vs_box[0], middle - (vs_box[1] + vs_box[3]) / 2), "VS", font=vs_font,
+                  fill=palette["ink"])
+
+    @staticmethod
+    def _outlined_crest(crest, palette):
+        """On a dark page a crest gets a 1 px contour in the page's light ink, so a navy logo does
+        not sink into the navy paper; by day it is pasted as it is. No plate goes behind it."""
+        if crest is None or sum(palette["paper"]) >= 384:
+            return crest
+        canvas = Image.new("RGBA", (crest.width + 2, crest.height + 2), (0, 0, 0, 0))
+        canvas.paste(crest, (1, 1), crest)
+        contour = Image.new("RGBA", canvas.size, (*palette["ink"][:3], 255))
+        contour.putalpha(canvas.getchannel("A").point(lambda a: 255 if a >= 96 else 0).filter(ImageFilter.MaxFilter(3)))
+        contour.alpha_composite(canvas)
+        return contour
 
     def _draw_question(self, draw, title, cx, width, y, palette, family):
         """The market's question centred in its QUESTION_LINES-line band, every word kept: the type

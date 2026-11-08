@@ -1424,6 +1424,55 @@ def test_dark_source_league_mark_keeps_its_colour_on_a_light_backplate(monkeypat
     assert image.getpixel((left + 9, 29)) == source_colour
 
 
+def _matchup_texts(monkeypatch, teams, palette):
+    from plugins.orbital_signal.market_style import market_palette
+
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    monkeypatch.setattr(plugin, "_market_mark", lambda *_args: Image.new("RGBA", (15, 15), (0, 40, 90, 255)))
+    palette = market_palette(palette)
+    image = Image.new("RGB", (120, 60), palette["paper"])
+    draw = ImageDraw.Draw(image)
+    texts, draw_text = [], draw.text
+
+    def record(xy, text, *args, **kwargs):
+        texts.append(text)
+        return draw_text(xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(draw, "text", record)
+    plugin._draw_matchup(draw, image, teams, 60, 97, 5, palette, DEFAULT_FONT)
+    return texts, image
+
+
+def test_matchup_reads_as_two_crested_rows_with_a_vs_between(monkeypatch):
+    texts, image = _matchup_texts(monkeypatch, [{"alias": "Giants", "color": "#2244AC"},
+                                                {"alias": "Eagles", "color": "#008282"}], DAY_PALETTE)
+
+    assert texts == ["GIANTS", "EAGLES", "VS"]
+    colours = {colour for _count, colour in image.getcolors(1 << 16)}
+    assert {(0x22, 0x44, 0xAC), (0x00, 0x82, 0x82), (0, 40, 90)} <= colours  # both team bars and crests
+
+
+def test_a_long_team_name_drops_its_generic_word_before_it_is_cut(monkeypatch):
+    texts, _image = _matchup_texts(monkeypatch, [{"alias": "Bilibili Gaming", "color": "#20bfdf"},
+                                                 {"alias": "T1", "color": "#c41c35"}], DAY_PALETTE)
+
+    assert texts[:2] == ["BILIBILI", "T1"]
+
+
+def test_a_crest_gets_a_light_contour_only_on_the_night_page():
+    from plugins.orbital_signal.market_style import market_palette
+
+    crest = Image.new("RGBA", (15, 15), (0, 0, 0, 0))
+    ImageDraw.Draw(crest).rectangle((4, 4, 10, 10), fill=(11, 34, 101, 255))
+    night, day = market_palette(NIGHT_PALETTE), market_palette(DAY_PALETTE)
+
+    assert OrbitalSignal._outlined_crest(crest, day) is crest
+    outlined = OrbitalSignal._outlined_crest(crest, night)
+    assert outlined.size == (17, 17)
+    assert outlined.getpixel((4, 8))[:3] == tuple(night["ink"][:3])  # the contour just outside the crest
+    assert outlined.getpixel((8, 8))[:3] == (11, 34, 101)  # the crest itself keeps its colour
+
+
 def test_event_art_fades_into_the_paper_at_its_foot(tmp_path):
     plugin = OrbitalSignal({"id": PLUGIN_ID})
     plugin._cache_dir = lambda create=True: tmp_path / "cache"
