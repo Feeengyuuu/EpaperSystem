@@ -935,7 +935,8 @@ def test_the_header_shows_a_travel_time_sign_and_the_readout_the_measured_water(
                          {"_inkypi_theme": {"mode": "day"}}, NOW)
     texts = {text for text, _color in recorded}
     assert {"MILPITAS", "17 MIN", "南向", "实测此刻", "4.6 ft", "+1.1 ft 高于预测"} <= texts
-    assert ("延误", "paper") in recorded and "在线 56 列 ·" in texts
+    # The advisory is led by its glyph now, not a lettered chip.
+    assert not {"延误", "电梯", "单车"} & texts and "在线 56 列 ·" in texts
     assert any(text.startswith("Expect 30-min delays") for text in texts)
     plain = render_page((800, 480), {**payload, "sign": None, "water": None, "bart_status": {"state": "unavailable"}},
                         {"_inkypi_theme": {"mode": "night"}}, NOW)
@@ -995,6 +996,26 @@ def test_bart_notes_add_the_bikes_at_the_station_and_keep_three_trains():
     # The advisory gives up its second line to the bikes, so the trains keep their rows.
     assert len(notes[0][2]) == 1
     assert sum(len(lines) for _label, _colour, lines in notes) <= 3
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_bart_notes_lead_with_a_glyph_in_their_colour_and_no_chip(mode):
+    from PIL import ImageColor
+
+    from plugins.bay_commute.command_render import NOTE_ICON_SLOT, NOTE_ICONS, NOTE_STEP, draw_bart_notes
+
+    page = Canvas({"_inkypi_theme": {"mode": mode}})
+    notes = [("延误 2", "crimson", ["Expect delays"]), ("电梯", "orange", ["1 部停用"]), ("单车", "blue", ["站旁"])]
+    draw_bart_notes(page, notes, 380)
+
+    assert set(NOTE_ICONS.values()) == {"delay", "emergency", "maintenance", "notice", "elevator", "bike"}
+    for index, (_label, colour, _lines) in enumerate(notes):
+        top = 380 + index * NOTE_STEP
+        slot = page.image.convert("RGB").crop((512, top, 512 + NOTE_ICON_SLOT, top + NOTE_STEP))
+        colours = {rgb for _count, rgb in slot.getcolors(4096)}
+        # The glyph is drawn in the note's colour straight on the paper: no filled chip behind it.
+        assert ImageColor.getrgb(page.palette[colour]) in colours
+        assert ImageColor.getrgb(page.palette["paper"]) in colours
 
 
 def test_no_advisories_issued_reads_as_the_quiet_line():

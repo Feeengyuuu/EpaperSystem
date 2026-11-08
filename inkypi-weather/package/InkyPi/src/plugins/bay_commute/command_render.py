@@ -45,6 +45,12 @@ BART_ROWS, BART_ROW_STEP = 3, 15
 # BART's service notes (advisories, elevators) under its departures: one line this tall each, an
 # advisory taking up to two.
 NOTE_STEP, ADVISORY_LINES = 12, 2
+# Each note is led by its kind's glyph (assets/note_icons, GPT Image 2.6 silhouettes) in the note's
+# colour, NOTE_ICON_H px tall and centred in a NOTE_ICON_SLOT px slot so the texts line up; an
+# advisory count follows the glyph.
+NOTE_ICONS = {"延误": "delay", "紧急": "emergency", "施工": "maintenance", "公告": "notice", "电梯": "elevator",
+              "单车": "bike"}
+NOTE_ICON_H, NOTE_ICON_SLOT = 12, 18
 # The observed water's delta from the prediction reads "as predicted" within this many feet.
 LEVEL_EVEN_FT = 0.1
 # The travel-time sign in the header, between the title and the Caltrans mark: a dark plate like the
@@ -560,8 +566,23 @@ def wrap_latin(page, text, size, width, lines):
 
 
 def _note_x(page, label):
-    """Where a note's text starts: after its chip, or after the quiet line's dot."""
-    return round(512 + page.draw.textlength(label, font=font(9)) + 10 + 6) if label else 526
+    """Where a note's text starts: after its glyph (and an advisory count), or after the quiet line's dot."""
+    if not label:
+        return 526
+    count = label.partition(" ")[2]
+    return round(512 + NOTE_ICON_SLOT + (page.draw.textlength(count, font=font(9)) + 2 if count else 0) + 5)
+
+
+@lru_cache(maxsize=16)
+def note_icon(kind, colour):
+    """The note kind's glyph, NOTE_ICON_H px tall, filled with ``colour`` (an RGB tuple)."""
+    name = NOTE_ICONS.get(kind, "notice")
+    with Image.open(ASSETS / "note_icons" / f"{name}.png") as source:
+        mask = source.convert("RGBA").getchannel("A")
+    width = max(1, round(mask.width * NOTE_ICON_H / mask.height))
+    glyph = Image.new("RGBA", (width, NOTE_ICON_H), (*colour, 255))
+    glyph.putalpha(mask.resize((width, NOTE_ICON_H), Image.Resampling.LANCZOS))
+    return glyph
 
 
 def bart_notes(page, payload):
@@ -594,13 +615,17 @@ def bart_notes(page, payload):
 
 
 def draw_bart_notes(page, notes, top):
-    """The notes from ``top`` down: a chip in its colour (a dot for the quiet line), then the text."""
+    """The notes from ``top`` down: the kind's glyph in its colour, no chip behind it (a dot for the
+    quiet line), then the text."""
     y = top
     for label, colour, lines in notes:
         x = _note_x(page, label)
         if label:
-            page.draw.rounded_rectangle((512, y, x - 6, y + 12), radius=6, fill=page.palette[colour])
-            page.text(((512 + x - 6) / 2, y), label, 9, "paper", align="center")
+            kind, _space, count = label.partition(" ")
+            glyph = note_icon(kind, ImageColor.getrgb(page.palette[colour]))
+            page.image.paste(glyph, (512 + (NOTE_ICON_SLOT - glyph.width) // 2, y + 1), glyph)
+            if count:
+                page.text((512 + NOTE_ICON_SLOT + 1, y), count, 9, colour)
         else:
             page.draw.ellipse((514, y + 3, 520, y + 9), fill=page.palette[colour])
         for line in lines:

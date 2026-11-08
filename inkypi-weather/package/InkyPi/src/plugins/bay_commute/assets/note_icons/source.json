@@ -1,0 +1,10 @@
+{
+  "assets": ["delay.png", "emergency.png", "maintenance.png", "notice.png", "elevator.png", "bike.png"],
+  "scene": "BART service note glyphs: clock with alert badge, warning triangle, wrench, megaphone, elevator car with up/down arrows, bicycle",
+  "generator": "image/gpt-image-2.6-sunburst (Creative Claw)",
+  "job_id": "cbca9ae3-79cc-4db3-bcb9-f5478a001fcb",
+  "generated": "2026-11-08",
+  "background": "transparent PNG, 1536x512, one row of 6 solid black silhouettes",
+  "processing": "alpha below 60 cleared, split at transparent column runs wider than 40 px, trimmed, 48 px tall (LANCZOS); tinted in the note colour at render",
+  "source_sha256": "109adc014069f5d42cd1b3ef0b5583551511f4aece69a77058ab0e3e0316a24b"
+}
