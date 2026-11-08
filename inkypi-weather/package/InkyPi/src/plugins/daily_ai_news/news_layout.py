@@ -39,10 +39,14 @@ SOURCE_LOGOS_MAX = 12
 SOURCE_LOGO_SCALES = {"pbs_newshour": 0.68}
 # A vertical red seal reading 头条 marks the lead story.
 SEAL_SIZE = (28, 54)
-# A lead story with a picture (its RSS item's) shows it at the band's left, the seal on its corner,
-# rounded and fading into the page across its right side from LEAD_PHOTO_FADE of its width.
+# A lead story with a picture (its RSS item's) shows it across the band's left LEAD_PHOTO_SPAN px,
+# the seal on its corner, rounded and fading into the page from LEAD_PHOTO_FADE of its width; the
+# headline and its dek start LEAD_PHOTO_WIDTH px in, over the picture, each letter haloed in the
+# page's colour (LEAD_HALO px) so it reads on the photo.
 LEAD_PHOTO_WIDTH = 118
-LEAD_PHOTO_FADE = 0.6
+LEAD_PHOTO_SPAN = 340
+LEAD_PHOTO_FADE = 0.35
+LEAD_HALO = 2
 COLUMN_TOP = 150
 COLUMN_GAP = 24
 COLUMN_BOTTOM = 390
@@ -109,6 +113,8 @@ class NewsPage:
         self.d = ImageDraw.Draw(image)
         self.c = palette
         self.family = font_family
+        # The page colour every letter is haloed in while it is set over the lead's photo.
+        self.halo = None
 
     # -- text helpers -------------------------------------------------------
     # ``bold`` is True or False for the page's face, or a weight (an int) for the stories' face.
@@ -124,7 +130,11 @@ class NewsPage:
         return self.p._tw(self.d, str(text), self.font(size, bold))
 
     def text(self, xy, text, size, bold=True, fill=None, anchor="la"):
-        self.d.text(xy, str(text), font=self.font(size, bold), fill=fill or self.c["ink"], anchor=anchor)
+        self.d.text(xy, str(text), font=self.font(size, bold), fill=fill or self.c["ink"], anchor=anchor,
+                    **self.halo_args())
+
+    def halo_args(self):
+        return {"stroke_width": LEAD_HALO, "stroke_fill": self.halo} if self.halo is not None else {}
 
     def clip(self, text, size, max_width, bold=True):
         text = str(text or "")
@@ -269,7 +279,9 @@ class NewsPage:
         seal_w, seal_h = SEAL_SIZE
         photo = lead.get("photo")
         if photo is not None:
-            self.lead_photo(photo, (MARGIN, top + 1, MARGIN + LEAD_PHOTO_WIDTH, bottom - 1))
+            # The picture reaches under the headline, clear of the outlets' logos at the band's right.
+            span = min(LEAD_PHOTO_SPAN, art_left - 12 - MARGIN)
+            self.lead_photo(photo, (MARGIN, top + 1, MARGIN + span, bottom - 1))
         # The generated 头条 badge is 1:2; drawn as a plain seal when the file is missing.
         if not news_art.paste_badge(self.img, "seal", MARGIN + seal_w / 2, top + 9 + seal_h / 2, seal_h // 2, seal_h):
             self.d.rounded_rectangle((MARGIN, top + 9, MARGIN + seal_w, top + 9 + seal_h), radius=3, fill=c["lead"])
@@ -297,7 +309,9 @@ class NewsPage:
             font, size = self.headline_font(lead["title"], brief_w, LEAD_TITLE_SIZES[LEAD_TITLE_SIZES.index(size):])
         headline = self.clip_with(lead["title"], font, brief_w)
         ink_top = font.getbbox(headline, anchor="la")[1] if headline else 0
-        self.d.text((text_x, top + 4 - ink_top), headline, font=font, fill=c["ink"], anchor="la")
+        # Over the photo, the headline and its dek carry a halo of the page's colour.
+        self.halo = c["background"] if photo is not None else None
+        self.d.text((text_x, top + 4 - ink_top), headline, font=font, fill=c["ink"], anchor="la", **self.halo_args())
         y = top + size + 6
         # The dek under it opens like a newspaper's: the section in its accent and the topic, then the
         # story's fact running on, every word of it where the band allows.
@@ -323,6 +337,7 @@ class NewsPage:
             note_y = y + len(fact) * fact_line + 2
             self.d.line((text_x, note_y + 8, text_x + 14, note_y + 8), fill=c["ink"], width=1)
             self.text((text_x + 20, note_y + 8), self.clip(note, 12, brief_w - 20, False), 12, False, c["ink"], "lm")
+        self.halo = None
         if logos:
             self.source_wall((art_left, top + 2, width - MARGIN, bottom - 2), logos, lead.get("source_logo"))
             return
