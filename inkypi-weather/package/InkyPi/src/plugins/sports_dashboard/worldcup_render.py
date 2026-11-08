@@ -16,6 +16,8 @@ CLUB_CARD_VENUE_LOGO_HEIGHT = 12
 # name (wins emerald, draws grey, losses crimson); once under way each side's scorers and cards (a
 # ball, a yellow card with the count, a red card with the player), then possession as a share bar.
 CLUB_FORM_CELL, CLUB_FORM_GAP = 7, 2
+# The clear gap between a team's name (its letters) and its last-five cells under it.
+CLUB_FORM_NAME_GAP = 4
 CLUB_EVENT_ICON, CLUB_EVENT_GAP = 8, 6
 CLUB_YELLOW_CARD = (240, 192, 32)
 
@@ -1043,26 +1045,42 @@ class WorldCupRenderMixin:
         bar_bottom = y2 - 9
         label_top = bar_bottom - 18
         name_y = min(flag_y + flag_h + 11, label_top - 9)
-        for side, (left, right) in (("a", left_area), ("b", right_area)):
-            name, name_font = self._fit_text(draw, event.get(f"team_{side}"), right - left, name_max, bold=True,
-                                             min_size=name_min)
-            self._draw_centered(draw, ((left + right) / 2, name_y), name, name_font, COLORS["text"])
+        # Both names in one size (the smaller one's fit), so the two sides read as a pair.
+        names = [self._fit_text(draw, event.get(f"team_{side}"), right - left, name_max, bold=True, min_size=name_min)
+                 for side, (left, right) in (("a", left_area), ("b", right_area))]
+        name_size = min(getattr(font, "size", name_max) for _name, font in names)
+        names = [self._fit_text(draw, event.get(f"team_{side}"), right - left, name_size, bold=True, min_size=name_min)
+                 for side, (left, right) in (("a", left_area), ("b", right_area))]
 
         # A group stage's points and record take the foot row; otherwise the win chances do.
         metas = [self._worldcup_team_points_meta(event, side) for side in ("a", "b")]
         probabilities = None if any(metas) else self._club_win_probabilities(event)
         width = right_area[1] - left_area[0]
-        if (is_live or is_recent) and (event.get("goals") or event.get("cards") or event.get("possession_a") is not None):
-            self._draw_club_match_events(draw, (left_area[0] - 4, name_y + 8, right_area[1] + 2, y2 - 4), center_x, event)
-            return
+        events = (is_live or is_recent) and (event.get("goals") or event.get("cards") or event.get("possession_a") is not None)
         forms = [str(event.get(f"form_{side}") or "") for side in ("a", "b")]
-        if any(forms) and not any(metas):
-            # Each team's last five under its name; the win chances, if any, close up under them.
-            form_y = name_y + 10
+        show_forms = any(forms) and not any(metas) and not events
+        if show_forms:
+            # Laid out from the card's foot: the win chances (or odds), each team's last five a clear
+            # gap above them, its name a clear gap above that; the name's letters, not its line box,
+            # keep the gaps. The crest's box runs below its art, so only its upper part bounds the name.
+            foot = 18 if probabilities or self._worldcup_event_has_odds(event) else 0
+            form_top = y2 - 7 - foot - CLUB_FORM_CELL
+            ink = [draw.textbbox((0, 0), name, font=font, anchor="lt") for name, font in names]
+            ink_h = max(box[3] - box[1] for box in ink)
+            name_bottom = max(form_top - CLUB_FORM_NAME_GAP, round(flag_y + flag_h * 0.7) + ink_h)
+            for (name, font), box, (left, right) in zip(names, ink, (left_area, right_area)):
+                draw.text(((left + right) / 2 - (box[0] + box[2]) / 2, name_bottom - box[3]), name, font=font,
+                          fill=COLORS["text"])
             for form, (left, right) in zip(forms, (left_area, right_area)):
                 if form:
-                    self._draw_club_form(draw, ((left + right) / 2, form_y + CLUB_FORM_CELL / 2), form)
-            label_top, bar_bottom = form_y + CLUB_FORM_CELL + 2, y2 - 5
+                    self._draw_club_form(draw, ((left + right) / 2, form_top + CLUB_FORM_CELL / 2), form)
+            label_top, bar_bottom = form_top + CLUB_FORM_CELL + 3, y2 - 5
+        else:
+            for (name, font), (left, right) in zip(names, (left_area, right_area)):
+                self._draw_centered(draw, ((left + right) / 2, name_y), name, font, COLORS["text"])
+        if events:
+            self._draw_club_match_events(draw, (left_area[0] - 4, name_y + 8, right_area[1] + 2, y2 - 4), center_x, event)
+            return
         if any(metas):
             for meta, (left, right) in zip(metas, (left_area, right_area)):
                 self._draw_worldcup_odds_text(draw, (left, label_top + 4, right, label_top + 15), meta, max_size=8)
@@ -1582,14 +1600,21 @@ class WorldCupRenderMixin:
             presentation=presentation,
         )
         left_text_x = left_flag_x + left_w + 4
+        left_meta = self._worldcup_team_points_meta(event, "a", include_odds=has_odds)
+        right_meta = self._worldcup_team_points_meta(event, "b", include_odds=has_odds)
+        # Without a line of odds or points under them, the names sit level with the badges' middle,
+        # clear of the date and kick-off line above.
+        name_top = y - 1 if left_meta or right_meta or has_odds else y + 2
+        team_bottom = name_top + 12
         team_a, font_a = self._fit_text(draw, event.get("team_a"), max(20, center_x - left_text_x - 4), 10, bold=True, min_size=7)
-        self._draw_text_in_box(draw, (left_text_x, y - 1, center_x - 28, team_bottom), team_a, font_a, COLORS["text"])
+        self._draw_text_in_box(draw, (left_text_x, name_top, center_x - 28, team_bottom), team_a, font_a, COLORS["text"])
         center_text, center_font = self._fit_text(draw, center_text, 52, 10, bold=True, min_size=7)
         if re.fullmatch(r"\d+\s*[-–]\s*\d+", center_text):
             center_text, center_font = self._fit_score(draw, center_text, 52, 10, bold=True,
                                                       sport="SOCCER", max_height=team_bottom - y + 1,
                                                       league=football_score_league(event, presentation))
-        self._draw_centered_in_box(draw, (center_x - 26, y - 1, center_x + 26, team_bottom), center_text, center_font, COLORS["text"])
+        self._draw_centered_in_box(draw, (center_x - 26, name_top, center_x + 26, team_bottom), center_text, center_font,
+                                   COLORS["text"])
         right_w = self._draw_worldcup_presented_flag(
             image,
             draw,
@@ -1604,9 +1629,8 @@ class WorldCupRenderMixin:
         )
         right_text_x = x2 - 1 - right_w - 4
         team_b, font_b = self._fit_text(draw, event.get("team_b"), max(20, right_text_x - center_x - 28), 10, bold=True, min_size=7)
-        self._draw_text_in_box(draw, (center_x + 28, y - 1, right_text_x, team_bottom), team_b, font_b, COLORS["text"], align="right")
-        left_meta = self._worldcup_team_points_meta(event, "a", include_odds=has_odds)
-        right_meta = self._worldcup_team_points_meta(event, "b", include_odds=has_odds)
+        self._draw_text_in_box(draw, (center_x + 28, name_top, right_text_x, team_bottom), team_b, font_b, COLORS["text"],
+                               align="right")
         # The odds run under the names, mirrored on the wider badge so both sides read alike, in a
         # band that ends a couple of pixels above the row's foot rather than on its border.
         meta_margin = max(left_w, right_w) + 5

@@ -198,3 +198,23 @@ def test_nfl_card_footer_names_the_forecast_and_a_final_its_recap(monkeypatch):
     render(lambda image, draw: plugin._draw_nfl_final_details(image, draw, (12, 150, 330, 252), final))
     assert footers[0].endswith("8°C 晴间多云")
     assert "Seahawks edge Bears" in drawn and "战报" in drawn
+
+
+def test_club_card_keeps_a_clear_gap_between_each_name_and_its_form(monkeypatch):
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    recording(plugin, monkeypatch)
+    upcoming = SportsDashboard._club_football_worldcup_event(
+        SportsDashboard._parse_club_espn_events("BL1", club_payload("pre"), LA)[0], LA)
+    presentation = {"competition": "club", "team_asset_kind": "logo", "main_team_logo_scale": 1.5, "main_team_logo_top": 42}
+    now = datetime(2026, 11, 2, 12, tzinfo=LA)
+    image = render(lambda image, draw: plugin._draw_worldcup_main_card(image, draw, 12, 8, 264, 155, upcoming, now, "next",
+                                                                         presentation), DAY_COLORS, (276, 164)).convert("RGB")
+    cells = {(22, 150, 96), (214, 62, 72)}
+    form_rows = [y for y in range(image.height)
+                 if sum(image.getpixel((x, y)) in cells for x in range(20, 130)) >= 3]
+    form_top = min(form_rows)
+    ink = DAY_COLORS["text"]
+    name_rows = [y for y in range(form_top - 30, form_top) if any(image.getpixel((x, y)) == ink for x in range(20, 130))]
+    # The name's letters end a clear gap above its last-five cells.
+    # (At least three clear rows; the cards used to leave two, which read as touching on the panel.)
+    assert name_rows and max(name_rows) <= form_top - 4
