@@ -3161,11 +3161,11 @@ def test_a_lead_with_a_nyt_picture_shows_it_at_the_bands_left(monkeypatch):
 
     # The item that carries the picture is found by the story's link, even after one without it.
     assert asked == [NYT_PICTURE]
-    green = [image.getpixel((x, 100)) for x in range(news_layout.MARGIN + 30, news_layout.MARGIN + 60)]
+    seal_w = news_layout.SEAL_SIZE[0]
+    green = [image.getpixel((x, 140)) for x in range(news_layout.MARGIN + 2, news_layout.MARGIN + seal_w)]
     assert all(pixel[1] > 120 and pixel[0] < 90 for pixel in green)
-    # It reaches on under the headline, which starts LEAD_PHOTO_WIDTH in and is set over the picture...
-    under_text = [image.getpixel((x, 143)) for x in range(news_layout.MARGIN + news_layout.LEAD_PHOTO_WIDTH + 10,
-                                                           news_layout.MARGIN + news_layout.LEAD_PHOTO_WIDTH + 40)]
+    # It reaches on under the headline, which starts right beside the seal, set over the picture...
+    under_text = [image.getpixel((x, 143)) for x in range(news_layout.MARGIN + seal_w + 12, news_layout.MARGIN + seal_w + 60)]
     assert any(pixel[1] > 120 and pixel[0] < 90 for pixel in under_text)
     # ...and fades into the page by its far edge.
     edge = news_layout.MARGIN + news_layout.LEAD_PHOTO_SPAN - 2

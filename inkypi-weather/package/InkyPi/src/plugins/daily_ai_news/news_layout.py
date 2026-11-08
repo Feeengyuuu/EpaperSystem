@@ -41,9 +41,8 @@ SOURCE_LOGO_SCALES = {"pbs_newshour": 0.68}
 SEAL_SIZE = (28, 54)
 # A lead story with a picture (its RSS item's) shows it across the band's left LEAD_PHOTO_SPAN px,
 # the seal on its corner, rounded and fading into the page from LEAD_PHOTO_FADE of its width; the
-# headline and its dek start LEAD_PHOTO_WIDTH px in, over the picture, each letter haloed in the
+# headline and its dek start right beside the seal, set over the picture, each letter haloed in the
 # page's colour (LEAD_HALO px) so it reads on the photo.
-LEAD_PHOTO_WIDTH = 118
 LEAD_PHOTO_SPAN = 340
 LEAD_PHOTO_FADE = 0.35
 LEAD_HALO = 2
@@ -289,7 +288,7 @@ class NewsPage:
             for index, char in enumerate("头条"):
                 self.text((MARGIN + seal_w / 2, top + 9 + seal_h * (1 + 2 * index) / 4), char, 17, True, seal_ink,
                           "mm")
-        text_x = MARGIN + (LEAD_PHOTO_WIDTH + 4 if photo is not None else seal_w + 14)
+        text_x = MARGIN + seal_w + (12 if photo is not None else 14)
         brief_w = art_left - 12 - text_x
         section, tag = lead.get("section_label"), lead.get("tag")
         kicker = (self.width(section, 13) if section else 0) + (12 if section and tag else 0) \
