@@ -38,6 +38,19 @@ def load_thumbnails(urls, cache_dir, *, http, context, cached_only, safe_url, us
     download_limits = replace(LIMITS, max_bytes=max_bytes)
     mode = "RGBA" if keep_alpha else "RGB"
     images, namespace = {}, None
+    if not cached_only:
+        # Every kept picture asked for again counts as just used before any new one is stored: the
+        # cache drops its least recently used files first, and a picture still on the page must not
+        # be the one a newcomer pushes out (a later cache-only redraw would show its placeholder).
+        kept = [name for name in dict.fromkeys(_key(url, keep_alpha) for url in map(safe_url, urls) if url)
+                if (directory / name).is_file() and not (directory / name).is_symlink()]
+        if kept:
+            try:
+                namespace = cache_namespace_for_directory(directory, budget)
+                for name in kept:
+                    namespace.get_path(name)
+            except (OSError, ValueError, RuntimeError):
+                pass
     for raw in urls:
         url = safe_url(raw)
         if not url or url in images:
