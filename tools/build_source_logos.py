@@ -54,6 +54,9 @@
   from their own sites; Hitokoto's (一言) logo, its open-source organisation's avatar, its white
   ground cleared.
 - The sports page's NHL panel: the league's shield from Commons (public domain).
+- The tennis panel's places beside a tournament's name: the City of Paris' horizontal logo (the
+  inline SVG of paris.fr's header), the Indian Wells Tennis Garden's dark wordmark (its site's
+  sticky header) and Turin's Inalpi Arena from Commons (CC0).
 - Tech Pulse: OpenRouter's logo and icon from Commons (public domain), for the newest models, and
   their makers' marks: Commons where it has one (a lockup cut to the mark before its name: Tencent's
   Hy, ByteDance's, Microsoft's, Cohere's, StepFun's, Liquid AI's, Meituan's, MiniMax's and NVIDIA's),
@@ -284,6 +287,10 @@ LOGOS = {
     "tennis_us_open": ((COMMONS.format(path="c/cd/Usopen-horizontal-logo.svg", name="Usopen-horizontal-logo.svg"),
                         COMMONS_FILE.format(name="Usopen-horizontal-logo.svg"), PUBLIC_DOMAIN),
                        [PLUGINS / "sports_dashboard" / "assets" / "logos"], 1.0),
+    # The tennis panel's places beside a tournament's name: Turin's ATP Finals arena (Commons, CC0).
+    "tennis_place_inalpi_arena": (("https://upload.wikimedia.org/wikipedia/commons/a/a5/Inalpi_Arena_logo.png",
+                                   COMMONS_FILE.format(name="Inalpi_Arena_logo.png"), "CC0 (Wikimedia Commons)"),
+                                  [PLUGINS / "sports_dashboard" / "assets" / "logos"], 1.0),
     # 打印灵感's source: MakerWorld's cube-stack mark (white art in Bambu Lab's wiki, kept as a mask).
     "makerworld": (("https://wiki.bambulab.com/makerworld/makerworld.svg", "https://wiki.bambulab.com/en/makerworld",
                     "MakerWorld's mark from Bambu Lab's wiki, shown to name the source"),
@@ -748,6 +755,43 @@ def _smk(records):
         "source_sha256": hashlib.sha256(svg).hexdigest(), "processing": "the symbol drawn in black, cropped, 64 px tall"})
 
 
+PARIS_SITE = "https://www.paris.fr/"
+IWTG_SITE = "https://indianwellstennisgarden.com/"
+# A browser's request: the Indian Wells Tennis Garden's site refuses one without these.
+BROWSER_HEADERS = {**SITE_HEADERS, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                   "Accept-Language": "en-US,en;q=0.9"}
+
+
+def _inline_svg(page, marker):
+    """The whole <svg> element of ``page`` around ``marker`` (bytes), with its namespace."""
+    at = page.index(marker)
+    svg = page[page.rindex(b"<svg", 0, at):page.index(b"</svg>", at) + len(b"</svg>")]
+    return svg if b"xmlns=" in svg[:200] else svg.replace(b"<svg", b'<svg xmlns="http://www.w3.org/2000/svg"', 1)
+
+
+def _place_logo(records, key, site, marker, licence, note):
+    page = requests.get(site, headers=BROWSER_HEADERS, timeout=30)
+    page.raise_for_status()
+    svg = _inline_svg(page.content, marker)
+    _write(records, PLUGINS / "sports_dashboard" / "assets" / "logos", key, _fit(_visible(_rasterize(svg))), {
+        "source": f"{site} ({note})", "page": site, "licence": licence,
+        "source_sha256": hashlib.sha256(svg).hexdigest(), "processing": "cropped, 64 px tall"})
+
+
+def _paris(records):
+    """The City of Paris' horizontal logo (its ship and PARIS), the inline SVG of paris.fr's header."""
+    _place_logo(records, "tennis_place_paris", PARIS_SITE, b'class="logo-horizontal"',
+                "The City of Paris' official logo from its own site, shown to name the host city",
+                "the header's inline SVG titled logo-horizontal")
+
+
+def _indian_wells(records):
+    """The Indian Wells Tennis Garden's horizontal wordmark: the dark one its site's sticky header draws."""
+    _place_logo(records, "tennis_place_indian_wells", IWTG_SITE, b'viewBox="0 0 157 40"',
+                "The Indian Wells Tennis Garden's official logo from its own site, shown to name the venue",
+                "the sticky header's inline SVG logo")
+
+
 BILIBILI_NAVBAR = "https://s1.hdslb.com/bfs/live-pkg/blive/bilili-page-component-navbar-top-v3/navbar-v3.js"
 DOUYU_HEADER = "https://shark2.douyucdn.cn/front-publish/header-master/js/header.umd._f090791.js"
 
@@ -848,6 +892,7 @@ def _console(key):
 
 
 COMPOSED = {"wikipedia_zh": _wikipedia_zh, "chineseposters": _chineseposters, "smk": _smk,
+            "tennis_place_paris": _paris, "tennis_place_indian_wells": _indian_wells,
             "bilibili": _bilibili, "douyu": _douyu, "picarto": _picarto,
             **{key: _console(key) for key in CONSOLES}}
 

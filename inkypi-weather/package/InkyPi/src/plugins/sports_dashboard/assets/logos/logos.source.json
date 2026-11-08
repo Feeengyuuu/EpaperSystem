@@ -231,6 +231,41 @@
         64
       ],
       "sha256": "e7cddd8c9b608ac68a5e3c9cbf8f756601b4499720892e0ff55d4e7097ee6488"
+    },
+    "tennis_place_inalpi_arena": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/a/a5/Inalpi_Arena_logo.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Inalpi_Arena_logo.png",
+      "licence": "CC0 (Wikimedia Commons)",
+      "source_sha256": "cf509818e9e39ad015ef64f299a86e22fc2eada2c39ed16fe7286ebcb1aa21e4",
+      "size": [
+        270,
+        64
+      ],
+      "sha256": "bd86db9fda00e2406506b269461aa956b50590576b689d7e8245127d1cd56230"
+    },
+    "tennis_place_paris": {
+      "source": "https://www.paris.fr/ (the header's inline SVG titled logo-horizontal)",
+      "page": "https://www.paris.fr/",
+      "licence": "The City of Paris' official logo from its own site, shown to name the host city",
+      "source_sha256": "ef9743487e76bf2619473c0a4c8e364dd15a6ef49d8df585cc700880c363492f",
+      "processing": "cropped, 64 px tall",
+      "size": [
+        241,
+        64
+      ],
+      "sha256": "8847447be2c76e40cda2d1e45e7491ac533c9c2e3cd4b3b745d1b7965ca73a21"
+    },
+    "tennis_place_indian_wells": {
+      "source": "https://indianwellstennisgarden.com/ (the sticky header's inline SVG logo)",
+      "page": "https://indianwellstennisgarden.com/",
+      "licence": "The Indian Wells Tennis Garden's official logo from its own site, shown to name the venue",
+      "source_sha256": "a20aaddbfec4c9fa962d4e4ed3fbccaad1add973e7040102e441375015dbc3ec",
+      "processing": "cropped, 64 px tall",
+      "size": [
+        257,
+        64
+      ],
+      "sha256": "2386f2b037734062d6fb17547159b751c06aa8cbdc717c6e8720a6d22b22a71b"
     }
   }
 }

@@ -30,7 +30,8 @@ SHOWN = 3
 LATE_ROUNDS = {"Quarterfinal", "Semifinal", "Final"}
 RECENT_WINDOW = timedelta(hours=12)
 ROUNDS_ZH = {"Round 1": "第一轮", "Round 2": "第二轮", "Round 3": "第三轮", "Round 4": "第四轮", "Round of 16": "16强",
-             "Quarterfinal": "1/4决赛", "Semifinal": "半决赛", "Final": "决赛", "Round Robin": "小组赛"}
+             "Quarterfinal": "1/4决赛", "Semifinal": "半决赛", "Final": "决赛", "Round Robin": "小组赛",
+             "Group Stage": "小组赛"}
 SLAMS = (("australian open", "澳大利亚网球公开赛"), ("roland garros|french open", "法国网球公开赛"),
          ("wimbledon", "温布尔登网球锦标赛"), ("us open", "美国网球公开赛"))
 FINALS = (("atp finals", "ATP 年终总决赛"), ("wta finals", "WTA 年终总决赛"))
@@ -55,6 +56,16 @@ WTA_500 = ("brisbane|adelaide|abu dhabi|linz|charleston|credit one|stuttgart|por
 # The bundled official marks: the Grand Slams' logos, the ATP Finals' logo and the tours' own tier
 # stamps and tags.
 MARKS = {"australian_open", "roland_garros", "wimbledon", "us_open"}
+# The place beside a tournament's name by its official logo, matched in ESPN's venue line: the host
+# city's own logo where ESPN names only the city (Paris), else the venue's (assets/logos).
+PLACE_MARKS = (("indian wells", "tennis_place_indian_wells"), ("inalpi|turin|torino", "tennis_place_inalpi_arena"),
+               ("paris", "tennis_place_paris"))
+
+
+def place_mark(tournament):
+    """The bundled logo naming the tournament's place (tennis_place_paris ...), or None."""
+    text = str((tournament or {}).get("city") or "").lower()
+    return next((key for pattern, key in PLACE_MARKS if re.search(pattern, text)), None)
 
 
 def tournament_category(tournament):
@@ -263,10 +274,10 @@ def load_card(plugin, settings, now):
 
 
 def attach_photos(plugin, settings, card, now):
-    """Give each player of a match still to be played the tour's own photo (``photo``), for when
-    ESPN has no headshot of them."""
-    upcoming = [(tour, player) for tour, entry in card["tours"].items() for match in entry["shown"]
-                if match["state"] == "pre" for player in match["players"]]
-    photos = tennis_photos.official_photos(plugin, settings, [dict(player, tour=tour) for tour, player in upcoming], now)
-    for tour, player in upcoming:
+    """Give each shown player the tour's own photo (``photo``), for when ESPN has no headshot of them:
+    every match shows its players' faces."""
+    shown = [(tour, player) for tour, entry in card["tours"].items() for match in entry["shown"]
+             for player in match["players"]]
+    photos = tennis_photos.official_photos(plugin, settings, [dict(player, tour=tour) for tour, player in shown], now)
+    for tour, player in shown:
         player["photo"] = photos.get(f"{tour}:{tennis_photos.name_key(player.get('name'))}", "")

@@ -22,6 +22,10 @@ SET_W = 20
 HEADSHOT_PAIR_W = 84
 # The share of a WTA torso cut-out kept to match a headshot's framing (head and shoulders).
 TORSO_BUST_SHARE = 0.5
+# A match under way or played shows each player's face in its row, in this slot after the seed.
+ROW_FACE_W = 24
+# The place beside the tournament's name, by its logo (tennis.place_mark), in this box at most.
+PLACE_LOGO = (72, 14)
 
 
 def match_state_label(match, now):
@@ -78,12 +82,19 @@ class TennisRenderMixin:
                                        (255, 255, 255))
             x += badge_w + 6
         name = tournament.get("name_zh") or tournament.get("name") or tour
-        city = tournament.get("city") or ""
+        # The place by its official logo (the host city's or the venue's), its name only without one.
+        place_key = tennis.place_mark(tournament)
+        place = self._load_local_logo(os.path.join(LOCAL_TEAM_LOGO_DIR, f"{place_key}.png"), PLACE_LOGO,
+                                      alpha_threshold=8) if place_key else None
+        city = "" if place is not None else tournament.get("city") or ""
         city_font = self._font(9, False)
-        city_w = self._text_width(draw, city, city_font) if city else 0
+        city_w = place.width if place is not None else (self._text_width(draw, city, city_font) if city else 0)
         name, name_font = self._fit_text_ellipsis(draw, name, x2 - x - city_w - 14, 12, bold=True, min_size=9)
         self._draw_text_in_box(draw, (x, y1, x2 - city_w - 10, y1 + HEAD_HEIGHT), name, name_font, COLORS["text"])
-        if city:
+        if place is not None:
+            place = SportsDashboard._night_inked_mark(place)
+            image.paste(place, (x2 - 8 - place.width, y1 + (HEAD_HEIGHT - place.height) // 2), place)
+        elif city:
             self._draw_text_in_box(draw, (x2 - city_w - 8, y1, x2 - 6, y1 + HEAD_HEIGHT), city, city_font, COLORS["muted"],
                                    align="right")
         shown = entry.get("shown") or []
@@ -123,7 +134,8 @@ class TennisRenderMixin:
         row_h = (y2 - y1 - 17) // 2
         for index, player in enumerate(players[:2]):
             top = y1 + 16 + index * row_h
-            self._draw_tennis_player(image, draw, (x1 + 5, top, x2 - 5 - reserve, top + row_h), player, match, sets)
+            self._draw_tennis_player(image, draw, (x1 + 5, top, x2 - 5 - reserve, top + row_h), player, match, sets,
+                                     face=not faces)
         if reserve:
             self._draw_tennis_headshots(image, (x2 - 4 - reserve, y1 + 18, x2 - 3, y2 - 1), faces)
 
@@ -163,7 +175,9 @@ class TennisRenderMixin:
         bust = torso.crop((0, 0, torso.width, int(torso.height * TORSO_BUST_SHARE)))
         return ImageOps.contain(bust, (size, height), Image.LANCZOS)
 
-    def _draw_tennis_player(self, image, draw, box, player, match, sets):
+    def _draw_tennis_player(self, image, draw, box, player, match, sets, *, face=False):
+        """A player's row: seed, (with ``face``) their headshot standing on the row's foot, flag, name,
+        the winner's tick and the set scores."""
         x1, y1, x2, y2 = [int(value) for value in box]
         decided = match.get("state") == "post"
         lost = decided and not player.get("winner")
@@ -173,6 +187,10 @@ class TennisRenderMixin:
             self._draw_rank_medal(draw, (x1, y1 + (y2 - y1 - disc) // 2, x1 + disc, y1 + (y2 - y1 - disc) // 2 + disc), seed,
                                   medal=False)
         flag_x = x1 + disc + 4
+        if face:
+            # The slot stays when ESPN and the tour have no photo, so the match's flags line up.
+            self._paste_tennis_row_face(image, (x1 + disc + 2, y1, x1 + disc + 2 + ROW_FACE_W, y2), player)
+            flag_x += ROW_FACE_W
         self._draw_flag_icon(image, draw, player.get("flag") or espn_flag_url(player.get("country")),
                              (flag_x, y1 + 3, flag_x + 18, y2 - 3), player.get("country"))
         sets_w = sets * SET_W
@@ -197,6 +215,18 @@ class TennisRenderMixin:
                                        str(games), self._font(11, won_set), COLORS["text"] if won_set else COLORS["muted"])
             if tiebreak is not None:
                 draw.text((cell[2] - mark_w, cell[1]), str(tiebreak), font=mark_font, fill=COLORS["muted"])
+
+    def _paste_tennis_row_face(self, image, box, player):
+        """The player's face (ESPN's headshot, else the tour's photo) centred in ``box``, on its foot."""
+        x1, y1, x2, y2 = box
+        for url in (player.get("headshot"), player.get("photo")):
+            face = self._tennis_face(url, y2 - y1) if url else None
+            if face is not None:
+                if face.width > x2 - x1 or face.height > y2 - y1 + 2:
+                    face = ImageOps.contain(face, (x2 - x1, y2 - y1 + 2), Image.LANCZOS)
+                image.paste(face, (x1 + (x2 - x1 - face.width) // 2, y2 - face.height), face)
+                return True
+        return False
 
     @staticmethod
     def _tennis_set_won(match, index, player):

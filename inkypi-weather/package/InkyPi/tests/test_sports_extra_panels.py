@@ -127,11 +127,17 @@ def test_tournaments_are_named_by_their_official_marks():
     assert tennis.tournament_mark({"tour": "WTA", "name": "Wimbledon"}) == "tennis_wimbledon"
     assert tennis.tournament_mark({"tour": "ATP", "name": "Nitto ATP Finals"}) == "tennis_atp_finals"
     assert tennis.tournament_mark({"tour": "WTA", "name": "WTA Finals Riyadh"}) is None
+    # The place by its own logo: the host city's where ESPN names only the city, else the venue's.
+    assert tennis.place_mark({"city": "Paris"}) == "tennis_place_paris"
+    assert tennis.place_mark({"city": "Indian Wells Tennis Garden"}) == "tennis_place_indian_wells"
+    assert tennis.place_mark({"city": "Turin"}) == tennis.place_mark({"city": "Inalpi Arena"}) == "tennis_place_inalpi_arena"
+    assert tennis.place_mark({"city": "Stockholm"}) is None
     from plugins.sports_dashboard.common import LOCAL_TEAM_LOGO_DIR
 
     for key in ("tennis_atp_1000", "tennis_atp_500", "tennis_atp_250", "tennis_australian_open", "tennis_roland_garros",
                 "tennis_us_open", "tennis_wimbledon", "tennis_atp_finals", "tennis_wta_1000", "tennis_wta_500",
-                "tennis_wta_250", "motogp_ducati", "motogp_ktm", "motogp_aprilia", "motogp_honda", "motogp_yamaha"):
+                "tennis_wta_250", "motogp_ducati", "motogp_ktm", "motogp_aprilia", "motogp_honda", "motogp_yamaha",
+                "tennis_place_paris", "tennis_place_indian_wells", "tennis_place_inalpi_arena"):
         assert (Path(LOCAL_TEAM_LOGO_DIR) / f"{key}.png").is_file(), key
 
 
@@ -177,8 +183,12 @@ def test_an_upcoming_tennis_match_shows_both_players_headshots(monkeypatch):
     # The pictures stand at the block's right edge, where a played match keeps its set scores.
     assert (90, 60, 40) in set(image.crop((170, 16, 258, 58)).get_flattened_data())
     asked.clear()
+    image = Image.new("RGB", (270, 70), DAY_COLORS["paper"])
     plugin._draw_tennis_match(image, ImageDraw.Draw(image), (0, 0, 260, 58), played, feeds.NOW, DAY_COLORS["blue"])
-    assert asked == []
+    # A played match shows each face in its player's row, after the seed; the set scores keep the right.
+    assert asked == [player["headshot"] for player in played["players"]]
+    assert (90, 60, 40) in set(image.crop((20, 16, 50, 58)).get_flattened_data())
+    assert (90, 60, 40) not in set(image.crop((170, 16, 258, 58)).get_flattened_data())
 
 
 def test_a_player_espn_has_no_photo_of_shows_the_tours_own(monkeypatch):
@@ -200,3 +210,20 @@ def test_a_player_espn_has_no_photo_of_shows_the_tours_own(monkeypatch):
 
     assert asked[:2] == [upcoming["players"][0]["headshot"], upcoming["players"][0]["photo"]]
     assert (200, 40, 160) in set(image.crop((170, 16, 258, 58)).get_flattened_data())
+
+
+def test_a_tournaments_place_is_its_logo_and_every_shown_player_gets_a_photo(monkeypatch):
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    card, now = _cards()["TENNIS"]
+    asked = []
+    monkeypatch.setattr(tennis.tennis_photos, "official_photos",
+                        lambda plugin, settings, players, now: asked.extend(players) or {})
+    tennis.attach_photos(plugin, {}, card, now)
+    states = {match["state"] for entry in card["tours"].values() for match in entry["shown"]}
+    assert {"post", "in"} & states
+    assert len(asked) == sum(len(match["players"]) for entry in card["tours"].values() for match in entry["shown"])
+    drawn = []
+    image = _render(plugin, "_draw_tennis_panel", card, now, DAY_COLORS, monkeypatch, drawn)
+    # Paris by the city's own logo (its navy ship and letters), no longer its name in words.
+    assert "Paris" not in drawn and "巴黎大师赛" in drawn
+    assert image.getbbox() is not None
