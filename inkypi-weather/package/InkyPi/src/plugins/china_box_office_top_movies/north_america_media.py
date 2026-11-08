@@ -15,8 +15,13 @@ from runtime.refresh_contracts import TaskCancelled, TaskDeadlineExceeded
 from utils.safe_image import ImageLimits, safe_open_image_response
 
 logger = logging.getLogger(__name__)
-POSTER_LIMITS = ImageLimits(max_bytes=2 * 1024 * 1024, max_width=1600,
+# The publisher's full-size posters reach 1350x2000 PNGs of about 3 MB (foreign releases).
+POSTER_LIMITS = ImageLimits(max_bytes=4 * 1024 * 1024, max_width=1600,
                            max_height=2400, max_pixels=3_000_000)
+# A foreign release's slug names its country after the year: Godzilla-Minus-Zero-(2026-Japan).
+_SLUG_IDENTITY = re.compile(r"(.+)-\(((?:19|20)\d{2})(?:-[A-Za-z][A-Za-z-]*)?\)")
+# Its heading and poster alt text add the original-language title in parentheses.
+_ORIGINAL_TITLE = re.compile(r"\s*\([^()]*[^\x00-\x7f][^()]*\)")
 
 
 def canonical_movie_url(value):
@@ -39,7 +44,7 @@ def movie_identity(value):
     if not canonical:
         return None
     slug = canonical.rsplit("/", 1)[-1]
-    match = re.fullmatch(r"(.+)-\(((?:19|20)\d{2})\)", slug)
+    match = _SLUG_IDENTITY.fullmatch(slug)
     if not match:
         return None
     title = match[1].replace("-", " ")
@@ -139,12 +144,12 @@ def page_poster(html_text, requested_url, response_url):
         if canonical_movie_url(urljoin(identity[0], url)) != identity[0]:
             return None
     expected_heading = title_key(identity[1] + " " + identity[2])
-    if not parser.headings or title_key(parser.headings[0]) != expected_heading:
+    if not parser.headings or title_key(_ORIGINAL_TITLE.sub("", parser.headings[0])) != expected_heading:
         return None
     for source, alt in parser.images:
         source = urljoin(identity[0], source)
         # The publisher's alt text reads "<title> poster".
-        alt_key = re.sub(r" poster$", "", title_key(alt))
+        alt_key = re.sub(r" poster$", "", title_key(_ORIGINAL_TITLE.sub("", alt)))
         if (official_poster_url(source, identity[0])
                 and alt_key in {title_key(identity[1]), expected_heading}):
             return source

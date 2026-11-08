@@ -12,7 +12,7 @@ from plugins.box_office_top_movies.china_source import ChinaFetchBudget
 import plugins.china_box_office_top_movies.china_box_office_top_movies as plugin_module
 from plugins.china_box_office_top_movies.china_box_office_top_movies import ChinaBoxOfficeTopMovies
 from plugins.china_box_office_top_movies.north_america_media import (
-    canonical_movie_url, page_poster, reuse_posters,
+    POSTER_LIMITS, canonical_movie_url, movie_identity, page_poster, reuse_posters,
 )
 from runtime.refresh_contracts import TaskCancelled, TaskContext
 from tests.test_china_box_office_top_movies import DummyDeviceConfig, canonical_theme
@@ -36,6 +36,36 @@ def test_publisher_alt_text_naming_the_poster_still_matches_the_film():
 
     assert page_poster(page, MOVIE, MOVIE) == POSTER
     assert page_poster(page.replace("Avengers: Endgame poster", "Another Movie poster"), MOVIE, MOVIE) is None
+
+
+FOREIGN_MOVIE = "https://www.the-numbers.com/movie/Godzilla-Minus-Zero-(2026-Japan)"
+FOREIGN_POSTER = "https://media.the-numbers.com/images/movie-posters/Godzilla-Minus-Zero-(2026-Japan).png"
+# As the publisher lists a foreign release: the country in the slug, the original title in the heading.
+FOREIGN_PAGE = f"""<meta property="og:url" content="https://www.the-numbers.com/">
+<h1>Godzilla Minus Zero (ゴジラ-0.0) (2026)</h1>
+<img src='{FOREIGN_POSTER}' alt='Godzilla Minus Zero (ゴジラ-0.0) poster'>"""
+
+
+@pytest.mark.parametrize("slug, title", [
+    ("Godzilla-Minus-Zero-(2026-Japan)", "Godzilla Minus Zero"),
+    ("Ramayana-Part-1-(2026-India)", "Ramayana Part 1"),
+    ("Wild-Horse-Nine-(2026-United-Kingdom)", "Wild Horse Nine"),
+])
+def test_foreign_release_slug_keeps_its_film_identity(slug, title):
+    url = "https://www.the-numbers.com/movie/" + slug
+    assert movie_identity(url) == (url, title, "2026")
+
+
+def test_official_poster_matches_a_heading_that_carries_the_original_title():
+    assert page_poster(FOREIGN_PAGE, FOREIGN_MOVIE, FOREIGN_MOVIE) == FOREIGN_POSTER
+    assert page_poster(FOREIGN_PAGE.replace("Godzilla Minus Zero (", "Another Monster ("),
+                       FOREIGN_MOVIE, FOREIGN_MOVIE) is None
+
+
+def test_publishers_full_size_poster_files_fit_the_download_limit():
+    # The publisher's 1350x2000 PNG for a foreign release is 2.8 MB.
+    assert POSTER_LIMITS.max_bytes >= 3 * 1024 * 1024
+    assert POSTER_LIMITS.max_pixels >= 1350 * 2000
 
 
 @pytest.mark.parametrize("page, response_url", [
@@ -205,6 +235,14 @@ def test_expired_or_legacy_chart_cannot_enter_north_america_repair(chart):
     for field, value in (("source_label", "TMDb Mainland Popular"), ("version", "old")):
         cache = {**chart.initial, field: value}
         assert not chart.plugin._movie_media_source_is_current(cache, chart.settings, chart.now)
+
+
+def test_a_foreign_release_on_the_chart_keeps_live_poster_repair_open(chart):
+    movies = [dict(row) for row in chart.initial["movies"]]
+    movies[2] = {**movies[2], "chart_url": FOREIGN_MOVIE}
+    cache = {**chart.initial, "movies": movies}
+
+    assert chart.plugin._movie_media_source_is_current(cache, chart.settings, chart.now)
 
 
 def test_tmdb_clip_without_year_cannot_displace_canonical_original_movie(chart):
