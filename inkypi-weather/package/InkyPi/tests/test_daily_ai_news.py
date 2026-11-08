@@ -13,9 +13,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import plugins.daily_ai_news.daily_ai_news as daily_ai_news_module
 from plugins.daily_ai_news.daily_ai_news import DailyAINews, TITLE_BACKGROUND_IMAGE, TITLE_BACKGROUND_SIZE, TITLE_WORDMARK_IMAGE, TITLE_WORDMARK_SIZE
-from plugins.daily_ai_news import news_art, news_brief, news_common, news_layout, news_market, news_sources
+from plugins.daily_ai_news import news_art, news_brief, news_common, news_layout, news_market, news_pictures, news_sources
 from plugins.base_plugin.presentation import PresentationMode
 from plugins.base_plugin.render_provenance import read_source_provenance
+
+
+REAL_ARTICLE_PICTURE = news_pictures.article_picture
+
+
+@pytest.fixture(autouse=True)
+def _no_article_pages(monkeypatch):
+    """A rendered page never reads a real article page here; the tests of that ask for it."""
+    monkeypatch.setattr(news_pictures, "article_picture", lambda *args, **kwargs: "")
 
 
 def _plugin():
@@ -3200,3 +3209,73 @@ def test_a_wrapped_dek_never_opens_a_line_with_a_closing_mark():
         for lines in (page.wrap_after(text, 15, width, 60, 4), page.wrap(text, 15, width, 4)):
             assert not any(line[:1] in news_layout.CLOSING_MARKS for line in lines[1:])
             assert "".join(lines).replace("…", "") in text or lines[-1].endswith("…")
+
+
+class _PageHttp:
+    def __init__(self, text="", fail=False):
+        self.text, self.fail, self.asked = text, fail, []
+
+    def request_text_head(self, method, url, **kwargs):
+        self.asked.append(url)
+        if self.fail:
+            raise RuntimeError("HTTP 403")
+        return SimpleNamespace(data=self.text)
+
+
+def test_an_article_page_names_its_picture_on_the_outlets_image_hosts():
+    page = '<meta property="og:image" content="https://www.aljazeera.com/wp-content/uploads/a.jpg?resize=1920%2C1080&amp;quality=80">'
+    assert news_pictures.page_picture(page) == "https://www.aljazeera.com/wp-content/uploads/a.jpg?resize=1920%2C1080&quality=80"
+    # BBC's share picture carries its branded strip: its plain copy is taken.
+    bbc = '<meta property="og:image" content="https://ichef.bbci.co.uk/ace/branded_news/1200/cpsprodpb/x/live/y.jpg">'
+    assert news_pictures.page_picture(bbc) == "https://ichef.bbci.co.uk/ace/standard/1200/cpsprodpb/x/live/y.jpg"
+    assert news_pictures.page_picture('<meta name="twitter:image" content="https://static.dw.com/image/1_6.jpg">') \
+        == "https://static.dw.com/image/1_6.jpg"
+    # 中新网 names none: its body's first photo.
+    chinanews = '<img src="//image.cns.com.cn/logo.png"><img src="//i2.chinanews.com.cn/simg/cmshd/2026/11/08/abc.jpg">'
+    assert news_pictures.page_picture(chinanews) == "https://i2.chinanews.com.cn/simg/cmshd/2026/11/08/abc.jpg"
+    assert news_pictures.page_picture('<meta property="og:image" content="https://evil.example/x.jpg">') == ""
+
+
+def test_the_leads_article_picture_is_read_once_and_kept(tmp_path):
+    link = "https://www.dw.com/en/story/a-1"
+    http = _PageHttp('<meta property="og:image" content="https://static.dw.com/image/1_6.jpg">')
+    cache = tmp_path / "articles.json"
+    context = SimpleNamespace(remaining_seconds=lambda: 10.0)
+
+    assert REAL_ARTICLE_PICTURE(link, cache, http=http, context=context, cached_only=False) == "https://static.dw.com/image/1_6.jpg"
+    assert REAL_ARTICLE_PICTURE(link, cache, http=http, context=context, cached_only=True) == "https://static.dw.com/image/1_6.jpg"
+    assert REAL_ARTICLE_PICTURE(link, cache, http=http, context=context, cached_only=False) == "https://static.dw.com/image/1_6.jpg"
+    assert http.asked == [link]
+    # A page off the page's outlets is never read; a redraw never fetches; a refused page is tried again later.
+    assert REAL_ARTICLE_PICTURE("https://example.com/a", cache, http=http, context=context, cached_only=False) == ""
+    other = "https://www.npr.org/2026/11/08/x"
+    assert REAL_ARTICLE_PICTURE(other, cache, http=http, context=context, cached_only=True) == ""
+    refused = _PageHttp(fail=True)
+    assert REAL_ARTICLE_PICTURE(other, cache, http=refused, context=context, cached_only=False) == ""
+    assert other not in json.loads(cache.read_text(encoding="utf-8"))
+    assert http.asked == [link]
+
+
+def test_the_lead_always_has_a_picture_under_its_headline(monkeypatch):
+    plugin = _plugin()
+    article, rss = "https://static.dw.com/image/1_6.jpg", "https://static01.nyt.com/x.jpg"
+    shown = {article: Image.new("RGB", (40, 30), (10, 200, 10)), rss: Image.new("RGB", (40, 30), (200, 10, 10))}
+    monkeypatch.setattr(plugin, "_lead_photo", lambda url, settings: shown.get(url))
+    lead = {"title": "欧洲将加入阿布扎比俄乌和谈", "tag": "外交", "article_link": "https://www.dw.com/en/a-1", "image_url": rss}
+
+    monkeypatch.setattr(news_pictures, "article_picture", lambda *args, **kwargs: article)
+    assert plugin._lead_picture(lead, {}) is shown[article]
+    monkeypatch.setattr(news_pictures, "article_picture", lambda *args, **kwargs: "")
+    assert plugin._lead_picture(lead, {}) is shown[rss]
+    # Neither: the generated illustration of the story's topic (外交 -> politics).
+    backdrop = plugin._lead_picture(dict(lead, image_url=""), {})
+    assert backdrop is not None and backdrop.size == (720, 240)
+    assert backdrop.tobytes() == news_pictures.topic_backdrop("politics").tobytes()
+
+
+def test_every_topic_has_its_generated_backdrop():
+    kinds = {kind for kind, _words in news_art.TOPIC_KEYWORDS} | {"news"}
+    for kind in kinds:
+        assert (news_pictures.BACKDROP_DIR / f"{kind}.jpg").is_file(), kind
+    record = json.loads((news_pictures.BACKDROP_DIR / "source.json").read_text(encoding="utf-8"))
+    assert set(record["files"]) == {f"{kind}.jpg" for kind in kinds}

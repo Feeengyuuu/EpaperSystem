@@ -1,0 +1,68 @@
+{
+  "model": "image/gpt-image-2.6-sunburst (Creative Claw), 1536x512, quality high",
+  "use": "整点新闻: the picture under the lead headline when neither its article page nor its RSS item has one",
+  "prompt_template": "Wide 3:1 editorial illustration banner for a newspaper front page, topic: <topic>. <scene>. Style: modern newspaper editorial illustration with subtle risograph halftone texture, limited muted palette of slate blue, warm grey and cream with a single accent of <accent>, soft contrast. Main subject in the left third, calmer space toward the right. No text, no letters, no numbers, no logos, no real flags, no recognizable real people.",
+  "processing": "resized to 720x240, JPEG quality 85",
+  "files": {
+    "health.jpg": {
+      "job": "034566dd-40c7-40c1-8e48-413e523b6766",
+      "source_sha256": "b0269a9ab94d10956f3c824f7c4badf2c22741d068946b8785d79a8ff2e35903",
+      "sha256": "76aaba09d247ddcba584f133aa6e27ebc11b939e78b02063a64a42281bca1e97",
+      "bytes": 40118
+    },
+    "conflict.jpg": {
+      "job": "cfcfcaec-f389-4f33-8eea-7a842eb272d3",
+      "source_sha256": "e0f62419ffd4185f47044e52d48472521584e13ef88add0a8766241035f3e575",
+      "sha256": "73eae0462cc174269ab72a47ff305a27ceb6909d4ac199916bfd3297c5063fb8",
+      "bytes": 38438
+    },
+    "aviation.jpg": {
+      "job": "b9d2d971-ce5c-4cd3-ba58-ffa0a11a9053",
+      "source_sha256": "792b8640ca70ec06e0f70741b166e708f05a304569b89adaaf8edc908e886eb2",
+      "sha256": "efaaae88ee8608054e0a0548d7680cb84a35fef46580289267a7f5c33616dfb3",
+      "bytes": 35463
+    },
+    "tech.jpg": {
+      "job": "eccdce5c-8ee4-4f86-a4b4-fe5a2df0ccde",
+      "source_sha256": "46f942c767eb7b83beab1c188ee440e8d3479020bd2fe2d15ea02b9b3a503b82",
+      "sha256": "9c7702f644a2c470eab46ca3e2ac2dc73eed73a529895dd2e63a95f30ec83c6b",
+      "bytes": 43662
+    },
+    "climate.jpg": {
+      "job": "6f0c534e-4cd6-4f6d-8696-4a4249c66e7c",
+      "source_sha256": "32c013e88b30432c4a0875ff4dd0e9c500702d8ed3f08ccd7983ae90bba673b8",
+      "sha256": "d8237e40f1c0e6fe38174bc374f73c487e37708fcd76319ea4fea8edcd60547c",
+      "bytes": 55452
+    },
+    "justice.jpg": {
+      "job": "adb079c2-cb93-4b91-84ff-353f8a92bf00",
+      "source_sha256": "915b99c76e04e6024c413353ab12b830b8d7ab1ff63b689d1d9404e5fc346e37",
+      "sha256": "5a10d57a7c74b50a6368014702ff5b50ed03a1af8bad2abe1a64bd880265cb72",
+      "bytes": 46380
+    },
+    "sports.jpg": {
+      "job": "e085cfd7-5aff-4bc2-b508-4e899b4ce67f",
+      "source_sha256": "93f5c97fc241de3ccdb9aea42f01be77394c51f59290126ff449e12c7dd59994",
+      "sha256": "f43bc252ee6a78fdb1e73b60c44995948568efd91c4c34fcc1f6ed7758b9c818",
+      "bytes": 47086
+    },
+    "economy.jpg": {
+      "job": "fa34aa3f-5fdd-4b2e-82b5-fe1b3a077de2",
+      "source_sha256": "8ecb170bd931c9d7e6a0833bf6f0ede92d79c24c32eb2bda7616e3b963febb54",
+      "sha256": "01b0d18850277af1eee0a4d00d81c92d81b8a4882fbd60239bf331b34f9e2e6b",
+      "bytes": 49774
+    },
+    "politics.jpg": {
+      "job": "715bab66-d556-40f0-b7a9-f0845b0d8fc7",
+      "source_sha256": "6cd4dc1d2fab033fc3c9b7a8396c2132739490d252dbc85a774bb6d0976f4597",
+      "sha256": "f4cb83457441955c7b040d9ea413eeeb99c34ef4cf08782006fa3bb46a90a086",
+      "bytes": 42744
+    },
+    "news.jpg": {
+      "job": "c2bea2d0-ef50-47ab-86c0-ed66b0f9d19c",
+      "source_sha256": "490e875d018ac78f9bd53c9869ca73ea8637a371b275cffc8dcb6d3c5ddbcd64",
+      "sha256": "e2f03c4c84f557df84da028cacb19cf2506525cbb8eea21bd5990cf86aed4d28",
+      "bytes": 40650
+    }
+  }
+}

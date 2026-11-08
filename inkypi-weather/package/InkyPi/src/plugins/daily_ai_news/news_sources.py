@@ -86,7 +86,11 @@ MAINLAND_FEED_HOST_HINTS = (
 )
 # A lead story's picture comes from its RSS item (media:content, else media:thumbnail), only from
 # these hosts: The New York Times gives every world item a 704 px square.
-LEAD_IMAGE_HOSTS = ("static01.nyt.com",)
+# The outlets' own image hosts: a lead's picture (its article page's or its RSS item's) is taken
+# only from these (news_pictures).
+LEAD_IMAGE_HOSTS = ("static01.nyt.com", "ichef.bbci.co.uk", "npr.brightspotcdn.com", "media.npr.org", "i.guim.co.uk",
+                    "www.aljazeera.com", "static.dw.com", "d3i6fh83elv35t.cloudfront.net", "i.abcnewsfe.com",
+                    "s.abcnews.com", "s.france24.com", "i2.chinanews.com.cn", "i3.chinanews.com.cn", "newsstatic.rthk.hk")
 # BBC's Chinese feed: its simplified address answers with the traditional edition since 2026-11,
 # so its items are marked to be shown only when they convert to simplified whole.
 TRADITIONAL_FEED_HINTS = ("bbci.co.uk/zhongwen/", "bbc.co.uk/zhongwen/", "bbc.com/zhongwen/")

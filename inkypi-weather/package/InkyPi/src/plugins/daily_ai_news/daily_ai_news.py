@@ -45,6 +45,7 @@ from utils.image_utils import text_width
 from utils.remote_thumbnails import load_thumbnails
 from utils.theme_utils import get_theme_palette
 
+from . import news_art, news_pictures
 from . import news_common as common
 from .news_brief import DEFAULT_MODEL, NEWS_TAG_MAX_CHARS, NewsBriefMixin, summary_model  # noqa: F401
 from .news_common import MAINLAND_NEWS_MAX, WORLD_NEWS_MAX
@@ -395,7 +396,7 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
         palette = self._page_palette(theme_context)
         img = self._base_background(PAGE_SIZE, palette["background"], (theme_context or {}).get("mode", "day"))
         lead, mainland, world = self._page_news(brief, payload)
-        photo = self._lead_photo(lead.get("image_url"), settings) if lead else None
+        photo = self._lead_picture(lead, settings) if lead else None
         if photo is not None:
             lead["photo"] = photo
         NewsPage(self, img, palette, DEFAULT_FONT).render(
@@ -456,6 +457,7 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
                 self._lead_item(lead["title"], payload) or {}
             lead["source_logo"] = self._source_logo_key(origin.get("source"), origin.get("link"))
             lead["image_url"] = self._lead_image_url(origin, payload)
+            lead["article_link"] = str(origin.get("link") or "")
         return lead, mainland, world
 
     @staticmethod
@@ -468,6 +470,27 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
         return next((lead_image_url(item.get("image")) for item in payload.get("items") or []
                      if isinstance(item, dict) and str(item.get("link") or "") == link
                      and lead_image_url(item.get("image"))), "")
+
+    def _lead_picture(self, lead: dict[str, Any], settings) -> Image.Image | None:
+        """The picture under the lead's headline (news_pictures): its article page's photo, else its
+        RSS item's, else the generated illustration of its topic."""
+        cached_only = any(common._enabled(settings.get(key))
+                          for key in ("_theme_render_only", "_cached_render_only", "cached_render_only"))
+        photo = None
+        try:
+            url = news_pictures.article_picture(
+                lead.get("article_link"), self._cache_dir(create=not cached_only) / "lead_photos" / "articles.json",
+                http=get_http_client(), context=task_context_or_default(LEAD_PHOTO_SECONDS), cached_only=cached_only)
+        except TaskCancelled:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the RSS picture or the topic's illustration stands in.
+            logger.warning("Daily AI news article picture skipped: %s", type(exc).__name__)
+            url = ""
+        for candidate in dict.fromkeys(item for item in (url, lead.get("image_url")) if item):
+            photo = self._lead_photo(candidate, settings)
+            if photo is not None:
+                return photo
+        return news_pictures.topic_backdrop(news_art.topic_kind(lead.get("tag"), lead.get("title")))
 
     def _lead_photo(self, url: str, settings) -> Image.Image | None:
         """The lead's picture from its cache, fetched first on a data refresh; None when it is not at hand."""
