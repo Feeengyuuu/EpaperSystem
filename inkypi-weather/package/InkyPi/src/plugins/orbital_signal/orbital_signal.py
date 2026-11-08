@@ -12,7 +12,7 @@ from pathlib import Path
 from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageOps
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.presentation import PresentationMode
 from plugins.base_plugin.render_provenance import (
@@ -1675,7 +1675,8 @@ class OrbitalSignal(BasePlugin):
         """The two teams as scoreboard rows in the question's band: each row a bar in the team's
         colour, its crest and its short name (a long one steps down a size, then ends in "..."), the
         names flush left in a block centred on the column, a hairline with VS between the rows."""
-        crests = [self._outlined_crest(self._market_mark(team.get("mark"), MATCHUP_CREST), palette) for team in teams]
+        # Crests go on as they are, without a ring or plate, in both themes.
+        crests = [self._market_mark(team.get("mark"), MATCHUP_CREST) for team in teams]
         full = [str(team.get("alias") or team.get("name") or "").upper() for team in teams]
         short = [" ".join(word for word in name.split() if word not in TEAM_NAME_GENERIC_WORDS) or name
                  for name in full]
@@ -1703,7 +1704,6 @@ class OrbitalSignal(BasePlugin):
                            fill=_hex_color(team.get("color")) or palette["ink"])
             crest_x = left + MATCHUP_BAR + 3
             if crest is not None:
-                # The crest may carry a 1 px contour beyond its MATCHUP_CREST box; centre it all.
                 image.paste(crest, (crest_x + (MATCHUP_CREST - crest.width) // 2,
                                     row_top + (MATCHUP_ROW - crest.height) // 2), crest)
             box = draw.textbbox((0, 0), name, font=font)
@@ -1717,19 +1717,6 @@ class OrbitalSignal(BasePlugin):
         draw.line((round(cx + vs_w / 2 + 4), middle, left + block_w, middle), fill=palette["rule"], width=1)
         draw.text((cx - vs_w / 2 - vs_box[0], middle - (vs_box[1] + vs_box[3]) / 2), "VS", font=vs_font,
                   fill=palette["ink"])
-
-    @staticmethod
-    def _outlined_crest(crest, palette):
-        """On a dark page a crest gets a 1 px contour in the page's light ink, so a navy logo does
-        not sink into the navy paper; by day it is pasted as it is. No plate goes behind it."""
-        if crest is None or sum(palette["paper"]) >= 384:
-            return crest
-        canvas = Image.new("RGBA", (crest.width + 2, crest.height + 2), (0, 0, 0, 0))
-        canvas.paste(crest, (1, 1), crest)
-        contour = Image.new("RGBA", canvas.size, (*palette["ink"][:3], 255))
-        contour.putalpha(canvas.getchannel("A").point(lambda a: 255 if a >= 96 else 0).filter(ImageFilter.MaxFilter(3)))
-        contour.alpha_composite(canvas)
-        return contour
 
     def _draw_question(self, draw, title, cx, width, y, palette, family):
         """The market's question centred in its QUESTION_LINES-line band, every word kept: the type

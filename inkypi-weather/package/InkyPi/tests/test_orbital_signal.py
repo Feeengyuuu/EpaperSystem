@@ -1459,18 +1459,19 @@ def test_a_long_team_name_drops_its_generic_word_before_it_is_cut(monkeypatch):
     assert texts[:2] == ["BILIBILI", "T1"]
 
 
-def test_a_crest_gets_a_light_contour_only_on_the_night_page():
+def test_night_matchup_crests_go_on_as_they_are_without_a_ring(monkeypatch):
     from plugins.orbital_signal.market_style import market_palette
 
-    crest = Image.new("RGBA", (15, 15), (0, 0, 0, 0))
-    ImageDraw.Draw(crest).rectangle((4, 4, 10, 10), fill=(11, 34, 101, 255))
-    night, day = market_palette(NIGHT_PALETTE), market_palette(DAY_PALETTE)
+    _texts, image = _matchup_texts(monkeypatch, [{"alias": "Giants", "color": "#2244AC"},
+                                                 {"alias": "Eagles", "color": "#008282"}], NIGHT_PALETTE)
 
-    assert OrbitalSignal._outlined_crest(crest, day) is crest
-    outlined = OrbitalSignal._outlined_crest(crest, night)
-    assert outlined.size == (17, 17)
-    assert outlined.getpixel((4, 8))[:3] == tuple(night["ink"][:3])  # the contour just outside the crest
-    assert outlined.getpixel((8, 8))[:3] == (11, 34, 101)  # the crest itself keeps its colour
+    night = market_palette(NIGHT_PALETTE)
+    crest = [(x, y) for x in range(image.width) for y in range(image.height)
+             if image.getpixel((x, y)) == (0, 40, 90)]
+    left = min(x for x, _y in crest)
+    row = next(y for x, y in crest if x == left)
+    # Straight from the crest to the night paper: no light contour in the pixel beside it.
+    assert image.getpixel((left - 1, row)) != tuple(night["ink"][:3])
 
 
 def test_event_art_fades_into_the_paper_at_its_foot(tmp_path):
