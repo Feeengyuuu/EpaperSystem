@@ -1,0 +1,75 @@
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+import aggregate_pages_migration  # noqa: E402
+from config import Config  # noqa: E402
+
+OWNER_UUID = "6ce0a56e6ddd4feaa1006be9394daf10"
+
+
+def _instance(plugin_id, name, uuid, interval=300):
+    return {"plugin_id": plugin_id, "name": name, "plugin_settings": {}, "refresh": {"interval": interval},
+            "instance_uuid": uuid, "structural_generation": 1, "settings_revision": 1}
+
+
+def _payload(*extra, live_radar_uuid=OWNER_UUID):
+    return {
+        "schema_version": 1,
+        "config_revision": 1,
+        "resolution": [800, 480],
+        "runtime_migrations": {"aggregate_pages_playlist_v1": True, "ai_ecosystem_retired_v1": True,
+                               "box_office_two_markets_v1": True, "pop_traffic_pages_playlist_v1": True,
+                               "planet_now_page_playlist_v1": True, "sky_radar_page_playlist_v1": True,
+                               "hot_odds_pages_playlist_v1": True, "ai_papers_page_playlist_v1": True,
+                               "print_inspiration_page_playlist_v1": True, "daily_digest_page_playlist_v1": True, "composite_pages_playlist_v1": True},
+        "playlist_config": {
+            "playlists": [{"name": "DailyDoseOfDay", "start_time": "00:00", "end_time": "24:00",
+                           "plugins": [_instance("live_radar", "LiveRadar", live_radar_uuid), *extra]}],
+            "active_playlist": "DailyDoseOfDay",
+        },
+    }
+
+
+def _start(monkeypatch, tmp_path, payload):
+    monkeypatch.setattr(aggregate_pages_migration, "OWNER_LIVE_RADAR_UUID_SHA256_PREFIX",
+                        hashlib.sha256(OWNER_UUID.encode()).hexdigest()[:16])
+    path = tmp_path / "device.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(Config, "config_file", str(path))
+    return Config(), path
+
+
+def _saved(path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_startup_takes_both_composite_pages_out_once_and_keeps_the_rest(monkeypatch, tmp_path):
+    _config, path = _start(monkeypatch, tmp_path, _payload(
+        _instance("time_almanac", "TimeAlmanac", "a" * 32, 3600), _instance("daily_digest", "DailyDigest", "b" * 32),
+        _instance("morning_read", "MorningRead", "c" * 32, 3600)))
+
+    saved = _saved(path)
+    plugins = saved["playlist_config"]["playlists"][0]["plugins"]
+    assert [(item["plugin_id"], item["name"]) for item in plugins] == [
+        ("live_radar", "LiveRadar"), ("daily_digest", "DailyDigest")]
+    assert saved["runtime_migrations"]["composite_pages_retired_v1"] is True
+    # The add migration's marker stays, so the pages do not come back.
+    assert saved["runtime_migrations"]["composite_pages_playlist_v1"] is True
+
+    revision = saved["config_revision"]
+    Config()
+    assert _saved(path)["config_revision"] == revision
+    assert len(_saved(path)["playlist_config"]["playlists"][0]["plugins"]) == 2
+
+
+def test_other_devices_keep_their_pages(monkeypatch, tmp_path):
+    _config, path = _start(monkeypatch, tmp_path, _payload(_instance("time_almanac", "TimeAlmanac", "a" * 32),
+                                                          live_radar_uuid="d" * 32))
+    saved = _saved(path)
+    assert [item["plugin_id"] for item in saved["playlist_config"]["playlists"][0]["plugins"]] == [
+        "live_radar", "time_almanac"]
+    assert "composite_pages_retired_v1" not in saved["runtime_migrations"]

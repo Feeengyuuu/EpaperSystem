@@ -314,6 +314,7 @@ class Config:
         self._add_daily_digest_page()
         self._add_print_inspiration_page()
         self._add_composite_pages()
+        self._retire_composite_pages()
 
     def _migrate_aggregate_pages_playlist(self):
         from aggregate_pages_migration import apply_aggregate_pages_playlist_migration
@@ -369,6 +370,11 @@ class Config:
         from composite_pages_migration import apply_composite_pages_migration
 
         apply_composite_pages_migration(self)
+
+    def _retire_composite_pages(self):
+        from composite_pages_retirement_migration import apply_composite_pages_retirement_migration
+
+        apply_composite_pages_retirement_migration(self)
 
     def _add_starter_rotation(self):
         from starter_rotation_migration import apply_starter_rotation_migration
