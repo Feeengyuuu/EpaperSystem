@@ -57,6 +57,31 @@ def test_most_read_skips_special_pages_and_puzzle_counts_the_mate():
         sources.normalize_puzzle({"fen": "not a position"})
 
 
+def test_most_read_falls_back_a_day_while_wikimedia_has_not_loaded_the_views(monkeypatch):
+    from plugins.daily_pop.render import wiki_day_label
+
+    # 16:32 Pacific on 11-08 is 00:32 UTC on 11-09: UTC yesterday's feed (11-08) has no list yet.
+    now = datetime(2026, 11, 8, 16, 32, tzinfo=sources.PACIFIC)
+    asked = []
+    feeds = {"2026/11/08": {"tfa": {}, "onthisday": []},
+             "2026/11/07": {"mostread": {"date": "2026-11-06Z", "articles": [{"title": "地球", "views": 50}]}}}
+
+    def fake_get(url, context, **kwargs):
+        asked.append(url.rsplit("featured/", 1)[1])
+        return feeds[asked[-1]]
+
+    monkeypatch.setattr(sources, "_get", fake_get)
+    data = sources.fetch_most_read(now, object())
+
+    assert asked == ["2026/11/08", "2026/11/07"]
+    assert data == {"articles": [{"title": "地球", "views": 50, "description": ""}], "day": "2026-11-06"}
+    assert (wiki_day_label(data["day"]), wiki_day_label(None)) == ("中文维基 · 11月6日", "中文维基 · 每日阅读量")
+    # With neither list out the source fails, so the page keeps its cached list.
+    feeds["2026/11/07"] = {"tfa": {}}
+    with pytest.raises(ValueError):
+        sources.fetch_most_read(now, object())
+
+
 def test_epic_frames_sort_and_the_globe_turns_with_the_time_of_day():
     rows = [{"image": f"epic_1b_20261023{hour:02d}0000", "date": f"2026-10-23 {hour:02d}:00:00",
              "centroid_coordinates": {"lat": 5, "lon": -15 * hour}} for hour in (20, 2, 14)]

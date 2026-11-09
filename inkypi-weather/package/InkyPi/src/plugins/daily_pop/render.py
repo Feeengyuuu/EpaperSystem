@@ -440,12 +440,22 @@ def wiki_globe(diameter, night):
     return sphere
 
 
+def wiki_day_label(day):
+    """The card's subtitle: the day its most-read list was read on ("中文维基 · 11月6日"), or the
+    plain reads for a list kept from before its day was recorded."""
+    try:
+        read = datetime.strptime(str(day or ""), "%Y-%m-%d")
+    except ValueError:
+        return "中文维基 · 每日阅读量"
+    return f"中文维基 · {read.month}月{read.day}日"
+
+
 def _wiki(canvas, payload):
     """The most read set round the Wikipedia globe: a lit sphere sunk into the card's left
     edge, a thin orbit round it and the five titles in order along the orbit, the first one
     largest; each one's views under it."""
     articles = (payload["wiki"]["data"].get("articles") or [])[:5]
-    top = _card(canvas, "wiki", "中文维基 · 昨日阅读量")
+    top = _card(canvas, "wiki", wiki_day_label(payload["wiki"]["data"].get("day")))
     _doodles(canvas, "wiki", top)
     left, _top, right, bottom = CARDS["wiki"]
     if not articles:

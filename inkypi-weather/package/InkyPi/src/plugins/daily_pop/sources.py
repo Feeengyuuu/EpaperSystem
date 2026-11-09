@@ -41,6 +41,8 @@ APPLE_SONGS_URL = "https://rss.marketingtools.apple.com/api/v2/us/music/most-pla
 ITUNES_SONGS_URL = "https://itunes.apple.com/us/rss/topsongs/limit=10/json"
 APPLE_SONGS_TIMEOUT = (3, 4)
 WIKI_FEED_URL = "https://api.wikimedia.org/feed/v1/wikipedia/zh/featured/{date:%Y/%m/%d}"
+# Feeds tried for the most-read list, newest first (fetch_most_read).
+WIKI_FEED_DAYS = 2
 CHESS_URL = "https://api.chess.com/pub/puzzle"
 EPIC_URL = "https://epic.gsfc.nasa.gov/api/natural"
 EPIC_IMAGE_URL = "https://epic.gsfc.nasa.gov/archive/natural/{date:%Y/%m/%d}/jpg/{name}.jpg"
@@ -344,8 +346,11 @@ def valid_songs(data):
 # --- Chinese Wikipedia: most read ----------------------------------------------------------
 
 def normalize_most_read(payload):
+    """The top articles of a featured feed's most-read list, with the UTC day they were read on
+    ("day", from the list's own "2026-11-06Z") when the feed names it."""
+    mostread = (payload or {}).get("mostread") or {}
     articles = []
-    for row in ((payload or {}).get("mostread") or {}).get("articles") or []:
+    for row in mostread.get("articles") or []:
         title = _clean(row.get("normalizedtitle") or row.get("title"), 30)
         if not title or WIKI_SKIP.search(title):
             continue
@@ -355,13 +360,26 @@ def normalize_most_read(payload):
             break
     if not articles:
         raise ValueError("Wikipedia returned no most-read articles")
-    return {"articles": articles}
+    day = re.fullmatch(r"(\d{4}-\d{2}-\d{2})Z?", str(mostread.get("date") or "").strip())
+    return {"articles": articles, **({"day": day.group(1)} if day else {})}
 
 
 def fetch_most_read(now, context):
-    # The most-read list covers a finished UTC day: yesterday's.
-    day = now.astimezone(timezone.utc) - timedelta(days=1)
-    return normalize_most_read(_get(WIKI_FEED_URL.format(date=day), context, max_bytes=1024 * 1024))
+    """The newest most-read list out: the featured feed for UTC yesterday carries the reads of the
+    finished day before it, once Wikimedia has loaded that day's page views. The load can run more
+    than a day late (at 00:42 UTC on 2026-11-09 the feed for 11-08 still had no list), so a feed
+    without its list falls back to the one a day earlier."""
+    newest = now.astimezone(timezone.utc) - timedelta(days=1)
+    for back in range(WIKI_FEED_DAYS):
+        day = newest - timedelta(days=back)
+        try:
+            return normalize_most_read(_get(WIKI_FEED_URL.format(date=day), context, max_bytes=1024 * 1024))
+        except TaskCancelled:
+            raise
+        except Exception as exc:  # noqa: BLE001 - a list not out yet (or that day's feed down) tries the day before.
+            if back + 1 >= WIKI_FEED_DAYS:
+                raise
+            logger.info("Wikipedia most read for %s not out (%s); using the day before", day.date(), type(exc).__name__)
 
 
 def valid_most_read(data):

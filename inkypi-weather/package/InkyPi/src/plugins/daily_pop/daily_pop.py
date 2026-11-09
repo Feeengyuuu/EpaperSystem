@@ -132,7 +132,7 @@ class DailyPop(BasePlugin):
                                  usable_seconds=3 * 86400, validate=sources.valid_songs, timeout_seconds=16)),
             "wiki": load(Source("wiki", {"lang": "zh", "day": now.date().isoformat()},
                                 lambda ctx: sources.fetch_most_read(now, ctx), fresh_seconds=6 * 3600,
-                                usable_seconds=2 * 86400, validate=sources.valid_most_read, timeout_seconds=10)),
+                                usable_seconds=2 * 86400, validate=sources.valid_most_read, timeout_seconds=16)),
             "puzzle": load(Source("puzzle", {"site": "chess.com"}, sources.fetch_puzzle, fresh_seconds=3 * 3600,
                                   usable_seconds=2 * 86400, validate=sources.valid_puzzle, timeout_seconds=8)),
             "epic": load(Source("epic", {"collection": "natural"}, sources.fetch_epic, fresh_seconds=3 * 3600,
