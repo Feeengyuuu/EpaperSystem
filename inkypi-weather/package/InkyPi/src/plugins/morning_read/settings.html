@@ -1,0 +1,26 @@
+<input type="hidden" name="refreshOnDisplay" id="refreshOnDisplay" value="false">
+<div class="form-group">
+  <small>一页晨读：左栏 Merriam-Webster 今日单词（音标、词性、释义与例句）、Wikiquote 每日名言、两条冷知识；右栏今日漫画整幅显示（xkcd、Cyanide &amp; Happiness、SMBC、PBF、Questionable Content、Poorly Drawn Lines、Dinosaur Comics、webcomic name 按天轮换，某家取不到时换下一家），附标题与 alt 文字。单词、名言、冷知识沿用“每日一词”和“每日知识”插件的来源与缓存；每个来源单独缓存，取不到的只隐藏自己的卡片。全部为公开接口，无需密钥。</small>
+</div>
+<div class="form-group">
+  <label class="form-label" for="fontFamily">字体</label>
+  <select name="fontFamily" id="fontFamily">
+    {% for font_name in available_fonts %}<option value="{{ font_name }}">{{ font_name }}</option>{% endfor %}
+  </select>
+</div>
+<div class="form-group">
+  <label><input type="checkbox" name="forceRefresh" id="forceRefresh"> 下次刷新重新获取全部来源</label>
+  <small>单词、名言与冷知识每天更新，漫画每 4 小时查看一次新作；轮播重绘使用本地缓存，不请求网络。</small>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  for (const key of ['fontFamily', 'forceRefresh']) {
+    const el = document.getElementById(key);
+    const value = typeof pluginSettings !== 'undefined' ? pluginSettings[key] : undefined;
+    if (value !== undefined) {
+      if (el.type === 'checkbox') el.checked = [true, 'true', 'on', '1'].includes(value);
+      else el.value = value;
+    } else if (key === 'fontFamily') el.value = 'Microsoft YaHei';
+  }
+});
+</script>

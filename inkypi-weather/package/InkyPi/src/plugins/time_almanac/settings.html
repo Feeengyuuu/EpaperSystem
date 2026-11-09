@@ -1,0 +1,34 @@
+<input type="hidden" name="refreshOnDisplay" id="refreshOnDisplay" value="false">
+<div class="form-group">
+  <small>一页看时间：左栏中文与英文文学报时（书里写到此刻的句子，时间字样高亮），下方今日 / 本周 / 本月 / 今年进度；右栏月相（照亮比例、月龄、接下来的上弦 / 满月 / 下弦 / 新月）与当天月出月落、日出日落（USNO，按天缓存，位置取天气页的经纬度），下方倒数日（春节、端午、七夕、中秋、元旦、情人节、独立日、万圣节、感恩节、圣诞节，可加一个自己的日子）。除日月出没外都在本地计算，轮播时按展示的那一分钟重绘。</small>
+</div>
+<div class="form-group">
+  <label class="form-label" for="countdownTitle">我的倒数日名称</label>
+  <input class="form-control" type="text" name="countdownTitle" id="countdownTitle" maxlength="12" placeholder="例如：旅行出发">
+</div>
+<div class="form-group">
+  <label class="form-label" for="countdownDate">我的倒数日日期</label>
+  <input class="form-control" type="date" name="countdownDate" id="countdownDate">
+  <small>留空只显示节日；日期过了会显示“N 天前”。</small>
+</div>
+<div class="form-group">
+  <label class="form-label" for="fontFamily">字体</label>
+  <select name="fontFamily" id="fontFamily">
+    {% for font_name in available_fonts %}<option value="{{ font_name }}">{{ font_name }}</option>{% endfor %}
+  </select>
+</div>
+<div class="form-group">
+  <label><input type="checkbox" name="forceRefresh" id="forceRefresh"> 下次刷新重新获取日月出没时间</label>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  for (const key of ['countdownTitle', 'countdownDate', 'fontFamily', 'forceRefresh']) {
+    const el = document.getElementById(key);
+    const value = typeof pluginSettings !== 'undefined' ? pluginSettings[key] : undefined;
+    if (value !== undefined) {
+      if (el.type === 'checkbox') el.checked = [true, 'true', 'on', '1'].includes(value);
+      else el.value = value;
+    } else if (key === 'fontFamily') el.value = 'Microsoft YaHei';
+  }
+});
+</script>

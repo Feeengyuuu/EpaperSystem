@@ -419,43 +419,49 @@ class MoonPhase(BasePlugin):
                 draw.point((x, y + 1), fill=color)
 
     def _render_moon_disc(self, diameter, phase_fraction, palette, icon=False):
-        scale = 2
-        size = max(96, int(diameter * scale))
-        radius = size * 0.475
-        center = (size - 1) / 2.0
-        image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-        pixels = image.load()
-        angle = 2.0 * math.pi * phase_fraction
-        sun_x = math.sin(angle)
-        sun_z = -math.cos(angle)
+        return render_moon_disc(diameter, phase_fraction, palette, icon=icon)
 
-        for py in range(size):
-            y = (py - center) / radius
-            y2 = y * y
-            for px in range(size):
-                x = (px - center) / radius
-                r2 = x * x + y2
-                edge = 1.0 - r2
-                if edge <= -0.02:
-                    continue
-                alpha = int(255 * _smoothstep(-0.02, 0.018, edge))
-                z = math.sqrt(max(0.0, 1.0 - r2))
-                lit = _smoothstep(-0.026, 0.038, x * sun_x + z * sun_z)
-                limb = 0.66 + 0.34 * z
-                tone = 0.96 if icon else _surface_tone(x, y)
-                bright = palette["moon_shadow"] + lit * (
-                    palette["moon_light"] * limb * tone - palette["moon_shadow"]
-                )
-                bright = int(max(0, min(255, bright)))
-                pixels[px, py] = (bright, bright, bright, alpha)
+def render_moon_disc(diameter, phase_fraction, palette, icon=False):
+    """The moon ``diameter`` px across at ``phase_fraction`` (0 new, 0.5 full) as RGBA: the lit side
+    in ``palette["moon_light"]``, the dark side in ``palette["moon_shadow"]`` (grey levels), craters
+    and maria unless ``icon``; an icon gets a hairline rim in ``palette["soft_rule"]``."""
+    scale = 2
+    size = max(96, int(diameter * scale))
+    radius = size * 0.475
+    center = (size - 1) / 2.0
+    image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    pixels = image.load()
+    angle = 2.0 * math.pi * phase_fraction
+    sun_x = math.sin(angle)
+    sun_z = -math.cos(angle)
 
-        if icon:
-            # Small phase icons: a hairline rim keeps the dark side readable on both themes.
-            ImageDraw.Draw(image).ellipse(
-                (center - radius, center - radius, center + radius, center + radius),
-                outline=palette["soft_rule"] + (255,), width=max(3, size // 24),
+    for py in range(size):
+        y = (py - center) / radius
+        y2 = y * y
+        for px in range(size):
+            x = (px - center) / radius
+            r2 = x * x + y2
+            edge = 1.0 - r2
+            if edge <= -0.02:
+                continue
+            alpha = int(255 * _smoothstep(-0.02, 0.018, edge))
+            z = math.sqrt(max(0.0, 1.0 - r2))
+            lit = _smoothstep(-0.026, 0.038, x * sun_x + z * sun_z)
+            limb = 0.66 + 0.34 * z
+            tone = 0.96 if icon else _surface_tone(x, y)
+            bright = palette["moon_shadow"] + lit * (
+                palette["moon_light"] * limb * tone - palette["moon_shadow"]
             )
-        return image.resize((diameter, diameter), RESAMPLE_LANCZOS)
+            bright = int(max(0, min(255, bright)))
+            pixels[px, py] = (bright, bright, bright, alpha)
+
+    if icon:
+        # Small phase icons: a hairline rim keeps the dark side readable on both themes.
+        ImageDraw.Draw(image).ellipse(
+            (center - radius, center - radius, center + radius, center + radius),
+            outline=palette["soft_rule"] + (255,), width=max(3, size // 24),
+        )
+    return image.resize((diameter, diameter), RESAMPLE_LANCZOS)
 
 
 def _draw_marker(draw, x, cy, size, up, fill):

@@ -97,10 +97,12 @@ INLINE_PLUGINS = frozenset(
         "literature_clock",
         "money_radar",
         "moon_phase",
+        "morning_read",
         "nature_nearby",
         "simple_calendar",
         "species_radar",
         "tech_play",
+        "time_almanac",
         "world_odds",
     }
 )
