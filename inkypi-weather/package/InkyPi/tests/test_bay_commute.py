@@ -1075,3 +1075,12 @@ def test_bart_rows_set_their_cars_labels_and_rails_in_one_column(monkeypatch):
                                                bart_etd("Berryessa", "ORANGE", "#ff9933", (17, 37), 6)])
     assert rows["Millbrae"][0] == rows["Berryessa"][0]
     assert rows["5节"][0] == rows["6节"][0] >= rows["Berryessa"][0] + rows["Berryessa"][2]
+
+
+def test_bart_note_glyphs_stand_level_with_their_own_lines():
+    """Each note's glyph as tall as its line's letters, with a clear gap to the next note's."""
+    from plugins.bay_commute import command_render
+
+    assert command_render.NOTE_ICON_H <= command_render.NOTE_STEP - 2
+    for kind in command_render.NOTE_ICONS:
+        assert command_render.note_icon(kind, (0, 0, 0)).height == command_render.NOTE_ICON_H

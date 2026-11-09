@@ -55,7 +55,9 @@ NOTE_STEP, ADVISORY_LINES = 12, 2
 # advisory count follows the glyph.
 NOTE_ICONS = {"延误": "delay", "紧急": "emergency", "施工": "maintenance", "公告": "notice", "电梯": "elevator",
               "单车": "bike"}
-NOTE_ICON_H, NOTE_ICON_SLOT = 12, 18
+# 10 px: as tall as the note's letters, so each glyph sits level with its own line (12 px ran
+# into the next line and the glyphs touched).
+NOTE_ICON_H, NOTE_ICON_SLOT = 10, 18
 # The observed water's delta from the prediction reads "as predicted" within this many feet.
 LEVEL_EVEN_FT = 0.1
 # The travel-time sign in the header, between the title and the Caltrans mark: a dark plate like the
@@ -649,6 +651,7 @@ def draw_bart_notes(page, notes, top):
         if label:
             kind, _space, count = label.partition(" ")
             glyph = note_icon(kind, ImageColor.getrgb(page.palette[colour]))
+            # Centred on the line's letters (a 10 px line's ink runs from 1 px under its top).
             page.image.paste(glyph, (512 + (NOTE_ICON_SLOT - glyph.width) // 2, y + 1), glyph)
             if count:
                 page.text((512 + NOTE_ICON_SLOT + 1, y), count, 9, colour)
