@@ -123,4 +123,10 @@ inkypi-weather/package/InkyPi/src/static/images/current_image.png
 # Owner-supplied Motiva Sans (Valve's Steam brand face): source and installed names stay private.
 **/steam-motiva-*.ttf
 **/MotivaSans-*.ttf
+# Owner-supplied tour typefaces (the ATP's Creato Display, the WTA's General Sans): never in the repository.
+**/tennis-atp-*.ttf
+**/tennis-wta-*.ttf
+**/creato*.ttf
+**/creato*.woff2
+**/GeneralSans*
 **/[Bb][Aa][Nn][Kk][Nn][Oo][Tt][Ee] [Rr][Ee][Gg][Uu][Ll][Aa][Rr].[Tt][Tt][Ff]

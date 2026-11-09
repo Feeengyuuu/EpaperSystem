@@ -139,6 +139,22 @@
       "license": "Valve (Steam) brand typeface, not offered for licence"
     },
     {
+      "key": "tennis_atp_medium", "font": "Creato Display Medium", "use": "Sports tennis panel, ATP column text (TTF only)", "kind": "brand",
+      "license": "The ATP Tour's web typeface (atptour.com), not offered for licence"
+    },
+    {
+      "key": "tennis_atp_bold", "font": "Creato Display Bold", "use": "Sports tennis panel, ATP column names and figures (TTF only)", "kind": "brand",
+      "license": "The ATP Tour's web typeface (atptour.com), not offered for licence"
+    },
+    {
+      "key": "tennis_wta_medium", "font": "General Sans Medium", "use": "Sports tennis panel, WTA column text (TTF only)", "kind": "brand",
+      "license": "The WTA's web typeface; Indian Type Foundry Free Font License (from Fontshare)"
+    },
+    {
+      "key": "tennis_wta_semibold", "font": "General Sans Semibold", "use": "Sports tennis panel, WTA column names and figures (TTF only)", "kind": "brand",
+      "license": "The WTA's web typeface; Indian Type Foundry Free Font License (from Fontshare)"
+    },
+    {
       "key": "esports-esl-heading", "font": "ESL Legendary Bold", "use": "ESL event headings", "kind": "brand",
       "license": "ESL FACEIT Group brand typeface, not offered for licence"
     },

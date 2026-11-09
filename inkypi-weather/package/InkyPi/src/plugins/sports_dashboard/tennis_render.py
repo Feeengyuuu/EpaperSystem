@@ -11,6 +11,7 @@ from datetime import datetime
 from .common import *
 from . import tennis, tennis_events
 from .icon_marks import espn_flag_url
+from utils.tennis_font import tour_font
 
 SportsDashboard = None
 
@@ -104,11 +105,11 @@ class TennisRenderMixin:
         place = self._load_local_logo(os.path.join(LOCAL_TEAM_LOGO_DIR, f"{place_key}.png"), PLACE_LOGO,
                                       alpha_threshold=8) if place_key else None
         city = "" if place is not None else event.get("venue") or tournament.get("city") or ""
-        city_font = self._font(9, False)
+        city_font = self._tennis_font(tour, 9)
         if city:
-            city, city_font = self._fit_text_ellipsis(draw, city, (x2 - x1) * VENUE_SHARE, 9, min_size=8)
+            city, city_font = self._tennis_fit(draw, city, (x2 - x1) * VENUE_SHARE, 9, tour, min_size=8)
         city_w = place.width if place is not None else (self._text_width(draw, city, city_font) if city else 0)
-        name, name_font = self._fit_text_ellipsis(draw, name, x2 - x - city_w - 14, 12, bold=True, min_size=9)
+        name, name_font = self._tennis_fit(draw, name, x2 - x - city_w - 14, 12, tour, bold=True, min_size=9)
         self._draw_text_in_box(draw, (x, y1, x2 - city_w - 10, y1 + HEAD_HEIGHT), name, name_font, COLORS["text"])
         if place is not None:
             if place_key not in tennis_events.VENUE_MARKS_IN_COLOUR:
@@ -123,30 +124,30 @@ class TennisRenderMixin:
         block_h = min(block_h, 58)
         for index, match in enumerate(shown):
             top = block_top + index * (block_h + 4)
-            self._draw_tennis_match(image, draw, (x1, top, x2, top + block_h), match, now, accent)
+            self._draw_tennis_match(image, draw, (x1, top, x2, top + block_h), match, now, accent, tour=tour)
 
-    def _draw_tennis_match(self, image, draw, box, match, now, accent):
+    def _draw_tennis_match(self, image, draw, box, match, now, accent, tour=None):
         x1, y1, x2, y2 = [int(value) for value in box]
         live = match.get("state") == "in"
         draw.rounded_rectangle((x1, y1, x2, y2), radius=5, fill=COLORS["panel"],
                                outline=COLORS["red"] if live else COLORS["border"], width=2 if live else 1)
-        label_font = self._font(9, True)
+        label_font = self._tennis_font(tour, 9, True)
         round_label = match.get("round_zh") or match.get("round") or ""
         self._draw_text_in_box(draw, (x1 + 7, y1 + 2, x2 - 80, y1 + 15), round_label, label_font, accent)
         state = match_state_label(match, now)
         if live:
             # The live dot leads its own label ("● 进行中"), right against it.
-            label_left = x2 - 6 - self._text_width(draw, state, self._font(9, True))
+            label_left = x2 - 6 - self._text_width(draw, state, self._tennis_font(tour, 9, True))
             draw.ellipse((label_left - 10, y1 + 5, label_left - 3, y1 + 12), fill=COLORS["red"], outline=COLORS["border"],
                          width=1)
         if match.get("state") == "pre" and state != "待定":
             # A match to come by the page's clock icon and its local start.
-            font = self._font(9, False)
+            font = self._tennis_font(tour, 9)
             width = self._text_width(draw, state, font)
             self._draw_icon_text(draw, "CLOCK", (x2 - 6 - width - 12, y1 + 2, x2 - 4, y1 + 15), state, font, COLORS["muted"],
                                  accent=accent)
         else:
-            self._draw_text_in_box(draw, (x2 - 58, y1 + 2, x2 - 6, y1 + 15), state, self._font(9, live),
+            self._draw_text_in_box(draw, (x2 - 58, y1 + 2, x2 - 6, y1 + 15), state, self._tennis_font(tour, 9, live),
                                    COLORS["red"] if live else COLORS["muted"], align="right")
         players = match.get("players") or []
         sets = max((len(player.get("sets") or []) for player in players), default=0)
@@ -158,7 +159,7 @@ class TennisRenderMixin:
         for index, player in enumerate(players[:2]):
             top = y1 + 16 + index * row_h
             self._draw_tennis_player(image, draw, (x1 + 5, top, x2 - 5 - reserve, top + row_h), player, match, sets,
-                                     face=not faces)
+                                     face=not faces, tour=tour)
         if reserve:
             self._draw_tennis_headshots(image, (x2 - 4 - reserve, y1 + 18, x2 - 3, y2 - 1), faces)
 
@@ -211,7 +212,7 @@ class TennisRenderMixin:
         bust = torso.crop((0, 0, torso.width, int(torso.height * TORSO_BUST_SHARE)))
         return ImageOps.contain(bust, (size, height), Image.LANCZOS)
 
-    def _draw_tennis_player(self, image, draw, box, player, match, sets, *, face=False):
+    def _draw_tennis_player(self, image, draw, box, player, match, sets, *, face=False, tour=None):
         """A player's row: seed, (with ``face``) their headshot standing on the row's foot, flag, name,
         the winner's tick and the set scores."""
         x1, y1, x2, y2 = [int(value) for value in box]
@@ -232,8 +233,8 @@ class TennisRenderMixin:
         sets_w = sets * SET_W
         name_x = flag_x + 23
         name = player.get("name") or "TBD"
-        name, name_font = self._fit_text_ellipsis(draw, name, x2 - sets_w - name_x - 18, 11,
-                                                  bold=not lost, min_size=8)
+        name, name_font = self._tennis_fit(draw, name, x2 - sets_w - name_x - 18, 11, tour,
+                                           bold=not lost, min_size=8)
         self._draw_text_in_box(draw, (name_x, y1, x2 - sets_w - 14, y2), name, name_font,
                                COLORS["muted"] if lost else COLORS["text"])
         if decided and player.get("winner"):
@@ -245,12 +246,36 @@ class TennisRenderMixin:
             won_set = self._tennis_set_won(match, index, player)
             draw.rectangle(cell, fill=COLORS["panel_gold"] if won_set else COLORS["panel"], outline=COLORS["line"], width=1)
             # The tie-break points sit small in the cell's top-right corner, the games left of them.
-            mark_font = self._font(7, False)
+            mark_font = self._tennis_font(tour, 7)
             mark_w = self._text_width(draw, str(tiebreak), mark_font) + 1 if tiebreak is not None else 0
             self._draw_centered_in_box(draw, (cell[0] + 1, cell[1], cell[2] - mark_w, cell[3]),
-                                       str(games), self._font(11, won_set), COLORS["text"] if won_set else COLORS["muted"])
+                                       str(games), self._tennis_font(tour, 11, won_set), COLORS["text"] if won_set else COLORS["muted"])
             if tiebreak is not None:
                 draw.text((cell[2] - mark_w, cell[1]), str(tiebreak), font=mark_font, fill=COLORS["muted"])
+
+    def _tennis_font(self, tour, size, bold=False):
+        """The tour's own typeface (the ATP's Creato Display, the WTA's General Sans) when installed on the
+        device (utils.tennis_font), missing glyphs from the panel's font; else the panel's font."""
+        return tour_font(tour, size, bold, self._font(size, bold))
+
+    def _tennis_fit(self, draw, text, max_width, size, tour, bold=False, min_size=8):
+        """(text, font) in the tour's typeface: the largest size from ``size`` down to ``min_size`` that
+        fits ``max_width``, else ``text`` cut with an ellipsis at ``min_size``."""
+        text, max_width = str(text or ""), max(1, int(max_width))
+        for step in range(int(size), int(min_size) - 1, -1):
+            font = self._tennis_font(tour, step, bold)
+            if self._text_width(draw, text, font) <= max_width:
+                return text, font
+        font = self._tennis_font(tour, min_size, bold)
+        low, high, best = 0, len(text), ""
+        while low <= high:
+            middle = (low + high) // 2
+            candidate = text[:middle].rstrip() + "..."
+            if self._text_width(draw, candidate, font) <= max_width:
+                best, low = candidate, middle + 1
+            else:
+                high = middle - 1
+        return best, font
 
     def _tennis_seed_icon(self, seed, size):
         """A seeded player's mark: a tennis ball in optic yellow, its white seams at the edges, the

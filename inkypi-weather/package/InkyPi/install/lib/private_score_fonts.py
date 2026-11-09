@@ -44,6 +44,15 @@ PURPOSES = {
                       "glyphs": "0123456789$%.,"},
     "steam_bold": {"basename": "steam-motiva-bold.ttf", "family": "Motiva Sans", "style": "Bold",
                    "glyphs": "0123456789$%.,"},
+    # The sports tennis panel in the tours' own type: the ATP's Creato Display, the WTA's General Sans.
+    "tennis_atp_medium": {"basename": "tennis-atp-medium.ttf", "family": "Creato Display", "style": "Medium",
+                          "glyphs": "0123456789/:"},
+    "tennis_atp_bold": {"basename": "tennis-atp-bold.ttf", "family": "Creato Display", "style": "Bold",
+                        "glyphs": "0123456789/:"},
+    "tennis_wta_medium": {"basename": "tennis-wta-medium.ttf", "family": "General Sans", "style": "Medium",
+                          "glyphs": "0123456789/:"},
+    "tennis_wta_semibold": {"basename": "tennis-wta-semibold.ttf", "family": "General Sans", "style": "Semibold",
+                            "glyphs": "0123456789/:"},
 }
 FONT_NAMES = frozenset(
     f"sports-{league}-score.{extension}"
