@@ -266,6 +266,702 @@
         64
       ],
       "sha256": "2386f2b037734062d6fb17547159b751c06aa8cbdc717c6e8720a6d22b22a71b"
+    },
+    "tennis_event_wta_finals": {
+      "source": "https://photoresources.wtatennis.com/photo-resources/2026/10/20/e6caada8-de3a-4b4a-87a9-80c65da20400/Finals-Quick-Link-Tile.png",
+      "page": "https://www.wtatennis.com/tournaments/808/wta-finals/2026",
+      "licence": "The WTA's logo of the FAGE WTA Finals Indian Wells from its own site, shown to name the tournament",
+      "source_sha256": "c21e8da33ababd74e8bf9f42269bd219eb32d2b0c3a55ade8c8d7bd1e9e7e9cd",
+      "processing": "white ground cleared, cropped, 64 px tall",
+      "size": [
+        93,
+        64
+      ],
+      "sha256": "940744988acbdb555be9025b061d403cd76a8149f6da9b354e6f7dd527440c15"
+    },
+    "tennis_event_next_gen_atp_finals": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos-white/next-gen-atp-finals-pif-mono-white_1.png",
+      "page": "https://www.atptour.com/en/tournaments/next-gen-atp-finals/7696/overview",
+      "licence": "The ATP Tour's logo of the Next Gen ATP Finals from its own tournament page, shown to name the tournament",
+      "source_sha256": "dc8fc62423702a9ea102ddea3d1be88c3dcbdea15618c90ee50590b578bde8da",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        112,
+        64
+      ],
+      "sha256": "72e1636b0133385298074caf8c1accce20c4298c375cd3ca106bd85f088f20e6"
+    },
+    "tennis_event_nitto_atp_finals": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos-white/nittoatpfinals_tournlogo_2026_april_white.png",
+      "page": "https://www.atptour.com/en/tournaments/nitto-atp-finals/605/overview",
+      "licence": "The ATP Tour's logo of the Nitto ATP Finals from its own tournament page, shown to name the tournament",
+      "source_sha256": "a627e367e7891f1fe20fe41080bb8d246822fad48fb2bf95bed9b66e7e56238c",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        108,
+        64
+      ],
+      "sha256": "4ccb0dabf576e5382d72a8aeeeb76a74ad01caa64c7cba92f940d28b49176e6b"
+    },
+    "tennis_event_davis_cup_finals": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos-white/daviscup_tournlogo_2026_april_white.png",
+      "page": "https://www.atptour.com/en/tournaments/davis-cup-finals/8099/overview",
+      "licence": "The ATP Tour's logo of the Davis Cup Finals from its own tournament page, shown to name the tournament",
+      "source_sha256": "1eaa56116c7b002aebf3c4803b54363d19feb2ac6c1039269352aa00097a25e7",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        86,
+        64
+      ],
+      "sha256": "0ccb4946bee30d3b585565e2d0ef35a1a354f2774d4310ec8194e3b1a83213ad"
+    },
+    "tennis_event_laver_cup": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/tournlogo_lavercup_v3.png",
+      "page": "https://www.atptour.com/en/tournaments/laver-cup/9210/overview",
+      "licence": "The ATP Tour's logo of the Laver Cup from its own tournament page, shown to name the tournament",
+      "source_sha256": "c514cdc747f570d254fc40e36a0940d27ba5f540e21f9d28256701c4a92e8f63",
+      "processing": "cropped, near-white strokes inked dark, 64 px tall",
+      "size": [
+        138,
+        64
+      ],
+      "sha256": "e916a90a2770ff03521bf09b03788c474d0c981d2ebc10d498d3d4e2685221b3"
+    },
+    "tennis_event_brisbane": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/brisbane_tournlogo_2026.png",
+      "page": "https://www.atptour.com/en/tournaments/brisbane/339/overview",
+      "licence": "The ATP Tour's logo of the Brisbane International presented by ANZ from its own tournament page, shown to name the tournament",
+      "source_sha256": "73d3abb0ffd8416ed403e700fe3f00cf4e1273caaff59d8234b1c9c411224050",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        221,
+        64
+      ],
+      "sha256": "04b5fb329162e0de61df6041d68fab6aa95a93b3489762b2fc270571b60a7c0e"
+    },
+    "tennis_event_hong_kong": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/hong-kong_tournlogo_2024.png",
+      "page": "https://www.atptour.com/en/tournaments/hong-kong/336/overview",
+      "licence": "The ATP Tour's logo of the Bank of China Hong Kong Tennis Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "f67de59eed5217b450bf27d39eea506535ca831fe9ee62cd81772a0ed7052724",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        251,
+        64
+      ],
+      "sha256": "b0446758cfb130bdebf60aba83bcf870981578dc81f3fb62dddcd9262c7548f0"
+    },
+    "tennis_event_adelaide": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/adelaide_tournlogo_2022.png",
+      "page": "https://www.atptour.com/en/tournaments/adelaide/8998/overview",
+      "licence": "The ATP Tour's logo of the Adelaide International from its own tournament page, shown to name the tournament",
+      "source_sha256": "ead9c784a17979c46a47167e0a80c0b0414a2ce347cf74cde8d4e5e11fa984cb",
+      "processing": "cropped, near-white strokes inked dark, 64 px tall",
+      "size": [
+        63,
+        64
+      ],
+      "sha256": "589635618549ae314cea756f3330a48edf238ea75e8edf266b0aff0bd43886c1"
+    },
+    "tennis_event_auckland": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/auckland_tournlogo_2025-july.png",
+      "page": "https://www.atptour.com/en/tournaments/auckland/301/overview",
+      "licence": "The ATP Tour's logo of the ASB Classic from its own tournament page, shown to name the tournament",
+      "source_sha256": "f50921ea7e8de2aa6266eb516e7b80485e5ad160185d29f20ac61795c06892ca",
+      "processing": "cropped, kept as printed on its own dark box, 64 px tall",
+      "size": [
+        52,
+        64
+      ],
+      "sha256": "4bb5e33db8254979fcac9686b000a7ede919a88d25f4d4b9d117f71a93acc5a9"
+    },
+    "tennis_event_montpellier": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/montpellier_tournlogo_2024_october.png",
+      "page": "https://www.atptour.com/en/tournaments/montpellier/375/overview",
+      "licence": "The ATP Tour's logo of the Open Occitanie from its own tournament page, shown to name the tournament",
+      "source_sha256": "5524f89e3468a12f9ba03a386e154b40bfd106c5b5634dab0b1d88064c4bc816",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        246,
+        64
+      ],
+      "sha256": "23236c39a292f8348cb593d87a9cd4abefad1ac2d7cb639974125f8f5cbb8b98"
+    },
+    "tennis_event_dallas": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/dallas_tournlogo_2026.png",
+      "page": "https://www.atptour.com/en/tournaments/dallas/424/overview",
+      "licence": "The ATP Tour's logo of the Nexo Dallas Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "4a80aab4c1fff5e345ee755e1f46c2d2b9951f49dffa7d70435a818bc655215c",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        188,
+        64
+      ],
+      "sha256": "0c46e726444e086494a6a2f56c544cd593e924c4b78011f63f4b85d895a13c58"
+    },
+    "tennis_event_rotterdam": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/rotterdam_tournlogo_2022.png",
+      "page": "https://www.atptour.com/en/tournaments/rotterdam/407/overview",
+      "licence": "The ATP Tour's logo of the ABN AMRO Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "4c5b28510f8b65ccdcd172b19802543314f96c0a0bacae0c370cd8129b94b487",
+      "processing": "cropped, near-white strokes inked dark, 64 px tall",
+      "size": [
+        149,
+        64
+      ],
+      "sha256": "709bab49e93a1a1ff5060eb2fd1bc57a3dee2e6155a3f3c69968c5da49801065"
+    },
+    "tennis_event_buenos_aires": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/buenos-aires_tournlogo_2024.png",
+      "page": "https://www.atptour.com/en/tournaments/buenos-aires/506/overview",
+      "licence": "The ATP Tour's logo of the IEB+ Argentina Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "51998c7ede003346029ebb5d7d88ca3d64673f4a643617270652035984afe256",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        156,
+        64
+      ],
+      "sha256": "8f6aac57a914778898303dbb81fc489e9c97dfd60a1c1c29a6c4b853e78bbff2"
+    },
+    "tennis_event_doha": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos-white/doha_tournlogo_2027.png",
+      "page": "https://www.atptour.com/en/tournaments/doha/451/overview",
+      "licence": "The ATP Tour's logo of the Qatar ExxonMobil Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "58e26c1caa6b5bb085600fd4e73c7a11e138bfa677fd6da035b0b78d3b44e884",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        221,
+        64
+      ],
+      "sha256": "2066a4e61d1ec5cc70e39789f842fc3ec6cc1c0e321b5b417cafaf5d2b754e1b"
+    },
+    "tennis_event_rio_de_janeiro": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/rio_tournlogo_2020.png",
+      "page": "https://www.atptour.com/en/tournaments/rio-de-janeiro/6932/overview",
+      "licence": "The ATP Tour's logo of the Rio Open presented by Claro from its own tournament page, shown to name the tournament",
+      "source_sha256": "e05a1f69dc07515adebc6651cb4b15e1fa4a8bf59974292ec823cb0453aa323e",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        228,
+        64
+      ],
+      "sha256": "813fc69ff84ba6c675d9bf7c476d45fd2adb3e1beca1e8fb3a919d63232f4495"
+    },
+    "tennis_event_delray_beach": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/delray-beach_tournlogo_2022.png",
+      "page": "https://www.atptour.com/en/tournaments/delray-beach/499/overview",
+      "licence": "The ATP Tour's logo of the Delray Beach Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "6f3f33500b321a94cf98d22dd3b22dbca0b456ba21889c54a997c176bc63ed0a",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        105,
+        64
+      ],
+      "sha256": "40e54ccf1699379bd5a55d398e930681706b954bb0ae5d348db95c980122bd63"
+    },
+    "tennis_event_dubai": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos-white/dubai_tournlogo_2026_april_white.png",
+      "page": "https://www.atptour.com/en/tournaments/dubai/495/overview",
+      "licence": "The ATP Tour's logo of the Dubai Duty Free Tennis Championships from its own tournament page, shown to name the tournament",
+      "source_sha256": "40e42d6058c80a378e630ee39c9382db901aa31b9ba66b53979b77f76ed30129",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        51,
+        64
+      ],
+      "sha256": "626f60791debb9ae1ec08ae04cc04f6e077ccc3002c841968d233e8a39f52fb2"
+    },
+    "tennis_event_acapulco": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/acapulco_tournlogo_2026.png",
+      "page": "https://www.atptour.com/en/tournaments/acapulco/807/overview",
+      "licence": "The ATP Tour's logo of the Abierto Mexicano Telcel presentado por HSBC from its own tournament page, shown to name the tournament",
+      "source_sha256": "bf6cec4d0f9ce2daec6466ebd7d4917b2e44824e05f6e40b42cc89143b2a6e37",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        92,
+        64
+      ],
+      "sha256": "e1be018862fb905e7b85a1bedcffc9841673aaa69c9d68a6a86aafb54a2b694a"
+    },
+    "tennis_event_santiago": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/santiago_tournlogo_2025_october.png",
+      "page": "https://www.atptour.com/en/tournaments/santiago/8996/overview",
+      "licence": "The ATP Tour's logo of the BCI Seguros Chile Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "175abf0565f0afc3389ba9d1ddbb4583bd8e95db9fd4266a5f6389beddb95469",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        209,
+        64
+      ],
+      "sha256": "b6fa3903d6afe3bd1f5d6d66c1efdee48835623477adf7dbad44fb6072bd6366"
+    },
+    "tennis_event_indian_wells": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos-white/indianwells_tournlogo_2026_april_white.png",
+      "page": "https://www.atptour.com/en/tournaments/indian-wells/404/overview",
+      "licence": "The ATP Tour's logo of the BNP Paribas Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "f73e82e7ddc2c4933f49010a6a99e24f3e2162519cc38fdb335e8f5139aecc51",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "963b01f3cc0f9fe79cb6666623fd04f0bbe0cced319532d895b2e40c2bca1024"
+    },
+    "tennis_event_miami": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/miami_tournlogo_2024.png",
+      "page": "https://www.atptour.com/en/tournaments/miami/403/overview",
+      "licence": "The ATP Tour's logo of the Miami Open presented by Itau from its own tournament page, shown to name the tournament",
+      "source_sha256": "5cdc386a906bdc0453b50976d46b6aa726165ec7f9278ec6bddfe661d1e64f55",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        115,
+        64
+      ],
+      "sha256": "9d0dd33c9384cd973b0dd3fc4c976cf9b60773733279b093fada7c8dc3454610"
+    },
+    "tennis_event_houston": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos-white/houston.png",
+      "page": "https://www.atptour.com/en/tournaments/houston/717/overview",
+      "licence": "The ATP Tour's logo of the Fayez Sarofim & Co. U.S. Men's Clay Court Championship from its own tournament page, shown to name the tournament",
+      "source_sha256": "51c792bbcb0ee8c5fa851ca46eb13cd8ac1460d9b9b98a9e6c59b8a252e55458",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        129,
+        64
+      ],
+      "sha256": "2262f0e894d694dd148394b17de0d967661cb3872f365b688b22944a8f5046ad"
+    },
+    "tennis_event_marrakech": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos-white/marrakech_tournlogo_2026_april_white.png",
+      "page": "https://www.atptour.com/en/tournaments/marrakech/360/overview",
+      "licence": "The ATP Tour's logo of the Grand Prix Hassan II from its own tournament page, shown to name the tournament",
+      "source_sha256": "ef159317b36eecbb6b813a3419729a9addf7388698f4a80032730505f2546e93",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        38,
+        64
+      ],
+      "sha256": "814b43468ff2a9d2072e4a9de7da6a3a8067c094ba0017389329c5097e7a8d6f"
+    },
+    "tennis_event_bucharest": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/bucharest_tournlogo_2025.png",
+      "page": "https://www.atptour.com/en/tournaments/bucharest/4462/overview",
+      "licence": "The ATP Tour's logo of the Tiriac Open presented by UniCredit Bank from its own tournament page, shown to name the tournament",
+      "source_sha256": "b298e03ef0178ee6167f90eb0caf16e7aea686c1f4467a9df2b1267718ca72e1",
+      "processing": "cropped, near-white strokes inked dark, 64 px tall",
+      "size": [
+        139,
+        64
+      ],
+      "sha256": "99c1f865f76b816b657722b0cb062000f05fe4a9d065d92d9b34baedbdece140"
+    },
+    "tennis_event_monte_carlo": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos-white/monte-carlo_tournlogo_2026_april_white.png",
+      "page": "https://www.atptour.com/en/tournaments/monte-carlo/410/overview",
+      "licence": "The ATP Tour's logo of the Rolex Monte-Carlo Masters from its own tournament page, shown to name the tournament",
+      "source_sha256": "43448ea2627dbc22187c257206aea441d70aa84c4824c17c27a8daa3aed36ff5",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        51,
+        64
+      ],
+      "sha256": "202d9c2a49dd33243faf4757516e35d6bd73c123b1a670f34d01d9a3cd923a65"
+    },
+    "tennis_event_barcelona": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos-white/barcelona_tournlogo_2026_april_white.png",
+      "page": "https://www.atptour.com/en/tournaments/barcelona/425/overview",
+      "licence": "The ATP Tour's logo of the Barcelona Open Banc Sabadell from its own tournament page, shown to name the tournament",
+      "source_sha256": "23e388f013c5146f41186e8b33cd4807dee1687f098444296ec79de8373a5bf0",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        74,
+        64
+      ],
+      "sha256": "7afa3bb06506e812e2659017ff03477f4bd5860baafe693bbd27917f1460913a"
+    },
+    "tennis_event_munich": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/munich_tournlogo_2025.png",
+      "page": "https://www.atptour.com/en/tournaments/munich/308/overview",
+      "licence": "The ATP Tour's logo of the BMW Open by Bitpanda from its own tournament page, shown to name the tournament",
+      "source_sha256": "dbcdaee90d1290d761f8f88541269fd4f0a1125207505927b09d4a9c095f04fc",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        278,
+        64
+      ],
+      "sha256": "66cd4cc85bcb11a98f98fcc92f954df838c2466eaad94b333d225038508245c4"
+    },
+    "tennis_event_madrid": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/madrid_tournlogo_2026.png",
+      "page": "https://www.atptour.com/en/tournaments/madrid/1536/overview",
+      "licence": "The ATP Tour's logo of the Mutua Madrid Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "d1a01435b65728659c5f77499f26d94b27d7b083268dcaf2b9026da4825d87c8",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        65,
+        64
+      ],
+      "sha256": "272cbf6a5ce0cd5946fc926f4264eccf8e0a3b3f7be0a5d1199a697845760e6b"
+    },
+    "tennis_event_rome": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos-white/rome.png",
+      "page": "https://www.atptour.com/en/tournaments/rome/416/overview",
+      "licence": "The ATP Tour's logo of the Internazionali BNL d'Italia from its own tournament page, shown to name the tournament",
+      "source_sha256": "993330ee6d094f56b187a32cd72fe85b5027fd006447acb8d5c7dbee4a83f75e",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        257,
+        64
+      ],
+      "sha256": "b86ba0193e0561e6b09d9b8cfd94ce77e46104aeefad8bb66ff9d680086dd0a6"
+    },
+    "tennis_event_hamburg": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/hamburg_tournlogo_2025_may.png",
+      "page": "https://www.atptour.com/en/tournaments/hamburg/414/overview",
+      "licence": "The ATP Tour's logo of the Bitpanda Hamburg Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "15582d7ff31f00e4df4855253574950126e02b0c226ce8107c2551699a806990",
+      "processing": "cropped, kept as printed on its own dark box, 64 px tall",
+      "size": [
+        145,
+        64
+      ],
+      "sha256": "62fa297fbb436dd721e12145035c0934b6a92c3067d3589f6d87451a5d0582d6"
+    },
+    "tennis_event_geneva": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/geneva_tournlogo_2020_june.png",
+      "page": "https://www.atptour.com/en/tournaments/geneva/322/overview",
+      "licence": "The ATP Tour's logo of the Gonet Geneva Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "2ed1861e22c9ade3191dec24196afecae57332996617240ebd49cb532f6de3be",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        59,
+        64
+      ],
+      "sha256": "b87bdd9685eac84b28fbcc4f1338e00a492678f21dbb82b46ec767bd4247d3a7"
+    },
+    "tennis_event_s_hertogenbosch": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos-white/shertogenbosch_tournlogo_2026_april_white.png",
+      "page": "https://www.atptour.com/en/tournaments/s-hertogenbosch/440/overview",
+      "licence": "The ATP Tour's logo of the Libema Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "578b2928fd45749295e10d6583250c6858203d61f157b96c0c55b7226166df70",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        98,
+        64
+      ],
+      "sha256": "e17c46a491bcd11ce5ca65ef2531408d76b338900ddb2fc888bb4763ae918d1c"
+    },
+    "tennis_event_london": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/london_tournlogo_2025.png",
+      "page": "https://www.atptour.com/en/tournaments/london/311/overview",
+      "licence": "The ATP Tour's logo of the HSBC Championships from its own tournament page, shown to name the tournament",
+      "source_sha256": "4159041aac6feb386aa1a73248b836fb1e8c3c589ed8f98605c048efdbe65d93",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        176,
+        64
+      ],
+      "sha256": "4c53bc7a1f43578938c8b9c013ff9ebcb2c8dbd4c0451b439ae6e23cb75bdeb0"
+    },
+    "tennis_event_halle": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/halle_tournlogo_2025.png",
+      "page": "https://www.atptour.com/en/tournaments/halle/500/overview",
+      "licence": "The ATP Tour's logo of the Terra Wortmann Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "b169200c9cd1adfd5ea3b78f8535ead5fef0809f7d2695b2867f0a9e57beb198",
+      "processing": "cropped, near-white strokes inked dark, 64 px tall",
+      "size": [
+        197,
+        64
+      ],
+      "sha256": "9b26a040eb9a9de7d9d58de7c1ac31710d971cd4bfd8ffcf497ad5757f7bc667"
+    },
+    "tennis_event_mallorca": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/mallorca_tournlogo_2026.png",
+      "page": "https://www.atptour.com/en/tournaments/mallorca/8994/overview",
+      "licence": "The ATP Tour's logo of the Vanda Pharmaceuticals Mallorca Championships from its own tournament page, shown to name the tournament",
+      "source_sha256": "85ad115e52fdcb148441bb53dcab218b01d2aa847b00cdd2b7cb5221c4e4c716",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        264,
+        64
+      ],
+      "sha256": "c6ff42af8ec32cf1a47df229f9c4bba80f8f33991539b2cfb1c21c7c782777b9"
+    },
+    "tennis_event_eastbourne": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/eastbourne_tournlogo_2025.png",
+      "page": "https://www.atptour.com/en/tournaments/eastbourne/741/overview",
+      "licence": "The ATP Tour's logo of the Lexus Eastbourne Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "1d9d037f625daad2992dde6fe767c645a2164630f3a007212ac19dac9772e60c",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        99,
+        64
+      ],
+      "sha256": "337e5fa597f9ca9ebfa74bed8d9638ede6084b11ca0dfb20c84cbe01406c76c4"
+    },
+    "tennis_event_gstaad": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/gstaad_tournlogo_2025.png",
+      "page": "https://www.atptour.com/en/tournaments/gstaad/314/overview",
+      "licence": "The ATP Tour's logo of the EFG Swiss Open Gstaad from its own tournament page, shown to name the tournament",
+      "source_sha256": "84ac09a4bd7a8ab7154a6b94b7af6f1f2dd315d218c0636d266007827c526dc8",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        51,
+        64
+      ],
+      "sha256": "2d993cfc003b8f2c04892f944e3d26afdf9118e3d19e28a63314c5fa07030ebe"
+    },
+    "tennis_event_bastad": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/bastad_tournlogo_2020.png",
+      "page": "https://www.atptour.com/en/tournaments/bastad/316/overview",
+      "licence": "The ATP Tour's logo of the Nordea Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "edda96990405302a235a93c203e47aeff51a66394be2b07b617cdeeabaf0dd16",
+      "processing": "cropped, near-white strokes inked dark, 64 px tall",
+      "size": [
+        52,
+        64
+      ],
+      "sha256": "d045da7b9e4089f4fc1ef5695e1e73acf5055a745b95f54887aeb52d7f570f37"
+    },
+    "tennis_event_umag": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/umag_tournlogo_2026_1.png",
+      "page": "https://www.atptour.com/en/tournaments/umag/439/overview",
+      "licence": "The ATP Tour's logo of the Plava Laguna Croatia Open Umag from its own tournament page, shown to name the tournament",
+      "source_sha256": "a80ffe40e001959737dd4b6f7a1b4892fb170a751db6df90e5faf590b2bca9b3",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        87,
+        64
+      ],
+      "sha256": "79a9a53a930bdc8220cb83b586e81dd3065458f3d3b64dab7710c372f765ee7d"
+    },
+    "tennis_event_kitzbuhel": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/kitzbuhel_tournlogo_2017.png",
+      "page": "https://www.atptour.com/en/tournaments/kitzbuhel/319/overview",
+      "licence": "The ATP Tour's logo of the Generali Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "3a67f0551f5cf88dd3726769d61f11807118f8b8bc42351f91e70a97231a516d",
+      "processing": "cropped, near-white strokes inked dark, 64 px tall",
+      "size": [
+        206,
+        64
+      ],
+      "sha256": "939a9992393b2348d8c229a25e825e2c17b54d1fd804ccf757ce4e69d0dcf8d0"
+    },
+    "tennis_event_estoril": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos-white/estoril_tournlogo_2026_april_white.png",
+      "page": "https://www.atptour.com/en/tournaments/estoril/7290/overview",
+      "licence": "The ATP Tour's logo of the Millennium Estoril Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "18d558ead4b8ac31c19b610b0424ae52bab283f51950346a2ff16d138417a22f",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "897c8b299fa92084c771b68c2fdad3b577ce537e360195939bbf406116019e05"
+    },
+    "tennis_event_washington": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/washington_tournlogo_2026.png",
+      "page": "https://www.atptour.com/en/tournaments/washington/418/overview",
+      "licence": "The ATP Tour's logo of the Mubadala DC Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "33286438342076fb67d4f1d079b1672c3baf72f83cabaf9d479f1430103ff952",
+      "processing": "cropped, near-white strokes inked dark, 64 px tall",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "0a6519927e3640f0ee90044a2ea1be2a210babdb510bd71526a72990332fee3a"
+    },
+    "tennis_event_los_cabos": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/los-cabos_tournlogo_2026_anniversary.png",
+      "page": "https://www.atptour.com/en/tournaments/los-cabos/7480/overview",
+      "licence": "The ATP Tour's logo of the Mifel Tennis Open by Telcel Oppo from its own tournament page, shown to name the tournament",
+      "source_sha256": "5a8fb09c6b087362a8238bb348dfba677571f015a8570f87fe1525f515058462",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        263,
+        64
+      ],
+      "sha256": "4dc9ced6eefbc3dfa3639061d3c0c1521114663cf6c11a80a687eeaf69ba619f"
+    },
+    "tennis_event_montreal": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/montreal_tournlogo_2024.png",
+      "page": "https://www.atptour.com/en/tournaments/montreal/421/overview",
+      "licence": "The ATP Tour's logo of the Omnium Banque Nationale présenté par Rogers from its own tournament page, shown to name the tournament",
+      "source_sha256": "62f1cba36802991118f804e08c5814df233763b4de668c375fe208661fa76a1f",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        154,
+        64
+      ],
+      "sha256": "649c39df6984fd5fbc560c2c95845870950ade7a64b86a39bf81479d4d19b556"
+    },
+    "tennis_event_cincinnati": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos-white/cincinatti-2024.png",
+      "page": "https://www.atptour.com/en/tournaments/cincinnati/422/overview",
+      "licence": "The ATP Tour's logo of the Cincinnati Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "ca751c61301566f506f0146d0ac9e76753f5f881ecae54ca75f1d5276035b496",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        65,
+        64
+      ],
+      "sha256": "8af1a3babe317d1c4c39d0a7355f174fdf4d63d41e6dc401acb6ea07756b2b17"
+    },
+    "tennis_event_winston_salem": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos-white/winston-salem.png",
+      "page": "https://www.atptour.com/en/tournaments/winston-salem/6242/overview",
+      "licence": "The ATP Tour's logo of the Winston-Salem Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "79834d5e1dba280ef0b0a84312c7200f7f21fb700ffd3f2862a5848cad50cf6a",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        135,
+        64
+      ],
+      "sha256": "d5d1e8d3b6de97114817a691bd319eeccaa839bf7f0274753603e04b2679295b"
+    },
+    "tennis_event_chengdu": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/chengdu_tournlogo_2026.png",
+      "page": "https://www.atptour.com/en/tournaments/chengdu/7581/overview",
+      "licence": "The ATP Tour's logo of the Chengdu Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "04112f3e8b67e6030e7d4dd6939dc3995a937cf9af0263488d79ea02ffc701e2",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        210,
+        64
+      ],
+      "sha256": "05935eb45095aed6b35da69587a77bf97b6bfa99843b591b2c1037f02a424edd"
+    },
+    "tennis_event_hangzhou": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/hangzhou_tournlogo_2026_september.png",
+      "page": "https://www.atptour.com/en/tournaments/hangzhou/4713/overview",
+      "licence": "The ATP Tour's logo of the AITO Hangzhou Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "d6dd482728efc9a88848f33ac60b668d578dd1930bc7b6f46bedf35dc459a041",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        164,
+        64
+      ],
+      "sha256": "e85f96d6e52f926dd398d1e2381314425a081aa28b20f0111dbbeab637b65bd0"
+    },
+    "tennis_event_beijing": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos-white/beijing_tournlogo_2026_april_white.png",
+      "page": "https://www.atptour.com/en/tournaments/beijing/747/overview",
+      "licence": "The ATP Tour's logo of the China Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "d6a5bb8674ae3d3ce1b54e9c0886a41aaf7d1f819bf3b4c8e8909ba38aa6c0b5",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        104,
+        64
+      ],
+      "sha256": "1e4dc20deaaa23cc0e053f68fdc17212b801a9a870821e9ee07f79f8c5f48586"
+    },
+    "tennis_event_tokyo": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/tokyo_tournlogo_2023_updated.png",
+      "page": "https://www.atptour.com/en/tournaments/tokyo/329/overview",
+      "licence": "The ATP Tour's logo of the Kinoshita Group Japan Open Tennis Championships from its own tournament page, shown to name the tournament",
+      "source_sha256": "f6fb761dd00ab16ff93105cf26286cbfb9e6c5c51194888beeb526f1c8fb3537",
+      "processing": "cropped, kept as printed on its own dark box, 64 px tall",
+      "size": [
+        128,
+        64
+      ],
+      "sha256": "3caad2e4c70a5df811b2bff71459e4924538f3317860b0cf7340617dacadbd34"
+    },
+    "tennis_event_shanghai": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos-white/shanghai_tournlogo_2026_april_white.png",
+      "page": "https://www.atptour.com/en/tournaments/shanghai/5014/overview",
+      "licence": "The ATP Tour's logo of the Rolex Shanghai Masters from its own tournament page, shown to name the tournament",
+      "source_sha256": "83f2b1340250e6797827d9487d27ff6729cb00110e652aec23e2cd015669070d",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        51,
+        64
+      ],
+      "sha256": "8ae409141802e3873748b2eeae7d466e54debf6af888e15b60dc6ef93ded55b9"
+    },
+    "tennis_event_almaty": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/almaty_tournlogo_2024.png",
+      "page": "https://www.atptour.com/en/tournaments/almaty/9410/overview",
+      "licence": "The ATP Tour's logo of the Almaty Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "73d80bc3ff8944fc38402d30a07d3572470e24c2d49c0be5fa7efccd91111afc",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        162,
+        64
+      ],
+      "sha256": "f1f05415cfdba10d2a1dab4b4d483e004fe0c92b788ab17808f10d575874d631"
+    },
+    "tennis_event_lyon": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos-white/lyon_tournlogo_2026_april_white_v2.png",
+      "page": "https://www.atptour.com/en/tournaments/lyon/496/overview",
+      "licence": "The ATP Tour's logo of the Grand Prix Auvergne-Rhone-Alpes from its own tournament page, shown to name the tournament",
+      "source_sha256": "bf67bb2c334eefb04ebb31edd16bdec8b8cd40083236f97f470b712b159df4d5",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        111,
+        64
+      ],
+      "sha256": "32a835f8efd1929a0d00f7f13c0d30bb31bfcfcc8be600177703de40322252ce"
+    },
+    "tennis_event_brussels": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/brussels_tournlogo_2025_september.png",
+      "page": "https://www.atptour.com/en/tournaments/brussels/7485/overview",
+      "licence": "The ATP Tour's logo of the BNP Paribas Fortis European Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "62787a802cde3598bc6d5028cd0a0b74969801cf19ab70ca7f269dc6aca50f8e",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        220,
+        64
+      ],
+      "sha256": "cb40e1cf2cbf4335738e5a224c5371db0428b77d6cdabf6df8fc43173e13d0d9"
+    },
+    "tennis_event_vienna": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos-white/vienna_tournlogo_2026_april_white.png",
+      "page": "https://www.atptour.com/en/tournaments/vienna/337/overview",
+      "licence": "The ATP Tour's logo of the Erste Bank Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "85dbfcb02f8960e6f37d65cc0905c020113fa877d6f4d217b126ff6c628dca71",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        82,
+        64
+      ],
+      "sha256": "2271be1e05b84e26eab306f9f076d1db3d4b2164ff040ce8404a7e05ab124ae9"
+    },
+    "tennis_event_basel": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/basel_tournlogo_2026.png",
+      "page": "https://www.atptour.com/en/tournaments/basel/328/overview",
+      "licence": "The ATP Tour's logo of the Swiss Indoors Basel from its own tournament page, shown to name the tournament",
+      "source_sha256": "d89faad58e744a2a094b6f981bdd4fc406f95602a932d6875a528fe328c465c8",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        156,
+        64
+      ],
+      "sha256": "485ca7f6e15f65442f6fdc96f47ad45599193ff041b90f9bbad25076be3cd03a"
+    },
+    "tennis_event_paris": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos-white/paris_tournlogo_2026_april_white.png",
+      "page": "https://www.atptour.com/en/tournaments/paris/352/overview",
+      "licence": "The ATP Tour's logo of the Rolex Paris Masters from its own tournament page, shown to name the tournament",
+      "source_sha256": "1dc60011972d8ae16f52066e298ea89c89ed438435eea06ace6d1c034bbe0438",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        51,
+        64
+      ],
+      "sha256": "d1582ceda8a7255cefcedf8c60cf8840616ce6e19df41f0f7a04cc8893e60928"
+    },
+    "tennis_event_stockholm": {
+      "source": "https://www.atptour.com/-/media/images/atp-tournaments/logos/stockholm_tournlogo_2026.png",
+      "page": "https://www.atptour.com/en/tournaments/stockholm/429/overview",
+      "licence": "The ATP Tour's logo of the Bybit Stockholm Open from its own tournament page, shown to name the tournament",
+      "source_sha256": "b97391bea5d2ed5cbdc9f6a62e107bf565577614742593f0cd3a536f38b88e82",
+      "processing": "cropped, served white for dark pages: stored in one dark ink, 64 px tall",
+      "size": [
+        48,
+        64
+      ],
+      "sha256": "4a9d71b82ab36659949f2e4b3226c940c20b849777a094aff3b2e913ef1cd689"
     }
   }
 }

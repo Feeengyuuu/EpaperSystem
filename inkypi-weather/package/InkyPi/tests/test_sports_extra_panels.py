@@ -115,17 +115,19 @@ def test_the_golf_board_shows_places_as_medals_and_countries_as_flags(monkeypatc
 
 
 def test_tournaments_are_named_by_their_official_marks():
+    # A tour-level event by its own logo; one without a bundled logo by the tour's tier stamp.
     paris = {"tour": "ATP", "name": "Rolex Paris Masters"}
-    assert (tennis.tournament_category(paris), tennis.tournament_mark(paris)) == ("1000", "tennis_atp_1000")
-    assert tennis.tournament_mark({"tour": "ATP", "name": "Swiss Indoors Basel"}) == "tennis_atp_500"
+    assert (tennis.tournament_category(paris), tennis.tournament_mark(paris)) == ("1000", "tennis_event_paris")
+    assert tennis.tournament_mark({"tour": "ATP", "name": "Swiss Indoors Basel"}) == "tennis_event_basel"
     assert tennis.tournament_mark({"tour": "ATP", "name": "Moselle Open"}) == "tennis_atp_250"
     assert tennis.tournament_mark({"tour": "WTA", "name": "Australian Open"}) == "tennis_australian_open"
-    # A WTA event carries the WTA's own tier tag; Wimbledon its crest, the ATP Finals their logo.
+    # A WTA event with a brand of its own carries the WTA's tier tag; Wimbledon its crest, the
+    # Finals their own logos.
     hong_kong = {"tour": "WTA", "name": "Prudential Hong Kong Tennis Open"}
     assert (tennis.tournament_category(hong_kong), tennis.tournament_mark(hong_kong)) == ("250", "tennis_wta_250")
     assert tennis.tournament_mark({"tour": "WTA", "name": "Wuhan Open"}) == "tennis_wta_1000"
     assert tennis.tournament_mark({"tour": "WTA", "name": "Wimbledon"}) == "tennis_wimbledon"
-    assert tennis.tournament_mark({"tour": "ATP", "name": "Nitto ATP Finals"}) == "tennis_atp_finals"
+    assert tennis.tournament_mark({"tour": "ATP", "name": "Nitto ATP Finals"}) == "tennis_event_nitto_atp_finals"
     assert tennis.tournament_mark({"tour": "WTA", "name": "WTA Finals Riyadh"}) is None
     # The place by its own logo: the host city's where ESPN names only the city, else the venue's.
     assert tennis.place_mark({"city": "Paris"}) == "tennis_place_paris"
@@ -139,6 +141,72 @@ def test_tournaments_are_named_by_their_official_marks():
                 "tennis_wta_250", "motogp_ducati", "motogp_ktm", "motogp_aprilia", "motogp_honda", "motogp_yamaha",
                 "tennis_place_paris", "tennis_place_indian_wells", "tennis_place_inalpi_arena"):
         assert (Path(LOCAL_TEAM_LOGO_DIR) / f"{key}.png").is_file(), key
+
+
+def test_each_tour_level_event_finds_its_own_mark_and_venue():
+    from plugins.sports_dashboard import tennis_events
+
+    def event(tour, name, place=""):
+        return tennis_events.event_for({"tour": tour, "name": name, "place": place})
+
+    stockholm = event("ATP", "Bybit Stockholm Open", "Stockholm, Sweden")
+    assert (stockholm["mark"], stockholm["venue"]) == ("tennis_event_stockholm", "Kungliga tennishallen")
+    # The WTA Finals at Indian Wells by their own logo, before Indian Wells' own row matches the place.
+    finals = event("WTA", "FAGE WTA Finals Indian Wells", "Indian Wells Tennis Garden, Indian Wells, USA")
+    assert finals["mark"] == "tennis_event_wta_finals"
+    assert event("WTA", "WTA Finals Riyadh", "Riyadh, Saudi Arabia") is None
+    assert event("ATP", "Next Gen ATP Finals")["mark"] == "tennis_event_next_gen_atp_finals"
+    # A combined event's WTA draw shares the ATP logo; a same-city event with its own brand does not.
+    assert event("WTA", "Mutua Madrid Open", "Madrid, Spain")["mark"] == "tennis_event_madrid"
+    assert event("ATP", "Qatar ExxonMobil Open", "Doha, Qatar")["mark"] == "tennis_event_doha"
+    doha = event("WTA", "Qatar TotalEnergies Open", "Doha, Qatar")
+    assert (doha["mark"], doha["venue"]) == (None, "Khalifa Tennis Complex")
+    assert tennis.tournament_mark({"tour": "WTA", "name": "Qatar TotalEnergies Open"}) == "tennis_wta_1000"
+    # A Grand Slam keeps its crest and names its grounds; an unknown event finds nothing.
+    assert event("ATP", "Australian Open", "Melbourne, Australia")["venue"] == "Melbourne Park"
+    assert tennis.tournament_mark({"tour": "ATP", "name": "Australian Open"}) == "tennis_australian_open"
+    assert event("ATP", "Moselle Open", "Metz, France") is None
+
+
+def test_every_event_mark_is_bundled_with_its_source():
+    import hashlib
+    import json
+
+    from plugins.sports_dashboard import tennis_events
+    from plugins.sports_dashboard.common import LOCAL_TEAM_LOGO_DIR
+
+    logos = Path(LOCAL_TEAM_LOGO_DIR)
+    records = json.loads((logos / "logos.source.json").read_text(encoding="utf-8"))["logos"]
+    keys = tennis_events.mark_keys()
+    boxed = {f"tennis_event_{key}" for key, _tours, _pattern, _venue, ink in tennis_events.EVENTS if ink == "boxed"}
+    assert len(keys) >= 55 and len(set(keys)) == len(keys)
+    for key in keys:
+        path = logos / f"{key}.png"
+        with Image.open(path) as mark:
+            assert mark.mode == "RGBA" and mark.height == 64, key
+            # Each mark stands on transparency, but for one printed on its own box.
+            assert key in boxed or mark.getchannel("A").getextrema()[0] == 0, key
+        record = records[key]
+        assert record["source"].startswith("https://") and record["page"].startswith("https://"), key
+        assert record["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest(), key
+
+
+def test_the_tennis_header_shows_the_events_mark_and_its_venue(monkeypatch):
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    tournament = {"tour": "ATP", "name": "Bybit Stockholm Open", "city": "Stockholm", "place": "Stockholm, Sweden",
+                  "name_zh": ""}
+    pasted = []
+    original = plugin._load_local_logo
+    monkeypatch.setattr(plugin, "_load_local_logo", lambda path, *args, **kwargs: pasted.append(Path(path).stem)
+                        or original(path, *args, **kwargs))
+    drawn = []
+    image = _render(plugin, "_draw_tennis_panel", {"sport": "TENNIS", "status": "NEXT",
+                                                   "tours": {"ATP": {"tournament": tournament, "shown": []}}},
+                    feeds.NOW, DAY_COLORS, monkeypatch, drawn)
+
+    assert "tennis_event_stockholm" in pasted and "tennis_atp_250" not in pasted
+    assert "Bybit Stockholm Open" in drawn and "Kungliga tennishallen" in drawn and "Stockholm" not in drawn
+    assert image.getbbox() is not None
 
 
 def test_each_rider_carries_his_manufacturers_mark():

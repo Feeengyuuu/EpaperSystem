@@ -16,13 +16,14 @@ from datetime import datetime, timedelta, timezone
 
 from runtime.refresh_contracts import TaskCancelled
 
-from . import event_ranking, extra_feeds, tennis_photos
+from . import event_ranking, extra_feeds, tennis_events, tennis_photos
 
 logger = logging.getLogger(__name__)
 SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/tennis/{tour}/scoreboard"
 HEADSHOT_URL = "https://a.espncdn.com/i/headshots/tennis/players/full/{id}.png"
 TOURS = ("ATP", "WTA")
-VERSION = "tennis-scoreboard-v1"
+# v2: each tournament keeps ESPN's whole place line ("place"), which finds its own mark and venue.
+VERSION = "tennis-scoreboard-v2"
 MAX_BYTES = 1536 * 1024
 TTL_SECONDS = 30 * 60
 MATCHES_KEPT = 16
@@ -88,12 +89,16 @@ def tournament_category(tournament):
 
 
 def tournament_mark(tournament):
-    """The bundled official mark naming the tournament: a Grand Slam's logo, the ATP Finals' logo, or
-    the tour's tier stamp or tag (tennis_atp_1000 / tennis_wta_250 ...); None for the WTA Finals."""
+    """The bundled official mark naming the tournament: a Grand Slam's logo, else the event's own logo
+    (tennis_events), else the ATP Finals' logo or the tour's tier stamp or tag (tennis_atp_1000 /
+    tennis_wta_250 ...); None for a WTA Finals without its own."""
     category = tournament_category(tournament)
     tour = "wta" if (tournament or {}).get("tour") == "WTA" else "atp"
     if category in MARKS:
         return f"tennis_{category}"
+    event = tennis_events.event_for(tournament)
+    if event and event["mark"]:
+        return event["mark"]
     if category == "finals":
         return "tennis_atp_finals" if tour == "atp" else None
     return f"tennis_{tour}_{category}"
@@ -176,6 +181,7 @@ def parse_scoreboard(payload, tour):
         venue = raw.get("venue") if isinstance(raw.get("venue"), dict) else {}
         tournament = {"id": str(raw.get("id") or ""), "tour": tour, "name": str(raw.get("name") or "")[:60],
                       "city": str(venue.get("displayName") or "").split(",")[0].strip()[:30],
+                      "place": str(venue.get("displayName") or "").strip()[:80],
                       "start": str(raw.get("date") or ""), "end": str(raw.get("endDate") or ""),
                       "major": bool(raw.get("major")), "matches": matches[-MATCHES_KEPT:]}
         tournament["name_zh"] = tournament_zh(tournament["name"])

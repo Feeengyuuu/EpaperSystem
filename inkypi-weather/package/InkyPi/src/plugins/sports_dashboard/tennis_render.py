@@ -9,7 +9,7 @@ round and state, and each player's seed as a medal disc, flag icon, name and set
 from datetime import datetime
 
 from .common import *
-from . import tennis
+from . import tennis, tennis_events
 from .icon_marks import espn_flag_url
 
 SportsDashboard = None
@@ -26,8 +26,10 @@ TORSO_BUST_SHARE = 0.5
 WIKI_HEAD_SHARE = 0.62
 # A match under way or played shows each player's face in its row, in this slot after the seed.
 ROW_FACE_W = 24
-# The place beside the tournament's name, by its logo (tennis.place_mark), in this box at most.
+# The place beside the tournament's name, by its logo (tennis.place_mark), in this box at most;
+# a venue named in words takes at most this share of the header.
 PLACE_LOGO = (72, 14)
+VENUE_SHARE = 0.36
 
 
 def match_state_label(match, now):
@@ -64,14 +66,18 @@ class TennisRenderMixin:
         x1, y1, x2, y2 = [int(value) for value in box]
         tournament = entry.get("tournament") or {}
         self._draw_hub_card_shell(draw, x1, y1, x2, y1 + HEAD_HEIGHT, accent)
-        # The tournament by its official mark: a Grand Slam's logo or the ATP's tier stamp; a WTA
-        # event by the tour's wordmark and its tier as a badge.
+        # The tournament by its official mark: a Grand Slam's logo, else the event's own logo
+        # (tennis_events), else the ATP's tier stamp or the WTA's tier tag; a WTA event without either
+        # by the tour's wordmark and its tier as a badge.
         key = tennis.tournament_mark(tournament)
+        event = tennis_events.event_for(tournament) or {}
         path = os.path.join(LOCAL_TEAM_LOGO_DIR, f"{key}.png") if key else TOUR_MARKS[tour]
         mark = self._load_local_logo(path, (66, 20) if key else (40, 14), alpha_threshold=8)
         x = x1 + 8
         if mark:
-            mark = SportsDashboard._night_inked_mark(mark)
+            # A logo printed on its own dark box keeps its colours by night (its letters are white).
+            if not (key == event.get("mark") and event.get("ink") == "boxed"):
+                mark = SportsDashboard._night_inked_mark(mark)
             image.paste(mark, (x, y1 + (HEAD_HEIGHT - mark.height) // 2), mark)
             x += mark.width + 6
         category = tennis.tournament_category(tournament)
@@ -84,12 +90,15 @@ class TennisRenderMixin:
                                        (255, 255, 255))
             x += badge_w + 6
         name = tournament.get("name_zh") or tournament.get("name") or tour
-        # The place by its official logo (the host city's or the venue's), its name only without one.
+        # The place by its official logo (the host city's or the venue's), else the venue by name
+        # (tennis_events), else the city ESPN gives.
         place_key = tennis.place_mark(tournament)
         place = self._load_local_logo(os.path.join(LOCAL_TEAM_LOGO_DIR, f"{place_key}.png"), PLACE_LOGO,
                                       alpha_threshold=8) if place_key else None
-        city = "" if place is not None else tournament.get("city") or ""
+        city = "" if place is not None else event.get("venue") or tournament.get("city") or ""
         city_font = self._font(9, False)
+        if city:
+            city, city_font = self._fit_text_ellipsis(draw, city, (x2 - x1) * VENUE_SHARE, 9, min_size=8)
         city_w = place.width if place is not None else (self._text_width(draw, city, city_font) if city else 0)
         name, name_font = self._fit_text_ellipsis(draw, name, x2 - x - city_w - 14, 12, bold=True, min_size=9)
         self._draw_text_in_box(draw, (x, y1, x2 - city_w - 10, y1 + HEAD_HEIGHT), name, name_font, COLORS["text"])
