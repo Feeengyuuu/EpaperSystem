@@ -60,6 +60,52 @@ def test_white_letters_on_a_dark_ground_are_the_logo_not_a_plate():
     assert sum(1 for pixel in peeled.get_flattened_data() if pixel[3] > 200 and min(pixel[:3]) > 200) > 200
 
 
+def test_a_studio_without_a_clan_is_matched_on_wikidata_by_name_and_trade():
+    found = {"search": [
+        {"id": "Q47090375", "label": "Valve", "match": {"text": "Valve"}, "description": "family name"},
+        {"id": "Q193559", "label": "Valve Corporation", "match": {"text": "Valve Corporation"},
+         "description": "American video game development and digital distribution company"},
+    ]}
+    # The family name has the name but not the trade; the company has both, its legal form aside.
+    assert steam_studios.studio_entity(found, "Valve") == "Q193559"
+    assert steam_studios.name_key("miHoYo Co., Ltd.") == steam_studios.name_key("miHoYo") == "mihoyo"
+    assert steam_studios.name_key("Infinity Ward®") == "infinityward" and steam_studios.name_key("Co") == "co"
+    assert steam_studios.studio_entity(found, "Bunnyhop") == "" and steam_studios.studio_entity({}, "Valve") == ""
+    assert steam_studios.studio_search("起源工作室")["language"] == "zh"
+    assert steam_studios.studio_search("Infinity Ward")["language"] == "en"
+
+
+def test_the_square_logo_claim_comes_first_and_commons_serves_it_as_a_png():
+    def claim(value, rank="normal"):
+        return {"rank": rank, "mainsnak": {"datavalue": {"value": value}}}
+
+    answer = {"claims": {"P154": [claim("Wide logo.svg")],
+                         "P8972": [claim("Old icon.png", "deprecated"), claim("Icon.png")]}}
+    assert steam_studios.logo_file(answer) == "Icon.png"
+    answer["claims"]["P8972"] = []
+    assert steam_studios.logo_file(answer) == "Wide logo.svg" and steam_studios.logo_file({}) == ""
+    assert steam_studios.logo_file({"claims": {"P154": [claim("Logo.svg", "normal"), claim("Logo 2024.svg", "preferred")]}}) \
+        == "Logo 2024.svg"
+    assert steam_studios.claims_query("Q1", "P154") == {"action": "wbgetclaims", "entity": "Q1", "property": "P154",
+                                                        "format": "json"}
+    svg = steam_studios.commons_urls("Infinity Ward.svg")
+    assert svg == ["https://upload.wikimedia.org/wikipedia/commons/thumb/1/1d/Infinity_Ward.svg/250px-Infinity_Ward.svg.png"]
+    png = steam_studios.commons_urls("Icon.png")
+    assert png[0].endswith("/250px-Icon.png") and png[1].endswith("/Icon.png") and "thumb" not in png[1]
+
+
+def test_an_official_logo_is_cut_to_its_mark_and_a_picture_is_not_one():
+    wordmark = Image.new("RGBA", (500, 140), (0, 0, 0, 0))
+    ImageDraw.Draw(wordmark).rectangle((40, 40, 459, 99), fill=(10, 10, 10, 255))
+    mark = steam_studios.official_mark(wordmark)
+    assert mark.size == (336, 48)  # cropped to the drawing (420 x 60), then 48 px tall at most
+    boxed = Image.new("RGB", (300, 100), (255, 255, 255))
+    ImageDraw.Draw(boxed).rectangle((50, 30, 249, 69), fill=(200, 20, 20))
+    assert steam_studios.official_mark(boxed).getpixel((0, 0))[:3] == (200, 20, 20)  # off its white ground
+    photo = Image.linear_gradient("L").convert("RGB").resize((96, 96))
+    assert steam_studios.official_mark(photo) is None
+
+
 def test_a_cut_out_that_crumbles_into_specks_does_not_read():
     solid = Image.new("RGBA", (30, 11), (0, 0, 0, 0))
     ImageDraw.Draw(solid).rectangle((0, 0, 29, 10), fill=(200, 30, 30, 255))

@@ -75,6 +75,11 @@ STUDIO_LOGO_SIZE = 48
 MAX_STUDIO_PAGE_BYTES = 512 * 1024
 MAX_STUDIOS = 300
 MAX_NEW_STUDIO_LOGOS = 4
+# A studio Steam names no creator clan for: its official logo from Wikidata and Commons
+# (steam_studios), the only hosts besides Steam's this plugin reads.
+WIKIMEDIA_HOSTS = ("www.wikidata.org", "upload.wikimedia.org")
+MAX_WIKI_JSON_BYTES = 128 * 1024
+MAX_WIKI_LOGO_BYTES = 2 * 1024 * 1024
 # Steam Deck compatibility categories worth a word.
 DECK_LABELS = {3: "Steam Deck 已验证", 2: "Steam Deck 可玩"}
 # Simplified Chinese (Steam's language 6) as the store lists it: full audio, subtitles, the
@@ -1338,15 +1343,28 @@ class SteamDailyArt(BasePlugin):
             details = self._store_details(appids, settings)
             self._tag_names()
             self._blurbs(details, allow_generate=True)
-            # A few new studios' logos per refill; the rest come with later ones.
+            # A few new studios' logos per refill; the rest come with later ones. A developer
+            # without a creator clan avatar, and the publisher, have their official logos looked
+            # up on Wikidata.
             fetched = 0
-            for facts in details.values():
+
+            def room():
                 deadline = getattr(self, "_active_data_deadline", None)
-                if fetched >= MAX_NEW_STUDIO_LOGOS or (deadline is not None and deadline - time.monotonic() < 15):
+                return fetched < MAX_NEW_STUDIO_LOGOS and (deadline is None or deadline - time.monotonic() >= 15)
+
+            for facts in details.values():
+                if not room():
                     break
-                if facts.get("developer_clan") and self._studio_logo(facts["developer_clan"], fetch=False) is None:
-                    fetched += 1
-                    self._studio_logo(facts["developer_clan"])
+                clan, avatar = facts.get("developer_clan"), None
+                if clan:
+                    avatar = self._studio_logo(clan, fetch=False)
+                    if avatar is None and self._studio_clan_due(clan):
+                        fetched += 1
+                        avatar = self._studio_logo(clan)
+                for name in ([facts.get("developer")] if avatar is None else []) + [facts.get("publisher")]:
+                    if name and room() and self._studio_wiki_due(name):
+                        fetched += 1
+                        self._studio_wiki_logo(name)
 
     def _shelf_info(self, item, settings):
         """What the shelf says about this game, or None without its store facts."""
@@ -1359,6 +1377,14 @@ class SteamDailyArt(BasePlugin):
         names = self._tag_names()
         now = self._shelf_now()
         language = ZH_LANGUAGE_LABELS.get(facts.get("zh_language") or "")
+        developer, publisher = facts.get("developer") or "", facts.get("publisher") or ""
+        logo = self._studio_logo(facts.get("developer_clan")) if developer else None
+        # Without a clan avatar, the developer's official logo as kept (looked up while refilling),
+        # and the publisher's; a logo that spells out the name stands for it in the credit.
+        made = self._studio_wiki_logo(developer, fetch=False) if logo is None and developer else None
+        sold = self._studio_wiki_logo(publisher, fetch=False) if publisher else None
+        made_named = made is not None and info_shelf.names_the_studio(made)
+        sold_named = sold is not None and info_shelf.names_the_studio(sold)
         return {
             # Whether it speaks Simplified Chinese, then the Steam Deck's verdict with Steam's own mark,
             # follow the reasons while there is room.
@@ -1371,17 +1397,18 @@ class SteamDailyArt(BasePlugin):
             "tags": [names[tag] for tag in facts.get("tags") or [] if tag in names][:4],
             # In reading order, each with how readily it gives way when the row is short.
             "credit": [
-                (text, give)
-                for text, give in (
-                    (facts.get("developer"), 0),
-                    (f"{facts['publisher']} 发行" if facts.get("publisher") else "", 3),
-                    (self._release_label(facts, now), 2),
-                    (self._review_label(facts), 1),
-                    (self._zh_review_label(facts), 1),
+                (text, give, mark)
+                for text, give, mark in (
+                    ("" if made_named else developer, 0, made),
+                    # With its official logo the publisher outlasts the release year.
+                    (("发行" if sold_named else f"{publisher} 发行") if publisher else "", 3 if sold is None else 2, sold),
+                    (self._release_label(facts, now), 2, None),
+                    (self._review_label(facts), 1, None),
+                    (self._zh_review_label(facts), 1, None),
                 )
-                if text
+                if text or mark is not None
             ],
-            "studio_logo": self._studio_logo(facts.get("developer_clan")) if facts.get("developer") else None,
+            "studio_logo": logo,
         }
 
     def _studio_logo_path(self, clan):
@@ -1419,12 +1446,91 @@ class SteamDailyArt(BasePlugin):
         except Exception as exc:
             logger.warning("Steam studio logo lookup failed: %s", type(exc).__name__)
             return self._open_studio_logo(path) if path.is_file() else None
+        self._keep_studio(clan, {"at": time.time(), "url": url})
+        return self._open_studio_logo(path) if url else None
+
+    def _studio_clan_due(self, clan):
+        """Whether the clan's avatar has not been looked up within STUDIO_LOGO_TTL."""
+        studios = self._read_shelf_cache().get("studios")
+        entry = studios.get(str(clan)) if isinstance(studios, dict) else None
+        return not (isinstance(entry, dict) and time.time() - float(entry.get("at") or 0) < STUDIO_LOGO_TTL)
+
+    def _keep_studio(self, key, entry):
         cache = self._read_shelf_cache()
         studios = cache.get("studios") if isinstance(cache.get("studios"), dict) else {}
-        studios[clan] = {"at": time.time(), "url": url}
+        studios[key] = entry
         cache["studios"] = dict(sorted(studios.items(), key=lambda pair: float(pair[1].get("at") or 0))[-MAX_STUDIOS:])
         self._write_shelf_cache(cache)
-        return self._open_studio_logo(path) if url else None
+
+    def _wiki_studio_entry(self, name):
+        key = steam_studios.name_key(name)
+        studios = self._read_shelf_cache().get("studios")
+        entry = studios.get(f"wiki:{key}") if key and isinstance(studios, dict) else None
+        return f"wiki:{key}" if key else "", entry if isinstance(entry, dict) else None
+
+    def _studio_wiki_due(self, name):
+        """Whether the studio's official logo has not been looked up within STUDIO_LOGO_TTL."""
+        key, entry = self._wiki_studio_entry(name)
+        return bool(key) and not (entry and time.time() - float(entry.get("at") or 0) < STUDIO_LOGO_TTL)
+
+    def _open_wiki_logo(self, entry):
+        file_name = str((entry or {}).get("file") or "")
+        if not re.fullmatch(r"wiki-Q\d+\.png", file_name):
+            return None
+        try:
+            return safe_open_image(str(Path(self._cache_dir()) / "studio-logos" / file_name)).convert("RGBA")
+        except (OSError, ValueError):
+            return None
+
+    def _studio_wiki_logo(self, name, fetch=True):
+        """The official logo (RGBA, at most 48 px tall) of a studio Steam names no creator clan
+        for: Wikidata's game studio of that name and its logo on Commons, kept for
+        STUDIO_LOGO_TTL (a studio without one too); None without one. ``fetch`` False answers
+        from what is kept alone."""
+        key, entry = self._wiki_studio_entry(name)
+        if not key:
+            return None
+        if not fetch or not self._studio_wiki_due(name):
+            return self._open_wiki_logo(entry)
+        file_name = ""
+        try:
+            found = json.loads(self._fetch_bytes(f"{steam_studios.WIKIDATA_API}?{urlencode(steam_studios.studio_search(name))}",
+                                                 label="studio search", max_bytes=MAX_WIKI_JSON_BYTES, kind="wiki"))
+            qid = steam_studios.studio_entity(found, name)
+            logo_name = ""
+            for prop in steam_studios.LOGO_CLAIMS if qid else ():
+                query = urlencode(steam_studios.claims_query(qid, prop))
+                logo_name = steam_studios.logo_file(json.loads(self._fetch_bytes(
+                    f"{steam_studios.WIKIDATA_API}?{query}", label="studio claims", max_bytes=MAX_WIKI_JSON_BYTES, kind="wiki")))
+                if logo_name:
+                    break
+            mark, read = None, False
+            for url in steam_studios.commons_urls(logo_name):
+                try:
+                    payload = self._fetch_bytes(url, label="studio logo", max_bytes=MAX_WIKI_LOGO_BYTES, kind="wiki")
+                except TaskCancelled:
+                    raise
+                except Exception:  # noqa: BLE001 - a picture narrower than the thumbnail is read whole next.
+                    continue
+                art = safe_open_image(BytesIO(payload), limits=ImageLimits(max_bytes=MAX_WIKI_LOGO_BYTES, max_width=4096,
+                                                                           max_height=4096, max_pixels=8_000_000))
+                read, mark = True, steam_studios.official_mark(art, height=STUDIO_LOGO_SIZE)
+                break
+            if mark is not None:
+                file_name = f"wiki-{qid}.png"
+                path = Path(self._cache_dir()) / "studio-logos" / file_name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                mark.save(path)
+            elif logo_name and not read:
+                # The logo was named but Commons did not answer: asked for again on a later refill.
+                raise RuntimeError("studio logo unreadable")
+        except TaskCancelled:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the studio's name stands alone until a later refill.
+            logger.warning("Studio logo lookup on Wikidata failed: %s", type(exc).__name__)
+            return self._open_wiki_logo(entry)
+        self._keep_studio(key, {"at": time.time(), "file": file_name})
+        return self._open_wiki_logo({"file": file_name})
 
     def _shelf_now(self):
         device_config = getattr(self, "_active_device_config", None)
@@ -1533,14 +1639,16 @@ class SteamDailyArt(BasePlugin):
             raise RuntimeError(f"Steam {label} response has an invalid shape")
         return value
 
-    def _fetch_bytes(self, url, *, label, max_bytes):
-        """A Steam store, API or community page's body within ``max_bytes``."""
+    def _fetch_bytes(self, url, *, label, max_bytes, kind="json"):
+        """A Steam store, API or community page's body within ``max_bytes``; with ``kind`` "wiki",
+        a Wikidata answer or Commons file (WIKIMEDIA_HOSTS) instead."""
         deadline = getattr(self, "_active_data_deadline", None)
         approved = get_ssrf_policy().resolve_and_validate(url)
-        self._validate_steam_target(approved, kind="json")
+        self._validate_steam_target(approved, kind=kind)
+        agent = steam_studios.WIKIMEDIA_AGENT if kind == "wiki" else "InkyPi SteamDailyArt/1.0"
         response = self._request_approved_target(
             approved,
-            headers={"Accept": "application/json", "User-Agent": "InkyPi SteamDailyArt/1.0"},
+            headers={"Accept": "application/json" if kind == "json" else "*/*", "User-Agent": agent},
             timeout=20,
             deadline=deadline,
         )
@@ -1933,7 +2041,7 @@ class SteamDailyArt(BasePlugin):
 
     def _request_approved_target(self, approved, *, headers, timeout, deadline):
         hostname = str(getattr(approved, "hostname", "") or "").lower().rstrip(".")
-        kind = "json" if hostname in STEAM_JSON_HOSTS else "media"
+        kind = "json" if hostname in STEAM_JSON_HOSTS else "wiki" if hostname in WIKIMEDIA_HOSTS else "media"
         self._validate_steam_target(approved, kind=kind)
         return _PinnedHTTPSResponse.open(
             approved,
@@ -1950,6 +2058,8 @@ class SteamDailyArt(BasePlugin):
         hostname = str(getattr(approved, "hostname", "") or "").lower().rstrip(".")
         if kind == "json":
             allowed = hostname in STEAM_JSON_HOSTS
+        elif kind == "wiki":
+            allowed = hostname in WIKIMEDIA_HOSTS
         else:
             allowed = any(hostname == suffix or hostname.endswith(f".{suffix}") for suffix in STEAM_MEDIA_HOST_SUFFIXES)
         if not allowed:

@@ -1,8 +1,10 @@
 from datetime import datetime
+import io
 import json
 import logging
 from pathlib import Path
 import sys
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -2005,7 +2007,7 @@ def test_shelf_info_gives_the_reasons_price_tags_and_credit(tmp_path, monkeypatc
     assert info["reasons"] == [("wishlist", "愿望单特惠"), ("new", "今日发售"), ("top_seller", "热销")]
     assert info["price"] == {"discount": 30, "final": "$4.89", "original": "$6.99"}
     assert info["line"] == "一款方块战争游戏" and info["tags"] == ["策略", "单人"]
-    assert info["credit"] == [("Loop Forge", 0), ("今日发售", 2), ("特别好评 93%", 1)]
+    assert info["credit"] == [("Loop Forge", 0, None), ("今日发售", 2, None), ("特别好评 93%", 1, None)]
     assert info["studio_logo"] is None
     assert plugin._shelf_info(item, {"infoShelf": "off"}) is None
     verified = {**facts, "deck": 3}
@@ -2186,6 +2188,112 @@ def test_studio_logo_is_the_clans_avatar_fetched_once_and_kept(tmp_path, monkeyp
     assert plugin._studio_logo("") is None and plugin._studio_logo("0") is None
 
 
+def _wiki_answers(calls, *, logo=True):
+    """Wikidata and Commons as the plugin reads them: Infinity Ward found with its logo."""
+    wordmark = Image.new("RGBA", (250, 46), (0, 0, 0, 0))
+    ImageDraw.Draw(wordmark).rectangle((4, 8, 245, 38), fill=(12, 12, 12, 255))
+    png = io.BytesIO()
+    wordmark.save(png, "PNG")
+
+    def fetch(url, *, label, max_bytes, kind="json"):
+        calls.append((label, kind))
+        if "wbsearchentities" in url:
+            return json.dumps({"search": [{"id": "Q731482", "label": "Infinity Ward", "match": {"text": "Infinity Ward"},
+                                           "description": "American video game developer"}]}).encode()
+        if "wbgetclaims" in url:
+            claims = ({"P154": [{"rank": "normal", "mainsnak": {"datavalue": {"value": "Infinity Ward.svg"}}}]}
+                      if logo and "property=P154" in url else {})
+            return json.dumps({"claims": claims}).encode()
+        assert url.startswith("https://upload.wikimedia.org/wikipedia/commons/thumb/")
+        return png.getvalue()
+
+    return fetch
+
+
+def test_a_studio_without_a_clan_has_its_official_logo_from_wikidata_once(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(plugin, "_fetch_bytes", _wiki_answers(calls))
+
+    assert plugin._studio_wiki_due("Infinity Ward")
+    assert plugin._studio_wiki_logo("Infinity Ward", fetch=False) is None  # nothing kept yet: no lookup
+    logo = plugin._studio_wiki_logo("Infinity Ward")
+    again = plugin._studio_wiki_logo("Infinity Ward")
+
+    assert logo.mode == "RGBA" and logo.size == (242, 31) and info_shelf.names_the_studio(logo)  # cropped, not enlarged
+    assert again.size == logo.size and not plugin._studio_wiki_due("Infinity Ward")
+    # The square logo claims first (none here), then the logo image, then its file.
+    assert calls == [("studio search", "wiki")] + [("studio claims", "wiki")] * 3 + [("studio logo", "wiki")]
+    # A studio with no logo there is kept as such: not asked again within the month.
+    calls.clear()
+    monkeypatch.setattr(plugin, "_fetch_bytes", _wiki_answers(calls, logo=False))
+    assert plugin._studio_wiki_logo("Infinity Ward®", fetch=True) is not None  # the same studio, already kept
+    plugin._keep_studio("wiki:infinityward", {"at": 0, "file": ""})
+    assert plugin._studio_wiki_logo("Infinity Ward") is None and plugin._studio_wiki_logo("Infinity Ward") is None
+    assert calls == [("studio search", "wiki")] + [("studio claims", "wiki")] * 3
+
+
+def test_a_failed_wikidata_lookup_is_not_kept_as_a_studio_without_a_logo(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+
+    def down(url, **kwargs):
+        raise RuntimeError("Wikidata is down")
+
+    monkeypatch.setattr(plugin, "_fetch_bytes", down)
+    assert plugin._studio_wiki_logo("Infinity Ward") is None
+    assert plugin._studio_wiki_due("Infinity Ward")
+
+
+def test_official_wordmarks_stand_for_the_studios_names_in_the_credit(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    monkeypatch.setattr(plugin, "_fetch_bytes", _wiki_answers([]))
+    plugin._studio_wiki_logo("Infinity Ward")
+    # The publisher's logo is kept under its own name (the same file stands in for it here).
+    plugin._keep_studio("wiki:activision", {"at": time.time(), "file": "wiki-Q731482.png"})
+    facts = {"name": "Call of Duty", "description": "一款射击游戏", "developer": "Infinity Ward", "developer_clan": "",
+             "publisher": "Activision", "tags": [], "review_label": "", "review_count": 0, "release": 0,
+             "coming_soon": False, "free": False, "discount": 0, "final": "$69.99", "original": ""}
+    monkeypatch.setattr(plugin, "_store_details", lambda appids, _settings: {"4435490": facts})
+    monkeypatch.setattr(plugin, "_tag_names", lambda: {})
+    monkeypatch.setattr(plugin, "_fetch_bytes", lambda *args, **kwargs: pytest.fail("a render never looks a logo up"))
+
+    info = plugin._shelf_info({"id": 4435490, "type": 0}, {})
+
+    assert info["studio_logo"] is None
+    assert [(text, give) for text, give, _mark in info["credit"]] == [("", 0), ("发行", 2)]
+    assert all(mark is not None for _text, _give, mark in info["credit"])
+
+    def whites(credit):
+        shelved = info_shelf.draw_shelf(_field_art(), {**SHELF_INFO, "credit": credit})
+        return sum(1 for pixel in shelved.crop((300, 440, 800, 480)).get_flattened_data() if min(pixel) > 240)
+
+    # The logos' black strokes are drawn in white on the dark bar, in the credit's places.
+    plain = [("Infinity Ward", 0), ("Activision 发行", 3)]
+    assert whites(info["credit"]) > whites(plain) + 300
+    font = info_shelf._font(13, False)
+    draw = ImageDraw.Draw(Image.new("RGB", (8, 8)))
+    assert [text for text, _mark in info_shelf._credit_parts(draw, info["credit"], font, 2000)] == ["", "发行"]
+    # Short of room, the publisher gives way first, its logo with it.
+    narrow = info_shelf._credit_parts(draw, info["credit"], font, 60)
+    assert len(narrow) == 1 and narrow[0][0] == ""
+
+
+def test_wikimedia_hosts_are_their_own_authority(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+
+    def target(host):
+        return SimpleNamespace(scheme="https", port=443, hostname=host, normalized_url=f"https://{host}/x",
+                               addresses=("93.184.216.34",))
+
+    for host in ("www.wikidata.org", "upload.wikimedia.org"):
+        assert plugin._validate_steam_target(target(host), kind="wiki") == f"https://{host}/x"
+        for kind in ("json", "media"):
+            with pytest.raises(RuntimeError, match="authority"):
+                plugin._validate_steam_target(target(host), kind=kind)
+    with pytest.raises(RuntimeError, match="authority"):
+        plugin._validate_steam_target(target("store.steampowered.com"), kind="wiki")
+
+
 def test_credit_gives_way_part_by_part_before_it_is_cut():
     draw = ImageDraw.Draw(Image.new("RGB", (10, 10)))
     font = info_shelf._font(13, False)
@@ -2285,7 +2393,7 @@ def test_shelf_info_dates_the_sales_end_and_names_chinese_support_and_reviews(tm
 
     assert info["price"] == {"discount": 40, "final": "$35.99", "original": "$59.99", "ends": "11/06 截止"}
     assert info["reasons"] == [("deal", "特惠"), ("zh_language", "中文配音"), ("steam_icon", "Steam Deck 已验证")]
-    assert info["credit"] == [("FromSoftware", 0), ("特别好评 93%", 1), ("简中 90%", 1)]
+    assert info["credit"] == [("FromSoftware", 0, None), ("特别好评 93%", 1, None), ("简中 90%", 1, None)]
     # A sale already over by the time the page is drawn names no end.
     monkeypatch.setattr(plugin, "_shelf_now", lambda: now + timedelta(days=5))
     assert "ends" not in plugin._shelf_info(item, {})["price"]

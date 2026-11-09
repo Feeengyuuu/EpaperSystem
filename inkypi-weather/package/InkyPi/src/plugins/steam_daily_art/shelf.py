@@ -18,7 +18,7 @@ from functools import lru_cache
 import zlib
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageStat
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps, ImageStat
 
 from utils.app_utils import get_base_ui_font
 
@@ -50,6 +50,18 @@ CLOCK_SIZE = 15
 WORDMARK_HEIGHT = 15
 # The developer's logo before its name in the credit line.
 STUDIO_LOGO = 18
+# A studio's official logo (Wikidata's, for a studio without a Steam avatar): one at least
+# STUDIO_WORDMARK_ASPECT times as wide as tall spells out the name and stands for it,
+# STUDIO_WORDMARK_HEIGHT tall within STUDIO_WORDMARK_MAX; a squarer one sits before the name
+# within STUDIO_EMBLEM. Its dark, nearly neutral strokes (under STUDIO_INK_DARK lightness,
+# STUDIO_INK_CHROMA colour) are drawn in white for the dark bar; its colours stay as printed.
+STUDIO_WORDMARK_ASPECT = 2.2
+STUDIO_WORDMARK_HEIGHT, STUDIO_WORDMARK_MAX = 20, 110
+STUDIO_EMBLEM = (28, 18)
+STUDIO_INK_DARK, STUDIO_INK_CHROMA = 90, 110
+CREDIT_SEPARATOR = " / "
+# Between a credit part's logo and its text.
+CREDIT_MARK_GAP = 5
 # A studio avatar whose four corners agree within STUDIO_GROUND_TOLERANCE has a flat ground,
 # cut away; a mark left darker than STUDIO_DARK_MARK (lightness) is drawn in white for the dark bar.
 STUDIO_GROUND_TOLERANCE, STUDIO_DARK_MARK = 30, 70
@@ -362,20 +374,36 @@ def _draw_head(canvas, draw, info, y, width, colours):
         x += chip_w + 8
 
 
+def _credit_parts(draw, credit, font, width):
+    """The credit's parts that fit in ``width`` as [(text, mark)], in reading order: the readiest
+    to give way dropped first while the line is too wide, then the last one's text cut.
+    ``credit`` is a list of (text, give) or (text, give, mark), give 0 never dropped; a mark (a
+    studio's official logo, sized and inked for the bar) stands before its text, or alone."""
+    parts = [(str(part[0] or ""), int(part[1]), part[2] if len(part) > 2 else None) for part in credit or []]
+    parts = [part for part in parts if part[0] or part[2] is not None]
+    gap = draw.textlength(CREDIT_SEPARATOR, font=font)
+
+    def part_width(text, mark):
+        return (mark.width + (CREDIT_MARK_GAP if text else 0) if mark is not None else 0) + (
+            draw.textlength(text, font=font) if text else 0)
+
+    def line_width(kept):
+        return sum(part_width(text, mark) for text, _give, mark in kept) + gap * (len(kept) - 1)
+
+    while parts and line_width(parts) > width and max(give for _text, give, _mark in parts) > 0:
+        parts.pop(max(range(len(parts)), key=lambda index: (parts[index][1], index)))
+    if parts and line_width(parts) > width:
+        text, give, mark = parts[-1]
+        room = width - (line_width(parts) - draw.textlength(text, font=font))
+        parts[-1] = (_fit(draw, text, font, max(0, room)) if text else "", give, mark)
+    return [(text, mark) for text, _give, mark in parts]
+
+
 def _fit_credit(draw, credit, font, width):
-    """The credit line in ``width``: its parts in reading order joined by " / ", the readiest to
-    give way dropped first while it is too wide, then cut. ``credit`` is a string or a list of
-    (text, give) with give 0 never dropped."""
+    """The credit line's text in ``width`` (see _credit_parts); ``credit`` may be a plain string."""
     if isinstance(credit, str):
         return _fit(draw, credit, font, width)
-    parts = [(str(text), int(give)) for text, give in credit or [] if text]
-    while parts:
-        line = " / ".join(text for text, _give in parts)
-        if draw.textlength(line, font=font) <= width or max(give for _text, give in parts) == 0:
-            return _fit(draw, line, font, width)
-        drop = max(range(len(parts)), key=lambda index: (parts[index][1], index))
-        parts.pop(drop)
-    return ""
+    return CREDIT_SEPARATOR.join(text for text, _mark in _credit_parts(draw, credit, font, width) if text)
 
 
 def _studio_mark(logo):
@@ -408,6 +436,27 @@ def _studio_cutout(logo):
     mark = mark.convert("RGBA")
     mark.putalpha(alpha.filter(ImageFilter.GaussianBlur(1)))
     return mark.resize((STUDIO_LOGO, STUDIO_LOGO), Image.Resampling.LANCZOS)
+
+
+def names_the_studio(mark):
+    """Whether an official logo is a wordmark wide enough to stand for the studio's name."""
+    return mark.width >= mark.height * STUDIO_WORDMARK_ASPECT
+
+
+def _official_mark(mark):
+    """A studio's official logo (RGBA) for the dark bar at the credit's size, its dark neutral
+    strokes in white."""
+    mark = mark.convert("RGBA")
+    box = (STUDIO_WORDMARK_MAX, STUDIO_WORDMARK_HEIGHT) if names_the_studio(mark) else STUDIO_EMBLEM
+    mark = ImageOps.contain(mark, box, Image.Resampling.LANCZOS)
+    red, green, blue, alpha = mark.split()
+    chroma = ImageChops.subtract(ImageChops.lighter(ImageChops.lighter(red, green), blue),
+                                 ImageChops.darker(ImageChops.darker(red, green), blue))
+    dark = ImageChops.multiply(mark.convert("L").point(lambda value: 255 if value < STUDIO_INK_DARK else 0),
+                               chroma.point(lambda value: 255 if value < STUDIO_INK_CHROMA else 0))
+    ink = Image.new("RGBA", mark.size, (*WHITE, 255))
+    ink.putalpha(alpha)
+    return Image.composite(ink, mark, dark)
 
 
 @lru_cache(maxsize=1)
@@ -443,11 +492,29 @@ def _draw_foot(canvas, draw, info, y, width, colours):
     logo = info.get("studio_logo")
     logo_w = STUDIO_LOGO + 6 if logo is not None else 0
     budget = max(0, right - MARGIN - min(tags_w, (right - MARGIN) * 0.55) - 12 - logo_w)
-    credit = _fit_credit(draw, info.get("credit"), credit_font, budget)
-    if credit:
-        credit_w = draw.textlength(credit, font=credit_font)
-        draw.text((right - credit_w, _text_y(draw, credit, credit_font, y, 24)), credit, font=credit_font, fill=WHITE)
-        right -= credit_w
+    credit = info.get("credit")
+    if isinstance(credit, str):
+        credit = [(_fit(draw, credit, credit_font, budget), 0)]
+    credit = [(part[0], part[1], _official_mark(part[2]) if len(part) > 2 and part[2] is not None else None)
+              for part in credit or []]
+    parts = _credit_parts(draw, credit, credit_font, budget)
+    if parts:
+        gap = draw.textlength(CREDIT_SEPARATOR, font=credit_font)
+        widths = [(mark.width + (CREDIT_MARK_GAP if text else 0) if mark is not None else 0)
+                  + (draw.textlength(text, font=credit_font) if text else 0) for text, mark in parts]
+        right -= sum(widths) + gap * (len(parts) - 1)
+        x = right
+        for index, (text, mark) in enumerate(parts):
+            if index:
+                draw.text((x, _text_y(draw, CREDIT_SEPARATOR, credit_font, y, 24)), CREDIT_SEPARATOR,
+                          font=credit_font, fill=WHITE)
+                x += gap
+            if mark is not None:
+                canvas.paste(mark, (int(x), y + (24 - mark.height) // 2), mark)
+                x += mark.width + (CREDIT_MARK_GAP if text else 0)
+            if text:
+                draw.text((x, _text_y(draw, text, credit_font, y, 24)), text, font=credit_font, fill=WHITE)
+                x += draw.textlength(text, font=credit_font)
         if logo is not None:
             right -= 6 + STUDIO_LOGO
             # The mark alone where its avatar has a flat ground; a photo keeps its rounded square.
