@@ -38,7 +38,10 @@ DISPLAY_FACE = (PLUGIN_ROOT.parent / "static" / "fonts" / "SpaceGrotesk-VF.ttf",
 # BART's departures and service notes beneath it, down the right column.
 NEXT_TITLE_Y, NEXT_VALUE_Y = 128, 143
 READOUT_Y, CHART_HEADER_Y = 183, 203
-CHART = (536, 218, 782, 301)
+# The plot starts a clear line under its header row; its height labels keep this far inside its
+# top and foot, so none meets the header or the hour labels under the plot.
+CHART = (536, 221, 782, 301)
+CHART_LABEL_INSET = 5
 BUOY_Y = 327
 BART_Y = 349
 BART_ROWS, BART_ROW_STEP = 3, 15
@@ -381,16 +384,24 @@ def roads(page, payload, now):
             page.rule((230, y + 109, 482, y + 109))
 
 
-def _chart_label(page, x, y, text, high):
+def _overlaps(box, others):
+    return any(box[0] < other[2] and other[0] < box[2] and box[1] < other[3] and other[1] < box[3] for other in others)
+
+
+def _chart_label(page, x, y, text, high, taken=()):
+    """A high or low tide's time by its point: over a high, under a low, beside the point when the
+    plot's edge is too near; on another side when the first would cover a label already there."""
     width = page.draw.textlength(text, font=font(10, "number"))
     xx = max(538, min(780 - width, x - width / 2))
-    yy = y - 17 if high else y + 6
-    if yy < CHART[1] + 1:
-        xx, yy = min(780 - width, x + 8), y - 7
-    if yy + 12 > CHART[3] - 2:
-        xx, yy = min(780 - width, x + 7), y - 13
-    page.draw.rounded_rectangle((xx - 2, yy - 1, xx + width + 2, yy + 12), radius=3, fill=page.palette["paper"])
+    places = [(xx, y - 17 if high else y + 6), (min(780 - width, x + 8), y - 7), (max(538, x - 8 - width), y - 7),
+              (xx, y + 6 if high else y - 17)]
+    fits = [(px, py) for px, py in places if CHART[1] + 1 <= py and py + 12 <= CHART[3] - 2]
+    clear = [(px, py) for px, py in fits if not _overlaps((px - 2, py - 1, px + width + 2, py + 12), taken)]
+    xx, yy = (clear or fits or places)[0]
+    box = (xx - 2, yy - 1, xx + width + 2, yy + 12)
+    page.draw.rounded_rectangle(box, radius=3, fill=page.palette["paper"])
     page.text((xx, yy), text, 10, "blue", role="number")
+    return box
 
 
 def level_readout(page, water, rising):
@@ -432,21 +443,39 @@ def tide_chart(page, data, now, water=None):
 
     points = [xy(row) for row in rows]
     draw_water(page, points, bottom)
-    for height in range(low, high + 1, 2):
-        y = bottom - (height - low) / (high - low) * (bottom - top)
-        page.text((528, y - 5), str(height), 10, "muted", role="number", align="right", bold=False)
+    # A dotted rule every 2 ft (every 4 over a range past 8 ft), each labelled at the left unless it
+    # lies on the plot's top or foot, where its figure would meet the header or the hours.
+    step = 2 if high - low <= 8 else 4
+    ticks = list(range(math.ceil(low / step) * step, high + 1, step))
+    levels = [(height, bottom - (height - low) / (high - low) * (bottom - top)) for height in ticks]
+    labelled = [(height, y) for height, y in levels if top + CHART_LABEL_INSET <= y <= bottom - CHART_LABEL_INSET]
+    for height, y in levels:
         for x in range(left, right, 4):
             page.draw.point((x, round(y)), fill=page.palette["rule"])
+    for height, y in labelled or levels:
+        page.text((528, y - 5), str(height), 10, "muted", role="number", align="right", bold=False)
     page.draw.line(points, fill=page.palette["blue"], width=3)
+    # The tide now reads off the whole prediction, so it holds past today's last sample at midnight.
+    found = tide_now(data.get("curve", []), now)
+    # The time now as a tag on the now line, at the plot's top when the curve runs low there, else at
+    # its foot, clear of the curve, the boat on it and the tides' labels.
+    now_tag = None
+    if found:
+        x, y = xy({"time": now.isoformat(), "height": found[0]})
+        tag = now.strftime("%H:%M")
+        width = page.draw.textlength(tag, font=font(9, "number"))
+        tx = max(left + 3, min(right - width - 3, x - width / 2))
+        ty = top + 2 if y > (top + bottom) / 2 else bottom - 13
+        now_tag = (x, y, tag, tx, ty, width)
+    taken = [(now_tag[3] - 3, now_tag[4] - 1, now_tag[3] + now_tag[5] + 3, now_tag[4] + 11)] if now_tag else []
     for row in data.get("extremes", []):
         if begin <= parse_time(row["time"]) < end:
             x, y = xy(row)
             # A malformed/out-of-range extreme cannot escape the plot into the readouts.
             y = max(top, min(bottom, y))
             page.draw.ellipse((x - 3, y - 3, x + 3, y + 3), fill=page.palette["blue"])
-            _chart_label(page, x, y, parse_time(row["time"]).astimezone(PACIFIC).strftime("%H:%M"), row["type"] == "H")
-    # The tide now reads off the whole prediction, so it holds past today's last sample at midnight.
-    found = tide_now(data.get("curve", []), now)
+            taken.append(_chart_label(page, x, y, parse_time(row["time"]).astimezone(PACIFIC).strftime("%H:%M"),
+                                      row["type"] == "H", taken))
     if found and water:
         level_readout(page, water, found[1])
     elif found:
@@ -458,16 +487,11 @@ def tide_chart(page, data, now, water=None):
         heights = [row["height"] for row in rows]
         page.text((512, READOUT_Y), "今日潮位", 11, "muted")
         page.text((575, READOUT_Y - 3), f"{min(heights):.1f} – {max(heights):.1f} ft", 16, "blue", role="display")
-    if found:
-        height, _rising = found
-        x, y = xy({"time": now.isoformat(), "height": height})
+    if now_tag:
+        x, y, tag, tx, ty, width = now_tag
         for yy in range(top, bottom, 4):
             page.draw.point((round(x), yy), fill=page.palette["muted"])
         paste_sticker(page, "boat", (max(left + 10, min(right - 10, x)), max(top + 10, y - 9)), 22)
-        tag = now.strftime("%H:%M")
-        width = page.draw.textlength(tag, font=font(9, "number"))
-        tx = max(left + 3, min(right - width - 3, x - width / 2))
-        ty = min(bottom - 12, y + 9)
         page.draw.rounded_rectangle((tx - 3, ty - 1, tx + width + 3, ty + 11), radius=3, fill=page.palette["paper"])
         page.text((tx, ty), tag, 9, "blue", role="number")
     measured = parse_time((water or {}).get("time"))

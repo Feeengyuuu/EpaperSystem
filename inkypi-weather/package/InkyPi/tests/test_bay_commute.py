@@ -1021,3 +1021,46 @@ def test_bart_notes_lead_with_a_glyph_in_their_colour_and_no_chip(mode):
 def test_no_advisories_issued_reads_as_the_quiet_line():
     payload = {"root": {"bsa": [{"type": "", "description": {"#cdata-section": "No advisories issued."}}]}}
     assert sources.parse_bart_advisories(payload) == []
+
+
+def test_the_tide_chart_keeps_its_labels_apart(monkeypatch):
+    """A real day's swing (-0.5 to 7 ft): the heights label every 4 ft inside the plot (no figure on its
+    top or foot to meet the header or the hours), and the time now sits clear of the tides' labels."""
+    import math as _math
+
+    from plugins.bay_commute import command_render
+
+    now = NOW.replace(hour=15, minute=58)
+    begin = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    curve, cursor = [], begin.astimezone(timezone.utc)
+    while cursor < begin + timedelta(days=2):
+        hours = (cursor - begin.astimezone(timezone.utc)).total_seconds() / 3600
+        curve.append({"time": cursor.isoformat(), "height": 3.25 + 3.75 * _math.cos((hours - 11) / 12.4 * 2 * _math.pi)})
+        cursor += timedelta(minutes=15)
+    extremes = [{"time": (begin + timedelta(hours=hour)).astimezone(timezone.utc).isoformat(), "height": height,
+                 "type": kind} for hour, height, kind in ((5.1, 2.0, "L"), (11.1, 7.0, "H"), (18.1, -0.5, "L"))]
+    data = {**tide_data(now), "curve": curve, "extremes": extremes}
+    recorded, boxes = [], []
+    original_text, original_label = Canvas.text, command_render._chart_label
+
+    def capture(self, xy, text, *args, **kwargs):
+        recorded.append((xy, str(text)))
+        return original_text(self, xy, text, *args, **kwargs)
+
+    def label(page, x, y, text, high, taken=()):
+        box = original_label(page, x, y, text, high, taken)
+        boxes.append(box)
+        return box
+
+    monkeypatch.setattr(Canvas, "text", capture)
+    monkeypatch.setattr(command_render, "_chart_label", label)
+    command_render.tide_chart(Canvas({}), data, now)
+
+    left, top, right, bottom = command_render.CHART
+    heights = [(xy[1] + 5, text) for xy, text in recorded if xy[0] == 528]
+    # (-2 to 8 ft: 8 lies on the plot's top edge, so only 0 and 4 carry figures.)
+    assert [text for _y, text in heights] == ["0", "4"]
+    assert all(top + command_render.CHART_LABEL_INSET <= y <= bottom - command_render.CHART_LABEL_INSET for y, _text in heights)
+    tag = next(xy for xy, text in recorded if text == "15:58")
+    tag_box = (tag[0] - 3, tag[1] - 1, tag[0] + 30, tag[1] + 11)
+    assert len(boxes) == 3 and not any(command_render._overlaps(box, [tag_box]) for box in boxes)
