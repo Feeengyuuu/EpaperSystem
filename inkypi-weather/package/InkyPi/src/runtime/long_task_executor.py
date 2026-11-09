@@ -314,9 +314,13 @@ def _configure_child_logging() -> None:
         # Logging setup must never fail the isolated task itself.
         if root.handlers:
             return
+        try:
+            from utils.secret_redaction import RedactingFormatter as formatter_class
+        except Exception:
+            formatter_class = logging.Formatter
         handler = logging.StreamHandler(sys.stdout)
         handler.setFormatter(
-            logging.Formatter(_SERVICE_LOG_FORMAT, _SERVICE_LOG_DATEFMT)
+            formatter_class(_SERVICE_LOG_FORMAT, _SERVICE_LOG_DATEFMT)
         )
         root.addHandler(handler)
         root.setLevel(logging.INFO)
