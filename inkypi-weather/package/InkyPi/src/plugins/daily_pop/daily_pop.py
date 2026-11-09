@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.render_provenance import attach_source_provenance
 from plugins.base_plugin.source_book import LIVE, Source, SourceBook, combined_provenance
@@ -37,6 +38,12 @@ TASK_SECONDS = 50
 EPIC_PREFETCH = 3
 EARTH_PIXELS = (272, 272)
 HISTORY_FILE = "history.json"
+# Each shown song's artist by their official Apple Music photo (sources.fetch_artist_photo): a found
+# photo kept 30 days, a page that names none 3, at most ARTIST_LOOKUPS pages read a refresh.
+ARTISTS_FILE = "artists.json"
+ARTIST_FOUND_TTL, ARTIST_MISSED_TTL = timedelta(days=30), timedelta(days=3)
+ARTIST_LOOKUPS = 3
+ARTIST_PIXELS = (96, 96)
 
 
 def _checkpoint(context):
@@ -150,8 +157,50 @@ class DailyPop(BasePlugin):
                     atomic_write_json(self._history_path(), history)
                 except OSError as exc:
                     logger.warning("Daily Pop history not saved: %s", exc)
+        songs = ((results["songs"].get("data") or {}).get("songs") or [])[:3]
         return {**results, "history": history, "bangumi_details": (details.get("data") or {}).get("shows") or {},
+                "artist_photos": self._artist_photos(songs, now, allow_network=allow_network, context=context),
                 "provenance": combined_provenance(results.values())}
+
+    def _artist_photos(self, songs, now, *, allow_network, context):
+        """{artist page: photo URL} for the shown songs' artists: the kept answers, with up to
+        ARTIST_LOOKUPS pages read when the network is allowed; a redraw only reads what is kept."""
+        now = now.astimezone(timezone.utc)
+        path = self._cache_root() / ARTISTS_FILE
+        try:
+            kept = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            kept = {}
+        kept = kept if isinstance(kept, dict) else {}
+
+        def current(entry):
+            try:
+                return now - datetime.fromisoformat(entry["at"]) <= (ARTIST_FOUND_TTL if entry.get("photo")
+                                                                     else ARTIST_MISSED_TTL)
+            except (KeyError, TypeError, ValueError):
+                return False
+
+        pages = list(dict.fromkeys(song.get("artist_url") for song in songs if song.get("artist_url")))
+        wanted = [page for page in pages if not (isinstance(kept.get(page), dict) and current(kept[page]))]
+        if wanted and allow_network:
+            changed = False
+            for page in wanted[:ARTIST_LOOKUPS]:
+                try:
+                    photo = sources.fetch_artist_photo(page, context)
+                except TaskCancelled:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - the song keeps its artist's name alone.
+                    logger.info("Daily Pop artist photo unavailable: %s", type(exc).__name__)
+                    continue
+                kept[page] = {"photo": photo, "at": now.isoformat()}
+                changed = True
+            if changed:
+                try:
+                    atomic_write_json(path, dict(list(kept.items())[-64:]))
+                except OSError as exc:
+                    logger.warning("Daily Pop artist photos not kept: %s", exc)
+        return {page: kept[page]["photo"] for page in pages
+                if isinstance(kept.get(page), dict) and kept[page].get("photo")}
 
     def _images(self, payload, now, *, allow_network, context):
         urls = [video.get("cover") for video in payload["bilibili"]["data"].get("videos", [])[:4]]
@@ -162,6 +211,11 @@ class DailyPop(BasePlugin):
                    "user_agent": sources.USER_AGENT}
         images = load_thumbnails(urls, self._cache_subdir("covers"), cached_only=not allow_network,
                                  size=(480, 480), **options)
+        # The shown songs' artists, small, beside their names.
+        artists = list((payload.get("artist_photos") or {}).values())
+        if artists:
+            images.update(load_thumbnails(artists, self._cache_subdir("artists"), cached_only=not allow_network,
+                                          size=ARTIST_PIXELS, **options))
         frame_index, frame_url, earth = self._earth(payload["epic"]["data"], now, allow_network, options)
         if earth is not None:
             images[frame_url] = earth

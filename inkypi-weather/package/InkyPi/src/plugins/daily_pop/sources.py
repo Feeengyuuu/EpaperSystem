@@ -52,6 +52,13 @@ MAX_SHOWS = 8
 # The page shows today's first BANGUMI_SHOWN shows; only they get their details fetched.
 BANGUMI_SHOWN = 6
 MAX_SONGS = 5
+# A song's artist by their Apple Music page (the charts link it), whose share picture is the
+# artist's official photo on Apple's image service; it is asked for as a small square centre crop.
+ARTIST_PAGE_HOST = "music.apple.com"
+ARTIST_PAGE_BYTES = 320 * 1024
+ARTIST_PHOTO_CROP = "120x120cc.jpg"
+_OG_IMAGE = re.compile(r"<meta\b[^>]*property=[\"']og:image[\"'][^>]*content=[\"']([^\"']+)[\"']", re.I)
+_MZSTATIC_SIZE = re.compile(r"/\d+x\d+[a-z]{0,3}\.(?:png|jpe?g|webp)$", re.I)
 BILIBILI_COVER_SIZE = "@640w_360h_1c.jpg"
 MAX_ARTICLES = 6
 # Wikipedia's most-read list always has its main page and search pages on top.
@@ -85,6 +92,33 @@ def safe_image_url(value):
     if parts.hostname.endswith(".hdslb.com") and parts.path.startswith("/bfs/archive/") and "@" not in parts.path:
         return url + BILIBILI_COVER_SIZE
     return url
+
+
+def artist_page(url):
+    """The artist's Apple Music page (https, no query), or "" for any other link."""
+    parts = urlsplit(https(url))
+    if parts.scheme != "https" or parts.hostname != ARTIST_PAGE_HOST or "/artist/" not in parts.path:
+        return ""
+    return f"https://{parts.hostname}{parts.path}"
+
+
+def artist_photo_url(page_text):
+    """The artist's official photo from their Apple Music page's share picture, as a small square
+    crop on Apple's image service; "" when the page names none there."""
+    found = _OG_IMAGE.search(str(page_text or ""))
+    url = https(found.group(1)) if found else ""
+    if not safe_image_url(url) or ".mzstatic.com/" not in url or not _MZSTATIC_SIZE.search(url):
+        return ""
+    return _MZSTATIC_SIZE.sub("/" + ARTIST_PHOTO_CROP, url)
+
+
+def fetch_artist_photo(page, context):
+    """The photo the artist's Apple Music page names (only its head is read)."""
+    context.raise_if_cancelled()
+    response = get_http_client().request_text_head("GET", page, context=context, timeout=REQUEST_TIMEOUT,
+                                                   max_bytes=ARTIST_PAGE_BYTES, headers={"User-Agent": USER_AGENT})
+    context.raise_if_cancelled()
+    return artist_photo_url(response.data)
 
 
 def _get(url, context, *, max_bytes, params=None, timeout=REQUEST_TIMEOUT):
@@ -238,7 +272,8 @@ def episode_progress(details, now):
 def normalize_songs(payload):
     results = (((payload or {}).get("feed") or {}).get("results")) or []
     songs = [{"name": _clean(row.get("name"), 50), "artist": _clean(row.get("artistName"), 40),
-              "artwork": str(row.get("artworkUrl100") or "").replace("100x100bb", "200x200bb")}
+              "artwork": str(row.get("artworkUrl100") or "").replace("100x100bb", "200x200bb"),
+              "artist_url": artist_page(row.get("artistUrl"))}
              for row in results if isinstance(row, dict) and row.get("name")]
     if not songs:
         raise ValueError("Apple returned no songs")
@@ -254,8 +289,10 @@ def normalize_itunes_songs(payload):
             continue
         images = row.get("im:image") or []
         artwork = (images[-1] or {}).get("label") if isinstance(images, list) and images else ""
-        songs.append({"name": _clean(name, 50), "artist": _clean((row.get("im:artist") or {}).get("label"), 40),
-                      "artwork": str(artwork or "")})
+        artist = row.get("im:artist") if isinstance(row.get("im:artist"), dict) else {}
+        songs.append({"name": _clean(name, 50), "artist": _clean(artist.get("label"), 40),
+                      "artwork": str(artwork or ""),
+                      "artist_url": artist_page((artist.get("attributes") or {}).get("href"))})
     if not songs:
         raise ValueError("iTunes returned no songs")
     return {"songs": songs[:MAX_SONGS], "chart": "itunes"}

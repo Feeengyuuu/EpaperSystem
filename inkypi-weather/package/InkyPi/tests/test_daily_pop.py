@@ -282,3 +282,60 @@ def test_a_show_wears_its_episodes_genre_and_top_rank(mode, monkeypatch):
     assert {"5/12话", "#812", "87在追 · 奇幻", "第3话", "2107在追"} <= set(drawn)
     # Rank 5310 is not shown, nor a genre that does not fit beside the count.
     assert "#5310" not in drawn and not any("很长" in text for text in drawn)
+
+
+def test_a_songs_artist_is_found_by_their_apple_music_page():
+    itunes = {"feed": {"entry": [{"im:name": {"label": "Choosin' Texas"},
+                                  "im:artist": {"label": "Ella Langley", "attributes": {
+                                      "href": "https://music.apple.com/us/artist/ella-langley/1384373733?uo=2"}},
+                                  "im:image": [{"label": "https://is1-ssl.mzstatic.com/a/170x170bb.png"}]}]}}
+    song = sources.normalize_itunes_songs(itunes)["songs"][0]
+    assert song["artist_url"] == "https://music.apple.com/us/artist/ella-langley/1384373733"
+    apple = {"feed": {"results": [{"name": "Dead Fresh", "artistName": "Lil Baby",
+                                   "artistUrl": "https://music.apple.com/us/artist/lil-baby/1276656483"}]}}
+    assert sources.normalize_songs(apple)["songs"][0]["artist_url"].endswith("/lil-baby/1276656483")
+    assert sources.artist_page("https://example.com/us/artist/x/1") == ""
+    # The page's share picture, asked for as a small square crop on Apple's image service.
+    page = ('<meta name="x"><meta property="og:image" content="https://is1-ssl.mzstatic.com/image/thumb/'
+            'AMCArtistImages211/v4/7d/f9/a.png/1200x630cw.png">')
+    assert sources.artist_photo_url(page) == "https://is1-ssl.mzstatic.com/image/thumb/AMCArtistImages211/v4/7d/f9/a.png/120x120cc.jpg"
+    assert sources.artist_photo_url('<meta property="og:image" content="https://example.com/a/1200x630cw.png">') == ""
+
+
+def test_artist_photos_are_looked_up_a_few_at_a_time_and_kept(tmp_path, monkeypatch):
+    from plugins.daily_pop.daily_pop import ARTIST_LOOKUPS, DailyPop
+    from runtime.refresh_contracts import TaskContext
+
+    plugin = DailyPop({"id": "daily_pop"})
+    monkeypatch.setattr(plugin, "_cache_root", lambda: tmp_path)
+    asked = []
+
+    def fetch(page, context):
+        asked.append(page)
+        return "" if page.endswith("/0") else page.replace("music.apple.com", "is1-ssl.mzstatic.com") + "/120x120cc.jpg"
+
+    monkeypatch.setattr(sources, "fetch_artist_photo", fetch)
+    context = TaskContext.never_cancelled(deadline_monotonic=10 ** 9)
+    songs = [{"artist_url": f"https://music.apple.com/us/artist/a/{index}"} for index in range(5)]
+    found = plugin._artist_photos(songs, NOW, allow_network=True, context=context)
+    assert len(asked) == ARTIST_LOOKUPS and set(found) == {song["artist_url"] for song in songs[1:ARTIST_LOOKUPS]}
+    asked.clear()
+    # A redraw reads the kept answers, a page that named no photo included, and asks nothing.
+    assert plugin._artist_photos(songs[:ARTIST_LOOKUPS], NOW, allow_network=False, context=context) == found
+    assert plugin._artist_photos(songs[:ARTIST_LOOKUPS], NOW, allow_network=True, context=context) == found
+    assert asked == []
+
+
+def test_each_song_shows_its_artists_photo_before_the_artists_name():
+    from plugins.daily_pop import render
+
+    payload = _payload()
+    page_url = "https://music.apple.com/us/artist/a/1"
+    photo_url = "https://is1-ssl.mzstatic.com/image/thumb/a.png/120x120cc.jpg"
+    payload["songs"]["data"]["songs"] = [{"name": "Song", "artist": "Artist", "artwork": "", "artist_url": page_url}] * 3
+    payload["artist_photos"] = {page_url: photo_url}
+    green = Image.new("RGB", (96, 96), (20, 200, 60))
+    image = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, {photo_url: green})
+    left, top, right, bottom = render.CARDS["songs"]
+    pixels = [image.getpixel((x, y)) for x in range(left, right) for y in range(top, bottom)]
+    assert sum(pixel == (20, 200, 60) for pixel in pixels) > 3 * 100

@@ -43,6 +43,8 @@ LOGOS = {"bilibili": (("bilibili_tv", "bilibili"), 19, "热门"), "bangumi": ("b
 KEY_LOGOS = {"bilibili": ("bilibili", 15), "bangumi": ("bangumi", 15), "wiki": ("wikipedia", 20),
              "epic": ("nasa", 20), "songs": ("apple_music", 13), "puzzle": ("chesscom", 16)}
 KEY_GAP = 16
+# A song's artist photo beside the artist's name in the songs card, round, this many px across.
+ARTIST_AVATAR = 16
 # Cards whose source colour runs all the way round them, so the area stands out.
 RINGED = {"bilibili"}
 # Quiet doodles in the source's colour under a card's content.
@@ -578,11 +580,21 @@ def _songs(canvas, payload, images):
         _paste_fit(canvas, images.get(sources.safe_image_url(song.get("artwork"))), art, radius=3)
         x = art[2] + 8
         middle = y0 + row_h / 2
-        # Name, then its artist greyed on the same line, so three songs fit the short card.
+        # Name, then its artist greyed on the same line, so three songs fit the short card; the
+        # artist's official photo, round, before the artist's name when it is at hand.
         name_w = canvas.text((x, middle), f"{index + 1}. {song.get('name')}", 12, anchor="lm", width=right - x - 96)
-        canvas.text((x + name_w + 6, middle + 1), song.get("artist"), 10, "muted", anchor="lm", bold=False,
-                    width=right - x - name_w - 6 - 40)
-        _move_badge(canvas, (right - 10, middle), moves.get(song.get("name")), anchor_right=True)
+        artist_x = x + name_w + 6
+        photo = images.get(sources.safe_image_url((payload.get("artist_photos") or {}).get(song.get("artist_url"))))
+        if photo is not None:
+            top_y = round(middle - ARTIST_AVATAR / 2)
+            _paste_fit(canvas, photo, (artist_x, top_y, artist_x + ARTIST_AVATAR, top_y + ARTIST_AVATAR),
+                       radius=ARTIST_AVATAR // 2, centering=(0.5, 0.3))
+            artist_x += ARTIST_AVATAR + 4
+        # The rank's move takes the row's end when there is one; otherwise the artist runs on to it.
+        move = moves.get(song.get("name"))
+        canvas.text((artist_x, middle + 1), song.get("artist"), 10, "muted", anchor="lm", bold=False,
+                    width=right - artist_x - (40 if move not in (None, 0) else 10))
+        _move_badge(canvas, (right - 10, middle), move, anchor_right=True)
 
 
 # --- Chess ---------------------------------------------------------------------------------------
