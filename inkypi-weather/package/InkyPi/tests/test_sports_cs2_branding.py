@@ -393,6 +393,43 @@ def test_bundled_dracula_logo_matches_the_provider_name_offline_and_reports_its_
     assert branding["event_logo_source"] == "LOCAL"
 
 
+@pytest.mark.parametrize("theme, expected", [("day", "f647ebc34fd0249303e4.png"), ("night", "79369b2b013a726f0f6e.png")])
+def test_blast_seasons_by_name_find_their_numbered_edition_and_its_rivals_mark(theme, expected):
+    from pathlib import Path
+
+    from plugins.sports_dashboard import common
+    from plugins.sports_dashboard.cs2_branding import fuzzy_match_event, local_event_branding
+    from plugins.sports_dashboard.sports_dashboard import SportsDashboard
+
+    # PandaScore's "BLAST Rivals Fall 2026" is HLTV's and BLAST.tv's "BLAST Rivals 2026 Season 2".
+    card = {"event_name": "BLAST Rivals Fall 2026", "main": {"start": datetime(2026, 11, 11, 2, tzinfo=timezone.utc)}}
+    branding = local_event_branding(card)
+    assert Path(branding["event_logo_path"]).name == "f647ebc34fd0249303e4.png"
+    assert Path(branding["event_logo_path_dark"]).name == "79369b2b013a726f0f6e.png"
+    entries = [_entry("1", "BLAST Rivals 2026 Season 1", "2026-04-27T00:00:00+00:00", "2026-05-03T00:00:00+00:00", "s1.png"),
+               _entry("2", "BLAST Premier Rivals 2026 Season 2", "2026-11-09T00:00:00+00:00", "2026-11-15T00:00:00+00:00", "s2.png")]
+    spring = {"event_name": "BLAST Rivals Spring 2026", "start": datetime(2026, 4, 28, tzinfo=timezone.utc)}
+    assert fuzzy_match_event(entries, spring)["id"] == "1"
+    assert fuzzy_match_event(entries, {**card["main"], "event_name": "BLAST Rivals Fall 2026"})["id"] == "2"
+    # The season names only number BLAST's editions; another organiser's "Fall" stays a word.
+    assert fuzzy_match_event([_entry("3", "Nova Cup 2026 Season 2", "2026-11-09T00:00:00+00:00",
+                                     "2026-11-15T00:00:00+00:00", "nova.png")],
+                             {"event_name": "Nova Cup Fall 2026", "start": card["main"]["start"]}) is None
+
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    palette = common.DAY_COLORS if theme == "day" else common.DEEP_NIGHT_COLORS
+    token = common._ACTIVE_COLORS.set(palette)
+    drawn = []
+    original = plugin._load_local_logo
+    plugin._load_local_logo = lambda path, *args, **kwargs: drawn.append(Path(path).name) or original(path, *args, **kwargs)
+    try:
+        with Image.new("RGB", (160, 110), palette["panel"]) as canvas:
+            assert plugin._draw_valve_focus_event_logo(canvas, (8, 8, 140, 100), {"series": "CS", "auto_follow": True, **card})
+    finally:
+        common._ACTIVE_COLORS.reset(token)
+    assert drawn == [expected]
+
+
 def test_enrich_falls_back_to_the_series_logo_only_without_any_provider_logo(monkeypatch, tmp_path):
     from pathlib import Path
     from plugins.sports_dashboard import cs2_branding

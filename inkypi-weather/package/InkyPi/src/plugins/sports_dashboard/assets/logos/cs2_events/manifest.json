@@ -745,8 +745,12 @@
       "path": "/events/8251/blast-rivals-2026-season-2",
       "start": "2026-11-09T11:00:00+00:00",
       "end": "2026-11-15T11:00:00+00:00",
-      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/pOBDGt1pvBDx2B2Fe6htMp.png?ixlib=java-2.1.0&w=400&s=74619cb4088a1e84add4cafab2fb3dc2",
-      "event_logo_path": "3530e66040f93fadae1e.png"
+      "event_logo_url": "https://liquipedia.net/commons/images/8/8a/BLAST_Rivals_2026_lightmode.png",
+      "event_logo_url_dark": "https://liquipedia.net/commons/images/b/b4/BLAST_Rivals_2026_darkmode.png",
+      "asset_source": "https://liquipedia.net/counterstrike/BLAST/Rivals/2026/Fall",
+      "asset_scope": "Official BLAST Rivals 2026 mark (black for the day page, white for the night page); HLTV's catalog supplies only the generic BLAST triangle",
+      "event_logo_path": "f647ebc34fd0249303e4.png",
+      "event_logo_path_dark": "79369b2b013a726f0f6e.png"
     },
     {
       "id": "9303",
@@ -1498,16 +1502,6 @@
       "url": "https://img-cdn.hltv.org/eventlogo/nBJErD4F57HhwYIJRrIu3w.png?ixlib=java-2.1.0&w=100&s=1395160691d9a4c1f4c4d46cc1c0838d"
     },
     {
-      "file": "3530e66040f93fadae1e.png",
-      "sha256": "3530e66040f93fadae1e61762bc692b969183fb8ff9f700c288fe0806339df71",
-      "bytes": 11687,
-      "size": [
-        400,
-        400
-      ],
-      "url": "https://img-cdn.hltv.org/eventlogo/pOBDGt1pvBDx2B2Fe6htMp.png?ixlib=java-2.1.0&w=400&s=74619cb4088a1e84add4cafab2fb3dc2"
-    },
-    {
       "file": "8f29e4ad803731f14136.png",
       "sha256": "8f29e4ad803731f141368fa01f9ede82ae6f14f90b82326211bd959d19fe03d0",
       "bytes": 3544,
@@ -1656,6 +1650,26 @@
         100
       ],
       "url": "https://img-cdn.hltv.org/eventlogo/yk2zL5wHnG080pBJ9BQS-E.png?ixlib=java-2.1.0&w=100&s=8e278b0756fbd9d11394d9ddbf9f8ec5"
+    },
+    {
+      "file": "f647ebc34fd0249303e4.png",
+      "sha256": "f647ebc34fd0249303e4fc41ca1c9adf10c66ef68f7ec7a87f85c3c86e825770",
+      "bytes": 23627,
+      "size": [
+        600,
+        347
+      ],
+      "url": "https://liquipedia.net/commons/images/8/8a/BLAST_Rivals_2026_lightmode.png"
+    },
+    {
+      "file": "79369b2b013a726f0f6e.png",
+      "sha256": "79369b2b013a726f0f6eb9e21be853508e691cdb2a200d5644a0203526e54a6f",
+      "bytes": 26574,
+      "size": [
+        600,
+        347
+      ],
+      "url": "https://liquipedia.net/commons/images/b/b4/BLAST_Rivals_2026_darkmode.png"
     }
   ]
 }

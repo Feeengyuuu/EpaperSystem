@@ -38,8 +38,12 @@ ONEWIN_EDITION = re.compile(r"^1winprivateclub(\d+)")
 # agree, and region words alone never identify a series.
 GENERIC_WORDS = frozenset({
     "season", "series", "championship", "league", "cup", "edition", "episode", "the", "of",
-    "esports", "cs", "cs2", "csgo", "tournament", "event", "s",
+    "esports", "cs", "cs2", "csgo", "tournament", "event", "s", "premier",
 })
+# BLAST names its two editions a year by season ("Rivals Fall 2026", "Open Spring 2026", "Bounty
+# Winter 2027") where HLTV and BLAST.tv number them ("BLAST Rivals 2026 Season 2",
+# rivals-2026-season-2): winter and spring open the year, summer and fall close it.
+BLAST_SEASONS = {"winter": "1", "spring": "1", "summer": "2", "fall": "2", "autumn": "2"}
 REGION_WORDS = frozenset({
     "cis", "eu", "europe", "european", "na", "north", "america", "american", "sa", "south", "asia",
     "pacific", "apac", "oceania", "mena", "africa", "china", "brazil", "international", "global", "world",
@@ -121,6 +125,10 @@ def _edition_tokens(name):
     parts = re.findall(r"[a-z0-9]+", text)
     numbers = {part.lstrip("0") or "0" for part in parts if part.isdigit()}
     words = {part for part in parts if not part.isdigit()}
+    seasons = {BLAST_SEASONS[word] for word in words if word in BLAST_SEASONS}
+    if "blast" in words and len(seasons) == 1:
+        numbers |= seasons
+        words -= BLAST_SEASONS.keys()
     return words - GENERIC_WORDS - STAGE_WORDS, words & STAGE_WORDS, numbers
 
 
