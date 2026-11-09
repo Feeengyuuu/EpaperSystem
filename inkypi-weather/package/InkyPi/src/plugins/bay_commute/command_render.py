@@ -837,7 +837,8 @@ def train_room(plan, shape):
 
 def train_shape_for(plans, step):
     """The one shape every train on the page is drawn in: the widest car of CAR_WIDTHS with which
-    every row keeps its destination whole. When even the narrowest leaves a row too little, the
+    the rows stand as a table (every destination whole, the length labels in one column), else with
+    which every row keeps its destination whole. When even the narrowest leaves a row too little, the
     destinations give way for it (in short, then cut to no less than TRAIN_NAME_MIN), and only past
     that do the cars narrow, down to CAR_FLOOR. Its body is no taller than the rows' ``step``
     leaves room for over the rail."""
@@ -848,6 +849,13 @@ def train_shape_for(plans, step):
         shape = train_shape(car_w, tallest)
         return all(train_room(plan, shape) >= need(plan) for plan in trains)
 
+    # First the widest car that lets the rows stand as a table: every destination whole and every
+    # length label in one column after the widest of them (see bart).
+    widest = max([plan["full_w"] for plan in plans] or [0])
+    labels = max([plan["cars_w"] for plan in trains] or [0])
+    for car_w in CAR_WIDTHS:
+        if fits(car_w, lambda plan: widest + 4 + labels + 1 - plan["cars_w"]):
+            return train_shape(car_w, tallest)
     for car_w in CAR_WIDTHS:
         if fits(car_w, lambda plan: plan["full_w"]):
             return train_shape(car_w, tallest)

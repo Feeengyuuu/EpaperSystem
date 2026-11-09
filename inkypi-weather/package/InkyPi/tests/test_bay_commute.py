@@ -739,12 +739,14 @@ def test_bart_rows_draw_the_next_train_as_long_as_it_runs_on_one_scale(monkeypat
 def test_bart_trains_take_the_widest_cars_the_tightest_row_allows(monkeypatch):
     from plugins.bay_commute.command_render import car_rows, row_plan, train_shape_for
 
-    # Two trains with room to spare: the widest cars, the tallest body.
+    # Two trains with room to spare: wide cars, as wide as lets the rows stand as a table (their
+    # length labels in one column after the wider destination).
     image, rows = bart_rows_page(monkeypatch, [bart_etd("Millbrae", "RED", "#ff0000", (4, 25, 45), 5),
                                                bart_etd("Berryessa", "ORANGE", "#ff9933", (17, 37), 6)])
     _x, y, _width = rows["Millbrae"]
     runs = stripe_runs(image, y + 5, (0xed, 0x1c, 0x24))
-    assert len(runs) == 5 and runs[0][1] - runs[0][0] + 1 == 12
+    assert len(runs) == 5 and 10 <= runs[0][1] - runs[0][0] + 1 <= 12
+    assert rows["5节"][0] == rows["6节"][0]
     # Under an advisory and elevator notes the rows close up, and the body with them, rail and all
     # clear of the next row; its stripe keeps 4 px.
     busy = {"state": "live", "data": {"time": NOW.isoformat(), "advisories": sources.parse_bart_advisories(BSA_DELAY),
