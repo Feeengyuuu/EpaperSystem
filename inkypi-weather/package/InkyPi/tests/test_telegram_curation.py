@@ -300,3 +300,21 @@ def test_focus_chats_weigh_in_take_one_more_row_and_leave_two_rows_to_others():
     assert focus_rows == VISIBLE_COUNT - 2
     assert all(item["curation"]["focus"] for item in visible[:focus_rows])
     assert len(ranked) == 15
+
+
+def test_the_fallback_picture_chat_is_a_focus_chat_and_marks_its_stories():
+    fallback_chat = {"chat_id": "1271802723", "chat_title": "某个群"}
+    rules = Rules({})
+    assert rules.focus_weight(message("a", "x", kind="group", **fallback_chat)) == 2
+    assert rules.fallback_picture(message("b", "x", kind="group", **fallback_chat))
+    assert not rules.fallback_picture(message("c", "x", chat="吃瓜群众"))
+    # A title term works too; an emptied field means no fallback chat.
+    assert Rules({"pictureFallbackChats": "某个"}).fallback_picture(message("d", "x", chat="某个群"))
+    assert not Rules({"pictureFallbackChats": ""}).fallback_picture(message("e", "x", kind="group", **fallback_chat))
+
+    ranked = curator({"curationMode": "rules"}).curate([
+        message("photo", "", kind="group", media_kind="photo", **fallback_chat),
+        message("news", "普通资讯 " * 12),
+    ])
+    marks = {item["key"]: item["curation"]["fallback_picture"] for item in ranked}
+    assert marks == {"photo": True, "news": False}

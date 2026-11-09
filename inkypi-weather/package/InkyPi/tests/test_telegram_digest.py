@@ -611,7 +611,7 @@ def test_plugin_info_and_settings_defaults_are_declared():
     assert 'max="7" step="1" name="mediaDownloadLimit"' in settings
     assert 'id="mediaDownloadLimit" value="7"' in settings
     for name in ("includeText", "curationMode", "aiDailyLimit", "blockKeywords", "boostKeywords",
-                 "blockChats", "pinChats"):
+                 "blockChats", "pinChats", "focusChats", "pictureFallbackChats"):
         assert f'name="{name}"' in settings
     assert "private chats included" in settings
     assert "key === 'mediaDownloadLimit'" in settings
@@ -1545,6 +1545,42 @@ def test_far_lower_photo_does_not_displace_the_best_story(tmp_path):
 
     assert lead["key"] == "text-new"
     assert [item["key"] for item in rest] == ["photo-mid"]
+
+
+def test_a_fallback_chats_picture_leads_only_when_no_other_story_has_one(tmp_path):
+    plugin = _plugin(tmp_path)
+    held = {"key": "held-photo", "media_kind": "photo", "date": 400, "curation": {"score": 90, "fallback_picture": True}}
+    text = {"key": "text", "media_kind": "text", "date": 300, "curation": {"score": 85}}
+    photo = {"key": "photo", "media_kind": "photo", "date": 200, "curation": {"score": 50}}
+
+    # Another story has a picture: the fallback photo neither leads by its picture nor as the best story.
+    lead, rest = plugin._split_page_lead([held, text, photo])
+    assert lead["key"] == "text" and [item["key"] for item in rest] == ["held-photo", "photo"]
+    lead, rest = plugin._split_page_lead([held, dict(photo, curation={"score": 85})])
+    assert lead["key"] == "photo" and [item["key"] for item in rest] == ["held-photo"]
+    # No other picture anywhere: the fallback photo leads like any picture.
+    lead, rest = plugin._split_page_lead([text, held])
+    assert lead["key"] == "held-photo" and [item["key"] for item in rest] == ["text"]
+
+
+def test_the_lower_picture_falls_back_to_the_fallback_chat_and_its_photo_is_fetched(tmp_path):
+    plugin = _plugin(tmp_path)
+    picture = tmp_path / "picture.png"
+    Image.new("RGB", (320, 180), (23, 139, 81)).save(picture)
+    lead = {"key": "lead", "chat_id": "c1", "raw_text": "lead", "media_path": ""}
+    held = {"key": "held", "chat_id": "c9", "raw_text": "has words", "media_path": str(picture),
+            "curation": {"fallback_picture": True}}
+    bare = {"key": "bare", "chat_id": "c2", "raw_text": "", "media_path": str(picture)}
+
+    # Even a wordless picture of another chat comes before the fallback chat's.
+    assert plugin._second_picture(lead, [held, bare]) == (bare, False)
+    assert plugin._second_picture(lead, [held, dict(bare, media_path="")]) == (held, False)
+
+    stories = [{"key": f"row-{index}", "media_kind": "text", "date": 100 - index, "curation": {"score": 80 - index}}
+               for index in range(9)]
+    held_photo = {"key": "held-photo", "media_kind": "photo", "date": 1, "curation": {"score": 5, "fallback_picture": True}}
+    queue = [item["key"] for item in plugin._account_media_download_queue(stories + [held_photo])]
+    assert queue == ["held-photo"]
 
 
 def test_lead_is_the_best_story_when_no_picture_is_close(tmp_path):

@@ -13,7 +13,13 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageOps
 
-from plugins.telegram_digest.curation import VISIBLE_COUNT, display_headline, display_summary, original_excerpt
+from plugins.telegram_digest.curation import (
+    VISIBLE_COUNT,
+    display_headline,
+    display_summary,
+    fallback_picture,
+    original_excerpt,
+)
 from utils.doodle_backdrop import paint_doodles
 
 LIST_ROWS = VISIBLE_COUNT - 1
@@ -296,19 +302,21 @@ class BriefingPageMixin:
     def _second_picture(self, lead, rest):
         """(the picture for the lead's empty half, whether it is the lead's own) or (None, False):
         the lead's album first, then the next picture story that says something, then any
-        picture story at all."""
+        picture story at all; a fallback chat's pictures only once no other story has one."""
         group, chat = str(lead.get("grouped_id") or ""), str(lead.get("chat_id") or "")
         if group:
             for story in rest:
                 if (str(story.get("grouped_id") or "") == group and str(story.get("chat_id") or "") == chat
                         and self._open_page_media(story) is not None):
                     return story, True
-        for story in rest:
-            if str(story.get("raw_text") or "").strip() and self._open_page_media(story) is not None:
-                return story, False
-        for story in rest:
-            if self._open_page_media(story) is not None:
-                return story, False
+        for fallback in (False, True):
+            stories = [story for story in rest if fallback_picture(story) == fallback]
+            for story in stories:
+                if str(story.get("raw_text") or "").strip() and self._open_page_media(story) is not None:
+                    return story, False
+            for story in stories:
+                if self._open_page_media(story) is not None:
+                    return story, False
         return None, False
 
     def _draw_second_feature(self, image, draw, item, box, p, same_story=False):
