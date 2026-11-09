@@ -26,6 +26,13 @@ TORSO_BUST_SHARE = 0.5
 WIKI_HEAD_SHARE = 0.62
 # A match under way or played shows each player's face in its row, in this slot after the seed.
 ROW_FACE_W = 24
+# A seeded player's tennis-ball mark (_tennis_seed_icon): optic-yellow felt, a darker rim, white
+# seams and the seed in dark ink; cached by (seed, size).
+SEED_BALL = (214, 232, 60)
+SEED_RIM = (128, 146, 30)
+SEED_SEAM = (255, 255, 255)
+SEED_INK = (20, 24, 16)
+SEED_ICON_CACHE = {}
 # The place beside the tournament's name, by its logo (tennis.place_mark), in this box at most;
 # a venue named in words takes at most this share of the header.
 PLACE_LOGO = (72, 14)
@@ -126,7 +133,10 @@ class TennisRenderMixin:
         self._draw_text_in_box(draw, (x1 + 7, y1 + 2, x2 - 80, y1 + 15), round_label, label_font, accent)
         state = match_state_label(match, now)
         if live:
-            draw.ellipse((x2 - 66, y1 + 5, x2 - 59, y1 + 12), fill=COLORS["red"], outline=COLORS["border"], width=1)
+            # The live dot leads its own label ("● 进行中"), right against it.
+            label_left = x2 - 6 - self._text_width(draw, state, self._font(9, True))
+            draw.ellipse((label_left - 10, y1 + 5, label_left - 3, y1 + 12), fill=COLORS["red"], outline=COLORS["border"],
+                         width=1)
         if match.get("state") == "pre" and state != "待定":
             # A match to come by the page's clock icon and its local start.
             font = self._font(9, False)
@@ -208,8 +218,8 @@ class TennisRenderMixin:
         seed = player.get("seed")
         disc = min(16, y2 - y1 - 2)
         if seed:
-            self._draw_rank_medal(draw, (x1, y1 + (y2 - y1 - disc) // 2, x1 + disc, y1 + (y2 - y1 - disc) // 2 + disc), seed,
-                                  medal=False)
+            icon = self._tennis_seed_icon(seed, disc)
+            image.paste(icon, (x1, y1 + (y2 - y1 - icon.height) // 2), icon)
         flag_x = x1 + disc + 4
         if face:
             # The slot stays when ESPN and the tour have no photo, so the match's flags line up.
@@ -239,6 +249,39 @@ class TennisRenderMixin:
                                        str(games), self._font(11, won_set), COLORS["text"] if won_set else COLORS["muted"])
             if tiebreak is not None:
                 draw.text((cell[2] - mark_w, cell[1]), str(tiebreak), font=mark_font, fill=COLORS["muted"])
+
+    def _tennis_seed_icon(self, seed, size):
+        """A seeded player's mark: a tennis ball in optic yellow, its white seams at the edges, the
+        seed's number in dark ink across it. Drawn four times larger and scaled down, so it stays crisp
+        at the row's 16 px; the same in both themes (the ball carries its own contrast)."""
+        size = max(8, int(size))
+        key = (int(seed), size)
+        cached = SEED_ICON_CACHE.get(key)
+        if cached is not None:
+            return cached
+        big = size * 4
+        ball = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+        pen = ImageDraw.Draw(ball)
+        pen.ellipse((0, 0, big - 1, big - 1), fill=SEED_BALL + (255,), outline=SEED_RIM + (255,), width=4)
+        # The seams: arcs of two circles centred beyond the ball's left and right edges, kept inside it.
+        seams = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+        seam_pen = ImageDraw.Draw(seams)
+        radius, width = big * 0.78, max(3, round(big * 0.055))
+        for cx in (-big * 0.57, big * 1.57):
+            seam_pen.ellipse((cx - radius, big / 2 - radius, cx + radius, big / 2 + radius), outline=SEED_SEAM + (255,),
+                             width=width)
+        inside = Image.new("L", (big, big), 0)
+        ImageDraw.Draw(inside).ellipse((4, 4, big - 5, big - 5), fill=255)
+        seams.putalpha(ImageChops.multiply(seams.getchannel("A"), inside))
+        ball.alpha_composite(seams)
+        label = str(int(seed))
+        font = self._font(int(big * (0.66 if len(label) == 1 else 0.52)), True)
+        # Centred on the digits' own ink, not the font's line box (which sits them low).
+        left, top, right, bottom = pen.textbbox((0, 0), label, font=font)
+        pen.text(((big - (right - left)) / 2 - left, (big - (bottom - top)) / 2 - top), label, font=font, fill=SEED_INK)
+        icon = ball.resize((size, size), Image.LANCZOS)
+        SEED_ICON_CACHE[key] = icon
+        return icon
 
     def _paste_tennis_row_face(self, image, box, player):
         """The player's face (ESPN's headshot, else the tour's photo) centred in ``box``, on its foot."""

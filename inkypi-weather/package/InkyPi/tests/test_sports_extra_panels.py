@@ -209,6 +209,39 @@ def test_the_tennis_header_shows_the_events_mark_and_its_venue(monkeypatch):
     assert image.getbbox() is not None
 
 
+def test_a_seeded_player_carries_a_tennis_ball_with_the_seed_on_it():
+    from plugins.sports_dashboard.tennis_render import SEED_BALL, SEED_INK
+
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    icon = plugin._tennis_seed_icon(5, 16)
+    assert icon.size == (16, 16) and icon.getpixel((0, 0))[3] == 0
+    pixels = [icon.getpixel((x, y)) for x in range(16) for y in range(16)]
+    # The optic-yellow felt and the dark number are both there, the number in the middle.
+    assert any(abs(r - SEED_BALL[0]) < 30 and abs(g - SEED_BALL[1]) < 30 and b < 120 and a > 200 for r, g, b, a in pixels)
+    dark = [(x, y) for x in range(16) for y in range(16) if sum(icon.getpixel((x, y))[:3]) < 200 and icon.getpixel((x, y))[3] > 200]
+    assert dark and 5 <= sum(x for x, _ in dark) / len(dark) <= 10 and 5 <= sum(y for _, y in dark) / len(dark) <= 10
+    assert plugin._tennis_seed_icon(5, 16) is icon and plugin._tennis_seed_icon(12, 16) is not icon
+    assert SEED_INK[0] < 60
+
+
+def test_the_live_dot_leads_its_label(monkeypatch):
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    monkeypatch.setattr(plugin, "_load_icon_flag", lambda url, size: Image.new("RGBA", size, (0, 80, 200, 255)))
+    match = {"state": "in", "round_zh": "小组赛", "date": "2026-11-10T19:00Z", "detail": "",
+             "players": [{"name": "A", "seed": 2, "sets": [[4, None]]}, {"name": "B", "seed": 7, "sets": [[4, None]]}]}
+    token = _ACTIVE_COLORS.set(DAY_COLORS)
+    try:
+        image = Image.new("RGB", (270, 64), DAY_COLORS["paper"])
+        draw = ImageDraw.Draw(image)
+        plugin._draw_tennis_match(image, draw, (2, 2, 266, 60), match, feeds.NOW.astimezone(LA), DAY_COLORS["blue"])
+        label_left = 266 - 6 - plugin._text_width(draw, "进行中", plugin._font(9, True))
+    finally:
+        _ACTIVE_COLORS.reset(token)
+    reds = [x for x in range(150, 266) for y in range(7, 14) if image.getpixel((x, y)) == DAY_COLORS["red"]]
+    dot_right = max(x for x in reds if x < label_left)
+    assert label_left - dot_right <= 4
+
+
 def test_each_rider_carries_his_manufacturers_mark():
     from plugins.sports_dashboard.motogp_render import maker_mark
 
