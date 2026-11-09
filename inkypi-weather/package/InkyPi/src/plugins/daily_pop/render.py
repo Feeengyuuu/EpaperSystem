@@ -43,8 +43,17 @@ LOGOS = {"bilibili": (("bilibili_tv", "bilibili"), 19, "热门"), "bangumi": ("b
 KEY_LOGOS = {"bilibili": ("bilibili", 15), "bangumi": ("bangumi", 15), "wiki": ("wikipedia", 20),
              "epic": ("nasa", 20), "songs": ("apple_music", 13), "puzzle": ("chesscom", 16)}
 KEY_GAP = 16
-# A song's artist photo beside the artist's name in the songs card, round, this many px across.
-ARTIST_AVATAR = 16
+# A song's artist photo before the artist's name (the row's second line), round, this many px across.
+ARTIST_AVATAR = 11
+# A song row's two lines' middles below the row's top (rows are about 25 px).
+SONG_LINES = (7, 19)
+# A song's genre as a glyph (assets/genre_icons, GPT Image 2.6 silhouettes, tinted the page's muted
+# ink) this many px tall before its release day, at the row's end ahead of its rank's move; a genre
+# without a glyph of its own takes the music notes.
+GENRE_ICON_H = 10
+GENRE_ICONS = {"嘻哈": "hiphop", "说唱": "hiphop", "乡村": "country", "流行": "pop", "节奏蓝调": "rnb", "摇滚": "rock",
+               "金属": "rock", "舞曲": "dance", "电子": "dance", "拉丁": "latin", "墨西哥": "latin", "另类": "alternative",
+               "独立流行": "alternative", "原声": "soundtrack"}
 # Cards whose source colour runs all the way round them, so the area stands out.
 RINGED = {"bilibili"}
 # Quiet doodles in the source's colour under a card's content.
@@ -209,14 +218,16 @@ def _glass(canvas, box, fill, alpha, radius):
     canvas.image.paste(fill, (x0, y0, x1 + 1, y1 + 1), mask)
 
 
-def _move_badge(canvas, xy, move, *, anchor_right=False):
-    """NEW in a red pill, or a small triangle and the places gained or lost; returns its width."""
+def _move_badge(canvas, xy, move, *, anchor_right=False, small=False):
+    """NEW in a red pill (``small``: 12 px tall in 8 px type, for a two-line row), or a small triangle
+    and the places gained or lost; returns its width."""
     x, y = xy
     if move == "new":
-        width = canvas.width("NEW", 9) + 10
+        size, half = (8, 6) if small else (9, 7)
+        width = canvas.width("NEW", size) + (8 if small else 10)
         left = x - width if anchor_right else x
-        canvas.draw.rounded_rectangle((left, y - 7, left + width, y + 7), radius=7, fill=canvas.color("new"))
-        canvas.text((left + width / 2, y), "NEW", 9, "badge_ink", anchor="mm")
+        canvas.draw.rounded_rectangle((left, y - half, left + width, y + half), radius=half, fill=canvas.color("new"))
+        canvas.text((left + width / 2, y), "NEW", size, "badge_ink", anchor="mm")
         return width
     if not isinstance(move, int) or move == 0:
         return 0
@@ -559,7 +570,31 @@ def _epic(canvas, payload, images, now):
 
 # --- Apple Music ---------------------------------------------------------------------------------
 
-def _songs(canvas, payload, images):
+def release_label(song, now):
+    """A song's release by its day ("11/06") this year, by its year before; "" without one."""
+    released = str(song.get("released") or "")
+    if len(released) != 10 or now is None:
+        return ""
+    return f"{released[5:7]}/{released[8:10]}" if released[:4] == f"{now:%Y}" else released[:4]
+
+
+@lru_cache(maxsize=32)
+def genre_icon(genre, colour):
+    """The genre's glyph GENRE_ICON_H px tall in ``colour``; None for no genre or a missing file."""
+    if not genre:
+        return None
+    try:
+        with Image.open(ASSETS / "genre_icons" / f"{GENRE_ICONS.get(genre, 'note')}.png") as source:
+            mask = source.convert("RGBA").getchannel("A")
+    except OSError:
+        return None
+    width = max(1, round(mask.width * GENRE_ICON_H / mask.height))
+    glyph = Image.new("RGBA", (width, GENRE_ICON_H), (*colour, 255))
+    glyph.putalpha(mask.resize((width, GENRE_ICON_H), Image.Resampling.LANCZOS))
+    return glyph
+
+
+def _songs(canvas, payload, images, now=None):
     songs = payload["songs"]["data"].get("songs") or []
     history = (payload.get("history") or {}).get("songs") or {}
     moves = chart_moves(songs, history.get("previous"), "name") if history.get("previous") else {}
@@ -579,23 +614,32 @@ def _songs(canvas, payload, images):
         art = (left + 10, int(y0 + 2), left + 10 + int(row_h - 4), int(y0 + row_h - 2))
         _paste_fit(canvas, images.get(sources.safe_image_url(song.get("artwork"))), art, radius=3)
         x = art[2] + 8
-        middle = y0 + row_h / 2
-        # Name, then its artist greyed on the same line, so three songs fit the short card; the
-        # artist's official photo, round, before the artist's name when it is at hand.
-        name_w = canvas.text((x, middle), f"{index + 1}. {song.get('name')}", 12, anchor="lm", width=right - x - 96)
-        artist_x = x + name_w + 6
+        # Two lines beside the cover, each the card's whole width: the song, with its rank's move
+        # (rising, falling or NEW) at the line's end; then its artist's official photo, round, and
+        # name, with the song's genre as its glyph and its release day at that line's end.
+        upper, lower = y0 + SONG_LINES[0], y0 + SONG_LINES[1]
+        badge_w = _move_badge(canvas, (right - 10, upper), moves.get(song.get("name")), anchor_right=True, small=True)
+        canvas.text((x, upper), f"{index + 1}. {song.get('name')}", 11, anchor="lm",
+                    width=right - 10 - (badge_w + 6 if badge_w else 0) - x)
+        artist_x = x
         photo = images.get(sources.safe_image_url((payload.get("artist_photos") or {}).get(song.get("artist_url"))))
         if photo is not None:
-            top_y = round(middle - ARTIST_AVATAR / 2)
+            top_y = round(lower - ARTIST_AVATAR / 2)
             _paste_fit(canvas, photo, (artist_x, top_y, artist_x + ARTIST_AVATAR, top_y + ARTIST_AVATAR),
                        radius=ARTIST_AVATAR // 2, centering=(0.5, 0.3))
             artist_x += ARTIST_AVATAR + 4
-        # The rank's move takes the row's end when there is one; otherwise the artist runs on to it.
-        move = moves.get(song.get("name"))
-        canvas.text((artist_x, middle + 1), song.get("artist"), 10, "muted", anchor="lm", bold=False,
-                    width=right - artist_x - (40 if move not in (None, 0) else 10))
-        _move_badge(canvas, (right - 10, middle), move, anchor_right=True)
-
+        end = right - 10
+        artist_w = canvas.width(song.get("artist") or "", 9, bold=False)
+        icon = genre_icon(song.get("genre"), tuple(canvas.color("muted"))[:3])
+        when = release_label(song, now)
+        when_w = canvas.width(when, 9, bold=False) if when else 0
+        if when and artist_x + artist_w + 8 + when_w <= end:
+            canvas.text((end, lower), when, 9, "muted", anchor="rm", bold=False)
+            end -= when_w + 4
+        if icon is not None and artist_x + artist_w + 8 + icon.width <= end:
+            canvas.image.paste(icon, (round(end - icon.width), round(lower - icon.height / 2)), icon)
+            end -= icon.width + 8
+        canvas.text((artist_x, lower), song.get("artist"), 9, "muted", anchor="lm", bold=False, width=end - artist_x)
 
 # --- Chess ---------------------------------------------------------------------------------------
 
@@ -657,7 +701,7 @@ def render_page(dimensions, payload, settings, now, images):
     _bangumi(canvas, payload, images, now)
     _wiki(canvas, payload)
     _epic(canvas, payload, images, now)
-    _songs(canvas, payload, images)
+    _songs(canvas, payload, images, now)
     _puzzle(canvas, payload, images)
     result = canvas.image
     if tuple(dimensions) != (800, 480):

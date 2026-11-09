@@ -94,6 +94,26 @@ def safe_image_url(value):
     return url
 
 
+# Apple's genre names in the page's Chinese; any other keeps Apple's name.
+GENRES_ZH = {"hip-hop/rap": "嘻哈", "hip hop/rap": "嘻哈", "rap": "说唱", "country": "乡村", "pop": "流行",
+             "r&b/soul": "节奏蓝调", "alternative": "另类", "rock": "摇滚", "dance": "舞曲", "electronic": "电子",
+             "latin": "拉丁", "música mexicana": "墨西哥", "k-pop": "韩流", "christian": "福音",
+             "christian & gospel": "福音", "singer/songwriter": "唱作", "soundtrack": "原声", "jazz": "爵士",
+             "blues": "布鲁斯", "reggae": "雷鬼", "classical": "古典", "metal": "金属", "indie pop": "独立流行",
+             "j-pop": "日流", "afrobeats": "非洲节拍", "holiday": "节日"}
+
+
+def genre_zh(name):
+    text = _clean(name, 24)
+    return GENRES_ZH.get(text.lower(), text) if text and text.lower() != "music" else ""
+
+
+def _release_day(value):
+    """The release's calendar day (YYYY-MM-DD) from Apple's date or timestamp; "" when unreadable."""
+    text = str(value or "").strip()[:10]
+    return text if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text) else ""
+
+
 def artist_page(url):
     """The artist's Apple Music page (https, no query), or "" for any other link."""
     parts = urlsplit(https(url))
@@ -273,7 +293,10 @@ def normalize_songs(payload):
     results = (((payload or {}).get("feed") or {}).get("results")) or []
     songs = [{"name": _clean(row.get("name"), 50), "artist": _clean(row.get("artistName"), 40),
               "artwork": str(row.get("artworkUrl100") or "").replace("100x100bb", "200x200bb"),
-              "artist_url": artist_page(row.get("artistUrl"))}
+              "artist_url": artist_page(row.get("artistUrl")),
+              "genre": next((genre_zh(item.get("name")) for item in row.get("genres") or []
+                             if isinstance(item, dict) and genre_zh(item.get("name"))), ""),
+              "released": _release_day(row.get("releaseDate"))}
              for row in results if isinstance(row, dict) and row.get("name")]
     if not songs:
         raise ValueError("Apple returned no songs")
@@ -290,9 +313,13 @@ def normalize_itunes_songs(payload):
         images = row.get("im:image") or []
         artwork = (images[-1] or {}).get("label") if isinstance(images, list) and images else ""
         artist = row.get("im:artist") if isinstance(row.get("im:artist"), dict) else {}
+        category = ((row.get("category") or {}).get("attributes") or {}) if isinstance(row.get("category"), dict) else {}
         songs.append({"name": _clean(name, 50), "artist": _clean(artist.get("label"), 40),
                       "artwork": str(artwork or ""),
-                      "artist_url": artist_page((artist.get("attributes") or {}).get("href"))})
+                      "artist_url": artist_page((artist.get("attributes") or {}).get("href")),
+                      "genre": genre_zh(category.get("label")),
+                      "released": _release_day((row.get("im:releaseDate") or {}).get("label")
+                                               if isinstance(row.get("im:releaseDate"), dict) else "")})
     if not songs:
         raise ValueError("iTunes returned no songs")
     return {"songs": songs[:MAX_SONGS], "chart": "itunes"}

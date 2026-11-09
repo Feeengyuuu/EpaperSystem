@@ -338,4 +338,31 @@ def test_each_song_shows_its_artists_photo_before_the_artists_name():
     image = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, {photo_url: green})
     left, top, right, bottom = render.CARDS["songs"]
     pixels = [image.getpixel((x, y)) for x in range(left, right) for y in range(top, bottom)]
-    assert sum(pixel == (20, 200, 60) for pixel in pixels) > 3 * 100
+    assert sum(pixel == (20, 200, 60) for pixel in pixels) > 3 * 60
+
+
+def test_a_songs_genre_and_release_close_its_artists_line():
+    from plugins.daily_pop import render
+
+    itunes = {"feed": {"entry": [{"im:name": {"label": "Talk To God"}, "im:artist": {"label": "Tom MacDonald"},
+                                  "category": {"attributes": {"label": "Hip-Hop/Rap"}},
+                                  "im:releaseDate": {"label": "2026-11-06T04:00:00-07:00"}}]}}
+    song = sources.normalize_itunes_songs(itunes)["songs"][0]
+    assert (song["genre"], song["released"]) == ("嘻哈", "2026-11-06")
+    now = datetime(2026, 11, 8, 12, tzinfo=sources.PACIFIC)
+    assert render.release_label(song, now) == "11/06"
+    assert render.release_label({"released": "2025-10-17"}, now) == "2025"
+    # Each genre has its glyph (an unknown one the music notes), in the page's muted ink.
+    for genre in list(render.GENRE_ICONS) + ["福音", ""]:
+        glyph = render.genre_icon(genre, (60, 70, 80))
+        assert (glyph is None) == (genre == "") and (glyph is None or glyph.height == render.GENRE_ICON_H)
+    payload = _payload()
+    payload["songs"]["data"]["songs"] = [dict(song, artwork="")] * 3
+    drawn = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, now, {})
+    left, top, right, bottom = render.CARDS["songs"]
+    muted = render.DAY["muted"]
+    from PIL import ImageColor
+    ink = ImageColor.getrgb(muted)
+    # The glyph and the day at the end of each artist line.
+    end = [drawn.getpixel((x, y)) for x in range(right - 60, right - 8) for y in range(top + 20, bottom)]
+    assert sum(pixel == ink for pixel in end) > 20

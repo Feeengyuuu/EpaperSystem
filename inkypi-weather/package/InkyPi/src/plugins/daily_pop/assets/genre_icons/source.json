@@ -1,0 +1,80 @@
+{
+  "model": "image/gpt-image-2.6-sunburst (Creative Claw), 1536x512, transparent, quality high",
+  "job": "44291e27-3fa1-4689-ad03-c89f82111ea7",
+  "prompt": "A single horizontal row of exactly ten small music-genre icons on a fully transparent background, each a solid flat black silhouette: a vintage stage microphone (hip-hop), a cowboy hat (country), a four-point sparkle star (pop), a saxophone (R&B), an electric guitar (rock), over-ear headphones (dance and electronic), a pair of maracas (latin), a vinyl record (alternative), a film clapperboard (soundtrack), a pair of beamed eighth notes (other); bold chunky shapes readable at 12 px, no text.",
+  "source_sha256": "d10ce8b3c7cb3ead86c233ff58230b464d4eb841169c0966e42df74500638553",
+  "processing": "split at transparent gaps, trimmed, 48 px tall black alpha glyphs tinted at render",
+  "use": "今日热榜: each hit song's genre beside its release day",
+  "files": {
+    "hiphop.png": {
+      "size": [
+        26,
+        48
+      ],
+      "sha256": "daf6428e6a97fa167287c5076a278974267bfc12bc4d9b4733e4739016f3dc14"
+    },
+    "country.png": {
+      "size": [
+        80,
+        48
+      ],
+      "sha256": "daecebef3bda673430408e01d58dfe82b275e9a0a6eb250556572b4c5c2e30af"
+    },
+    "pop.png": {
+      "size": [
+        49,
+        48
+      ],
+      "sha256": "aa50f342d1ede9133987151bcc7d26ac73777c1bb4d162bc0c6dc73e6bd83baa"
+    },
+    "rnb.png": {
+      "size": [
+        45,
+        48
+      ],
+      "sha256": "2fc1adfe0709039c7bcee410adc76ea1cf322f30b33c457fb005aee2134324d1"
+    },
+    "rock.png": {
+      "size": [
+        44,
+        48
+      ],
+      "sha256": "aff40c88f43687eb9afc25b0ebb5bf8991246f600d48b3cb7d149a80e5566658"
+    },
+    "dance.png": {
+      "size": [
+        59,
+        48
+      ],
+      "sha256": "015b55de30ce5b09aedb772221db496ffa63854812398ff0145f92f19cdc6ff3"
+    },
+    "latin.png": {
+      "size": [
+        56,
+        48
+      ],
+      "sha256": "664fa6b430e81fce42675c044f74c0b4c169a30eb975ebf4b7ff5a0c2d8cc852"
+    },
+    "alternative.png": {
+      "size": [
+        46,
+        48
+      ],
+      "sha256": "1b4ff47c090c127270b078786b0995e34b64c57b5e7b0fcaf5458c2ccc449857"
+    },
+    "soundtrack.png": {
+      "size": [
+        49,
+        48
+      ],
+      "sha256": "a9cba0f490a33e4ea80a0fa338a9bcaf19588cba684e48fb6532f0bd936aed48"
+    },
+    "note.png": {
+      "size": [
+        45,
+        48
+      ],
+      "sha256": "3d078fd6bc8bd0faf5c65b233b4c780d81d6e68947c7f1698895b07977a5778b"
+    }
+  }
+}
