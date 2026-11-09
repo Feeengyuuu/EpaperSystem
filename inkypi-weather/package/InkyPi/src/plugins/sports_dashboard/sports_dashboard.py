@@ -186,6 +186,8 @@ class SportsDashboard(
             sources.append("worlds")
         if self._live_state_active(self._lck_live_state_path(), LCK_LIVE_STATE_VERSION, current_dt):
             sources.append("lck")
+        if self._live_state_active(self._vct_live_state_path(), VCT_LIVE_STATE_VERSION, current_dt):
+            sources.append("vct")
         if self._live_state_active(
             self._valve_esports_live_state_path(),
             VALVE_ESPORTS_LIVE_STATE_VERSION,

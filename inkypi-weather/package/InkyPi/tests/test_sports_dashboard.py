@@ -12855,6 +12855,7 @@ def test_theme_only_injected_palettes_use_cached_stubs_without_provider_and_rese
     )
     plugin._attach_lpl_odds = lambda events, *_args: events
     plugin._load_lck_events = lambda _settings, _timezone_info: ([], "CACHE")
+    plugin._load_vct_events = lambda _settings, _timezone_info: ([], "CACHE")
     plugin._load_nba_events = lambda _settings, _timezone_info: (
         SportsDashboard._parse_nba_espn_events(_sample_nba_scoreboard_payload(), la),
         "CACHE",

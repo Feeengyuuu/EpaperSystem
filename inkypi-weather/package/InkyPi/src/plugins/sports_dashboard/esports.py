@@ -403,6 +403,15 @@ class EsportsMixin:
             logger.warning("LCK schedule fetch failed: %s", exc)
         return [], "LCK NO DATA"
 
+    def _load_vct_events(self, settings, timezone_info):
+        try:
+            events = self._fetch_vct_events(settings, timezone_info)
+            if events:
+                return events, "VCT LIVE DATA"
+        except Exception as exc:
+            logger.warning("VCT schedule fetch failed: %s", _safe_exception_text(exc))
+        return [], "VCT NO DATA"
+
     def _load_msi_events(self, settings, timezone_info, now):
         tournament = None
         try:
@@ -2473,6 +2482,18 @@ class EsportsMixin:
             # on match days) or when the sidebar override forces it.
             if worlds_card.get("in_window") or worlds_card.get("sidebar_pinned") or worlds_forced:
                 cards.append(worlds_card)
+        if self._bool_setting(settings, "vctEnabled", True):
+            # VALORANT's top tier competes under the same rules as the LoL leagues; out of season
+            # (only results) it is no candidate at all.
+            vct_events, vct_source_state = self._load_vct_events(settings, timezone_info)
+            cards.append(
+                {
+                    "league_key": "VCT",
+                    "selected": self._select_lck_events(vct_events, now),
+                    "source_state": vct_source_state,
+                    "priority": VCT_SIDEBAR_PRIORITY,
+                }
+            )
         return cards
 
     def _load_lol_esports_sidebar(self, settings, device_config, timezone_info, now):
@@ -2488,7 +2509,7 @@ class EsportsMixin:
             or settings.get("lolSidebarLeagueOverride")
             or ""
         ).strip().upper()
-        if configured in {"LPL", "LCK", "MSI", "WORLDS"}:
+        if configured in {"LPL", "LCK", "MSI", "WORLDS", "VCT"}:
             return configured
         if SportsDashboard._bool_setting(settings, "lckPreviewEnabled", False):
             return "LCK"
@@ -2746,6 +2767,8 @@ class EsportsMixin:
     def _lol_card_tier(card):
         selected = (card or {}).get("selected") or {}
         event = selected.get("main") or (selected.get("live") or selected.get("upcoming") or [{}])[0]
+        if SportsDashboard._lol_card_key(card) == "VCT":
+            return event_ranking.vct_tier((event or {}).get("league_slug"), (event or {}).get("block"))
         return event_ranking.esports_tier("lol", SportsDashboard._lol_card_key(card), (event or {}).get("block"))
 
     @staticmethod
@@ -5031,9 +5054,17 @@ class EsportsMixin:
             "LCK",
         )
 
-    def _fetch_lol_esports_events(self, settings, timezone_info, league_setting_key, default_league_id, league_key, force_live_endpoint=False, now=None):
-        league_id = str(settings.get(league_setting_key) or default_league_id).strip()
-        url = LOLESPORTS_SCHEDULE_URL.format(league_id=league_id)
+    def _fetch_vct_events(self, settings, timezone_info):
+        """The VCT leagues' latest schedule page in one request (Riot takes a comma list)."""
+        league_ids = str(settings.get("vctLeagueIds") or "").strip() or ",".join(DEFAULT_VCT_LEAGUE_IDS)
+        return self._fetch_lol_esports_events(settings, timezone_info, None, league_ids, "VCT",
+                                              schedule_url=VALORANT_ESPORTS_SCHEDULE_URL, poll_live=False)
+
+    def _fetch_lol_esports_events(self, settings, timezone_info, league_setting_key, default_league_id, league_key,
+                                  force_live_endpoint=False, now=None, schedule_url=LOLESPORTS_SCHEDULE_URL,
+                                  poll_live=True):
+        league_id = str((settings.get(league_setting_key) if league_setting_key else None) or default_league_id).strip()
+        url = schedule_url.format(league_id=league_id)
         session = get_http_session()
         response = session.get(
             url,
@@ -5049,7 +5080,8 @@ class EsportsMixin:
             "MSI": "msiLiveEndpointEnabled",
             "WORLDS": "worldsLiveEndpointEnabled",
         }.get(str(league_key).upper(), "lolLiveEndpointEnabled")
-        should_poll_live = force_live_endpoint or self._should_poll_lpl_live_endpoint(events, now)
+        # Valorant has no getLive of its own: its schedule's states carry the live match.
+        should_poll_live = poll_live and (force_live_endpoint or self._should_poll_lpl_live_endpoint(events, now))
         if self._bool_setting(settings, live_endpoint_key, True) and should_poll_live:
             try:
                 live_events = self._fetch_lpl_live_events(settings, timezone_info)
@@ -5656,6 +5688,7 @@ class EsportsMixin:
                 "LCK": LCK_LIVE_STATE_VERSION,
                 "MSI": MSI_LIVE_STATE_VERSION,
                 "WORLDS": WORLDS_LIVE_STATE_VERSION,
+                "VCT": VCT_LIVE_STATE_VERSION,
             }.get(key, LPL_LIVE_STATE_VERSION),
             "league_key": key,
             "updated_at": now.astimezone(timezone.utc).isoformat(),
@@ -5690,6 +5723,7 @@ class EsportsMixin:
                 "LCK": self._lck_live_state_path,
                 "MSI": self._msi_live_state_path,
                 "WORLDS": self._worlds_live_state_path,
+                "VCT": self._vct_live_state_path,
             }.get(key, self._lpl_live_state_path)()
             self._write_json_file(path, payload)
         except OSError as exc:
@@ -6258,6 +6292,9 @@ class EsportsMixin:
 
     def _lck_live_state_path(self):
         return self._sports_dashboard_cache_dir() / "lck_live_state.json"
+
+    def _vct_live_state_path(self):
+        return self._sports_dashboard_cache_dir() / "vct_live_state.json"
 
     def _msi_tournament_state_path(self):
         return self._sports_dashboard_cache_dir() / "msi_tournament_state.json"

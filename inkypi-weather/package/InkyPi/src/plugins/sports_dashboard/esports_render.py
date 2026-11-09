@@ -1905,6 +1905,18 @@ class EsportsRenderMixin:
                 "empty_schedule": "No MSI schedule",
                 "empty_upcoming": "No more MSI schedule",
             }
+        if key == "VCT":
+            return {
+                "key": "VCT",
+                "name": "VCT",
+                "logo_path": os.path.join(LOCAL_VCT_LOGO_DIR, "champions.png"),
+                "accent": "vct_accent",
+                "live": "vct_live",
+                "tag": "vct_tag",
+                "shadow": "vct_shadow",
+                "empty_schedule": "No VCT schedule",
+                "empty_upcoming": "No more VCT schedule",
+            }
         if key == "WORLDS":
             return {
                 "key": "WORLDS",
@@ -1960,12 +1972,19 @@ class EsportsRenderMixin:
 
         header_y = 12
 
-        wordmark_path = self._worlds_header_wordmark_path(config, logo_path, now)
-        wordmark_drawn = bool(wordmark_path) and self._draw_worlds_header_wordmark(
-            image,
-            wordmark_path,
-            (right_x + 13, header_y + 1, right_x + right_w - 96, header_y + 41),
-        )
+        if config["key"] == "VCT":
+            vct_event = main_event or (recent[0] if recent else None)
+            wordmark_drawn = self._draw_vct_header(
+                image, draw, (right_x + 13, header_y + 1, right_x + right_w - 96, header_y + 41),
+                (vct_event or {}).get("league_slug"), config,
+            )
+        else:
+            wordmark_path = self._worlds_header_wordmark_path(config, logo_path, now)
+            wordmark_drawn = bool(wordmark_path) and self._draw_worlds_header_wordmark(
+                image,
+                wordmark_path,
+                (right_x + 13, header_y + 1, right_x + right_w - 96, header_y + 41),
+            )
         if not wordmark_drawn:
             logo_x = right_x + 13
             logo_y = header_y + 5
@@ -2023,6 +2042,59 @@ class EsportsRenderMixin:
         else:
             self._draw_lpl_recent_rows(image, draw, right_x, right_w, 374, recent[:2], league_key=league_key)
         paint_list_backdrop(image, (right_x + 2, 240, width - 2, height - 2), "esports", COLORS["panel"], (COLORS["paper"], COLORS["panel"]))
+
+    def _draw_vct_header(self, image, draw, box, league_slug, config):
+        """The VCT card's header: its leading match's league by Riot's official wordmark (an
+        international event's coloured lockup alone; a partner league's wordmark beside its mark,
+        the one-colour ones in the page ink). Without one, the league's mark (the Champions spark
+        when it has none here), "VCT" in large type and the league's name under it."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        slug = str(league_slug or "").strip().lower()
+        if self._draw_vct_wordmark(image, (x1, y1, x2, y2), slug):
+            return True
+        path = os.path.join(LOCAL_VCT_LOGO_DIR, f"{slug}.png") if slug else ""
+        if not path or not os.path.exists(path):
+            path = config["logo_path"]
+        mark = self._load_local_logo(path, (y2 - y1, y2 - y1), alpha_threshold=8)
+        if not mark:
+            return False
+        image.paste(mark, (x1, y1 + (y2 - y1 - mark.height) // 2), mark)
+        text_x = x1 + mark.width + 8
+        title, title_font = self._fit_text(draw, "VCT", x2 - text_x, 24, bold=True, min_size=14)
+        draw.text((text_x, y1 - 1), title, font=title_font, fill=COLORS["text"])
+        label = VCT_LEAGUE_LABELS.get(slug, "")
+        if label:
+            label, label_font = self._fit_text(draw, label, x2 - text_x, 12, bold=True, min_size=8)
+            draw.text((text_x, y1 + 26), label, font=label_font, fill=COLORS[config["accent"]])
+        return True
+
+    def _draw_vct_wordmark(self, image, box, slug):
+        """Riot's official wordmark of the league in ``box``; False when it has none here."""
+        style = VCT_WORDMARKS.get(slug)
+        path = os.path.join(LOCAL_VCT_WORDMARK_DIR, f"{slug}.png")
+        if not style or not os.path.exists(path):
+            return False
+        ink, with_mark = style
+        x1, y1, x2, y2 = box
+        x = x1
+        if with_mark:
+            mark = self._load_local_logo(os.path.join(LOCAL_VCT_LOGO_DIR, f"{slug}.png"), (y2 - y1, y2 - y1),
+                                         alpha_threshold=8)
+            if mark:
+                image.paste(mark, (x, y1 + (y2 - y1 - mark.height) // 2), mark)
+                x += mark.width + 8
+        # A partner league's wordmark sits a little lower than its mark is tall, an event's fills the slot.
+        art_height = (y2 - y1) - (12 if with_mark else 0)
+        art = self._load_local_logo(path, (x2 - x, art_height), alpha_threshold=8)
+        if not art:
+            return False
+        if ink == "ink":
+            # One-colour wordmark in the theme ink, hard-edged like the Worlds wordmark.
+            tinted = Image.new("RGBA", art.size, tuple(COLORS["text"][:3]) + (255,))
+            tinted.putalpha(art.getchannel("A").point(lambda value: 255 if value >= 128 else 0))
+            art = tinted
+        image.paste(art, (x, y1 + (y2 - y1 - art.height) // 2), art)
+        return True
 
     @staticmethod
     def _worlds_header_wordmark_path(config, logo_path, now):
@@ -2486,9 +2558,11 @@ class EsportsRenderMixin:
             len(visible_events),
             msi_next_filler=msi_next_filler,
             msi_next_start=msi_next_start,
+            league_key=league_key,
         )
 
-    def _draw_lpl_empty_upcoming_filler(self, image, right_x, right_w, section_y, visible_count, msi_next_filler=False, msi_next_start=None):
+    def _draw_lpl_empty_upcoming_filler(self, image, right_x, right_w, section_y, visible_count, msi_next_filler=False,
+                                        msi_next_start=None, league_key="LPL"):
         if visible_count >= 2:
             return
         x1 = int(right_x + 14)
@@ -2505,6 +2579,12 @@ class EsportsRenderMixin:
                 image.paste(filler, (x1, y1))
                 self._draw_lpl_msi_next_label(image, x1, y1, width, height, msi_next_start)
                 return
+        if str(league_key or "").upper() == "VCT":
+            # VALORANT's own tableau, whole and centred (the LoL cup is League's).
+            filler = self._load_local_logo(LOCAL_VCT_MARBLE_FILLER_PATH, (width, height), alpha_threshold=8)
+            if filler:
+                image.paste(filler, (x1 + (width - filler.width) // 2, y2 - filler.height), filler)
+            return
         filler = self._load_lpl_sidebar_filler((width, height))
         if filler:
             image.paste(filler, (x1, y1), filler)

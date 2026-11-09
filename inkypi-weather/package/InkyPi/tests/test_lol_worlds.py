@@ -296,6 +296,7 @@ def test_lol_sidebar_cards_include_worlds_only_during_the_tournament():
     plugin._attach_lpl_odds = lambda events, *_args, **_kwargs: events
     plugin._load_lck_events = lambda *_args: ([], "LCK NO DATA")
     plugin._load_msi_events = lambda *_args: ([], "MSI NO DATA", None)
+    plugin._load_vct_events = lambda *_args: ([], "VCT NO DATA")
     state = {"in_window": False, "pinned": False}
     plugin._load_worlds_sidebar_card = lambda *_args, **_kwargs: {
         **_pinned_worlds_card(SportsDashboard._select_worlds_events(_worlds_events(), NOW)),
@@ -308,11 +309,12 @@ def test_lol_sidebar_cards_include_worlds_only_during_the_tournament():
 
     state["in_window"] = True  # a rest day: a candidate, not pinned
     keys = [card["league_key"] for card in plugin._load_lol_esports_sidebar_cards({}, FakeDeviceConfig(), timezone.utc, NOW)]
-    assert keys[-1] == "WORLDS"
+    # Worlds follows the LoL leagues; VALORANT's VCT card comes last.
+    assert keys[-2:] == ["WORLDS", "VCT"]
 
     state["pinned"] = True
     keys = [card["league_key"] for card in plugin._load_lol_esports_sidebar_cards({}, FakeDeviceConfig(), timezone.utc, NOW)]
-    assert keys[-1] == "WORLDS"
+    assert keys[-2:] == ["WORLDS", "VCT"]
 
     keys = [
         card["league_key"]

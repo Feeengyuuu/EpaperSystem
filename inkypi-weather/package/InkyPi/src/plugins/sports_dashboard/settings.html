@@ -508,6 +508,14 @@
 </div>
 
 <div class="form-group">
+    <input type="hidden" name="vctEnabled" value="false">
+    <label class="form-label">
+        <input type="checkbox" id="vctEnabled" name="vctEnabled" value="true">
+        Show VALORANT (VCT Champions, Masters, Game Changers Championship and the partner leagues) in the esports sidebar
+    </label>
+</div>
+
+<div class="form-group">
     <input type="hidden" name="lplLiveRefreshEnabled" value="false">
     <label class="form-label">
         <input type="checkbox" id="lplLiveRefreshEnabled" name="lplLiveRefreshEnabled" value="true">
@@ -682,6 +690,7 @@
             document.getElementById('lckEnabled').checked = pluginSettings.lckEnabled !== 'false';
             document.getElementById('lckLeagueId').value = pluginSettings.lckLeagueId || '';
             document.getElementById('worldsEnabled').checked = pluginSettings.worldsEnabled !== 'false';
+            document.getElementById('vctEnabled').checked = pluginSettings.vctEnabled !== 'false';
             document.getElementById('lplLiveRefreshEnabled').checked = pluginSettings.lplLiveRefreshEnabled !== 'false';
             document.getElementById('lplLiveRefreshIntervalSeconds').value = pluginSettings.lplLiveRefreshIntervalSeconds || '';
             document.getElementById('lplOddsEnabled').checked = pluginSettings.lplOddsEnabled !== 'false';

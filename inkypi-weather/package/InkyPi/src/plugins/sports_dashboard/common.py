@@ -105,6 +105,9 @@ MSI_TOURNAMENT_STATE_VERSION = "sports-dashboard-msi-tournament-v1"
 MSI_LIVE_STATE_VERSION = "sports-dashboard-msi-live-v1"
 WORLDS_TOURNAMENT_STATE_VERSION = "sports-dashboard-worlds-tournament-v1"
 WORLDS_LIVE_STATE_VERSION = "sports-dashboard-worlds-live-v1"
+VCT_LIVE_STATE_VERSION = "sports-dashboard-vct-live-v1"
+# The VCT card's place in the Riot cards' order, after LPL, LCK, MSI and Worlds.
+VCT_SIDEBAR_PRIORITY = 4
 VALVE_ESPORTS_STATE_VERSION = "sports-dashboard-valve-esports-v1"
 VALVE_ESPORTS_LIVE_STATE_VERSION = "sports-dashboard-valve-esports-live-v4"
 VALVE_TI_OFFICIAL_CACHE_VERSION = "sports-dashboard-valve-ti-official-v1"
@@ -352,6 +355,19 @@ DEFAULT_MSI_LEAGUE_ID = "98767991325878492"
 DEFAULT_MSI_TOURNAMENT_CACHE_HOURS = 12
 DEFAULT_WORLDS_LEAGUE_ID = "98767975604431411"
 DEFAULT_WORLDS_TOURNAMENT_CACHE_HOURS = 12
+# VALORANT Champions Tour, top tier only, from Riot's own Valorant esports API (the lolesports
+# key and schedule shape): Champions, Masters, the Game Changers Championship and the four
+# partner leagues. Challengers and qualifiers stay out, as LoL keeps to LPL/LCK/MSI/Worlds; EWC's
+# Valorant has the EWC card.
+DEFAULT_VCT_LEAGUE_IDS = (
+    "107254585505459304",  # Champions
+    "109940824119741550",  # Masters
+    "109222784797127274",  # Game Changers Championship
+    "109974795266458277",  # VCT Americas
+    "106109559530232966",  # VCT EMEA
+    "109974804058058602",  # VCT Pacific
+    "111691194187846945",  # VCT CN
+)
 DEFAULT_TIMEZONE = "America/Los_Angeles"
 ODDS_API_IO_LEAGUE_ALIASES = {
     "international-world-cup": DEFAULT_WORLD_CUP_ODDS_API_IO_LEAGUE,
@@ -376,6 +392,31 @@ LOCAL_EWC_GAME_PLACEHOLDER_DIR = os.path.join(
 )
 LOCAL_MSI_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "msi.png")
 LOCAL_WORLDS_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "worlds.png")
+# Each VCT league's own mark (Riot's league images), named by the league's slug.
+LOCAL_VCT_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "vct")
+# Riot's official wordmarks (Liquipedia's copies), by the league's slug: (ink, beside its mark). An
+# international event's coloured lockup stands alone; a partner league's wordmark follows its mark,
+# the one-colour ones ("ink") drawn in the page's ink.
+LOCAL_VCT_WORDMARK_DIR = os.path.join(LOCAL_VCT_LOGO_DIR, "wordmarks")
+VCT_WORDMARKS = {
+    "champions": ("colour", False),
+    "vct_masters": ("colour", False),
+    "game_changers_championship": ("colour", False),
+    "vct_americas": ("ink", True),
+    "vct_emea": ("ink", True),
+    "vct_pacific": ("ink", True),
+    "vct_china": ("colour", True),
+}
+# The name under "VCT" in the card's header (without a wordmark), by the league's slug.
+VCT_LEAGUE_LABELS = {
+    "champions": "Champions",
+    "vct_masters": "Masters",
+    "game_changers_championship": "Game Changers",
+    "vct_americas": "Americas",
+    "vct_emea": "EMEA",
+    "vct_pacific": "Pacific",
+    "vct_china": "CN",
+}
 # Edition-specific official wordmarks ("WORLDS 26"); editions without one keep
 # the emblem and source label.
 LOCAL_WORLDS_WORDMARK_PATHS = {
@@ -707,6 +748,8 @@ LOCAL_NBA_OFFSEASON_ACCENT_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_offseason_a
 LOCAL_PGA_FAIRWAY_STRIP_PATH = os.path.join(LOCAL_DECOR_DIR, "pga_fairway_strip.png")
 LOCAL_DOTA2_TI_EMPTY_SLOT_FILLER_PATH = os.path.join(LOCAL_DECOR_DIR, "dota2_ti_empty_slot_filler.png")
 LOCAL_LPL_MARBLE_FILLER_PATH = os.path.join(LOCAL_DECOR_DIR, "lpl_marble_filler.png")
+# The VCT card's own marble tableau for the same empty slot (generated art, kept in proportion).
+LOCAL_VCT_MARBLE_FILLER_PATH = os.path.join(LOCAL_DECOR_DIR, "vct_marble_filler.png")
 LOCAL_LPL_MSI_NEXT_FILLER_PATH = os.path.join(LOCAL_DECOR_DIR, "lpl_msi_next_filler.png")
 LOCAL_LPL_MSI_OFFSEASON_FILLER_PATH = os.path.join(LOCAL_DECOR_DIR, "lpl_msi_offseason_filler.png")
 LOCAL_LPL_MSI_OFFSEASON_FILLER_PATHS = (
@@ -731,6 +774,10 @@ LOLESPORTS_TOURNAMENTS_URL = (
     "?hl=en-US&leagueId={league_id}"
 )
 LOLESPORTS_LIVE_URL = "https://esports-api.lolesports.com/persisted/gw/getLive?hl=en-US"
+VALORANT_ESPORTS_SCHEDULE_URL = (
+    "https://esports-api.service.valorantesports.com/persisted/val/getSchedule"
+    "?hl=en-US&sport=val&leagueId={league_id}"
+)
 LOLESPORTS_EVENT_DETAILS_URL = "https://esports-api.lolesports.com/persisted/gw/getEventDetails?hl=en-US&id={event_id}"
 LOLESPORTS_LIVE_STATS_WINDOW_URL = "https://feed.lolesports.com/livestats/v1/window/{game_id}"
 BO3_API_BASE_URL = "https://api.bo3.gg/api/v1"
@@ -2123,6 +2170,10 @@ DAY_COLORS = {
     "worlds_live": (222, 45, 38),
     "worlds_tag": (255, 239, 176),
     "worlds_shadow": (255, 196, 30),
+    "vct_accent": (235, 60, 78),
+    "vct_live": (222, 45, 38),
+    "vct_tag": (255, 226, 228),
+    "vct_shadow": (15, 25, 35),
 }
 
 DEEP_NIGHT_COLORS = {
@@ -2206,6 +2257,10 @@ DEEP_NIGHT_COLORS = {
     "worlds_live": (255, 82, 74),
     "worlds_tag": (68, 54, 12),
     "worlds_shadow": (130, 104, 26),
+    "vct_accent": (255, 92, 106),
+    "vct_live": (255, 82, 74),
+    "vct_tag": (76, 24, 32),
+    "vct_shadow": (110, 36, 46),
 }
 
 _ACTIVE_COLORS = ContextVar("sports_dashboard_active_colors", default=DAY_COLORS)
@@ -3552,7 +3607,9 @@ class SportsDashboardCommonMixin:
             )
         else:
             self._release_worlds_sidebar_pin()
-        self._attach_lpl_realtime_info(lol_selected, settings, league_key=lol_league_key)
+        if str(lol_league_key or "").upper() != "VCT":
+            # LoL's in-game frames (Riot livestats, bo3.gg) have no Valorant counterpart.
+            self._attach_lpl_realtime_info(lol_selected, settings, league_key=lol_league_key)
         self._write_lol_live_state(lol_selected, now, lol_source_state, **live_state_options)
         self._draw_lpl_sidebar(
             image,

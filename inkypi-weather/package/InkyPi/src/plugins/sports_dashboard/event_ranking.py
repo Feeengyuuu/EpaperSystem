@@ -212,6 +212,19 @@ def esports_tier(kind, league="", name=""):
     return "C"
 
 
+def vct_tier(league_slug, block=""):
+    """VALORANT Champions Tour tiers, as LoL's: Champions (the world championship) S; Masters and
+    the Game Changers Championship (international) and a partner league's playoffs A; the rest C."""
+    slug = str(league_slug or "").strip().lower()
+    if slug == "champions":
+        return "S"
+    if slug in {"vct_masters", "game_changers_championship"}:
+        return "A"
+    if _has(r"FINALS?\b|PLAYOFF", str(block or "").upper()):
+        return "A"
+    return "C"
+
+
 # Golf -------------------------------------------------------------------------
 
 

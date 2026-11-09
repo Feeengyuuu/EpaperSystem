@@ -962,6 +962,174 @@
         64
       ],
       "sha256": "4a9d71b82ab36659949f2e4b3226c940c20b849777a094aff3b2e913ef1cd689"
+    },
+    "vct/champions": {
+      "source": "https://static.lolesports.com/leagues/1636575094815_VCT_Spark_Gold.png",
+      "page": "https://valorantesports.com/",
+      "licence": "Riot Games' mark of Champions from its Valorant esports API, shown to name the league",
+      "source_sha256": "7c6cfbd53e520734c3942b508e46de9e3fe0f699d4be9d1b918097a8acfef1d6",
+      "processing": "cropped, fitted in 128 px",
+      "size": [
+        118,
+        128
+      ],
+      "sha256": "bb9d53787a44428d83f80b81fc0324bf6ae1339c91d07158149a998864e4d038"
+    },
+    "vct/vct_masters": {
+      "source": "https://static.lolesports.com/leagues/1685263111965_VCT_SPARK_RGB_PURPLE.png",
+      "page": "https://valorantesports.com/",
+      "licence": "Riot Games' mark of Masters from its Valorant esports API, shown to name the league",
+      "source_sha256": "9692592c1a0663b6cb25a11e37f93c398b4cbcaa37d652ea5938f208a918999a",
+      "processing": "cropped, fitted in 128 px",
+      "size": [
+        118,
+        128
+      ],
+      "sha256": "f1600aaf8c61aa40e6da4ffbafb4651d3bdfce618e227978ee17b0fdd035e921"
+    },
+    "vct/game_changers_championship": {
+      "source": "https://static.lolesports.com/leagues/1666607427484_VCTSpark.png",
+      "page": "https://valorantesports.com/",
+      "licence": "Riot Games' mark of Game Changers Championship from its Valorant esports API, shown to name the league",
+      "source_sha256": "2b6adf2e1104d4af507dd513f4a8193e94813709772a08e249b2dca537bd086b",
+      "processing": "cropped, fitted in 128 px",
+      "size": [
+        118,
+        128
+      ],
+      "sha256": "8dffb6269dbefb2a9243db33ccdd2815f6ec724b6eb5bb0b458081fb6bc2c990"
+    },
+    "vct/vct_americas": {
+      "source": "https://static.lolesports.com/leagues/1757677856494_VCT23_INT_AMERICAS_Logo_MARK_RGB_Orange.png",
+      "page": "https://valorantesports.com/",
+      "licence": "Riot Games' mark of VCT Americas from its Valorant esports API, shown to name the league",
+      "source_sha256": "7a4a4d41828090031961fd9e556604351728677c5d54704418510396283f7f5e",
+      "processing": "cropped, fitted in 128 px",
+      "size": [
+        121,
+        128
+      ],
+      "sha256": "5e5fbf00df1ca94fc2d8eee021e5bcd969ca473b83a24f97d9f48ee3a2a2d704"
+    },
+    "vct/vct_emea": {
+      "source": "https://static.lolesports.com/leagues/1757677841319_VCT23_INT_EMEA_Logo_MARK_RGB_GREEN.png",
+      "page": "https://valorantesports.com/",
+      "licence": "Riot Games' mark of VCT EMEA from its Valorant esports API, shown to name the league",
+      "source_sha256": "c3b49e5f38b5d922fa6fdd562031e799bb87c1b33aa3bbc5247b7e3436f892ca",
+      "processing": "cropped, fitted in 128 px",
+      "size": [
+        128,
+        128
+      ],
+      "sha256": "67ce2f06544ede3135ddd1a24f41923763421df3f464477fd65bf3e705038251"
+    },
+    "vct/vct_pacific": {
+      "source": "https://static.lolesports.com/leagues/1757677849568_VCT23_INT_PACIFIC_Logo_MARK_RGB_Blue.png",
+      "page": "https://valorantesports.com/",
+      "licence": "Riot Games' mark of VCT Pacific from its Valorant esports API, shown to name the league",
+      "source_sha256": "df13213e9c4744596dd3aade9df0cf031f139edc996c8e692881945135925224",
+      "processing": "cropped, fitted in 128 px",
+      "size": [
+        128,
+        126
+      ],
+      "sha256": "0149c2a73f9fcbf64e9c654705f62484805b8c2ab79695b80b7980ded49e97ec"
+    },
+    "vct/vct_china": {
+      "source": "https://static.lolesports.com/leagues/1757677833011_VCT24_CN_Logo_Mark_RGB_Red.png",
+      "page": "https://valorantesports.com/",
+      "licence": "Riot Games' mark of VCT CN from its Valorant esports API, shown to name the league",
+      "source_sha256": "d950dff18cadfb7dfa90f5f10c4cfbcec98fd9ae4b1ca866be939eade0d511b5",
+      "processing": "cropped, fitted in 128 px",
+      "size": [
+        112,
+        128
+      ],
+      "sha256": "e001aeff7488a9161fdb09013e85ef89fab0b09867762c0a3dbe1a36779cccf7"
+    },
+    "vct/wordmarks/champions": {
+      "source": "https://liquipedia.net/commons/images/4/4b/VCT_Champions_Shanghai_2026_allmode.png",
+      "page": "https://liquipedia.net/commons/File:VCT_Champions_Shanghai_2026_allmode.png",
+      "licence": "Riot Games' official VCT logo (Liquipedia's copy), shown to name the league",
+      "source_sha256": "f93578140d14abfc243e225493a7806bfe51b6c433673d16e1a065cd9c6c2e3e",
+      "processing": "the VALORANT CHAMPIONS lines only (the 2026 row and the Shanghai plate cut), cropped to its letters, 96 px tall",
+      "size": [
+        355,
+        96
+      ],
+      "sha256": "5c7286763b2780502144b7ab19f48c752b8959e674212f680f7840b763c36604"
+    },
+    "vct/wordmarks/vct_masters": {
+      "source": "https://liquipedia.net/commons/images/7/7e/VCT_Masters_2026_allmode.png",
+      "page": "https://liquipedia.net/commons/File:VCT_Masters_2026_allmode.png",
+      "licence": "Riot Games' official VCT logo (Liquipedia's copy), shown to name the league",
+      "source_sha256": "99185f7a480f48467921528303e89e0a631df51af9b87670216ffd637e785d92",
+      "processing": "the VALORANT MASTERS lines only (the 2026 row cut), cropped to its letters, 96 px tall",
+      "size": [
+        318,
+        96
+      ],
+      "sha256": "61fafef854aa159a8eeddaa0780b744a900ec64251316a9764f268ad8adfa296"
+    },
+    "vct/wordmarks/game_changers_championship": {
+      "source": "https://liquipedia.net/commons/images/2/2c/VCT_Game_Changers_Championship_2026_yellow_allmode.png",
+      "page": "https://liquipedia.net/commons/File:VCT_Game_Changers_Championship_2026_yellow_allmode.png",
+      "licence": "Riot Games' official VCT logo (Liquipedia's copy), shown to name the league",
+      "source_sha256": "7e2f67a115070e5052aa1d60d8ed9432123f2e7f310dbef9bc8a696c52d37da9",
+      "processing": "the VALORANT GAME CHANGERS CHAMPIONSHIP lines only (the 2026 row and the Sao Paulo plate cut), cropped to its letters, 96 px tall",
+      "size": [
+        327,
+        96
+      ],
+      "sha256": "469ec58b6b5500cae42f95108f085951ea732031a1a8ef881ca356b5de8d8ab6"
+    },
+    "vct/wordmarks/vct_americas": {
+      "source": "https://liquipedia.net/commons/images/3/3f/VCT_2023_Americas_League_logo_lightmode.png",
+      "page": "https://liquipedia.net/commons/File:VCT_2023_Americas_League_logo_lightmode.png",
+      "licence": "Riot Games' official VCT logo (Liquipedia's copy), shown to name the league",
+      "source_sha256": "fe40c5f5480c8a9bdb568ecd8a140ccd9bf1f7ad38f7d45a00ac3a8096f86e90",
+      "processing": "the AMERICAS wordmark as printed, cropped to its letters, 96 px tall",
+      "size": [
+        603,
+        96
+      ],
+      "sha256": "df83db9caa116fd2cbdf8105d2a29563ce5ebf0fa7d99c7ae6734008879369e6"
+    },
+    "vct/wordmarks/vct_emea": {
+      "source": "https://liquipedia.net/commons/images/8/8d/VCT_2023_EMEA_League_logo_lightmode.png",
+      "page": "https://liquipedia.net/commons/File:VCT_2023_EMEA_League_logo_lightmode.png",
+      "licence": "Riot Games' official VCT logo (Liquipedia's copy), shown to name the league",
+      "source_sha256": "3aab5ae47559a4e4d7021a475c742040c29502ee634d254ef1bb5198a5dbd4b8",
+      "processing": "the EMEA wordmark as printed, cropped to its letters, 96 px tall",
+      "size": [
+        403,
+        96
+      ],
+      "sha256": "81c1e8f3d196a4235c134e56e85bcc32a04ece296b917069519e013a5fb82a7e"
+    },
+    "vct/wordmarks/vct_pacific": {
+      "source": "https://liquipedia.net/commons/images/3/33/VCT_2023_Pacific_League_logo_lightmode.png",
+      "page": "https://liquipedia.net/commons/File:VCT_2023_Pacific_League_logo_lightmode.png",
+      "licence": "Riot Games' official VCT logo (Liquipedia's copy), shown to name the league",
+      "source_sha256": "c4f30f65e4f6f1320e11fab482c3064ab8704bbcfbc74f83fbc33846ed36bdf6",
+      "processing": "the PACIFIC wordmark as printed, cropped to its letters, 96 px tall",
+      "size": [
+        599,
+        96
+      ],
+      "sha256": "f985a6acb3b696d533cbbefd50779f8e36475f4aaf5e13efab2eeda13fb53760"
+    },
+    "vct/wordmarks/vct_china": {
+      "source": "https://liquipedia.net/commons/images/b/bf/VCT_CN_Stage_1_allmode.png",
+      "page": "https://liquipedia.net/commons/File:VCT_CN_Stage_1_allmode.png",
+      "licence": "Riot Games' official VCT logo (Liquipedia's copy), shown to name the league",
+      "source_sha256": "5943ebf9ba990e9cb3419a79f4408cf257ff28c6be1e2ce732faee3628007ed7",
+      "processing": "the VCT CN letters only (the mark and the STAGE 1 plate cut), cropped to its letters, 96 px tall",
+      "size": [
+        193,
+        96
+      ],
+      "sha256": "a9c8aeae5dfadfec4961fa0cfceff8079203972a531c8a4bd27febf11966221d"
     }
   }
 }

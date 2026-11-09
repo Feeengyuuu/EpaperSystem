@@ -244,6 +244,17 @@
         199,
         38
       ]
+    },
+    "vct_marble_filler.png": {
+      "scene": "white-marble tableau: crystal-crowned championship trophy on a stepped plinth between two hooded tactical agents (generic), red shards and red silk; transparent, no text",
+      "job_id": "86ad184d-6059-4393-9fca-32c30af1ce8d",
+      "model": "image/gpt-image-2.5-sunburst",
+      "source_sha256": "30d604325bbfafd2f06bf37293f2199403212889841c8eee1b10010a3c33d3e9",
+      "sha256": "f9d8c290c2ac613462a9aa3b5b612a5cfb9c73cbfa1f8ff84516571cbd469be0",
+      "size": [
+        299,
+        96
+      ]
     }
   },
   "live_now_wordmark.png": {
