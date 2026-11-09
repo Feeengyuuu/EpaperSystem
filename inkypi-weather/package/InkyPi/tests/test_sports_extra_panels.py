@@ -205,8 +205,37 @@ def test_the_tennis_header_shows_the_events_mark_and_its_venue(monkeypatch):
                     feeds.NOW, DAY_COLORS, monkeypatch, drawn)
 
     assert "tennis_event_stockholm" in pasted and "tennis_atp_250" not in pasted
-    assert "Bybit Stockholm Open" in drawn and "Kungliga tennishallen" in drawn and "Stockholm" not in drawn
+    # The venue by its own logo (the Royal Tennis Hall's crest), not in words.
+    assert "tennis_place_kungliga_tennishallen" in pasted
+    assert "Bybit Stockholm Open" in drawn and "Kungliga tennishallen" not in drawn and "Stockholm" not in drawn
     assert image.getbbox() is not None
+
+
+def test_venues_with_their_own_logo_show_it_and_the_rest_are_named():
+    import hashlib
+    import json
+
+    from plugins.sports_dashboard import tennis_events
+    from plugins.sports_dashboard.common import LOCAL_TEAM_LOGO_DIR
+
+    def place(tour, name, where):
+        return tennis.place_mark({"tour": tour, "name": name, "place": where, "city": where.split(",")[0]})
+
+    assert place("ATP", "Bybit Stockholm Open", "Stockholm, Sweden") == "tennis_place_kungliga_tennishallen"
+    assert place("ATP", "ABN AMRO Open", "Rotterdam, Netherlands") == "tennis_place_rotterdam_ahoy"
+    assert place("ATP", "Erste Bank Open", "Vienna, Austria") == "tennis_place_wiener_stadthalle"
+    assert place("WTA", "Miami Open presented by Itau", "Miami, USA") == "tennis_place_hard_rock_stadium"
+    # The city's or venue's logo matched in ESPN's line still stands; a venue without a logo has none.
+    assert place("ATP", "Rolex Paris Masters", "Paris, France") == "tennis_place_paris"
+    assert place("ATP", "Swiss Indoors Basel", "Basel, Switzerland") is None
+    logos = Path(LOCAL_TEAM_LOGO_DIR)
+    records = json.loads((logos / "logos.source.json").read_text(encoding="utf-8"))["logos"]
+    for key in tennis_events.venue_mark_keys():
+        path = logos / f"{key}.png"
+        with Image.open(path) as mark:
+            assert mark.mode == "RGBA" and mark.height == 64, key
+        assert records[key]["source"].startswith("https://") and records[key]["page"].startswith("https://"), key
+        assert records[key]["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest(), key
 
 
 def test_a_seeded_player_carries_a_tennis_ball_with_the_seed_on_it():

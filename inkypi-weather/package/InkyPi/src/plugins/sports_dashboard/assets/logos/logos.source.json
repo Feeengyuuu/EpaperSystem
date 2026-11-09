@@ -1130,6 +1130,54 @@
         96
       ],
       "sha256": "a9c8aeae5dfadfec4961fa0cfceff8079203972a531c8a4bd27febf11966221d"
+    },
+    "tennis_place_kungliga_tennishallen": {
+      "source": "https://www.kltk.se/wp-content/themes/kltk-build/img/logo.svg",
+      "page": "https://www.kltk.se/",
+      "licence": "Kungliga Lawn Tennisklubben's crest from the Royal Tennis Hall's own site, shown to name the venue",
+      "processing": "rendered from the site's SVG, trimmed, 64 px tall",
+      "source_sha256": "fb790c3ad7774f55272a415d593d364d545653f70337ce9a99237a6ca4a95ca3",
+      "size": [
+        39,
+        64
+      ],
+      "sha256": "d568d3d032e7c2ec5a72c10947626496279888a58332ecca32ce9b6d5fe31f8c"
+    },
+    "tennis_place_rotterdam_ahoy": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2b/Rotterdam_Ahoy_Logo.svg/960px-Rotterdam_Ahoy_Logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Rotterdam_Ahoy_Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "processing": "Commons' PNG rendering, trimmed, 64 px tall",
+      "source_sha256": "cf4c5b6704bbfcbc2f57bb1952dc1cd5cb76ae9d376566a45b12434ee066ef9c",
+      "size": [
+        159,
+        64
+      ],
+      "sha256": "1623e58123727ffc4d04af5e57b2a17b3d5d88b4d8c264b6892f6e24e17294f4"
+    },
+    "tennis_place_wiener_stadthalle": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ae/Wiener_Stadthalle_logo.svg/960px-Wiener_Stadthalle_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Wiener_Stadthalle_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "processing": "Commons' PNG rendering, trimmed, 64 px tall",
+      "source_sha256": "7a7a6f0463aa03f0c22b0f75d364383dc9783f16cfbe069f951f35900b422fc0",
+      "size": [
+        387,
+        64
+      ],
+      "sha256": "4f50aeebde74e44871e3c7ceb0f62df9aca8297a135410816f43276e16bb02c2"
+    },
+    "tennis_place_hard_rock_stadium": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a9/Hard_rock_stadium_florida_logo.svg/960px-Hard_rock_stadium_florida_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Hard_rock_stadium_florida_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "processing": "Commons' PNG rendering, trimmed, 64 px tall",
+      "source_sha256": "61da394329ddf7030e6ca9840e0419bb0fecc6fac2f72ed896d8c6f248050405",
+      "size": [
+        111,
+        64
+      ],
+      "sha256": "2bf8104c4886032975d39700647a7c7dac94bdb1856133afa5431cc7b77af399"
     }
   }
 }

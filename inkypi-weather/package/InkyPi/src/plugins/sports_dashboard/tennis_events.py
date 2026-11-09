@@ -111,10 +111,22 @@ EVENTS = (
     ("wta_chennai", WTA, r"chennai", "SDAT Tennis Stadium", None),
 )
 _COMPILED = tuple((key, tours, re.compile(pattern), venue, mark) for key, tours, pattern, venue, mark in EVENTS)
+# The venue by its own official logo where one is bundled (assets/logos, recorded in logos.source.json):
+# the Royal Tennis Hall's crest from its own site, the others Wikimedia Commons' public-domain logos.
+# Without one the card names the venue in words.
+VENUE_MARKS = {
+    "stockholm": "tennis_place_kungliga_tennishallen",
+    "rotterdam": "tennis_place_rotterdam_ahoy",
+    "vienna": "tennis_place_wiener_stadthalle",
+    "miami": "tennis_place_hard_rock_stadium",
+}
+# Venue logos printed in their own colours on any ground (a night inking would wash out their details).
+VENUE_MARKS_IN_COLOUR = {"tennis_place_kungliga_tennishallen", "tennis_place_hard_rock_stadium"}
 
 
 def event_for(tournament):
-    """{"key", "mark" (the bundled logo's name or None), "ink", "venue"} for the tournament, or None."""
+    """{"key", "mark" (the bundled logo's name or None), "ink", "venue", "venue_mark" (the venue's bundled
+    logo or None)} for the tournament, or None."""
     tournament = tournament or {}
     tour = str(tournament.get("tour") or "").upper()
     text = " ".join(str(tournament.get(field) or "") for field in ("name", "place", "city")).lower()
@@ -122,10 +134,16 @@ def event_for(tournament):
         return None
     for key, tours, pattern, venue, mark in _COMPILED:
         if tour in tours and pattern.search(text):
-            return {"key": key, "mark": f"tennis_event_{key}" if mark else None, "ink": mark, "venue": venue}
+            return {"key": key, "mark": f"tennis_event_{key}" if mark else None, "ink": mark, "venue": venue,
+                    "venue_mark": VENUE_MARKS.get(key)}
     return None
 
 
 def mark_keys():
     """Every bundled event mark's name (tennis_event_<key>)."""
     return [f"tennis_event_{key}" for key, _tours, _pattern, _venue, mark in EVENTS if mark]
+
+
+def venue_mark_keys():
+    """Every bundled venue logo's name (tennis_place_<venue>)."""
+    return sorted(set(VENUE_MARKS.values()))

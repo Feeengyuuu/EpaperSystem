@@ -33,9 +33,10 @@ SEED_RIM = (128, 146, 30)
 SEED_SEAM = (255, 255, 255)
 SEED_INK = (20, 24, 16)
 SEED_ICON_CACHE = {}
-# The place beside the tournament's name, by its logo (tennis.place_mark), in this box at most;
-# a venue named in words takes at most this share of the header.
-PLACE_LOGO = (72, 14)
+# The place beside the tournament's name, by its logo (tennis.place_mark), in this box at most (tall
+# enough for a crest such as the Royal Tennis Hall's in the 24 px header); a venue named in words takes
+# at most this share of the header.
+PLACE_LOGO = (72, 20)
 VENUE_SHARE = 0.36
 
 
@@ -110,7 +111,8 @@ class TennisRenderMixin:
         name, name_font = self._fit_text_ellipsis(draw, name, x2 - x - city_w - 14, 12, bold=True, min_size=9)
         self._draw_text_in_box(draw, (x, y1, x2 - city_w - 10, y1 + HEAD_HEIGHT), name, name_font, COLORS["text"])
         if place is not None:
-            place = SportsDashboard._night_inked_mark(place)
+            if place_key not in tennis_events.VENUE_MARKS_IN_COLOUR:
+                place = SportsDashboard._night_inked_mark(place)
             image.paste(place, (x2 - 8 - place.width, y1 + (HEAD_HEIGHT - place.height) // 2), place)
         elif city:
             self._draw_text_in_box(draw, (x2 - city_w - 8, y1, x2 - 6, y1 + HEAD_HEIGHT), city, city_font, COLORS["muted"],

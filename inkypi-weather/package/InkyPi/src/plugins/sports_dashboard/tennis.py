@@ -64,7 +64,11 @@ PLACE_MARKS = (("indian wells", "tennis_place_indian_wells"), ("inalpi|turin|tor
 
 
 def place_mark(tournament):
-    """The bundled logo naming the tournament's place (tennis_place_paris ...), or None."""
+    """The bundled logo naming the tournament's place: its venue's own (tennis_events.VENUE_MARKS), else
+    the city's or venue's matched in ESPN's venue line (tennis_place_paris ...), or None."""
+    event = tennis_events.event_for(tournament)
+    if event and event.get("venue_mark"):
+        return event["venue_mark"]
     text = str((tournament or {}).get("city") or "").lower()
     return next((key for pattern, key in PLACE_MARKS if re.search(pattern, text)), None)
 
