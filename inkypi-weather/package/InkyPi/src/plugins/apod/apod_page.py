@@ -45,6 +45,25 @@ PROBABILITIES_RECT = (16, 338, 352, 384)
 ALERT_RECT = (16, 392, 352, 434)
 SOURCE_RECT = (16, 448, 352, 472)
 RIGHT_X = 368
+# The open readout column: every reading starts PANEL_INSET inside its zone, labels small above
+# DM Mono values; no tiles. The G/R/S and chance columns keep GRS_GAP between them.
+PANEL_INSET = 4
+GRS_GAP = 10
+READING_SIZE = 20
+ALERT_RULE_WIDTH = 3
+# The Kp dial: KP_SEGMENTS bars KP_BAR_LENGTH long, lit in G-scale colours up to the reading and
+# in the bar-track navy beyond it; the number and its words start KP_TEXT_LEFT into the zone.
+KP_SEGMENTS = 27
+KP_BAR_LENGTH = 13
+KP_GAUGE_RADIUS = 66
+KP_TEXT_LEFT = 160
+G_LEVELS = {"G0": "平静", "G1": "弱磁暴", "G2": "中等磁暴", "G3": "强磁暴", "G4": "严重磁暴",
+            "G5": "极端磁暴"}
+KP_MODES = {"estimated": "估算", "observed": "实测", "unavailable": "暂无读数"}
+# With no tiles over it, the photo's faded left edge is covered by the page ground: solid to
+# SCRIM_SOLID, clearing by SCRIM_CLEAR, so the readings never sit on the picture.
+SCRIM_SOLID = 350
+SCRIM_CLEAR = 410
 ICON_DIR = Path(__file__).resolve().parent / "assets" / "icons"
 # JPL's sky watch takes the storm-chance row (those chances move up beside the R and S lamps):
 # the NEOs passing within ten lunar distances on a square-root scale from Earth, the Moon marked
@@ -81,7 +100,6 @@ KICKER_ICON_ROOM = 18
 
 PAGE_COLOR = (7, 16, 31)
 HEADER_COLOR = (9, 21, 40)
-TILE_COLOR = (12, 27, 49)
 # Close to the panel's own blue, so a one-pixel outline stays a line instead of dithering to dots.
 TILE_OUTLINE = (0, 60, 230)
 # Small type and the line icons are pure white: a tint or grey dithers to speckle on the panel,
@@ -189,14 +207,16 @@ def _load_fonts() -> Mapping[str, ImageFont.FreeTypeFont]:
     return {
         "brand": _font(27, bold=True),
         "header_meta": space_font("mono", 10),
-        "kp_label": space_font("public_semibold", 10),
-        "kp_number": space_font("mono", 40),
-        "kp_peak": space_font("mono", 10),
+        "label": _font(11),
+        "label_small": _font(10),
+        "kp_number": space_font("mono", 44),
+        "kp_unit": space_font("telemetry_regular", 14),
+        "kp_peak": _font(10),
         "dial": space_font("mono", 10),
-        "grs_value": space_font("mono", 13),
-        "grs_name": _font(10, bold=True),
-        "metric_label": space_font("public_semibold", 10),
-        "metric_value": space_font("mono", 16),
+        "grs_value": space_font("mono", 14),
+        "grs_name": _font(10),
+        "reading": space_font("mono", READING_SIZE),
+        "unit": space_font("telemetry_regular", 11),
         "probability_label": space_font("public_semibold", 10),
         "probability_value": space_font("mono", 13),
         "alert": _font(12, bold=True),
@@ -596,11 +616,6 @@ def _paste_icon(canvas, name, x, y, size) -> int:
     return size
 
 
-def _tile(draw, rect, *, outline=TILE_OUTLINE, fill=TILE_COLOR, radius=8) -> None:
-    x1, y1, x2, y2 = rect
-    draw.rounded_rectangle((x1, y1, x2 - 1, y2 - 1), radius=radius, fill=fill, outline=outline, width=1)
-
-
 def _kp_zone_color(kp: float) -> tuple[int, int, int]:
     """The NOAA G scale along the dial: below 5 quiet, then G1 to G5."""
     for threshold, color in KP_ZONES:
@@ -609,38 +624,45 @@ def _kp_zone_color(kp: float) -> tuple[int, int, int]:
     return KP_ZONES[-1][1]
 
 
-def _draw_kp_gauge(draw, center, radius, kp_value, fonts) -> None:
-    """A semicircular 0-9 dial in G-scale colours with a needle at ``kp_value``."""
-    cx, cy = center
-    box = (cx - radius, cy - radius, cx + radius, cy + radius)
-    steps = 54
-    for step in range(steps):
-        start = 180 + 180 * step / steps
-        end = 180 + 180 * (step + 1) / steps
-        draw.arc(box, start=start, end=end + 0.6, fill=_kp_zone_color(9 * (step + 0.5) / steps), width=7)
-    for tick in range(10):
-        angle = math.radians(180 + 20 * tick)
-        cos, sin = math.cos(angle), math.sin(angle)
-        draw.line((cx + cos * (radius - 11), cy + sin * (radius - 11), cx + cos * (radius - 6), cy + sin * (radius - 6)),
-                  fill=TEXT_COLOR, width=1)
-        label = str(tick)
-        bbox = _text_bbox(draw, (0, 0), label, fonts["dial"])
-        lx = cx + cos * (radius + 9) - (bbox[2] + bbox[0]) / 2
-        ly = cy + sin * (radius + 9) - (bbox[3] + bbox[1]) / 2
-        _draw_text(draw, (lx, ly), label, font=fonts["dial"], fill=LABEL_COLOR)
+def _draw_kp_gauge(canvas, draw, center, radius, kp_value, fonts) -> None:
+    """A 0-9 dial of KP_SEGMENTS short bars, lit in G-scale colours up to ``kp_value`` and in the
+    bar-track navy beyond it; 5 (the G1 threshold) is named over the rim, 0 and 9 just inside its
+    ends. Drawn four times over and reduced, so the bars keep clean edges."""
     try:
         value = max(0.0, min(9.0, float(kp_value)))
     except (TypeError, ValueError):
         value = None
-    if value is not None:
-        angle = math.radians(180 + 20 * value)
-        tip = (cx + math.cos(angle) * (radius - 14), cy + math.sin(angle) * (radius - 14))
-        draw.line((cx, cy, *tip), fill=TEXT_COLOR, width=3)
-    draw.ellipse((cx - 5, cy - 5, cx + 5, cy + 5), fill=TEXT_COLOR, outline=TILE_OUTLINE)
+    cx, cy = center
+    scale = 4
+    reach = radius + 2
+    layer = Image.new("RGBA", (2 * reach * scale, (reach + 2) * scale), (0, 0, 0, 0))
+    pen = ImageDraw.Draw(layer)
+    ox, oy = reach * scale, reach * scale
+    outer, inner = radius * scale, (radius - KP_BAR_LENGTH) * scale
+    half_gap = math.radians(180 / KP_SEGMENTS) * 0.32
+    for index in range(KP_SEGMENTS):
+        start = math.radians(180 + 180 * index / KP_SEGMENTS) + half_gap
+        end = math.radians(180 + 180 * (index + 1) / KP_SEGMENTS) - half_gap
+        middle = 9 * (index + 0.5) / KP_SEGMENTS
+        color = BAR_TRACK_COLOR if value is None or middle > value else _kp_zone_color(middle)
+        corners = [(ox + math.cos(angle) * reach_, oy + math.sin(angle) * reach_)
+                   for angle, reach_ in ((start, inner), (start, outer), (end, outer), (end, inner))]
+        pen.polygon(corners, fill=color + (255,))
+    layer = layer.resize((layer.width // scale, layer.height // scale), Image.Resampling.LANCZOS)
+    canvas.paste(layer, (int(cx - reach), int(cy - reach)), layer)
+    font = fonts["dial"]
+    angle = math.radians(180 + 20 * 5)
+    bbox = _text_bbox(draw, (0, 0), "5", font)
+    _draw_text(draw, (cx + math.cos(angle) * (radius + 9) - (bbox[2] + bbox[0]) / 2,
+                      cy + math.sin(angle) * (radius + 9) - (bbox[3] + bbox[1]) / 2), "5", font=font, fill=LABEL_COLOR)
+    inner_edge = radius - KP_BAR_LENGTH - 4
+    _draw_text(draw, (cx - inner_edge, cy - bbox[3]), "0", font=font, fill=LABEL_COLOR)
+    _draw_right(draw, cx + inner_edge, cy - bbox[3], "9", font=font, fill=LABEL_COLOR)
 
 
 def _draw_kp_panel(canvas, draw, rect, snapshot, fonts) -> None:
-    """The Kp hero tile: the dial on the left, the reading and its context on the right."""
+    """The hero reading: the segmented dial on the left; the Kp number, the storm level in words
+    and the 48-hour high beside it, all in the level's colour but the high."""
 
     x1, y1, x2, y2 = rect
     current = snapshot.current_kp if isinstance(snapshot.current_kp, Mapping) else {}
@@ -650,29 +672,37 @@ def _draw_kp_panel(canvas, draw, rect, snapshot, fonts) -> None:
     kp_value = _format_number(current.get("value"))
     mode = str(current.get("mode") or "unavailable")
     current_g = _scale_value(scales, "G")
-    peak_kp = _format_number(forecast.get("max_kp"))
-    peak_g = str(forecast.get("noaa_scale") or "G—")
+    left = x1 + PANEL_INSET
 
-    _tile(draw, rect)
-    _draw_text(draw, (x1 + 12, y1 + 7), f"当前地磁指数{TEXT_SEPARATOR}CURRENT GEOMAGNETIC INDEX",
-               font=fonts["kp_label"], fill=LABEL_COLOR)
-    _draw_kp_gauge(draw, (x1 + 84, y2 - 16), 58, current.get("value"), fonts)
+    _draw_text(draw, (left, y1 + 1), "地磁指数", font=fonts["label"], fill=LABEL_COLOR)
+    _draw_kp_gauge(canvas, draw, (left + KP_GAUGE_RADIUS + 2, y2 - 6), KP_GAUGE_RADIUS, current.get("value"),
+                   fonts)
 
-    right = x1 + 162
+    right = x1 + KP_TEXT_LEFT
     number_font = fonts["kp_number"]
-    _draw_text(draw, (right, y1 + 24), kp_value, font=number_font, fill=color)
+    _draw_text(draw, (right, y1 + 12), kp_value, font=number_font, fill=color)
     number_right = right + _text_width(draw, kp_value, number_font) + _text_bbox(draw, (0, 0), kp_value, number_font)[0]
-    _draw_text(draw, (number_right + 6, y1 + 50), "Kp", font=fonts["metric_label"], fill=color)
-    state_copy, state_font = _fit_kp_state(draw, current_g, mode, max_width=x2 - 12 - right)
-    _draw_text(draw, (right, y1 + 76), state_copy, font=state_font, fill=color)
-    _draw_text(draw, (right, y1 + 94), f"48H PEAK{TEXT_SEPARATOR}Kp {peak_kp} / {peak_g}",
-               font=fonts["kp_peak"], fill=MUTED_COLOR)
+    unit_y = y1 + 12 + number_font.getmetrics()[0] - fonts["kp_unit"].getmetrics()[0]
+    _draw_text(draw, (number_right + 5, unit_y), "Kp", font=fonts["kp_unit"], fill=color)
+    state_copy, state_font = _fit_kp_state(draw, current_g, mode, max_width=x2 - PANEL_INSET - right)
+    _draw_text(draw, (right, y1 + 68), state_copy, font=state_font, fill=color)
+    _draw_text(draw, (right, y1 + 92), _kp_peak_copy(forecast), font=fonts["kp_peak"], fill=TEXT_COLOR)
+
+
+def _kp_peak_copy(forecast) -> str:
+    """"48 小时最高 Kp 6.3，G2"; the storm level only when one is forecast."""
+    peak_g = str(forecast.get("noaa_scale") or "G—")
+    copy = f"48 小时最高 Kp {_format_number(forecast.get('max_kp'))}"
+    return copy if peak_g in ("G—", "G0") else f"{copy}，{peak_g}"
 
 
 def _fit_kp_state(draw, current_g, mode, *, max_width):
-    """The current G level and Kp mode on one line beside the number, stepping 12 to 10 px."""
-    for text in (f"CURRENT {current_g}{TEXT_SEPARATOR}{mode}", f"{current_g}{TEXT_SEPARATOR}{mode}"):
-        for size in (12, 11, 10):
+    """The current G level in words and how Kp was read ("G2 中等磁暴（估算）") on one line
+    beside the number, stepping 13 to 10 px."""
+    level = G_LEVELS.get(str(current_g), "等级未知")
+    reading = KP_MODES.get(str(mode), str(mode))
+    for text in (f"{current_g} {level}（{reading}）", f"{current_g} {level}"):
+        for size in (13, 12, 11, 10):
             font = _font(size, bold=True)
             if _text_width(draw, text, font) <= max_width:
                 return text, font
@@ -680,49 +710,57 @@ def _fit_kp_state(draw, current_g, mode, *, max_width):
 
 
 def _draw_grs_panel(draw, snapshot, fonts, *, chances=False) -> None:
-    """G, R and S as status lamps coloured by their NOAA level; with ``chances`` the R and S
-    lamps also carry the day's chance of an R1-R2 blackout and an S1+ storm at their right."""
+    """G, R and S as plain dots in their NOAA level's colour, the level and its name beside each;
+    with ``chances`` the R and S columns also carry the day's chance of an R1-R2 blackout and an
+    S1+ storm at their right."""
     x1, y1, x2, y2 = GRS_RECT
     scales = snapshot.current_scales if isinstance(snapshot.current_scales, Mapping) else {}
     probabilities = snapshot.probabilities if isinstance(snapshot.probabilities, Mapping) else {}
     odds = {"R": ("R1-2", probabilities.get("r1_r2")), "S": ("S1+", probabilities.get("s1_plus"))}
-    _tile(draw, GRS_RECT)
-    cell_width = (x2 - x1) / 3
-    middle = (y1 + y2) / 2
+    left, right = x1 + PANEL_INSET, x2 - PANEL_INSET
+    cell_width = (right - left + GRS_GAP) / 3
     for index, (letter, name) in enumerate((("G", "地磁暴"), ("R", "无线电中断"), ("S", "太阳辐射"))):
-        left = round(x1 + index * cell_width)
-        if index:
-            draw.line((left, y1 + 8, left, y2 - 9), fill=TILE_OUTLINE, width=1)
+        cell_left = round(left + index * cell_width)
+        cell_right = round(left + (index + 1) * cell_width) - GRS_GAP
         lamp = _severity_color(_scale_level(scales, letter))
-        cx = left + 20
-        draw.ellipse((cx - 11, middle - 11, cx + 11, middle + 11), fill=_mix(lamp, TILE_COLOR, 0.55))
-        draw.ellipse((cx - 7, middle - 7, cx + 7, middle + 7), fill=lamp, outline=_mix(lamp, (255, 255, 255), 0.4))
-        _draw_text(draw, (left + 38, y1 + 4), _scale_value(scales, letter), font=fonts["grs_value"], fill=TEXT_COLOR)
-        _draw_text(draw, (left + 38, y1 + 22), name, font=fonts["grs_name"], fill=LABEL_COLOR)
+        middle = y1 + 11
+        draw.ellipse((cell_left, middle - 5, cell_left + 10, middle + 5), fill=lamp)
+        level = _scale_value(scales, letter)
+        _draw_text(draw, (cell_left + 16, y1 + 2), level, font=fonts["grs_value"], fill=TEXT_COLOR)
+        _draw_text(draw, (cell_left + 16, y1 + 21), name, font=fonts["grs_name"], fill=LABEL_COLOR)
         if chances and letter in odds:
             label, value = odds[letter]
-            right = round(x1 + (index + 1) * cell_width) - 7
             percent = "—" if value is None else f"{value}%"
-            _draw_right(draw, right, y1 + 4, percent, font=fonts["probability_value"], fill=_probability_color(value))
-            # The chance's name sits just left of it, when that leaves the lamp's level clear.
-            label_right = right - _text_width(draw, percent, fonts["probability_value"]) - 3
-            level_right = left + 38 + _text_width(draw, _scale_value(scales, letter), fonts["grs_value"])
-            if label_right - _text_width(draw, label, fonts["probability_label"]) >= level_right + 4:
-                _draw_right(draw, label_right, y1 + 6, label, font=fonts["probability_label"], fill=LABEL_COLOR)
+            _draw_right(draw, cell_right, y1 + 2, percent, font=fonts["probability_value"],
+                        fill=_probability_color(value))
+            # The chance's name sits under it, when that leaves the level's name clear.
+            name_right = cell_left + 16 + _text_width(draw, name, fonts["grs_name"])
+            if cell_right - _text_width(draw, label, fonts["probability_label"]) >= name_right + 4:
+                _draw_right(draw, cell_right, y1 + 21, label, font=fonts["probability_label"], fill=LABEL_COLOR)
 
 
-def _draw_metric_cell(canvas, draw, rect, icon, label, value, fonts) -> None:
-    x1, y1, x2, y2 = rect
-    _tile(draw, rect)
-    taken = _paste_icon(canvas, icon, x1 + 8, y1 + (y2 - y1 - 24) // 2, 24)
-    text_x = x1 + 10 + (taken + 6 if taken else 0)
-    _draw_text(draw, (text_x, y1 + 4), label, font=fonts["metric_label"], fill=LABEL_COLOR)
-    selected = fonts["metric_value"]
-    for size in range(16, 7, -1):
+def _draw_reading(draw, origin, max_right, label, value, fonts, *, unit="", color=TEXT_COLOR) -> None:
+    """One open reading: a small label above a DM Mono value and its unit, the value stepping down
+    from READING_SIZE until value and unit fit before ``max_right``."""
+    x, y = origin
+    _draw_text(draw, (x, y), label, font=fonts["label"], fill=LABEL_COLOR)
+    unit_font = fonts["unit"]
+    unit_width = _text_width(draw, unit, unit_font) + 4 if unit and value != "—" else 0
+    selected = fonts["reading"]
+    for size in range(READING_SIZE, 11, -1):
         selected = space_font("mono", size)
-        if _text_width(draw, value, selected) <= x2 - text_x - 8:
+        if x + _text_width(draw, value, selected) + unit_width <= max_right:
             break
-    _draw_text(draw, (text_x, y1 + 18), value, font=selected, fill=TEXT_COLOR)
+    _draw_text(draw, (x, y + 16), value, font=selected, fill=color)
+    if unit_width:
+        unit_x = x + _text_width(draw, value, selected) + _text_bbox(draw, (0, 0), value, selected)[0] + 4
+        unit_y = y + 16 + selected.getmetrics()[0] - unit_font.getmetrics()[0]
+        _draw_text(draw, (unit_x, unit_y), unit, font=unit_font, fill=LABEL_COLOR)
+
+
+def _draw_metric_cell(draw, rect, label, value, fonts, unit="") -> None:
+    x1, y1, x2, _y2 = rect
+    _draw_reading(draw, (x1 + PANEL_INSET, y1), x2 - PANEL_INSET, label, value, fonts, unit=unit)
 
 
 def _draw_metrics_panel(canvas, draw, snapshot, fonts) -> None:
@@ -730,14 +768,9 @@ def _draw_metrics_panel(canvas, draw, snapshot, fonts) -> None:
     magnetic = snapshot.magnetic_field if isinstance(snapshot.magnetic_field, Mapping) else {}
     forecast = snapshot.forecast_48h if isinstance(snapshot.forecast_48h, Mapping) else {}
     wind_value = _format_number(speed.get("speed_km_s"), decimals=0)
-    if wind_value != "—":
-        wind_value += " km/s"
-    bz_value = _format_number(magnetic.get("bz_nt"), decimals=2)
-    if bz_value != "—":
-        bz_value = f"{str(magnetic.get('direction') or 'unknown')} {bz_value} nT"
+    bz_number = _format_number(magnetic.get("bz_nt"), decimals=2)
+    bz_value = bz_number if bz_number == "—" else f"{str(magnetic.get('direction') or 'unknown')} {bz_number}"
     bt_value = _format_number(magnetic.get("bt_nt"), decimals=1)
-    if bt_value != "—":
-        bt_value += " nT"
     forecast_value = (
         f"{str(forecast.get('noaa_scale') or 'G—')}{TEXT_SEPARATOR}Kp "
         f"{_format_number(forecast.get('max_kp'))}"
@@ -751,28 +784,27 @@ def _draw_metrics_panel(canvas, draw, snapshot, fonts) -> None:
     chances = (snapshot.flare_probabilities
                if isinstance(getattr(snapshot, "flare_probabilities", None), Mapping) else {})
     if xray or chances:
-        # The flares take the whole lower row; Bt and Bz share a cell (the Kp tile already
-        # carries the 48-hour peak the forecast cell repeated).
+        # The flares take the whole lower row; Bt and Bz share a reading (the Kp hero already
+        # carries the 48-hour high the forecast cell repeated).
         field_value = "—"
-        if bt_value != "—" or bz_value != "—":
-            bz_number = _format_number(magnetic.get("bz_nt"), decimals=2)
-            field_value = f"{_format_number(magnetic.get('bt_nt'), decimals=1)}{TEXT_SEPARATOR}{bz_number} nT"
+        if bt_value != "—" or bz_number != "—":
+            field_value = f"{bt_value} / {bz_number}"
         cells = (
-            ((x1, y1, mid_x - gap, mid_y - gap), "solar_wind", f"太阳风{TEXT_SEPARATOR}WIND", wind_value),
-            ((mid_x + gap, y1, x2, mid_y - gap), "magnet", f"磁场 Bt{TEXT_SEPARATOR}Bz", field_value),
+            ((x1, y1, mid_x - gap, mid_y - gap), "太阳风", wind_value, "km/s"),
+            ((mid_x + gap, y1, x2, mid_y - gap), "磁场 Bt / Bz", field_value, "nT"),
         )
-        for rect, icon, label, value in cells:
-            _draw_metric_cell(canvas, draw, rect, icon, label, value, fonts)
+        for rect, label, value, unit in cells:
+            _draw_metric_cell(draw, rect, label, value, fonts, unit=unit)
         _draw_flare_cell(canvas, draw, (x1, mid_y + gap, x2, y2), xray, chances, fonts)
         return
     cells = (
-        ((x1, y1, mid_x - gap, mid_y - gap), "solar_wind", f"太阳风{TEXT_SEPARATOR}WIND", wind_value),
-        ((mid_x + gap, y1, x2, mid_y - gap), "magnet", "磁场 Bz", bz_value),
-        ((x1, mid_y + gap, mid_x - gap, y2), "compass", "磁场强度 Bt", bt_value),
-        ((mid_x + gap, mid_y + gap, x2, y2), "forecast", "48H FORECAST", forecast_value),
+        ((x1, y1, mid_x - gap, mid_y - gap), "太阳风", wind_value, "km/s"),
+        ((mid_x + gap, y1, x2, mid_y - gap), "磁场 Bz", bz_value, "nT"),
+        ((x1, mid_y + gap, mid_x - gap, y2), "磁场强度 Bt", bt_value, "nT"),
+        ((mid_x + gap, mid_y + gap, x2, y2), "48 小时预报", forecast_value, ""),
     )
-    for rect, icon, label, value in cells:
-        _draw_metric_cell(canvas, draw, rect, icon, label, value, fonts)
+    for rect, label, value, unit in cells:
+        _draw_metric_cell(draw, rect, label, value, fonts, unit=unit)
 
 
 def _flare_colour(flare_class) -> tuple[int, int, int]:
@@ -781,66 +813,46 @@ def _flare_colour(flare_class) -> tuple[int, int, int]:
     return {"C": AMBER_COLOR, "M": ORANGE_COLOR, "X": RED_COLOR}.get(letter, GREEN_COLOR if letter else MUTED_COLOR)
 
 
-@lru_cache(maxsize=4)
-def _flare_icon(size: int) -> Image.Image:
-    """A small sun with a flare loop, in the page's white line work."""
-    scale = 4
-    big = size * scale
-    icon = Image.new("RGBA", (big, big), (0, 0, 0, 0))
-    pen = ImageDraw.Draw(icon)
-    line = max(2, round(big * 0.075))
-    cx, cy, radius = big * 0.42, big * 0.58, big * 0.27
-    pen.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), outline=TEXT_COLOR + (255,), width=line)
-    for angle in (150, 195, 240, 285):
-        rad = math.radians(angle)
-        inner, outer = radius + big * 0.08, radius + big * 0.17
-        pen.line((cx + math.cos(rad) * inner, cy + math.sin(rad) * inner,
-                  cx + math.cos(rad) * outer, cy + math.sin(rad) * outer), fill=TEXT_COLOR + (255,), width=line)
-    # The flare: a loop leaping off the upper right limb.
-    loop = (cx + radius * 0.15, big * 0.06, big * 0.97, cy + radius * 0.35)
-    pen.arc(loop, start=200, end=20, fill=TEXT_COLOR + (255,), width=line)
-    return icon.resize((size, size), Image.Resampling.LANCZOS)
-
-
 def _draw_flare_cell(canvas, draw, rect, xray, chances, fonts) -> None:
-    """The X-ray class now and the strongest flare of 24 hours on the left; SWPC's C/M/X chances
+    """The X-ray class now, with the strongest flare of 24 hours after it; SWPC's C/M/X chances
     for the next three days on the right, each class a trio of day bars with day one's figure."""
     x1, y1, x2, y2 = rect
-    _tile(draw, rect)
-    icon = _flare_icon(24)
-    canvas.paste(icon, (x1 + 8, y1 + (y2 - y1 - 24) // 2), icon)
-    text_x = x1 + 40
-    _draw_text(draw, (text_x, y1 + 4), f"X射线耀斑{TEXT_SEPARATOR}X-RAY", font=fonts["metric_label"], fill=LABEL_COLOR)
+    left = x1 + PANEL_INSET
+    _draw_text(draw, (left, y1), "X 射线耀斑", font=fonts["label"], fill=LABEL_COLOR)
     current = str(xray.get("current_class") or "—")
-    value_font = fonts["metric_value"]
-    _draw_text(draw, (text_x, y1 + 18), current, font=value_font, fill=_flare_colour(xray.get("current_class")))
+    value_font = fonts["reading"]
+    _draw_text(draw, (left, y1 + 16), current, font=value_font, fill=_flare_colour(xray.get("current_class")))
     peak = xray.get("peak_class")
     if peak:
-        peak_x = text_x + _text_width(draw, current, value_font) + 8
-        _draw_text(draw, (peak_x, y1 + 23), "24H", font=fonts["probability_label"], fill=LABEL_COLOR)
-        peak_x += _text_width(draw, "24H", fonts["probability_label"]) + 3
-        _draw_text(draw, (peak_x, y1 + 20), str(peak), font=fonts["probability_value"], fill=_flare_colour(peak))
+        baseline = y1 + 16 + value_font.getmetrics()[0]
+        peak_x = left + _text_width(draw, current, value_font) + 10
+        peak_label = "24 小时最高"
+        _draw_text(draw, (peak_x, baseline - fonts["label_small"].getmetrics()[0]), peak_label,
+                   font=fonts["label_small"], fill=LABEL_COLOR)
+        peak_x += _text_width(draw, peak_label, fonts["label_small"]) + 4
+        _draw_text(draw, (peak_x, baseline - fonts["probability_value"].getmetrics()[0]), str(peak),
+                   font=fonts["probability_value"], fill=_flare_colour(peak))
 
     rows = [(letter, chances.get(letter.lower())) for letter in ("C", "M", "X")]
     rows = [(letter, values) for letter, values in rows if isinstance(values, (list, tuple)) and len(values) == 3]
     if not rows:
         return
-    group_width, right = 58, x2 - 8
-    left = right - group_width * len(rows)
-    _draw_text(draw, (left, y1 + 4), f"1-3日{TEXT_SEPARATOR}FLARE ODDS", font=fonts["metric_label"], fill=LABEL_COLOR)
-    bar_bottom, bar_height = y2 - 7, 14
+    group_width, right = 56, x2 - PANEL_INSET
+    groups_left = right - group_width * len(rows) + 8
+    _draw_text(draw, (groups_left, y1), "1-3 天耀斑概率", font=fonts["label"], fill=LABEL_COLOR)
+    bar_bottom, bar_height = y2 - 4, 15
     for index, (letter, values) in enumerate(rows):
-        gx = left + index * group_width
-        _draw_text(draw, (gx, bar_bottom - 13), letter, font=fonts["probability_value"], fill=TEXT_COLOR)
-        bars_x = gx + 11
+        gx = groups_left + index * group_width
+        _draw_text(draw, (gx, bar_bottom - 14), letter, font=fonts["probability_value"], fill=TEXT_COLOR)
+        bars_x = gx + 12
         for day, value in enumerate(values):
-            bx = bars_x + day * 6
-            draw.rectangle((bx, bar_bottom - bar_height, bx + 3, bar_bottom), fill=BAR_TRACK_COLOR)
+            bx = bars_x + day * 5
+            draw.rectangle((bx, bar_bottom - bar_height, bx + 2, bar_bottom), fill=BAR_TRACK_COLOR)
             share = max(0.0, min(1.0, float(value) / 100))
             if share > 0:
                 top = bar_bottom - max(2, round(bar_height * share))
-                draw.rectangle((bx, top, bx + 3, bar_bottom), fill=_probability_color(value))
-        _draw_text(draw, (bars_x + 20, bar_bottom - 11), f"{int(values[0])}%", font=fonts["header_meta"],
+                draw.rectangle((bx, top, bx + 2, bar_bottom), fill=_probability_color(value))
+        _draw_text(draw, (bars_x + 17, bar_bottom - 12), f"{int(values[0])}%", font=fonts["header_meta"],
                    fill=TEXT_COLOR)
 
 
@@ -857,7 +869,7 @@ def _probability_color(value) -> tuple[int, int, int]:
 
 
 def _draw_probabilities_panel(canvas, draw, snapshot, fonts) -> None:
-    """Three storm chances, each with a bar the width of its probability."""
+    """Today's three storm chances, each its figure over a hairline bar the width of its chance."""
     x1, y1, x2, y2 = PROBABILITIES_RECT
     probabilities = snapshot.probabilities if isinstance(snapshot.probabilities, Mapping) else {}
     values = (
@@ -865,25 +877,25 @@ def _draw_probabilities_panel(canvas, draw, snapshot, fonts) -> None:
         ("R3–R5", probabilities.get("r3_r5")),
         ("S1+", probabilities.get("s1_plus")),
     )
-    _tile(draw, PROBABILITIES_RECT)
-    taken = _paste_icon(canvas, "probability", x1 + 8, y1 + (y2 - y1 - 22) // 2, 22)
-    cells_left = x1 + 10 + (taken + 4 if taken else 0)
-    cell_width = (x2 - 8 - cells_left) / 3
+    left, right = x1 + PANEL_INSET, x2 - PANEL_INSET
+    _draw_text(draw, (left, y1), "今日风暴概率", font=fonts["label"], fill=LABEL_COLOR)
+    cell_width = (right - left + GRS_GAP) / 3
     for index, (label, value) in enumerate(values):
-        left = round(cells_left + index * cell_width)
-        right = round(cells_left + (index + 1) * cell_width) - 8
-        _draw_text(draw, (left, y1 + 6), label, font=fonts["probability_label"], fill=LABEL_COLOR)
+        cell_left = round(left + index * cell_width)
+        cell_right = round(left + (index + 1) * cell_width) - GRS_GAP
+        _draw_text(draw, (cell_left, y1 + 17), label, font=fonts["probability_label"], fill=LABEL_COLOR)
         probability = "—" if value is None else f"{value}%"
-        _draw_right(draw, right, y1 + 4, probability, font=fonts["probability_value"], fill=TEXT_COLOR)
-        bar_y = y2 - 12
-        draw.rounded_rectangle((left, bar_y, right, bar_y + 4), radius=2, fill=BAR_TRACK_COLOR)
+        _draw_right(draw, cell_right, y1 + 15, probability, font=fonts["probability_value"],
+                    fill=_probability_color(value))
+        bar_y = y2 - 6
+        draw.rectangle((cell_left, bar_y, cell_right, bar_y + 1), fill=BAR_TRACK_COLOR)
         try:
             share = max(0.0, min(1.0, float(value) / 100))
         except (TypeError, ValueError):
             share = 0.0
         if share > 0:
-            draw.rounded_rectangle((left, bar_y, left + max(4, round((right - left) * share)), bar_y + 4), radius=2,
-                                   fill=_probability_color(value))
+            draw.rectangle((cell_left, bar_y - 1, cell_left + max(3, round((cell_right - cell_left) * share)),
+                            bar_y + 2), fill=_probability_color(value))
 
 
 def planets_copy(sky) -> str:
@@ -952,13 +964,19 @@ def _tonight_planets(snapshot, sky):
             if planet.get("name") in PLANET_ICONS][:3]
 
 
+def _alert_rule(draw, color) -> int:
+    """The row's colour as a short vertical bar at its left, like the caption's on the photo; the
+    x where the row's icon goes."""
+    x1, y1, _x2, y2 = ALERT_RECT
+    draw.rectangle((x1 + PANEL_INSET, y1 + 3, x1 + PANEL_INSET + ALERT_RULE_WIDTH - 1, y2 - 3), fill=color)
+    return x1 + PANEL_INSET + ALERT_RULE_WIDTH + 9
+
+
 def _draw_planets_row(canvas, draw, planets, fonts) -> None:
     """No alert: a short all-clear, then tonight's planets, each led by its icon, with where and
     when it stands highest."""
     x1, y1, x2, y2 = ALERT_RECT
-    _tile(draw, ALERT_RECT, outline=GREEN_COLOR, fill=_mix(GREEN_COLOR, PAGE_COLOR, 0.82))
-    taken = _paste_icon(canvas, "source", x1 + 9, y1 + (y2 - y1 - 22) // 2, 22)
-    x = x1 + 12 + (taken + 6 if taken else 0)
+    x = _alert_rule(draw, GREEN_COLOR)
     _draw_text(draw, (x, y1 + 3), f"NOAA 无告警{TEXT_SEPARATOR}今夜可见", font=_font(11, bold=True), fill=TEXT_COLOR)
     middle = y1 + 30
     font = _font(11, bold=True)
@@ -969,7 +987,7 @@ def _draw_planets_row(canvas, draw, planets, fonts) -> None:
             continue
         label = f"{planet['name']} {planet['direction']} {hour:02d}时"
         width = PLANET_ICON_SIZE + 3 + _text_width(draw, label, font)
-        if x + width > x2 - 8:
+        if x + width > x2 - PANEL_INSET:
             break
         _paste_sky_icon(canvas, PLANET_ICONS[planet["name"]], (x + PLANET_ICON_SIZE / 2, middle), PLANET_ICON_SIZE)
         _draw_text(draw, (x + PLANET_ICON_SIZE + 3, middle - 8), label, font=font, fill=TEXT_COLOR)
@@ -983,12 +1001,12 @@ def _draw_alert_panel(canvas, draw, snapshot, fonts, sky=None) -> None:
         return
     x1, y1, x2, y2 = ALERT_RECT
     text, color = _alert_copy(snapshot, sky)
-    _tile(draw, ALERT_RECT, outline=color, fill=_mix(color, PAGE_COLOR, 0.82))
+    icon_x = _alert_rule(draw, color)
     icon = "alert" if isinstance(snapshot.alert, Mapping) or isinstance(snapshot.donki_event, Mapping) else "source"
-    taken = _paste_icon(canvas, icon, x1 + 9, y1 + (y2 - y1 - 22) // 2, 22)
-    text_x = x1 + 12 + (taken + 6 if taken else 0)
+    taken = _paste_icon(canvas, icon, icon_x, y1 + (y2 - y1 - 20) // 2, 20)
+    text_x = icon_x + (taken + 8 if taken else 0)
     lines, font = _fit_alert_copy(
-        draw, text, max_width=x2 - 10 - text_x, required_active=isinstance(snapshot.alert, Mapping),
+        draw, text, max_width=x2 - PANEL_INSET - text_x, required_active=isinstance(snapshot.alert, Mapping),
     )
     line_height = _line_height(draw, font)
     y = y1 + max(3, ((y2 - y1) - line_height * len(lines)) // 2)
@@ -1025,7 +1043,7 @@ def _neo_x(left, right, lunar):
 
 
 def neo_copy(neo) -> tuple[str, str]:
-    """The nearest NEO's two lines: its name, then "0.32 LD · 10/28 18:26 · ~7 m"."""
+    """The nearest NEO's two lines: its name, then "0.32 LD  10/28 18:26  ~7 m"."""
     parts = [f"{neo['lunar']:.2f} LD"]
     try:
         when = datetime.fromisoformat(neo["when"]).astimezone(PACIFIC)
@@ -1035,25 +1053,24 @@ def neo_copy(neo) -> tuple[str, str]:
     if neo.get("size_m"):
         size = neo["size_m"]
         parts.append(f"~{size:.0f} m" if size < 1000 else f"~{size / 1000:.1f} km")
-    return str(neo.get("name") or "—"), " · ".join(parts)
+    return str(neo.get("name") or "—"), "  ".join(parts)
 
 
 def _draw_neo_panel(canvas, draw, neos, fonts) -> None:
     """The NEOs passing within ten lunar distances in 30 days on a strip from Earth, the Moon at
     one lunar distance, the nearest in red and named at the right; JPL's logo names the source."""
     x1, y1, x2, y2 = NEO_RECT
-    _tile(draw, NEO_RECT)
     objects = neos.get("objects") or []
-    _draw_text(draw, (x1 + 10, y1 + 4), f"近地天体{TEXT_SEPARATOR}NEO 30D", font=fonts["probability_label"],
-               fill=LABEL_COLOR)
+    left = x1 + PANEL_INSET
+    _draw_text(draw, (left, y1), "近地天体 30 天", font=fonts["label"], fill=LABEL_COLOR)
     logo = _jpl_logo(10)
-    right = x2 - 8
+    right = x2 - PANEL_INSET
     if logo is not None:
-        canvas.paste(logo, (right - logo.width, y1 + 6), logo)
+        canvas.paste(logo, (right - logo.width, y1 + 3), logo)
         right -= logo.width + 6
-    _draw_right(draw, right, y1 + 4, f"{neos.get('count', len(objects))} 颗 < 10 LD", font=_font(10, bold=True),
+    _draw_right(draw, right, y1 + 1, f"{neos.get('count', len(objects))} 颗 < 10 LD", font=_font(10, bold=True),
                 fill=TEXT_COLOR)
-    strip_left, strip_right, strip_y = x1 + 14, x1 + 164, y2 - 15
+    strip_left, strip_right, strip_y = left + 6, left + 150, y2 - 12
     draw.line((strip_left, strip_y, strip_right, strip_y), fill=TILE_OUTLINE, width=1)
     for lunar in (1, 5, 10):
         x = _neo_x(strip_left, strip_right, lunar)
@@ -1079,10 +1096,10 @@ def _draw_neo_panel(canvas, draw, neos, fonts) -> None:
     text_x = strip_right + 14
     if objects:
         name, detail = neo_copy(objects[0])
-        _draw_text(draw, (text_x, y1 + 17), name, font=fonts["probability_value"], fill=RED_COLOR)
-        _draw_text(draw, (text_x, y1 + 32), detail, font=_font(9, bold=True), fill=TEXT_COLOR)
+        _draw_text(draw, (text_x, y1 + 15), name, font=fonts["probability_value"], fill=RED_COLOR)
+        _draw_text(draw, (text_x, y1 + 31), detail, font=_font(10), fill=TEXT_COLOR)
     else:
-        _draw_text(draw, (text_x, y1 + 24), "30 天内无近距掠过", font=_font(10, bold=True), fill=TEXT_COLOR)
+        _draw_text(draw, (text_x, y1 + 22), "30 天内无近距掠过", font=_font(10, bold=True), fill=TEXT_COLOR)
 
 
 def _as_utc(value) -> datetime | None:
@@ -1103,14 +1120,12 @@ def _utc_stamp(value, *, include_date=False) -> str:
 def _draw_source_panel(canvas, draw, snapshot, fonts) -> None:
     observed = _utc_stamp(snapshot.oldest_core_observed_at_utc)
     cached = _utc_stamp(snapshot.fetched_at_utc)
-    text = (
-        f"NOAA SWPC{TEXT_SEPARATOR}OBS {observed}"
-        f"{TEXT_SEPARATOR}CACHE {cached}"
-    )
+    text = f"NOAA SWPC{TEXT_SEPARATOR}观测 {observed}{TEXT_SEPARATOR}缓存 {cached}"
     font = fonts["source"]
-    taken = _paste_icon(canvas, "source", SOURCE_RECT[0], SOURCE_RECT[1] + 2, 16)
-    text_x = SOURCE_RECT[0] + (taken + 6 if taken else 0)
-    if _text_width(draw, text, font) > SOURCE_RECT[2] - text_x:
+    x1 = SOURCE_RECT[0] + PANEL_INSET
+    taken = _paste_icon(canvas, "source", x1, SOURCE_RECT[1] + 2, 16)
+    text_x = x1 + (taken + 6 if taken else 0)
+    if _text_width(draw, text, font) > SOURCE_RECT[2] - PANEL_INSET - text_x:
         raise ApodPageLayoutError("complete NOAA source timestamps do not fit")
     _draw_text(draw, (text_x, SOURCE_RECT[1] + 4), text, font=font, fill=MUTED_COLOR)
 
@@ -1240,6 +1255,20 @@ def _place_photo(canvas, photo, caption_top) -> None:
         canvas.paste(Image.composite(dark, region, ramp), (left, top + shade_top))
 
 
+def _draw_panel_scrim(canvas) -> None:
+    """The page ground over the photo's faded left edge behind the panel: solid to SCRIM_SOLID,
+    clearing linearly by SCRIM_CLEAR."""
+    left, top, right, bottom = PHOTO_LEFT, PHOTO_TOP, SCRIM_CLEAR, PAGE_SIZE[1]
+    ramp = Image.new("L", (right - left, 1))
+    for offset in range(right - left):
+        x = left + offset
+        share = 1.0 if x < SCRIM_SOLID else (SCRIM_CLEAR - x) / (SCRIM_CLEAR - SCRIM_SOLID)
+        ramp.putpixel((offset, 0), round(255 * max(0.0, min(1.0, share))))
+    mask = ramp.resize((right - left, bottom - top))
+    region = canvas.crop((left, top, right, bottom))
+    canvas.paste(Image.composite(Image.new("RGB", region.size, PAGE_COLOR), region, mask), (left, top))
+
+
 def _draw_caption(canvas, draw, layout) -> None:
     x1 = RIGHT_TEXT_RECT[0]
     x2 = RIGHT_TEXT_RECT[2]
@@ -1317,7 +1346,7 @@ def render_apod_page(
     measurement: ApodPageMeasurement | None = None,
     sky: Mapping | None = None,
 ) -> Image.Image:
-    """Render the mission-control page: instrument tiles on the left, the photo full-bleed on the right.
+    """Render the mission-control page: open instrument readings on the left, the photo full-bleed on the right.
     ``sky`` (JPL's NEOs and tonight's planets) takes the storm-chance row when it has NEOs."""
 
     if tuple(dimensions) != PAGE_SIZE:
@@ -1345,6 +1374,7 @@ def render_apod_page(
     fonts = _load_fonts()
 
     _place_photo(canvas, fit_photo(source_image, measured.photo_size), layout.caption_top)
+    _draw_panel_scrim(canvas)
     _draw_header(canvas, draw, rendered_at_utc, fonts)
     _draw_kp_panel(canvas, draw, KP_RECT, weather, fonts)
     neos = sky.get("neos") if isinstance(sky, Mapping) else None

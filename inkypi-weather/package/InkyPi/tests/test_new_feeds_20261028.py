@@ -26,7 +26,7 @@ def test_neos_are_nearest_first_with_lunar_distances_and_sizes():
     assert round(neos["objects"][0]["lunar"], 2) == 0.32
     assert 3 < neos["objects"][0]["size_m"] < 7
     name, detail = apod_page.neo_copy(neos["objects"][0])
-    assert name == "2026 UE2" and detail.startswith("0.32 LD · 10/28 18:26")
+    assert name == "2026 UE2" and detail.startswith("0.32 LD  10/28 18:26")
 
 
 def test_tonights_planet_is_its_highest_dark_hour():

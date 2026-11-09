@@ -2240,13 +2240,14 @@ def test_apod_page_photo_fades_into_the_panel_and_darkens_under_the_caption():
 
     assert rendered.mode == "RGB"
     assert rendered.size == (800, 480)
-    # Between the Kp and G/R/S tiles nothing covers the fade.
+    # The panel's ground covers the photo's faded edge up to SCRIM_SOLID and clears by SCRIM_CLEAR.
     y = (page.KP_RECT[3] + page.GRS_RECT[1]) // 2
     assert rendered.getpixel((page.PHOTO_LEFT - 1, y)) == page.PAGE_COLOR
-    blues = [rendered.getpixel((x, y))[2] for x in range(page.PHOTO_LEFT, page.PHOTO_LEFT + page.PHOTO_FADE)]
+    assert rendered.getpixel((page.SCRIM_SOLID - 1, y)) == page.PAGE_COLOR
+    blues = [rendered.getpixel((x, y))[2] for x in range(page.PHOTO_LEFT, page.SCRIM_CLEAR)]
     assert blues == sorted(blues)
     assert abs(blues[0] - page.PAGE_COLOR[2]) <= 8
-    assert rendered.getpixel((page.PHOTO_LEFT + page.PHOTO_FADE, y)) == PHOTO_BLUE
+    assert rendered.getpixel((page.SCRIM_CLEAR, y)) == PHOTO_BLUE
     shade_top = layout.caption_top - page.CAPTION_SHADE_LEAD
     assert rendered.getpixel((790, shade_top - 1)) == PHOTO_BLUE
     foot = rendered.getpixel((790, 479))
@@ -2292,12 +2293,13 @@ def test_apod_page_icons_are_transparent_and_drawn_in_pure_white():
 def test_apod_page_kp_state_fits_beside_the_number(mode, current_g):
     page = _apod_page_module()
     draw = ImageDraw.Draw(Image.new("RGB", page.PAGE_SIZE))
-    max_width = page.KP_RECT[2] - 12 - (page.KP_RECT[0] + 162)
+    max_width = page.KP_RECT[2] - page.PANEL_INSET - (page.KP_RECT[0] + page.KP_TEXT_LEFT)
 
     text, font = page._fit_kp_state(draw, current_g, mode, max_width=max_width)
 
-    assert text == f"CURRENT {current_g} | {mode}"
-    assert 10 <= font.size <= 12
+    level = page.G_LEVELS.get(current_g, "等级未知")
+    assert text == f"{current_g} {level}（{page.KP_MODES[mode]}）"
+    assert 10 <= font.size <= 13
     assert page._text_width(draw, text, font) <= max_width
 
 
@@ -2328,13 +2330,14 @@ def test_apod_page_composed_photo_edges_are_exact_cover_pixels(source):
     # Past the fade and above the caption shade, the photo is the exact cover crop.
     left, top = page.PHOTO_RECT[:2]
     last_clear = layout.caption_top - page.CAPTION_SHADE_LEAD - 1 - top
+    clear = page.SCRIM_CLEAR - left
     edge_points = {
-        (page.PHOTO_FADE, 0),
+        (clear, 0),
         (350, 0),
         (579, 0),
-        (page.PHOTO_FADE, 149),
+        (clear, 149),
         (579, 149),
-        (page.PHOTO_FADE, last_clear),
+        (clear, last_clear),
         (579, last_clear),
     }
     for x, y in edge_points:
@@ -2637,8 +2640,8 @@ def test_apod_page_uses_clear_ascii_separators_without_moving_kp_rect(monkeypatc
 
     assert kp_calls == [page.KP_RECT]
     assert not any("·" in text or "•" in text for text in drawn_text)
-    assert "当前地磁指数 | CURRENT GEOMAGNETIC INDEX" in drawn_text
-    assert "太阳风 | WIND" in drawn_text
+    assert "地磁指数" in drawn_text
+    assert "太阳风" in drawn_text
     assert "CREDIT | NASA / APOD" in drawn_text
     assert "NASA APOD | 2026-07-22" in drawn_text
 
@@ -2762,7 +2765,7 @@ def test_apod_page_kp_rect_is_direct_and_invariant(monkeypatch, scenario):
     assert calls[0][1] is weather
 
 
-def test_apod_page_left_text_bboxes_stay_inside_the_tiles_and_never_use_ellipsis(
+def test_apod_page_left_text_bboxes_stay_inside_the_panel_and_never_use_ellipsis(
     monkeypatch,
 ):
     page = _apod_page_module()
@@ -2787,17 +2790,20 @@ def test_apod_page_left_text_bboxes_stay_inside_the_tiles_and_never_use_ellipsis
 
     left_calls = [call for call in calls if call[0][0] < 368 and call[0][1] >= 65]
     assert left_calls
-    assert all(bbox[2] <= page.KP_RECT[2] - 8 for _xy, _text, bbox in left_calls)
+    assert all(bbox[2] <= page.KP_RECT[2] - page.PANEL_INSET for _xy, _text, bbox in left_calls)
+    # Every reading stays left of the solid scrim, so none sits on the photo.
+    assert page.KP_RECT[2] - page.PANEL_INSET <= page.SCRIM_SOLID
     assert not any("..." in text or "…" in text for _xy, text, _bbox in calls)
     all_copy = " | ".join(text for _xy, text, _bbox in calls)
     for required_copy in (
         "4.7",
-        "CURRENT G2 | estimated",
-        "48H PEAK | Kp 6.3 / G2",
+        "G2 中等磁暴（估算）",
+        "48 小时最高 Kp 6.3，G2",
         "G2",
         "R1",
         "S0",
-        "455 km/s",
+        "455",
+        "km/s",
         "磁场 Bz",
         "磁场强度 Bt",
         "R1–R2",
@@ -2807,7 +2813,7 @@ def test_apod_page_left_text_bboxes_stay_inside_the_tiles_and_never_use_ellipsis
         "S1+",
         "5%",
         "NOAA ALERTS",
-        "NOAA SWPC | OBS 12:00Z | CACHE 12:20Z",
+        "NOAA SWPC | 观测 12:00Z | 缓存 12:20Z",
     ):
         assert required_copy in all_copy
 
@@ -2859,8 +2865,8 @@ def test_apod_page_renders_magnetic_field_from_aggregate_projection(monkeypatch)
         rendered_at_utc=NOW_UTC,
     )
 
-    assert "south -0.04 nT" in calls
-    assert "5.2 nT" in calls
+    assert "south -0.04" in calls and "nT" in calls
+    assert "5.2" in calls
 
 
 def test_apod_page_draws_every_required_role_at_approved_true_font_size(
@@ -2905,11 +2911,11 @@ def test_apod_page_draws_every_required_role_at_approved_true_font_size(
     assert "NASAPics × SPACE WEATHER" not in by_text
     assert by_text["2026-07-22 12:20Z"].size >= 10
     assert 36 <= by_text["4.7"].size <= 44
-    assert 10 <= by_text["CURRENT G2 | estimated"].size <= 12
-    assert by_text["太阳风 | WIND"].size >= 10
-    assert 16 <= by_text["455 km/s"].size <= 19
+    assert 10 <= by_text["G2 中等磁暴（估算）"].size <= 13
+    assert by_text["太阳风"].size >= 10
+    assert 18 <= by_text["455"].size <= page.READING_SIZE
     assert by_text["NOAA WATCH | G2 | Geomagnetic storm watch"].size >= 12
-    assert by_text["NOAA SWPC | OBS 12:00Z | CACHE 12:20Z"].size >= 10
+    assert by_text["NOAA SWPC | 观测 12:00Z | 缓存 12:20Z"].size >= 10
     assert by_text["CREDIT | NASA / APOD"].size >= 10
     assert by_text["NASA APOD | 2026-07-22"].size >= 10
     assert 16 <= by_text["极光"].size <= 20

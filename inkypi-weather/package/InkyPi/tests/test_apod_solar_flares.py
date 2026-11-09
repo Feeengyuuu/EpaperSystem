@@ -185,9 +185,9 @@ def test_snapshot_carries_the_flares_and_the_page_draws_them(tmp_path, monkeypat
     draw = apod_page.MixedDraw(ImageDraw.Draw(canvas))
     apod_page._draw_metrics_panel(canvas, draw, snapshot, apod_page._load_fonts())
     text = " ".join(drawn)
-    for expected in ("B3.2", "24H", "B8.0", "FLARE ODDS", "30%", "5%", "1%", "Bt"):
+    for expected in ("B3.2", "24 小时最高", "B8.0", "耀斑概率", "30%", "5%", "1%", "Bt"):
         assert expected in text, expected
-    assert "48H FORECAST" not in text
+    assert "48 小时预报" not in text
 
 
 def test_without_flare_data_the_metrics_keep_their_four_cells(tmp_path, monkeypatch):
@@ -202,4 +202,4 @@ def test_without_flare_data_the_metrics_keep_their_four_cells(tmp_path, monkeypa
     canvas = Image.new("RGB", apod_page.PAGE_SIZE, apod_page.PAGE_COLOR)
     apod_page._draw_metrics_panel(canvas, apod_page.MixedDraw(ImageDraw.Draw(canvas)), snapshot,
                                   apod_page._load_fonts())
-    assert "48H FORECAST" in drawn and not any("FLARE" in text for text in drawn)
+    assert "48 小时预报" in drawn and not any("耀斑" in text for text in drawn)
