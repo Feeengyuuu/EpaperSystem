@@ -1064,3 +1064,12 @@ def test_the_tide_chart_keeps_its_labels_apart(monkeypatch):
     tag = next(xy for xy, text in recorded if text == "15:58")
     tag_box = (tag[0] - 3, tag[1] - 1, tag[0] + 30, tag[1] + 11)
     assert len(boxes) == 3 and not any(command_render._overlaps(box, [tag_box]) for box in boxes)
+
+
+def test_bart_rows_set_their_cars_labels_and_rails_in_one_column(monkeypatch):
+    """The destinations from one left, each train's length in one column after the widest of them
+    and every rail from after that column, so the rows read as a table."""
+    image, rows = bart_rows_page(monkeypatch, [bart_etd("Millbrae", "RED", "#ff0000", (4, 25, 45), 5),
+                                               bart_etd("Berryessa", "ORANGE", "#ff9933", (17, 37), 6)])
+    assert rows["Millbrae"][0] == rows["Berryessa"][0]
+    assert rows["5节"][0] == rows["6节"][0] >= rows["Berryessa"][0] + rows["Berryessa"][2]

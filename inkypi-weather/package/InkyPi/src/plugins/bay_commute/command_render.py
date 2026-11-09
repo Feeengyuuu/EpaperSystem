@@ -45,6 +45,8 @@ CHART_LABEL_INSET = 5
 BUOY_Y = 327
 BART_Y = 349
 BART_ROWS, BART_ROW_STEP = 3, 15
+# The departures start this far under the station's name row (its name, trains in service, 实时发车).
+BART_HEAD_GAP = 15
 # BART's service notes (advisories, elevators) under its departures: one line this tall each, an
 # advisory taking up to two.
 NOTE_STEP, ADVISORY_LINES = 12, 2
@@ -687,7 +689,7 @@ def bart(page, payload, now):
     page.text((name_x, BART_Y - 1), name, 13, role="bart", width=min(170, 784 - note_w - fleet_w - 8 - name_x))
     notes = bart_notes(page, payload)
     notes_h = sum(len(note_lines) for _label, _colour, note_lines in notes) * NOTE_STEP
-    band_top, band_bottom = BART_Y + 14, BART_BOTTOM - notes_h - (3 if notes else 0)
+    band_top, band_bottom = BART_Y + BART_HEAD_GAP, BART_BOTTOM - notes_h - (3 if notes else 0)
     lines = lines[:max(1, int((band_bottom - band_top) // BART_ROW_STEP))]
     draw_bart_notes(page, notes, band_bottom + 3)
     if not lines:
@@ -700,6 +702,20 @@ def bart(page, payload, now):
     step = (band_bottom - band_top) / len(lines)
     plans = [row_plan(page, line) for line in lines]
     shape = train_shape_for(plans, step)
+    # The rows in columns: every destination from the same left, every train's length label in one
+    # column after the widest destination and every train's rail starting after that column (the
+    # noses already share the times' left). A row whose train would not clear that column keeps the
+    # labels and rails after its own destination instead.
+    names = []
+    for line, plan in zip(lines, plans):
+        room = train_room(plan, shape) if plan["cars"] else 272 - 31 - plan["times_w"]
+        name = fitted_destination(page, line["destination"], room)
+        names.append((name, room, min(room, page.draw.textlength(name, font=font(12, "bart", False)))))
+    cars_w = max([plan["cars_w"] for plan in plans if plan["cars"]] or [0])
+    label_x = round(529 + max(width for _name, _room, width in names) + 4)
+    aligned = all(not plan["cars"] or
+                  plan["front"] + 1 - train_width(plan["cars"], shape) - TRAIN_LEAD >= label_x + cars_w
+                  for plan in plans)
     for index, (line, plan) in enumerate(zip(lines, plans)):
         y = round(band_top + index * step + (step - BART_ROW_STEP) / 2)
         # The bullet and the train (or the leader and its stop ring) are all level with the middle of
@@ -729,12 +745,12 @@ def bart(page, payload, now):
         # train, its nose just short of the times, its rail back to the label; the destination gives
         # way to it.
         cars = plan["cars"]
-        room = train_room(plan, shape) if cars else 272 - 31 - times_w
-        name_w = page.text((529, y), fitted_destination(page, line["destination"], room), 12, role="bart",
-                           width=room, bold=False)
+        name, room, _width = names[index]
+        name_w = page.text((529, y), name, 12, role="bart", width=room, bold=False)
         if cars:
-            page.text((529 + name_w + 4, y - 1), f"{cars}节", 10, "muted", bold=False)
-            draw_train(page, round(529 + name_w + plan["cars_w"] + 5), plan["front"], middle, cars,
+            label = label_x if aligned else round(529 + name_w + 4)
+            page.text((label, y - 1), f"{cars}节", 10, "muted", bold=False)
+            draw_train(page, round(label + (cars_w if aligned else plan["cars_w"]) + 1), plan["front"], middle, cars,
                        train_colour(line), shape)
             continue
         # Without its length the destination leads to its trains along its line, drawn as BART's
