@@ -656,47 +656,63 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
         lead_key = str((lead or {}).get("key") or "")
         # The lead's album photo may fill the half its text leaves, so it is fetched as sharp.
         large_keys = {lead_key} | {str(item.get("key") or "") for item in self._album_siblings(lead, messages)[:1]}
-        for item in self._account_media_download_queue(messages):
-            if not isinstance(item, dict) or item.get("media_path"):
-                continue
-            kind = str(item.get("media_kind") or "").lower()
-            key = str(item.get("key") or "")
-            message = (message_objects or {}).get(key)
-            if message is None:
-                continue
-            media = {
-                "kind": kind,
-                "file_id": item.get("media_file_id") or key,
-                "file_unique_id": item.get("media_unique_id") or key,
-                "width": item.get("media_width") or 0,
-                "height": item.get("media_height") or 0,
-                "duration": item.get("duration") or 0,
-            }
-            cached_media_path = self._existing_media_path((existing_messages or {}).get(key), media)
-            if cached_media_path:
-                record_resource_event("telegram_media", disk_hits=1)
-                item["media_path"] = str(cached_media_path)
-                continue
-            if downloaded >= media_download_limit:
-                return
-            if time_left is not None and time_left() < ACCOUNT_MEDIA_DOWNLOAD_TIMEOUT_SECONDS + 2:
-                logger.info("Telegram Digest left the remaining media for the next refresh.")
-                return
-            try:
-                cached_media_path = await asyncio.wait_for(
-                    self._download_account_media(
-                        client,
-                        message,
-                        media,
-                        LEAD_PHOTO_MIN_SIDE if key in large_keys else THUMB_PHOTO_MIN_SIDE,
-                    ),
-                    timeout=ACCOUNT_MEDIA_DOWNLOAD_TIMEOUT_SECONDS,
-                )
-                item["media_path"] = str(cached_media_path or "")
-            except Exception as exc:
-                logger.warning("Could not cache Telegram account media for %s: %s", key, exc)
-            finally:
-                downloaded += 1
+        # Only "Telegram Digest ..." lines leave the account worker for the journal, so each
+        # failure and the round's count are said that way.
+        saved, failed = 0, []
+        try:
+            for item in self._account_media_download_queue(messages):
+                if not isinstance(item, dict) or item.get("media_path"):
+                    continue
+                kind = str(item.get("media_kind") or "").lower()
+                key = str(item.get("key") or "")
+                message = (message_objects or {}).get(key)
+                if message is None:
+                    continue
+                media = {
+                    "kind": kind,
+                    "file_id": item.get("media_file_id") or key,
+                    "file_unique_id": item.get("media_unique_id") or key,
+                    "width": item.get("media_width") or 0,
+                    "height": item.get("media_height") or 0,
+                    "duration": item.get("duration") or 0,
+                }
+                cached_media_path = self._existing_media_path((existing_messages or {}).get(key), media)
+                if cached_media_path:
+                    record_resource_event("telegram_media", disk_hits=1)
+                    item["media_path"] = str(cached_media_path)
+                    continue
+                if downloaded >= media_download_limit:
+                    break
+                if time_left is not None and time_left() < ACCOUNT_MEDIA_DOWNLOAD_TIMEOUT_SECONDS + 2:
+                    logger.info("Telegram Digest left the remaining media for the next refresh.")
+                    break
+                try:
+                    cached_media_path = await asyncio.wait_for(
+                        self._download_account_media(
+                            client,
+                            message,
+                            media,
+                            LEAD_PHOTO_MIN_SIDE if key in large_keys else THUMB_PHOTO_MIN_SIDE,
+                        ),
+                        timeout=ACCOUNT_MEDIA_DOWNLOAD_TIMEOUT_SECONDS,
+                    )
+                    item["media_path"] = str(cached_media_path or "")
+                    if cached_media_path:
+                        saved += 1
+                    else:
+                        failed.append(f"{key} empty")
+                except TaskCancelled:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - the story keeps its text; the next refresh retries.
+                    failed.append(f"{key} {type(exc).__name__}")
+                    logger.warning("Telegram Digest could not cache the picture of %s: %s", key,
+                                   str(exc) or type(exc).__name__)
+                finally:
+                    downloaded += 1
+        finally:
+            if downloaded:
+                logger.info("Telegram Digest cached %d of %d pictures%s.", saved, downloaded,
+                            f" (failed: {', '.join(failed[:4])})" if failed else "")
 
     async def _hydrate_chat_avatars(self, client, messages, entities, time_left=None):
         """Each group's and channel's picture for its stories' source line (``chat_avatar``): the
@@ -722,7 +738,8 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
                     except TaskCancelled:
                         raise
                     except Exception as exc:  # noqa: BLE001 - the chat keeps its kind's icon.
-                        logger.warning("Could not cache the Telegram picture of chat %s: %s", chat_id, exc)
+                        logger.warning("Telegram Digest could not cache the picture of chat %s: %s", chat_id,
+                                       str(exc) or type(exc).__name__)
                 paths[chat_id] = str(target) if target.is_file() else ""
             item["chat_avatar"] = paths[chat_id]
 

@@ -1002,6 +1002,31 @@ def test_chat_pictures_are_fetched_once_replaced_when_changed_and_skipped_for_pr
     assert [path.name for path in (tmp_path / "avatars").iterdir()] == ["c-1001_p2.jpg"]
 
 
+def test_picture_downloads_that_fail_reach_the_journal(tmp_path, caplog):
+    import asyncio
+    import logging
+
+    plugin = _plugin(tmp_path)
+
+    class Client:
+        async def download_media(self, message, **kwargs):
+            if message == "slow":
+                raise TimeoutError()
+            return b""
+
+    stories = [{"key": f"c:{index}", "media_kind": "photo", "date": 10 - index, "curation": {"score": 50 - index}}
+               for index in range(2)]
+    objects = {"c:0": "slow", "c:1": "empty"}
+    with caplog.at_level(logging.INFO):
+        asyncio.run(plugin._hydrate_account_media(Client(), stories, objects, {}, 7))
+
+    # Only "Telegram Digest ..." lines leave the account worker, so the failures are said that way.
+    lines = [record.getMessage() for record in caplog.records]
+    assert "Telegram Digest could not cache the picture of c:0: TimeoutError" in lines
+    assert "Telegram Digest cached 0 of 2 pictures (failed: c:0 TimeoutError, c:1 empty)." in lines
+    assert all(not story.get("media_path") for story in stories)
+
+
 def test_a_story_with_its_chats_picture_shows_it_as_a_disc_on_its_source_line(tmp_path):
     plugin = _plugin(tmp_path)
     now = datetime(2026, 7, 13, 18, 0, tzinfo=timezone.utc)
