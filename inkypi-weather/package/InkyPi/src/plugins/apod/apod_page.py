@@ -66,9 +66,11 @@ PAGE_SIZE = (800, 480)
 CAPTION_MIN_TOP = 300
 CAPTION_MAX_TOP = 364
 PHOTO_TOP = 65
-# The photo runs under the panel's right edge and fades into it over PHOTO_FADE pixels.
-PHOTO_LEFT = 340
-PHOTO_FADE = 64
+# The photo runs in under the instrument tiles and fades in over PHOTO_FADE pixels, whole by the
+# tiles' right edge: the blend shows only between the tiles, and past them the photo is at full
+# strength (fading out past the tiles left a dark band beside them).
+PHOTO_LEFT = 220
+PHOTO_FADE = 150
 PHOTO_RECT = (PHOTO_LEFT, PHOTO_TOP, PAGE_SIZE[0], PAGE_SIZE[1])
 # The caption sits on the photo, which darkens toward the foot from just above it.
 CAPTION_SHADE_LEAD = 36

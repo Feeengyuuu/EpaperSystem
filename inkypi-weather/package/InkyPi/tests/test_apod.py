@@ -2267,7 +2267,7 @@ def test_apod_page_uses_every_approved_fixed_rectangle_exactly():
     assert page.PROBABILITIES_RECT == (16, 338, 352, 384)
     assert page.ALERT_RECT == (16, 392, 352, 434)
     assert page.SOURCE_RECT == (16, 448, 352, 472)
-    assert page.PHOTO_RECT == (340, 65, 800, 480)
+    assert page.PHOTO_RECT == (220, 65, 800, 480)
 
 
 def test_apod_page_icons_are_transparent_and_drawn_in_pure_white():
@@ -2312,7 +2312,7 @@ def test_apod_page_kp_state_fits_beside_the_number(mode, current_g):
 )
 def test_apod_page_composed_photo_edges_are_exact_cover_pixels(source):
     page = _apod_page_module()
-    expected = page.fit_photo(source, (460, 415))
+    expected = page.fit_photo(source, (580, 415))
     apod = _page_record(title_en="Aurora", title_zh="极光")
     layout = page.measure_apod_page(apod=apod, title_zh="极光", translation_unavailable=False).caption
 
@@ -2330,12 +2330,12 @@ def test_apod_page_composed_photo_edges_are_exact_cover_pixels(source):
     last_clear = layout.caption_top - page.CAPTION_SHADE_LEAD - 1 - top
     edge_points = {
         (page.PHOTO_FADE, 0),
-        (230, 0),
-        (459, 0),
+        (350, 0),
+        (579, 0),
         (page.PHOTO_FADE, 149),
-        (459, 149),
+        (579, 149),
         (page.PHOTO_FADE, last_clear),
-        (459, last_clear),
+        (579, last_clear),
     }
     for x, y in edge_points:
         assert rendered.getpixel((left + x, top + y)) == expected.getpixel((x, y))
@@ -2513,7 +2513,7 @@ def test_apod_page_real_multiline_credit_preserves_every_character_within_budget
     assert layout.credit_bottom <= layout.date_y
     assert layout.date_bottom <= 480
     assert measurement.photo_rect == page.PHOTO_RECT
-    assert measurement.photo_size == (460, 415)
+    assert measurement.photo_size == (580, 415)
 
     original_text = ImageDraw.ImageDraw.text
     drawn_text = []
