@@ -85,6 +85,9 @@ TRAIN_NAME_MIN = 36
 # BART's own line colours, as its lettered bullets print them, for each train's stripe.
 BART_LINE_COLOURS = {"red": "#ed1c24", "orange": "#faa61a", "yellow": "#ffe600", "blue": "#009ad9",
                      "green": "#50b848"}
+# The 道路封闭 title row's road works frieze starts clear of the barricade (its art ends at x 222)
+# and is left off when the count leaves it less than this height.
+CONSTRUCTION_LEFT, CONSTRUCTION_MIN_H = 230, 12
 # The column (and its divider) end here, above the footer rule.
 BART_BOTTOM = 448
 PLACE_MARKS = {"san jose": ("san-jose.png", 31, ""),
@@ -326,6 +329,24 @@ def _camera(page, index, row, entries):
     page.text((x + w, y + 57), label, 9, "muted", align="right", bold=False, width=w)
 
 
+def construction_strip(page, box):
+    """The road works frieze (workers, an excavator, a roller between two cones; assets/details,
+    GPT Image 2.6) in the title row's free stretch ``box``, standing on its foot, as large as the
+    stretch allows up to its height, centred across it."""
+    x0, y0, x1, y1 = box
+    with Image.open(ASSETS / "details" / f"construction-{page.mode}.png") as source:
+        art = source.convert("RGBA")
+    scale = min((y1 - y0) / art.height, max(0, x1 - x0) / art.width)
+    if art.height * scale < CONSTRUCTION_MIN_H:
+        art.close()
+        return
+    size = (max(1, round(art.width * scale)), max(1, round(art.height * scale)))
+    small = art.resize(size, Image.Resampling.LANCZOS)
+    art.close()
+    page.image.paste(small, (round(x0 + (x1 - x0 - size[0]) / 2), y1 - size[1]), small)
+    small.close()
+
+
 def roads(page, payload, now):
     source = payload["roads"]
     ranked = rank_roads(source.get("data", {}).get("items", []), now)
@@ -333,7 +354,8 @@ def roads(page, payload, now):
     title = f"重点 {len(rows)} 项 / 共 {len(ranked)} 项"
     if source.get("state") == "stale_cache":
         title = "缓存 · " + title
-    page.text((482, 83), title, 10, "muted", align="right", width=186)
+    title_w = page.text((482, 83), title, 10, "muted", align="right", width=186)
+    construction_strip(page, (CONSTRUCTION_LEFT, 77, round(482 - title_w) - 8, 101))
     raster = render_map(rows, size=(200, 320), night=page.mode == "night")
     page.image.paste(raster, (16, 111))
     page.image.info["bay_map_markers"] = raster.info.get("markers", [])

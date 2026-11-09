@@ -1,0 +1,24 @@
+{
+  "model": "image/gpt-image-2.6-sunburst (Creative Claw), 1536x512, transparent, quality high",
+  "job": "9e992907-3dca-4aa6-8691-94f67a6c4ef7",
+  "prompt": "A very wide, very low horizontal frieze of a road construction scene on a transparent background: traffic cones, a road worker in an orange vest and white hard hat with a jackhammer, a small yellow excavator, a second worker with a shovel, a gravel pile, a small road roller, more cones; flat vector, thin dark-grey outlines, safety orange, white, warm yellow, grey and slate, matching an orange-and-white barricade; no text.",
+  "source_sha256": "9e57d11fbd754465e6e13fce8c7fce07f637d041ab13883080e7ddc69f2d2fbf",
+  "processing": "cropped to its ink, the outer cones left off, 48 px tall; the night copy's dark outlines lifted to (206, 216, 224)",
+  "use": "湾区交通观测: the 道路封闭 title row, between the barricade and the count",
+  "files": {
+    "construction-day.png": {
+      "size": [
+        350,
+        48
+      ],
+      "sha256": "c3804bcd27b6149d019c47162a783bfd0800e63b4a08666aa9619a8ffd8cfbe7"
+    },
+    "construction-night.png": {
+      "size": [
+        350,
+        48
+      ],
+      "sha256": "ed2ca8b7ad4f3ba4fefe885d5463cda7d1d40cc0f5d0a8a80069bc2aa2fef7eb"
+    }
+  }
+}

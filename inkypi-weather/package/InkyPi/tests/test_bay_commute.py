@@ -1084,3 +1084,19 @@ def test_bart_note_glyphs_stand_level_with_their_own_lines():
     assert command_render.NOTE_ICON_H <= command_render.NOTE_STEP - 2
     for kind in command_render.NOTE_ICONS:
         assert command_render.note_icon(kind, (0, 0, 0)).height == command_render.NOTE_ICON_H
+
+
+def test_the_road_title_row_carries_the_road_works_frieze_clear_of_the_count(monkeypatch):
+    from plugins.bay_commute import command_render
+
+    drawn = []
+    original = command_render.construction_strip
+    monkeypatch.setattr(command_render, "construction_strip",
+                        lambda page, box: drawn.append(box) or original(page, box))
+    image, rows = bart_rows_page(monkeypatch, [bart_etd("Millbrae", "RED", "#ff0000", (4, 25, 45), 5)])
+    (x0, y0, x1, y1), = drawn
+    count_x = next(x for text, (x, _y, _w) in rows.items() if text.startswith("重点"))
+    assert x0 >= 223 and x1 <= count_x - 8 + 1 and (y0, y1) == (77, 101)
+    # The art stands in that stretch: some of its orange and yellow, nothing past it.
+    strip = image.crop((x0, y0, x1, y1 + 1)).convert("RGB")
+    assert any(r > 200 and 120 < g < 200 and b < 90 for r, g, b in strip.get_flattened_data())
