@@ -238,8 +238,17 @@ def test_hero_icon_centers_on_the_visible_title_and_status_group(plugin, data, n
     bounds = _text_bounds(crop)
     assert bounds is not None
     glyph_group_center = 43 + (bounds[1] + bounds[3] - 1) / 2
-    icon_center = 96 + (56 - 1) / 2
-    assert abs(glyph_group_center - icon_center) <= 1
+    icon_top, icon_bottom = _hero_icon_rows(image)
+    assert icon_bottom - icon_top == 56
+    assert abs(glyph_group_center - (icon_top + icon_bottom - 1) / 2) <= 1
+    # The group stands on the card's foot, below the middle where game art carries its logo.
+    assert max(icon_bottom, 43 + bounds[3]) == 205 - console_renderer.HERO_FOOT_PAD
+
+
+def _hero_icon_rows(image):
+    """The first and one-past-last row of the fixture's flat hero icon."""
+    rows = [y for y in range(43, 205) if image.getpixel((209 + 28, y)) == (200, 80, 40)]
+    return rows[0], rows[-1] + 1
 
 
 def test_top_game_title_and_hours_group_centers_on_each_independent_icon(plugin, data):
@@ -522,7 +531,7 @@ def test_game_logos_sit_on_the_page_without_a_border(plugin, data):
     image = render_console(plugin, data, (800, 480))
     # Hero, four recent rows and the top three, as (x, y, size). A friend's
     # game keeps its green in-game frame (see the friend activity test).
-    logos = ([(209, 96, 56)] + [(206, 246 + row * 29, 24) for row in range(4)]
+    logos = ([(209, _hero_icon_rows(image)[0], 56)] + [(206, 246 + row * 29, 24) for row in range(4)]
              + [(222 + rank * 197, 412, 33) for rank in range(3)])
 
     for x, y, size in logos:
@@ -537,7 +546,7 @@ def test_hero_game_title_is_outlined_over_its_artwork(plugin, data, monkeypatch)
     monkeypatch.setattr(plugin, "_game_background",
                         lambda _data, appid, size: Image.new("RGB", size, (235, 235, 225)))
     image = render_console(plugin, data, (800, 480))
-    title = image.crop((281, 50, 571, 150))
+    title = image.crop((281, 100, 571, 205))
     pixels = {color: count for count, color in title.getcolors(1 << 16)}
 
     assert pixels[(242, 248, 253)] > 100
@@ -821,12 +830,13 @@ def test_style_version_moves_on_while_previous_cache_stays_compatible():
         STEAM_DASHBOARD_STYLE_VERSION,
     )
 
-    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-game-progress-v52"
-    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[:4] == (
+    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-hero-foot-v53"
+    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[:5] == (
+        "midnight-console-game-progress-v52",
         "midnight-console-full-cover-friends-v51",
         "midnight-console-adaptive-roster-v50", "midnight-console-horizontal-friends-v49",
         "midnight-console-adaptive-friend-mosaic-v48")
-    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[4:11] == (
+    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[5:12] == (
         "midnight-console-whole-avatar-frame-v47",
         "midnight-console-profile-backdrop-v46",
         "midnight-console-game-hue-v45",
@@ -947,3 +957,65 @@ def test_one_overlapping_line_names_each_friend_under_their_portrait(plugin, mon
     joined = [(box, value) for box, value in texts if "、" in value]
     assert joined and joined[0][0][0] > big[-1][0] + big[-1][2] / 2
     assert joined[0][1].startswith(f"Friend{len(big)}")
+
+
+def test_hero_art_is_drawn_as_sharp_under_the_title_as_above_it(plugin, data, displayed, monkeypatch):
+    # Hard-edged bars stand in for lettering in the art; the veil is the only thing over them.
+    def bars(_data, _appid, size):
+        art = Image.new("RGB", size, (20, 30, 40))
+        pen = ImageDraw.Draw(art)
+        for left in range(0, size[0], 16):
+            pen.rectangle((left, 0, left + 7, size[1]), fill=(235, 235, 225))
+        return art
+
+    monkeypatch.setattr(plugin, "_game_background", bars, raising=False)
+    image = render_console(plugin, data, (800, 480))
+    status_box = next(box for box, text in displayed if text == "游戏中 · AppID 108600")
+    # The strip right of the text column, beside the facts, matches the same strip at the top.
+    top, foot = image.crop((572, 45, 583, 46)), image.crop((572, status_box[1], 583, status_box[1] + 1))
+    assert ImageChops.difference(top, foot).getbbox() is None
+
+
+def test_hero_facts_and_progress_words_are_white_and_colour_stays_on_shapes(plugin, data, monkeypatch):
+    monkeypatch.setattr(console_renderer, "game_palette", lambda _art: None)
+    data["game_progress"] = {"appid": "108600", "news": None,
+                             "achievements": {"total": 42, "unlocked": 25,
+                                              "rarest": {"name": "Survivor", "percent": 1.5}}}
+    bitmaps, drawn = [], []
+    original_bitmap, original_draw = _Console._text_bitmap, ImageDraw.ImageDraw.text
+
+    def bitmap(self, text, width, height, size=14, color=console_renderer.WHITE, *args, **kwargs):
+        bitmaps.append((str(text), color))
+        return original_bitmap(self, text, width, height, size, color, *args, **kwargs)
+
+    def draw(self, xy, text, *args, **kwargs):
+        drawn.append((str(text), kwargs.get("fill")))
+        return original_draw(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(_Console, "_text_bitmap", bitmap)
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", draw)
+    image = render_console(plugin, data, (800, 480))
+
+    assert ("游戏中 · AppID 108600", console_renderer.WHITE) in bitmaps
+    for words in ("成就", "25/42", "60%", "最稀有", "Survivor", "1.5% 玩家"):
+        assert (words, console_renderer.WHITE) in drawn
+    # The bar keeps the page's accent and the gem its gold.
+    colours = {color for _count, color in image.crop((281, 150, 571, 205)).getcolors(1 << 16)}
+    assert CYAN in colours and console_renderer.RARE_GOLD in colours
+
+
+def test_small_type_on_the_rail_is_white(plugin, data, monkeypatch):
+    colours = {}
+    original = _Console.text
+
+    def record(self, box, value, size=14, color=console_renderer.WHITE, *args, **kwargs):
+        if box[2] <= 181:
+            colours[str(value)] = color
+        return original(self, box, value, size, color, *args, **kwargs)
+
+    monkeypatch.setattr(_Console, "text", record)
+    render_console(plugin, data, (800, 480))
+    for words in ("STEAM PLAYER", "游戏", "好友", "近2周", "总计", "徽章", "XP"):
+        assert colours[words] == console_renderer.WHITE, words
+    assert all(color == console_renderer.WHITE for words, color in colours.items()
+               if words.endswith(" LP") or words.startswith("距"))

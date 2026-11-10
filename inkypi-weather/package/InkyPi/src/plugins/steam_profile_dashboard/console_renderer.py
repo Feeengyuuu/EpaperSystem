@@ -69,7 +69,12 @@ FRIEND_GAP = 3
 TITLE_OUTLINE = 2
 # Under the hero's status line: the owner's achievements in that game (a bar of those unlocked)
 # and the rarest one unlocked, each line this tall with this gap; the rarest share in gold.
-PROGRESS_LINE, PROGRESS_GAP, PROGRESS_TOP = 17, 6, 10
+PROGRESS_LINE, PROGRESS_GAP, PROGRESS_TOP = 17, 4, 8
+# The hero's icon, title and facts stand along the card's foot, this far above its edge, clear
+# of the lettering game art carries in its upper half and middle.
+HERO_ICON = 56
+HERO_FOOT_PAD = 9
+HERO_TITLE_GAP = 9
 RARE_GOLD = (249, 202, 77)
 RAIL_SIZE = (181, 480)
 # The bordered plate behind the persona name and its STEAM PLAYER caption; it keeps the
@@ -376,10 +381,9 @@ class _Console:
             if rank.lp:
                 self.draw.rounded_rectangle((x, 301, x + round((176 - x) * rank.lp / 100), 306),
                                             radius=2, fill=rank.color)
-            self.text((x, 309, 178, 320), f"{rank.lp} LP", 10, self.c["muted"])
+            self.text((x, 309, 178, 320), f"{rank.lp} LP", 10)
         if rank.next_name:
-            self.text((x, 321, 178, 332), f"距{rank.next_name} 差{rank.levels_to_next}级", 10,
-                      self.c["muted"], min_size=7)
+            self.text((x, 321, 178, 332), f"距{rank.next_name} 差{rank.levels_to_next}级", 10, min_size=7)
         self.rank_ladder(rank)
 
     def rank_ladder(self, rank):
@@ -541,13 +545,14 @@ class _Console:
         name = self._text_bitmap(persona, 147, 29, 29, WHITE, True, 1, 18, outline=TITLE_OUTLINE)
         self.text((19, 178, 166, 207), persona, prepared=name)
         # Steam's round mark leads the caption, in the caption's colour (Steam's one-colour mark,
-        # which reads on any backdrop where its blue app icon sinks into the dark rail).
+        # which reads on any backdrop where its blue app icon sinks into the dark rail). The
+        # rail's small type lies on the profile backdrop, so all of it is the page's white ink.
         caption_x = 20
         mark = sidebar_asset("steam", STEAM_MARK)
         if mark is not None:
-            self.image.paste(Image.new("RGB", mark.size, self.c["muted"]), (caption_x, 212), mark)
+            self.image.paste(Image.new("RGB", mark.size, WHITE), (caption_x, 212), mark)
             caption_x += STEAM_MARK + 4
-        self.text((caption_x, 212, 164, 225), "STEAM PLAYER", 10, self.c["muted"])
+        self.text((caption_x, 212, 164, 225), "STEAM PLAYER", 10)
         self.draw.line((14, 230, 167, 230), fill=self.c["border"])
         self.rank_card(data)
         owned = data.get("owned_games") or []
@@ -569,7 +574,7 @@ class _Console:
                 self.image.paste(icon, (x, y + 5), icon)
             else:
                 self.small_symbol(symbol, x, y + 4)
-            self.text((x + 20, y, x + 78, y + 10), label, 9, self.c["muted"])
+            self.text((x + 20, y, x + 78, y + 10), label, 9)
             self.text((x + 20, y + 10, x + 78, y + 25), number, 15, bold=True, min_size=11)
         self.draw.line((14, 405, 167, 405), fill=self.c["border"])
         badges = data.get("badges") or {}
@@ -580,7 +585,7 @@ class _Console:
                 self.image.paste(icon, (16, y + 1), icon)
             else:
                 self.draw.ellipse((17, y, 34, y + 17), outline=self.c["accent"], width=2)
-            self.text((43, y + 1, 86, y + 20), label, 14, self.c["muted"])
+            self.text((43, y + 1, 86, y + 20), label, 14)
             self.text((87, y, 168, y + 23), _value(number), 20, bold=True, min_size=14, align="right")
 
     def hero(self, recent):
@@ -615,13 +620,17 @@ class _Console:
         achievements = achievements if isinstance(achievements, dict) and _number(achievements.get("total")) else None
         lines = (1 + bool(achievements.get("rarest"))) if achievements else 0
         progress_height = PROGRESS_TOP + lines * PROGRESS_LINE + (lines - 1) * PROGRESS_GAP if lines else 0
-        title = self._text_bitmap(name, 290, 72 if not lines else 60, 25, WHITE, True, 2, 19, outline=TITLE_OUTLINE)
-        status_line = self._text_bitmap(detail, 290, 24, 15, self.c["accent"], min_size=12)
-        group_height = title.height + 13 + status_line.height + progress_height
-        group_y = 43 + (162 - group_height) // 2
-        self.icon(appid, 209, 96, 56)
+        title = self._text_bitmap(name, 290, 60, 25, WHITE, True, 2, 19, outline=TITLE_OUTLINE)
+        # The facts are small type: the page's white ink at full strength, never a tint.
+        status_line = self._text_bitmap(detail, 290, 24, 15, WHITE, min_size=12)
+        group_height = title.height + HERO_TITLE_GAP + status_line.height + progress_height
+        # The icon and the text group share one centre line, standing on the card's foot.
+        block = max(HERO_ICON, group_height)
+        top = 205 - HERO_FOOT_PAD - block
+        group_y = top + (block - group_height) // 2
+        self.icon(appid, 209, top + (block - HERO_ICON) // 2, HERO_ICON)
         self.text((281, group_y, 571, group_y + title.height), name, prepared=title)
-        status_y = group_y + title.height + 13
+        status_y = group_y + title.height + HERO_TITLE_GAP
         self.text((281, status_y, 571, status_y + status_line.height), detail,
                   prepared=status_line)
         if achievements:
@@ -629,7 +638,8 @@ class _Console:
 
     def hero_progress(self, achievements, x, y, right):
         """The owner's achievements in the hero game: unlocked of all on a bar in the game's hue and
-        the share, then the rarest one unlocked with how few players have it."""
+        the share, then the rarest one unlocked with how few players have it. The words are all
+        white; the colour stays on the bar and the gem."""
         total, unlocked = _number(achievements.get("total")), _number(achievements.get("unlocked"))
         unlocked = min(unlocked, total)
         middle = y + PROGRESS_LINE / 2
@@ -638,14 +648,14 @@ class _Console:
             self.image.paste(icon, (x, round(middle - icon.height / 2)), icon)
         left = x + 22
         label, label_font = "成就", self.font(12)
-        self.draw.text((left, middle), label, font=label_font, fill=self.c["muted"], anchor="lm")
+        self.draw.text((left, middle), label, font=label_font, fill=WHITE, anchor="lm")
         left += self.draw.textlength(label, font=label_font) + 5
         count, count_font = f"{unlocked}/{total}", self.font(14, True)
         self.draw.text((left, middle), count, font=count_font, fill=WHITE, anchor="lm")
         left += self.draw.textlength(count, font=count_font) + 10
         share, share_font = f"{round(100 * unlocked / total)}%", self.font(13, True)
         share_w = self.draw.textlength(share, font=share_font)
-        self.draw.text((right, middle), share, font=share_font, fill=self.c["accent"], anchor="rm")
+        self.draw.text((right, middle), share, font=share_font, fill=WHITE, anchor="rm")
         bar = (left, round(middle - 3), right - share_w - 8, round(middle + 3))
         if bar[2] - bar[0] >= 30:
             self.draw.rounded_rectangle(bar, radius=3, fill=self.c["border"])
@@ -662,12 +672,12 @@ class _Console:
                            (gem[0] - 6, gem[1] - 1)), fill=RARE_GOLD)
         left = x + 22
         label = "最稀有"
-        self.draw.text((left, middle), label, font=label_font, fill=self.c["muted"], anchor="lm")
+        self.draw.text((left, middle), label, font=label_font, fill=WHITE, anchor="lm")
         left += self.draw.textlength(label, font=label_font) + 6
         percent = f"{rarest.get('percent')}% 玩家"
         percent_font = self.font(12, True)
         percent_w = self.draw.textlength(percent, font=percent_font)
-        self.draw.text((right, middle), percent, font=percent_font, fill=RARE_GOLD, anchor="rm")
+        self.draw.text((right, middle), percent, font=percent_font, fill=WHITE, anchor="rm")
         name_font = self.font(13, True)
         name = str(rarest["name"])
         room = right - percent_w - 8 - left
