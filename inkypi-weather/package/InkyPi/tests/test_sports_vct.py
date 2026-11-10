@@ -225,3 +225,36 @@ def test_every_vct_wordmark_is_bundled_with_its_source():
         record = records[f"vct/wordmarks/{slug}"]
         assert record["source"].startswith("https://liquipedia.net/commons/images/"), slug
         assert record["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest(), slug
+
+
+def test_the_empty_upcoming_line_names_the_league_by_its_logo_and_fits_the_sidebar(monkeypatch):
+    plugin = _plugin()
+    drawn, pasted = [], []
+    worlds = plugin._lol_sidebar_config("WORLDS")
+    real_wordmark, real_logo = plugin._draw_worlds_header_wordmark, plugin._draw_lpl_logo
+    monkeypatch.setattr(plugin, "_draw_worlds_header_wordmark",
+                        lambda image, path, box: pasted.append(("wordmark", box)) or real_wordmark(image, path, box))
+    monkeypatch.setattr(plugin, "_draw_lpl_logo", lambda image, draw, x, y, w, h, **options: pasted.append(
+        ("logo", (x, y, x + w, y + h))) or real_logo(image, draw, x, y, w, h, **options))
+
+    def line(config, now=None, right=None):
+        image = Image.new("RGB", (224, 60), (255, 251, 240))
+        draw = sports_dashboard_module.ImageDraw.Draw(image)
+        real_text = draw.text
+        draw.text = lambda xy, text, **options: drawn.append(text) or real_text(xy, text, **options)
+        plugin._draw_empty_upcoming_line(image, draw, 18, 20, config, now, right)
+        return image
+
+    # Worlds reads "No more [WORLDS 26] schedule": the edition wordmark its header wears, inside the sidebar.
+    line(worlds, datetime(2026, 11, 10, tzinfo=timezone.utc), 212)
+    assert drawn == ["No more ", " schedule"] and pasted[0][0] == "wordmark"
+    box = pasted[0][1]
+    assert 18 < box[0] < box[2] < 212 and 10 <= box[3] - box[1] <= 18
+    # A league with a mark of its own is named by it; one whose logo file is missing keeps its name in type.
+    drawn.clear(), pasted.clear()
+    image = line(plugin._lol_sidebar_config("LPL"))
+    assert drawn == ["No more ", " schedule"] and pasted[0][0] == "logo"
+    assert len(image.getcolors(100000)) > 3
+    drawn.clear(), pasted.clear()
+    line({**worlds, "logo_path": "missing.png"})
+    assert drawn == ["No more Worlds schedule"] and not pasted

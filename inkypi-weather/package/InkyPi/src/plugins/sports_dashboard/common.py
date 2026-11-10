@@ -764,6 +764,10 @@ MSI_HEADER_LOGO_SIZE = (
     int(round(LOL_HEADER_LOGO_SIZE[0] * MSI_HEADER_LOGO_SCALE)),
     int(round(LOL_HEADER_LOGO_SIZE[1] * MSI_HEADER_LOGO_SCALE)),
 )
+# The league's logo set like a word in the sidebar's "no more ... schedule" line: within this box.
+EMPTY_LINE_LOGO = (96, 18)
+# A mark whose mean colour is this close to the panel's (summed over the channels) stays in type.
+EMPTY_LINE_LOGO_CONTRAST = 120
 LOLESPORTS_API_KEY = "0TvQnueqKa5mxJntVWt0w4LpLfEkrV1Ta8rQBb9Z"
 LOLESPORTS_SCHEDULE_URL = (
     "https://esports-api.lolesports.com/persisted/gw/getSchedule"

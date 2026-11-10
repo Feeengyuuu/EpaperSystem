@@ -2535,7 +2535,7 @@ class EsportsRenderMixin:
         config = self._lol_sidebar_config(league_key)
         self._draw_section_header(draw, right_x, right_w, y, "UPCOMING", COLORS[config["accent"]])
         if not events:
-            draw.text((right_x + 18, y + 38), config["empty_upcoming"], font=self._font(14, True), fill=COLORS["muted"])
+            self._draw_empty_upcoming_line(image, draw, right_x + 18, y + 38, config, now, right_x + right_w - 12)
             self._draw_lpl_empty_upcoming_filler(
                 image,
                 right_x,
@@ -2560,6 +2560,47 @@ class EsportsRenderMixin:
             msi_next_start=msi_next_start,
             league_key=league_key,
         )
+
+    def _draw_empty_upcoming_line(self, image, draw, x, y, config, now=None, right=None):
+        """The sidebar's "no more ... schedule" line with the league named by its official logo, set
+        in the line like a word: Worlds by the edition wordmark its header wears, the others by
+        their marks. The league's name stays in type when the logo is not at hand, or when the mark
+        is too close to the page to be seen on it (a dark mark at night). For a wide logo the
+        words step down a size or two, then the logo is scaled, so the line ends by ``right``."""
+        font = self._font(14, True)
+        line = config["empty_upcoming"]
+        # VCT's one config stands for several leagues, each with a mark of its own: it stays in type.
+        before, name, after = line.partition(config["name"]) if config["key"] != "VCT" else (line, "", "")
+        wordmark = self._worlds_header_wordmark_path(config, config["logo_path"], now)
+        logo = self._load_local_logo(wordmark or config["logo_path"], EMPTY_LINE_LOGO, alpha_threshold=8) if name else None
+        if logo is not None and right is not None:
+            for size in (14, 13, 12):
+                font = self._font(size, True)
+                room = int(right - x - draw.textlength(before + after, font=font) - 1)
+                if logo.width <= room:
+                    break
+            else:
+                logo = self._load_local_logo(wordmark or config["logo_path"], (max(1, room), EMPTY_LINE_LOGO[1]),
+                                             alpha_threshold=8)
+        if logo is not None and not wordmark and config["logo_path"] != LOCAL_WORLDS_LOGO_PATH:
+            solid = [pixel[:3] for pixel in logo.get_flattened_data() if pixel[3] >= 128]
+            mean = [sum(channel) / len(solid) for channel in zip(*solid)] if solid else COLORS["panel"][:3]
+            if sum(abs(a - b) for a, b in zip(mean, COLORS["panel"][:3])) < EMPTY_LINE_LOGO_CONTRAST:
+                logo = None
+        if logo is None:
+            draw.text((x, y), line, font=font, fill=COLORS["muted"])
+            return
+        top, bottom = draw.textbbox((x, y), "No", font=font)[1::2]
+        draw.text((x, y), before, font=font, fill=COLORS["muted"])
+        x = round(x + draw.textlength(before, font=font))
+        logo_top = round((top + bottom - logo.height) / 2)
+        # The header's own routines, so a one-colour mark takes the page's ink here as it does there.
+        if wordmark:
+            self._draw_worlds_header_wordmark(image, wordmark, (x, logo_top, x + logo.width, logo_top + logo.height))
+        else:
+            self._draw_lpl_logo(image, draw, x, logo_top, logo.width, logo.height, logo_path=config["logo_path"],
+                                fallback_text=config["key"])
+        draw.text((x + logo.width + 1, y), after, font=font, fill=COLORS["muted"])
 
     def _draw_lpl_empty_upcoming_filler(self, image, right_x, right_w, section_y, visible_count, msi_next_filler=False,
                                         msi_next_start=None, league_key="LPL"):
