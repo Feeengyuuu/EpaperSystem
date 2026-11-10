@@ -84,9 +84,11 @@ WIKI_TITLE_SIZES = (14, 13, 13, 12, 12)
 # Bilibili: the lead video's cover runs down behind its title, fading into the page from
 # BILI_LEAD_FADE of its height; each row's thumbnail fills the row's height and fades into the
 # page across its right side from BILI_THUMB_FADE of its width, the title starting over the fade.
+# The titles are plain ink with no outline, so both fades start early enough to leave them a
+# nearly clean ground.
 BILI_LEAD_HEIGHT = 176
-BILI_LEAD_FADE = 0.56
-BILI_THUMB_FADE = 0.58
+BILI_LEAD_FADE = 0.44
+BILI_THUMB_FADE = 0.42
 BILI_THUMB_TITLE = 0.8
 BILI_TWO_LINE_SIZE = 14
 # The translucent chips over the covers: how much of their fill covers the picture.
@@ -280,7 +282,7 @@ def _bilibili(canvas, payload, images):
     _glass(canvas, (left + 9, pill_y, left + 9 + pill_w, pill_y + 18), canvas.color("shade"), PILL_ALPHA, 9)
     canvas.text((left + 9 + pill_w / 2, pill_y + 9), pill, 10, (255, 255, 255), anchor="mm")
     for line in lines:
-        canvas.text((left + 10, y), line, size, stroke="paper")
+        canvas.text((left + 10, y), line, size)
         y += size + 5
     meta = " · ".join(part for part in (lead.get("owner"), lead.get("section"), lead.get("reason")) if part)
     canvas.text((left + 10, cover_box[3] + 3), meta, 10, "muted", bold=False, width=right - left - 20)
@@ -308,12 +310,12 @@ def _bilibili(canvas, payload, images):
                                         largest=BILI_TWO_LINE_SIZE, smallest=11)
         block = len(lines) * (size + 4) - 4
         for number, line in enumerate(lines):
-            canvas.text((text_x, y0 + (title_h - block) / 2 + number * (size + 4)), line, size, stroke="paper")
+            canvas.text((text_x, y0 + (title_h - block) / 2 + number * (size + 4)), line, size)
         x = text_x
-        x += canvas.text((x, meta_y), f"{count_text(video.get('views'))}播放", 10, "muted", bold=False, stroke="paper") + 6
+        x += canvas.text((x, meta_y), f"{count_text(video.get('views'))}播放", 10, "muted", bold=False) + 6
         gain = _view_gain(video, previous_views)
         if gain:
-            x += canvas.text((x, meta_y), f"+{gain}", 10, "up", stroke="paper") + 6
+            x += canvas.text((x, meta_y), f"+{gain}", 10, "up") + 6
         _move_badge(canvas, (right - 10, meta_y + 6), moves.get(video.get("title")), anchor_right=True)
 
 

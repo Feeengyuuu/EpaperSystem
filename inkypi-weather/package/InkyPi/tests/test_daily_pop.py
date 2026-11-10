@@ -391,3 +391,28 @@ def test_a_songs_genre_and_release_close_its_artists_line():
     # The glyph and the day at the end of each artist line.
     end = [drawn.getpixel((x, y)) for x in range(right - 60, right - 8) for y in range(top + 20, bottom)]
     assert sum(pixel == ink for pixel in end) > 20
+
+
+def test_bilibili_titles_are_plain_ink_on_a_cover_that_has_all_but_faded(monkeypatch):
+    from plugins.daily_pop import render
+
+    strokes = []
+    original = render.PageCanvas.text
+
+    def record(self, xy, text, *args, **kwargs):
+        strokes.append((str(text), kwargs.get("stroke")))
+        return original(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(render.PageCanvas, "text", record)
+    payload = _payload()
+    for index, video in enumerate(payload["bilibili"]["data"]["videos"]):
+        video["cover"] = f"https://i0.hdslb.com/{index}.jpg"
+    red = Image.new("RGB", (320, 180), (200, 30, 30))
+    images = {sources.safe_image_url(video["cover"]): red for video in payload["bilibili"]["data"]["videos"]}
+
+    render._bilibili(render.PageCanvas(render._palette({"_inkypi_theme": {"mode": "day"}})), payload, images)
+
+    # No outline round any of the card's text: titles, views, gains.
+    assert strokes and all(stroke is None for _text, stroke in strokes)
+    # The covers start fading before their middle, so the titles over them sit on a thin ground.
+    assert render.BILI_LEAD_FADE < 0.5 and render.BILI_THUMB_FADE < 0.5 < render.BILI_THUMB_TITLE
