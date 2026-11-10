@@ -3166,19 +3166,55 @@ def test_a_lead_with_a_nyt_picture_shows_it_at_the_bands_left(monkeypatch):
         return Image.new("RGB", (240, 240), (30, 160, 60))
 
     monkeypatch.setattr(plugin, "_lead_photo", fake_photo)
+    outlines = []
+    draw_text = ImageDraw.ImageDraw.text
+
+    def text(self, xy, value, *args, **kwargs):
+        outlines.append(kwargs.get("stroke_width", 0))
+        return draw_text(self, xy, value, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", text)
     image = plugin._render((800, 480), {"brief_title": "整点新闻"}, payload, datetime(2026, 11, 2, 8, 0), {"mode": "day"})
 
     # The item that carries the picture is found by the story's link, even after one without it.
     assert asked == [NYT_PICTURE]
     seal_w = news_layout.SEAL_SIZE[0]
-    green = [image.getpixel((x, 140)) for x in range(news_layout.MARGIN + 2, news_layout.MARGIN + seal_w)]
-    assert all(pixel[1] > 120 and pixel[0] < 90 for pixel in green)
+    # The picture is laid thin (LEAD_PHOTO_STRENGTH of it, the page showing through), so plain ink reads on it.
+    paper = image.getpixel((5, 143))
+    tint = tuple(round(page + (ink - page) * news_layout.LEAD_PHOTO_STRENGTH) for ink, page in zip((30, 160, 60), paper))
+
+    def is_tint(pixel):
+        return max(abs(shown - wanted) for shown, wanted in zip(pixel, tint)) <= 2
+
+    assert tint != paper
+    assert all(is_tint(image.getpixel((x, 140))) for x in range(news_layout.MARGIN + 2, news_layout.MARGIN + seal_w))
     # It reaches on under the headline, which starts right beside the seal, set over the picture...
     under_text = [image.getpixel((x, 143)) for x in range(news_layout.MARGIN + seal_w + 12, news_layout.MARGIN + seal_w + 60)]
-    assert any(pixel[1] > 120 and pixel[0] < 90 for pixel in under_text)
+    assert any(is_tint(pixel) for pixel in under_text)
     # ...and fades into the page by its far edge.
     edge = news_layout.MARGIN + news_layout.LEAD_PHOTO_SPAN - 2
     assert image.getpixel((edge, 143)) == image.getpixel((5, 143))
+    # No letter on the page is outlined: the type over the picture is plain ink.
+    assert outlines and not any(outlines)
+
+
+def test_the_lead_photo_is_laid_thin_and_fades_into_the_page():
+    green, white = (0, 100, 0), (255, 255, 255)
+    box = (10, 5, 360, 95)
+    page = Image.new("RGB", (400, 100), white)
+    news_layout.NewsPage(_plugin(), page, {}, "").lead_photo(Image.new("RGB", (350, 90), green), box)
+
+    # LEAD_PHOTO_STRENGTH of the picture over the page, the same from its left edge to where its fade starts...
+    thin = tuple(round(paper + (ink - paper) * news_layout.LEAD_PHOTO_STRENGTH) for ink, paper in zip(green, white))
+    fade = box[0] + round((box[2] - box[0]) * news_layout.LEAD_PHOTO_FADE)
+    for x in (box[0] + 8, 60, fade - 2):
+        assert max(abs(shown - wanted) for shown, wanted in zip(page.getpixel((x, 50)), thin)) <= 2
+    # ...then fading into the page by its right edge.
+    assert page.getpixel((box[2] - 1, 50)) == white
+    # At full strength it is the picture itself.
+    whole = Image.new("RGB", (400, 100), white)
+    news_layout.NewsPage(_plugin(), whole, {}, "").lead_photo(Image.new("RGB", (350, 90), green), box, strength=1.0)
+    assert whole.getpixel((60, 50)) == green
 
 
 def test_a_lead_photo_is_read_from_its_cache_on_a_redraw(monkeypatch, tmp_path):

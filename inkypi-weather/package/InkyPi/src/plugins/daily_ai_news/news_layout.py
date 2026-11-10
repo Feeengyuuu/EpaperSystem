@@ -41,11 +41,12 @@ SOURCE_LOGO_SCALES = {"pbs_newshour": 0.68}
 SEAL_SIZE = (28, 54)
 # A lead story with a picture (its RSS item's) shows it across the band's left LEAD_PHOTO_SPAN px,
 # the seal on its corner, rounded and fading into the page from LEAD_PHOTO_FADE of its width; the
-# headline and its dek start right beside the seal, set over the picture, each letter haloed in the
-# page's colour (LEAD_HALO px) so it reads on the photo.
+# headline and its dek start right beside the seal, set over the picture in plain ink, with no
+# outline round the letters. So that they read there, the picture is laid at LEAD_PHOTO_STRENGTH,
+# the page showing through the rest of it: a quiet ground for the type.
 LEAD_PHOTO_SPAN = 340
 LEAD_PHOTO_FADE = 0.35
-LEAD_HALO = 2
+LEAD_PHOTO_STRENGTH = 0.34
 # The headline's letters start LEAD_HEADLINE_TOP px into the band; over a photo, the seal and they
 # sit LEAD_PHOTO_PAD px in from its left and top edges (the column cards' own bleed).
 LEAD_HEADLINE_TOP = 4
@@ -116,8 +117,6 @@ class NewsPage:
         self.d = ImageDraw.Draw(image)
         self.c = palette
         self.family = font_family
-        # The page colour every letter is haloed in while it is set over the lead's photo.
-        self.halo = None
 
     # -- text helpers -------------------------------------------------------
     # ``bold`` is True or False for the page's face, or a weight (an int) for the stories' face.
@@ -133,11 +132,7 @@ class NewsPage:
         return self.p._tw(self.d, str(text), self.font(size, bold))
 
     def text(self, xy, text, size, bold=True, fill=None, anchor="la"):
-        self.d.text(xy, str(text), font=self.font(size, bold), fill=fill or self.c["ink"], anchor=anchor,
-                    **self.halo_args())
-
-    def halo_args(self):
-        return {"stroke_width": LEAD_HALO, "stroke_fill": self.halo} if self.halo is not None else {}
+        self.d.text(xy, str(text), font=self.font(size, bold), fill=fill or self.c["ink"], anchor=anchor)
 
     def clip(self, text, size, max_width, bold=True):
         text = str(text or "")
@@ -317,10 +312,7 @@ class NewsPage:
             font, size = self.headline_font(lead["title"], brief_w, LEAD_TITLE_SIZES[LEAD_TITLE_SIZES.index(size):])
         headline = self.clip_with(lead["title"], font, brief_w)
         ink_top = font.getbbox(headline, anchor="la")[1] if headline else 0
-        # Over the photo, the headline and its dek carry a halo of the page's colour.
-        self.halo = c["background"] if photo is not None else None
-        self.d.text((text_x, top + LEAD_HEADLINE_TOP - ink_top), headline, font=font, fill=c["ink"], anchor="la",
-                    **self.halo_args())
+        self.d.text((text_x, top + LEAD_HEADLINE_TOP - ink_top), headline, font=font, fill=c["ink"], anchor="la")
         y = top + size + 6
         # The dek under it opens like a newspaper's: the section in its accent and the topic, then the
         # story's fact running on, every word of it where the band allows.
@@ -346,7 +338,6 @@ class NewsPage:
             note_y = y + len(fact) * fact_line + 2
             self.d.line((text_x, note_y + 8, text_x + 14, note_y + 8), fill=c["ink"], width=1)
             self.text((text_x + 20, note_y + 8), self.clip(note, 12, brief_w - 20, False), 12, False, c["ink"], "lm")
-        self.halo = None
         if logos:
             self.source_wall((art_left, top + 2, width - MARGIN, bottom - 2), logos, lead.get("source_logo"))
             return
@@ -354,18 +345,19 @@ class NewsPage:
         news_art.draw_topic_art(self.d, (art_left, top + 4, width - MARGIN - 6, bottom - 4), kind,
                                 c["ink"], c["panel"], c["rule"], c["lead"], image=self.img)
 
-    def lead_photo(self, picture, box, radius=6):
-        """``picture`` filling ``box``, rounded, fading into the page across its right side."""
+    def lead_photo(self, picture, box, radius=6, strength=LEAD_PHOTO_STRENGTH):
+        """``picture`` filling ``box`` at ``strength`` (the page showing through the rest of it),
+        rounded, fading into the page across its right side."""
         x0, y0, x1, y1 = [int(value) for value in box]
         size = (max(1, x1 - x0), max(1, y1 - y0))
         tile = ImageOps.fit(picture.convert("RGB"), size, method=Image.Resampling.LANCZOS, centering=(0.5, 0.4))
         mask = Image.new("L", size, 0)
         ImageDraw.Draw(mask).rounded_rectangle((0, 0, size[0] - 1 + radius, size[1] - 1), radius=radius, fill=255)
         start = round(size[0] * LEAD_PHOTO_FADE)
-        ramp = Image.new("L", (size[0], 1), 255)
+        ramp = Image.new("L", (size[0], 1), round(255 * strength))
         for index in range(start, size[0]):
             t = (index - start) / max(1, size[0] - 1 - start)
-            ramp.putpixel((index, 0), round(255 * (1 - t * t * (3 - 2 * t))))
+            ramp.putpixel((index, 0), round(255 * strength * (1 - t * t * (3 - 2 * t))))
         self.img.paste(tile, (x0, y0), ImageChops.multiply(mask, ramp.resize(size)))
 
     def headline_font(self, title, max_width, sizes=LEAD_TITLE_SIZES):
