@@ -62,7 +62,9 @@
   Hy, ByteDance's, Microsoft's, Cohere's, StepFun's, Liquid AI's, Meituan's, MiniMax's and NVIDIA's),
   else the maker's own site icon (Inception's, Ricursive Intelligence's, Recursive's, Particle's) or
   its verified Hugging Face organisation's avatar (Baidu's paw). Perplexity's mark is drawn in hairlines
-  that dither away 16 px tall, so its models keep the name chip.
+  that dither away 16 px tall, so its models keep the name chip. Thinking Machines Lab has no symbol:
+  its mark is its name in two lines (Commons, public domain), printed in a pale grey that would dither
+  to dots on the panel, so it is kept as near-black lettering for the page to ink.
 - LiveRadar's footer, the platforms it follows: bilibili直播's logo (the PNG its live site's navbar
   script carries), Douyu's (the SVG symbol its site header script carries), Douyin's, YouTube's, Twitch's
   and Kick's wordmarks from Commons (public domain), Picarto's mark (its header's year-round one, not the
@@ -396,6 +398,9 @@ LOGOS = {
                          COMMONS_FILE.format(name="Liquid-ai-logo-2026.svg"), PUBLIC_DOMAIN), [TECH_LOGOS], "left_mark"),
     "provider-meituan": (("https://upload.wikimedia.org/wikipedia/commons/9/9b/Meituan_Logo.png",
                           COMMONS_FILE.format(name="Meituan_Logo.png"), PUBLIC_DOMAIN), [TECH_LOGOS], "left_mark"),
+    "provider-thinkingmachines": (("https://upload.wikimedia.org/wikipedia/commons/d/d9/Thinking_Machines_Lab_logo.jpg",
+                                   COMMONS_FILE.format(name="Thinking_Machines_Lab_logo.jpg"), PUBLIC_DOMAIN),
+                                  [TECH_LOGOS], "tone_lettering"),
     "openrouter_icon": ((COMMONS.format(path="f/f8/OpenRouter_icon.svg", name="OpenRouter_icon.svg"),
                          COMMONS_FILE.format(name="OpenRouter_icon.svg"), PUBLIC_DOMAIN),
                         [PLUGINS / "tech_pulse" / "assets" / "logos"], 1.0),
@@ -614,6 +619,27 @@ def _white_lettering(image):
     return image
 
 
+def _tone_lettering(image, widest=128):
+    """Lettering printed in a pale tone on white (a wordmark saved as a JPEG) as a near-black mask
+    for the page to ink: each pixel as solid as it is far from the white, whole from the lightest
+    tone the lettering itself is printed in. At most ``widest`` px wide."""
+    darkness = ImageChops.invert(image.convert("L"))
+    counts = darkness.histogram()
+    # The lightest tone of the lettering proper: all but a tenth of what is clearly drawn is darker.
+    drawn, seen, tone = sum(counts[64:]), 0, 64
+    for level in range(64, 256):
+        seen += counts[level]
+        if seen >= drawn * 0.1:
+            tone = level
+            break
+    mask = Image.new("RGBA", image.size, (26, 26, 26, 255))
+    mask.putalpha(darkness.point(lambda value: 0 if value < 16 else min(255, round(value * 255 / tone))))
+    mask = _visible(mask)
+    if mask.width > widest:
+        mask = mask.resize((widest, round(mask.height * widest / mask.width)), Image.Resampling.LANCZOS)
+    return mask
+
+
 def _white_ground(image):
     """The opaque white square behind a site icon cleared."""
     pixels = image.load()
@@ -660,6 +686,7 @@ def _lead_mark(image, across):
 PROCESSING = {"knockout": (_knockout, "white artwork kept as a black mask the page tints"),
               "white_lettering": (_white_lettering, "white lettering (for a dark header) set near-black"),
               "white_ground": (_white_ground, "the white ground cleared"),
+              "tone_lettering": (_tone_lettering, "pale lettering on white kept as a near-black mask the page inks"),
               "white_mark": (_white_mark, "its black drawn white for a dark page"),
               "left_mark": (lambda image: _lead_mark(image, "x"), "cut to the mark left of its name"),
               "top_mark": (lambda image: _lead_mark(image, "y"), "cut to the mark above its name")}

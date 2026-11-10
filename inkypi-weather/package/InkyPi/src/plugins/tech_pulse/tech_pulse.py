@@ -110,12 +110,14 @@ PROVIDER_COLOURS = {
     "x-ai": (40, 40, 40), "z-ai": (40, 90, 220), "minimax": (230, 60, 90), "amazon": (255, 153, 0),
     "nvidia": (118, 185, 0), "cohere": (57, 89, 77), "microsoft": (0, 120, 212), "meta": (0, 100, 224),
     "tencent": (0, 82, 217), "baidu": (41, 50, 225), "xiaomi": (255, 105, 0), "perplexity": (32, 128, 141),
+    "thinkingmachines": (147, 142, 142),
 }
 # A maker's short name on its chip, where its id is long ("moonshotai" -> "Moonshot").
 PROVIDER_NAMES = {
     "openai": "OpenAI", "anthropic": "Anthropic", "google": "Google", "meta-llama": "Meta", "mistralai": "Mistral",
     "deepseek": "DeepSeek", "qwen": "Qwen", "moonshotai": "Moonshot", "x-ai": "xAI", "z-ai": "Z.ai",
     "minimax": "MiniMax", "amazon": "Amazon", "nvidia": "NVIDIA", "cohere": "Cohere", "microsoft": "Microsoft",
+    "thinkingmachines": "Thinking Machines",
 }
 # Each OpenRouter author (a model id's part before "/") whose official mark is in assets/logos
 # (tools/build_source_logos.py), by its file's key; an author not here keeps the chip with its name.
@@ -129,8 +131,14 @@ PROVIDER_LOGOS = {
     "nvidia": "provider-nvidia", "microsoft": "provider-microsoft", "cohere": "provider-cohere",
     "inception": "provider-inception", "ricursiveai": "provider-ricursiveai", "recursive": "provider-recursive",
     "particle-ai": "provider-particle-ai", "xiaomi": "provider-xiaomi", "stepfun": "provider-stepfun", "liquid": "provider-liquid", "meituan": "provider-meituan",
+    "thinkingmachines": "provider-thinkingmachines",
 }
 PROVIDER_MARK_HEIGHT, PROVIDER_MARK_WIDTH = 16, 46
+# A maker whose official mark is its name set in two lines (Thinking Machines Lab's) is drawn this
+# tall, so each line reads at the size of the card's small type, and may be this wide. It hangs from
+# PROVIDER_WORDMARK_TOP px under the card's top edge, clear of the card's second line.
+PROVIDER_WORDMARKS = frozenset({"provider-thinkingmachines"})
+PROVIDER_WORDMARK_HEIGHT, PROVIDER_WORDMARK_WIDTH, PROVIDER_WORDMARK_TOP = 21, 56, 1
 # A mark on its own ground (Kimi's, Z.ai's, Meituan's squares) fills at least this share of its box,
 # some of it near white or coloured: it keeps its printed colours at night, where other marks'
 # near-black parts take the page's ink.
@@ -1307,7 +1315,9 @@ class TechPulse(BasePlugin):
             mark = self._provider_mark(author, palette)
             if mark is not None:
                 # The maker's official mark names it; the chip with its name is for makers without one.
-                image.paste(mark.convert("RGB"), (int(card[0] + 10), int(top - mark.height / 2)), mark.getchannel("A"))
+                # A two-line wordmark, taller than the line, stays inside the card.
+                mark_top = max(card[1] + PROVIDER_WORDMARK_TOP, top - mark.height / 2)
+                image.paste(mark.convert("RGB"), (int(card[0] + 10), int(mark_top)), mark.getchannel("A"))
                 chip_w = mark.width
             else:
                 provider = PROVIDER_NAMES.get(author, author.split("-")[0].title())
@@ -1341,17 +1351,19 @@ class TechPulse(BasePlugin):
 
     def _provider_mark(self, provider, palette):
         """The official mark of a model's maker (PROVIDER_LOGOS) PROVIDER_MARK_HEIGHT tall and at most
-        PROVIDER_MARK_WIDTH wide, None without one. On a dark page its near-black parts take the
-        page's ink (xAI's X, Amazon's a, its smile still orange); a mark on its own ground stays as
-        printed."""
+        PROVIDER_MARK_WIDTH wide (a two-line wordmark, PROVIDER_WORDMARKS, its own larger box), None
+        without one. On a dark page its near-black parts take the page's ink (xAI's X, Amazon's a,
+        its smile still orange); a mark on its own ground stays as printed."""
         key = provider_logo_key(provider)
         if key is None:
             return None
         path = ASSET_DIR / "logos" / f"{key}.png"
         ink = palette["ink"] if sum(palette["background"]) < 240 and not _provider_badge(str(path)) else None
-        mark = load_source_logo(path, PROVIDER_MARK_HEIGHT, ink)
-        if mark is not None and mark.width > PROVIDER_MARK_WIDTH:
-            mark = load_source_logo(path, max(1, PROVIDER_MARK_HEIGHT * PROVIDER_MARK_WIDTH // mark.width), ink)
+        height, width = ((PROVIDER_WORDMARK_HEIGHT, PROVIDER_WORDMARK_WIDTH) if key in PROVIDER_WORDMARKS
+                         else (PROVIDER_MARK_HEIGHT, PROVIDER_MARK_WIDTH))
+        mark = load_source_logo(path, height, ink)
+        if mark is not None and mark.width > width:
+            mark = load_source_logo(path, max(1, height * width // mark.width), ink)
         return mark
 
     def _wordmark(self, key, height, background):

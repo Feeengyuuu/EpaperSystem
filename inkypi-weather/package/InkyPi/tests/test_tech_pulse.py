@@ -1109,6 +1109,7 @@ def test_openrouter_authors_map_to_their_makers_official_marks():
     assert key("ricursiveai/ripple-65b-preview") == "provider-ricursiveai"
     assert key("bytedance-seed/seed-2-1-turbo") == key("bytedance/ui-tars-1.5-7b") == "provider-bytedance"
     assert key("meta/muse-spark-open") == key("meta-llama/llama-guard-4-12b") == "provider-meta-llama"
+    assert key("thinkingmachines/inkling-2-small") == "provider-thinkingmachines"
     # An alias's "~" and the id's case do not hide its maker.
     assert key("~openai/gpt-astra-latest") == key("OpenAI") == "provider-openai"
     for unknown in ("stealth/crouton-alpha", "aion-labs/aion-3.5-mini", "perplexity/sonar-pro-search", "", None):
@@ -1133,13 +1134,18 @@ def test_maker_marks_fit_the_card_slot_and_unknown_makers_have_none(tmp_path):
     plugin = _plugin(tmp_path)
     for mode in ("day", "night"):
         palette = plugin._palette({"_inkypi_theme": canonical_theme(mode)})
-        for author in tech_pulse_module.PROVIDER_LOGOS:
+        for author, key in tech_pulse_module.PROVIDER_LOGOS.items():
             mark = plugin._provider_mark(author, palette)
             assert mark is not None, author
-            assert mark.height <= tech_pulse_module.PROVIDER_MARK_HEIGHT, author
-            assert mark.width <= tech_pulse_module.PROVIDER_MARK_WIDTH, author
+            # A symbol fits the line's slot; a name set in two lines has a taller box of its own.
+            wordmark = key in tech_pulse_module.PROVIDER_WORDMARKS
+            assert mark.height <= (tech_pulse_module.PROVIDER_WORDMARK_HEIGHT if wordmark
+                                   else tech_pulse_module.PROVIDER_MARK_HEIGHT), author
+            assert mark.width <= (tech_pulse_module.PROVIDER_WORDMARK_WIDTH if wordmark
+                                  else tech_pulse_module.PROVIDER_MARK_WIDTH), author
             assert mark.getchannel("A").getbbox() is not None, author
         assert plugin._provider_mark("stealth", palette) is None
+        assert tech_pulse_module.PROVIDER_WORDMARKS <= set(tech_pulse_module.PROVIDER_LOGOS.values())
 
 
 def _mark_pixels(mark):
@@ -1205,6 +1211,67 @@ def test_openrouter_strip_names_makers_by_mark_and_keeps_the_chip_for_the_rest(t
     x0, y0, _x1, _y1 = tech_pulse_module.OPENROUTER_BOX
     slot = image.crop((x0 + 148 + 10, y0 + 6 + 3, x0 + 148 + 10 + 16, y0 + 6 + 19)).get_flattened_data()
     assert sum(1 for r, g, b in slot if b > 150 and b > r + 60) > 20
+
+
+def test_the_thinking_machines_wordmark_is_lettering_the_page_can_ink():
+    path = Path(tech_pulse_module.ASSET_DIR) / "logos" / "provider-thinkingmachines.png"
+    with Image.open(path) as source:
+        art = source.convert("RGBA")
+
+    # Near-black lettering on nothing (its pale grey would dither to dots), its name in two lines.
+    solid = [pixel for pixel in art.get_flattened_data() if pixel[3] > 128]
+    assert solid and all(max(pixel[:3]) < 110 for pixel in solid)
+    assert art.getpixel((0, art.height // 2))[3] == 0 and art.getpixel((art.width - 1, art.height // 2))[3] == 0
+    alpha = art.getchannel("A").point(lambda value: 255 if value > 128 else 0)
+    inked = [alpha.crop((0, y, art.width, y + 1)).getbbox() is not None for y in range(art.height)]
+    lines = sum(1 for y, on in enumerate(inked) if on and (y == 0 or not inked[y - 1]))
+    assert lines == 2
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_a_maker_named_by_a_two_line_wordmark_keeps_it_inside_its_card(tmp_path, monkeypatch, mode):
+    plugin = _plugin(tmp_path)
+    palette = plugin._palette({"_inkypi_theme": canonical_theme(mode)})
+    fonts = {name: plugin._load_font(None, size, weight) for name, (size, weight) in tech_pulse_module.FONT_SPECS.items()}
+    drawn = []
+    original = plugin._draw_text
+
+    def capture(draw, xy, text, font, fill, **kwargs):
+        drawn.append((str(text), draw.textbbox(xy, str(text), font=font, anchor=kwargs.get("anchor"))))
+        return original(draw, xy, text, font, fill, **kwargs)
+
+    monkeypatch.setattr(plugin, "_draw_text", capture)
+    image = Image.new("RGB", (800, 480), palette["background"])
+    models = _strip_models("thinkingmachines/inkling-2-small", "tencent/hy4", "stealth/crouton-alpha")
+    models["models"][0]["name"] = "Inkling 2 Small"
+    plugin._draw_openrouter(image, ImageDraw.Draw(image), tech_pulse_module.OPENROUTER_BOX, models, palette, fonts,
+                            datetime(2026, 11, 5, 18, 0, tzinfo=timezone.utc))
+
+    module = tech_pulse_module
+    mark = plugin._provider_mark("thinkingmachines", palette)
+    assert mark.height == module.PROVIDER_WORDMARK_HEIGHT and mark.width <= module.PROVIDER_WORDMARK_WIDTH
+    # The wordmark names the maker: no chip with its name is lettered.
+    assert not {"Thinking Machines", "Thinkingmachines"} & {text for text, _bbox in drawn}
+    # It is drawn in the page's ink: dark by day, light on the night page.
+    solid = _mark_pixels(mark)
+    light = sum(1 for red, green, blue, _alpha in solid if min(red, green, blue) > 200)
+    assert (light > 0.8 * len(solid)) == (mode == "night")
+    assert (sum(1 for pixel in solid if max(pixel[:3]) < 110) > 0.8 * len(solid)) == (mode == "day")
+    # It hangs inside the card's top edge, clear of the facts' line under it, and the model's
+    # name starts after it.
+    x0, y0, _x1, y1 = module.OPENROUTER_BOX
+    left, card_top = x0 + 148 + 10, y0 + 6
+    mark_top = card_top + module.PROVIDER_WORDMARK_TOP
+    box = image.crop((left, mark_top, left + mark.width, mark_top + mark.height))
+    ink = palette["ink"]
+    assert sum(1 for pixel in box.get_flattened_data() if max(abs(a - b) for a, b in zip(pixel, ink)) < 60) > 60
+    facts = next(bbox for text, bbox in drawn if "上下文" in text and "个" not in text)
+    assert facts[0] == left and mark_top + mark.height <= facts[1]
+    assert next(bbox for text, bbox in drawn if text.startswith("Inkling"))[0] >= left + mark.width + 4
+    # Above and under the wordmark's box the card is clear.
+    card_ground = palette["row"]
+    assert image.getpixel((left + 20, card_top)) == card_ground
+    assert image.getpixel((left + 20, mark_top + mark.height + 1)) == card_ground
 
 
 def test_model_names_drop_a_repeated_maker_and_aliases_drop_their_tilde():

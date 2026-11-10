@@ -316,6 +316,18 @@
         64
       ],
       "sha256": "9bb38f9ccd96c946b56d22d16ec7fe9e39e69b64f3983c8a6b086d9c2ecccec5"
+    },
+    "provider-thinkingmachines": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/d/d9/Thinking_Machines_Lab_logo.jpg",
+      "page": "https://commons.wikimedia.org/wiki/File:Thinking_Machines_Lab_logo.jpg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "92c67ec9f74e7b8455b86bbbd5b9e4f51ca8b791cfef0782e19f732524e530d0",
+      "processing": "pale lettering on white kept as a near-black mask the page inks",
+      "size": [
+        128,
+        51
+      ],
+      "sha256": "8f1c69f694b8862c355655b725049864b6279635bd0e8426e548e743c83f19fd"
     }
   }
 }
