@@ -149,6 +149,11 @@ ROLE_MARGIN = 5
 MEDALS = ((255, 205, 54), (206, 214, 226), (214, 134, 62))
 # The board's rating bars run over this span of Rating 3.0.
 RATING_SPAN = (0.85, 1.40)
+# The shown player's row on a board: how strong its gold light is at the left end, how much of
+# that is left at the row's top and foot, and how far along the row its underline reaches.
+HIGHLIGHT_GLOW = 0.34
+HIGHLIGHT_EDGE = 0.25
+HIGHLIGHT_LINE_REACH = 0.9
 TEAM_NAME_NOISE = frozenset({"team", "esports", "esport", "gaming", "club", "gg"})
 TEAM_ALIASES = {"navi": "natusvincere"}
 
@@ -413,12 +418,27 @@ class ProRenderMixin:
             left = x0 + 12 + column * column_w
             yield index, (left, top + row * row_h, left + column_w - 6, top + (row + 1) * row_h)
 
-    def _highlight(self, draw, cell, colors):
-        """The tracked player's row: a solid deep-gold bar with a bright gold edge on its left."""
-        box = (cell[0] - 6, cell[1] + 2, cell[2] + 3, cell[3] - 2)
-        fill = tuple(round(gold * 0.32 + panel * 0.68) for gold, panel in zip(colors["gold"], colors["panel"]))
-        draw.rounded_rectangle(box, radius=6, fill=fill)
-        draw.rounded_rectangle((box[0], box[1], box[0] + 4, box[3]), radius=2, fill=colors["gold"])
+    def _highlight(self, image, cell, colors):
+        """The tracked player's row, lit softly rather than boxed: a gold light that is strongest at
+        the row's left and middle height and gone by its right end and towards its top and foot,
+        one gold hairline under the row fading the same way, and a small gold diamond before it."""
+        x0, y0, x1, y1 = (round(cell[0] - 6), round(cell[1] + 2), round(cell[2] + 3), round(cell[3] - 2))
+        width, height = x1 - x0 + 1, y1 - y0 + 1
+        gold = tuple(colors["gold"][:3])
+        glow = Image.new("L", (width, height), 0)
+        line = Image.new("L", (width, 1), 0)
+        across = [(1 - x / max(1, width - 1)) ** 1.6 for x in range(width)]
+        for y in range(height):
+            # Full strength along the middle of the row, HIGHLIGHT_EDGE of it at its top and foot.
+            lift = 1 - (1 - HIGHLIGHT_EDGE) * abs(2 * y / max(1, height - 1) - 1) ** 2
+            for x in range(width):
+                glow.putpixel((x, y), round(255 * HIGHLIGHT_GLOW * across[x] * lift))
+        for x in range(width):
+            line.putpixel((x, 0), round(255 * max(0.0, 1 - x / max(1, width - 1) / HIGHLIGHT_LINE_REACH) ** 1.2))
+        image.paste(gold, (x0, y0, x1 + 1, y1 + 1), glow)
+        image.paste(gold, (x0, y1, x1 + 1, y1 + 1), line)
+        middle = (y0 + y1) / 2
+        ImageDraw.Draw(image).polygon([(x0 - 4, middle), (x0, middle - 4), (x0 + 4, middle), (x0, middle + 4)], fill=gold)
 
     def _tracker_badge(self, draw, pick, colors, fonts, right=786, y=134):
         text = f"随机追踪 {pick.get('position', 1)}/{pick.get('size', 1)} · {datetime.now():%H:%M}"
@@ -917,7 +937,7 @@ class ProRenderMixin:
         for index, cell in self._board_cells(box, len(board)):
             row = board[index]
             if row["id"] == account.get("player_id", account.get("id")):
-                self._highlight(draw, cell, colors)
+                self._highlight(image, cell, colors)
             left, top, right, bottom = cell
             middle = (top + bottom) / 2
             self._text(draw, (left, middle - 7), f"{index + 1:>2}", fonts["small_bold"], colors["muted"])
@@ -1833,7 +1853,7 @@ class ProRenderMixin:
         for index, cell in self._board_cells(box, len(board)):
             row = board[index]
             if row["nick"] == player.get("nick"):
-                self._highlight(draw, cell, colors)
+                self._highlight(image, cell, colors)
             left, top, right, bottom = cell
             middle = (top + bottom) / 2
             rank = int(row.get("rank") or index + 1)

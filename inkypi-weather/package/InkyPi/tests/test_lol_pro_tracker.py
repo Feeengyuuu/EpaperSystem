@@ -343,9 +343,29 @@ def test_both_pages_render_with_the_shown_player_highlighted(plugin):
     for image in (lol, cs2):
         assert isinstance(image, Image.Image) and image.size == (800, 480)
         assert len(image.getcolors(maxcolors=1_000_000)) > 40
-    gold = plugin._render_colors({"mode": "night"})["gold"]
-    # The first board cell (the shown player in both) carries the gold highlight outline.
-    assert lol.getpixel((418, 210)) == gold or gold in {lol.getpixel((x, 196)) for x in range(416, 600)}
+    colors = plugin._render_colors({"mode": "night"})
+    gold, panel = tuple(colors["gold"][:3]), tuple(colors["panel"][:3])
+    # The shown player's row is lit softly, not boxed: a gold light strongest at its left and middle
+    # height and gone by the right end, one hairline under it fading the same way, a diamond before it.
+    flat = Image.new("RGB", (400, 60), panel)
+    plugin._highlight(flat, (20, 10, 380, 50), colors)
+    x0, y0, x1, y1 = 14, 12, 383, 48
+
+    def off(pixel, colour):
+        return sum(abs(a - b) for a, b in zip(pixel, colour))
+
+    assert flat.getpixel((x0, 30)) == gold and flat.getpixel((x0 - 3, 30)) == gold  # the diamond
+    near, middle, far = (flat.getpixel((x, 30)) for x in (x0 + 12, (x0 + x1) // 2, x1))
+    assert far == panel and off(near, panel) > off(middle, panel) > 0
+    assert off(near, gold) > 200  # a light, not a solid gold bar
+    # Fainter towards the row's top than along its middle, and no line along the top or the left.
+    assert 0 < off(flat.getpixel((x0 + 12, y0)), panel) < off(near, panel) and off(flat.getpixel((x0 + 30, y0)), gold) > 200
+    assert off(flat.getpixel((x0, y0 + 2)), gold) > 200
+    assert off(flat.getpixel((x0 + 30, y1)), gold) < 90 and flat.getpixel((x1, y1)) == panel
+    assert flat.getpixel((200, y0 - 2)) == panel and flat.getpixel((200, y1 + 2)) == panel
+    # Both pages light exactly one row of their board.
+    for page in (lol, cs2):
+        assert gold in {page.getpixel((x, y)) for x in range(400, 640) for y in range(170, 470)}
 
 
 def test_each_turn_in_the_rotation_prepares_a_new_pro_before_display():
