@@ -256,15 +256,18 @@ def test_ticketmaster_uses_injected_canonical_day_and_night_palettes():
     day = plugin._palette({"_inkypi_theme": _canonical_theme("day")})
     night = plugin._palette({"_inkypi_theme": _canonical_theme("night")})
 
+    # By day the page keeps its own colours on pure white paper, whatever the theme's are.
     assert day["mode"] == "color"
-    assert day["paper"] == (229, 236, 232)
-    assert day["ink"] == (28, 43, 48)
-    assert day["line"] == (175, 197, 194)
-    assert day["accent"] == (177, 68, 53)
+    assert day == plugin._palette({})
+    assert day["paper"] == (255, 255, 255)
+    assert day["ink"] == day["title"] == (17, 22, 26)
+    assert day["accent"] == (186, 30, 54)
+    assert len({day["paper"], day["line"], day["rule"], day["muted"], day["ink"]}) == 5
     assert night["mode"] == "dark"
     assert night["paper"] == (0, 0, 0)
     assert night["ink"] == (238, 238, 231)
     assert night["line"] == (46, 48, 52)
+    assert night["title"] == night["ink"] and night["rule"] not in {night["paper"], night["line"]}
     assert night["accent"] == (229, 188, 88)
     assert night["chromatic_media"] is True
     assert night["wordmark_shadow"] == night["accent"]
@@ -306,13 +309,11 @@ def test_ticketmaster_night_theme_keeps_each_event_poster_color(tmp_path):
         "Ticketmaster Discovery",
         datetime.now(timezone.utc),
     )
-    poster_samples = (
-        (170, 140),
-        (442, 116),
-        (442, 163),
-        (442, 210),
-        (442, 257),
-    )
+    from plugins.ticketmaster_events.week_page import HERO, KIND_BAR, LIST, ROW_H, SLIP_TOP, THUMB, TIME_COLUMN
+
+    thumb_x = LIST[0] + TIME_COLUMN + KIND_BAR + THUMB[0] // 2
+    poster_samples = ((HERO[0] + 150, HERO[1] + 60), *(
+        (thumb_x, LIST[1] + SLIP_TOP + row * ROW_H + 3 + THUMB[1] // 2) for row in range(4)))
 
     for sample, poster_color in zip(poster_samples, poster_colors):
         rendered = target.getpixel(sample)
@@ -1036,14 +1037,20 @@ def test_a_whole_empty_week_keeps_the_existing_no_events_failure():
     assert all("onsaleStartDateTime" not in call for call in calls)
 
 
+def _page_events(poster, count=8):
+    return [TicketmasterEvent(rank=index + 1, title=f"Show {index}", local_date="2026-10-25",
+                              local_time="19:30:00", venue_name="Venue", city="San Jose", segment="Music",
+                              status="onsale", poster_path=str(poster)) for index in range(count)]
+
+
 def test_the_page_renders_the_week_band_and_the_sales_opening_soon(monkeypatch, tmp_path):
+    from plugins.ticketmaster_events.week_page import HERO, WEEK_BAND
+
     plugin = TicketmasterEvents({"id": "ticketmaster_events"})
     poster = tmp_path / "poster.jpg"
     Image.new("RGB", (640, 360), (200, 40, 40)).save(poster)
     now = datetime(2026, 10, 25, 9, 30, tzinfo=timezone.utc)
-    events = [TicketmasterEvent(rank=index + 1, title=f"Show {index}", local_date="2026-10-25",
-                                local_time="19:30:00", venue_name="Venue", city="San Jose", segment="Music",
-                                status="onsale", poster_path=str(poster)) for index in range(8)]
+    events = _page_events(poster)
     week = {"days": [{"date": f"2026-10-{25 + index}", "count": 10 + index, "segments": {"music": 3, "sports": 1}}
                      for index in range(7)]}
     sales = [{"title": "Big Tour", "sale_start": "2026-10-28T17:00:00Z", "segment": "music"}]
@@ -1053,13 +1060,123 @@ def test_the_page_renders_the_week_band_and_the_sales_opening_soon(monkeypatch, 
     plain = plugin._render_events((800, 480), events, {}, "Ticketmaster Discovery", now)
 
     assert image.size == (800, 480)
-    # The page lies on the featured poster's colour; the plain background has none to lie on.
-    assert image.getpixel((330, 300)) != plain.getpixel((330, 300)) or image.getpixel((5, 300)) != colors["paper"]
-    # Today's cell in the week band is outlined in the accent colour.
-    from plugins.ticketmaster_events.week_page import WEEK_BAND
+    # The week's sales and counts fill the featured column's foot, which the plain page leaves empty.
+    foot = (HERO[0], HERO[3] - 60, HERO[2], HERO[3])
+    assert image.crop(foot).tobytes() != plain.crop(foot).tobytes()
+    assert plain.crop(foot).getcolors() == [((HERO[2] - HERO[0]) * 60, colors["paper"])]
+    # Today's cell in the week band lies under a short rule of the accent colour; the others do not.
+    x0, y0, x1, _y1 = WEEK_BAND
+    cell = (x1 - x0) // 7
+    assert {image.getpixel((x, y0 + 1)) for x in range(x0, x0 + cell - 12)} == {colors["accent"]}
+    assert colors["accent"] not in {image.getpixel((x, y0 + 1)) for x in range(x0 + cell, x1)}
 
-    x0, y0, _x1, _y1 = WEEK_BAND
-    assert colors["accent"] in {image.getpixel((x, y0 + 3)) for x in range(x0 + 4, x0 + 100)}
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_the_page_stands_on_plain_paper_without_a_frame_or_tinted_panels(mode, tmp_path):
+    from plugins.ticketmaster_events.week_page import COLUMN_RULE, HEADER_H, HERO, LIST, MARGIN
+
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    poster = tmp_path / "poster.jpg"
+    Image.new("RGB", (640, 360), (200, 40, 40)).save(poster)
+    settings = {"_inkypi_theme": _canonical_theme(mode)}
+    colors = plugin._palette(settings)
+
+    image = plugin._render_events((800, 480), _page_events(poster), settings, "Ticketmaster Discovery",
+                                  datetime(2026, 10, 25, 9, 30, tzinfo=timezone.utc))
+
+    assert colors["paper"] == ((255, 255, 255) if mode == "day" else (0, 0, 0))
+    # The margins around the page and the gutters beside the column rule are the bare paper.
+    for box in ((0, 0, MARGIN, 480), (800 - MARGIN + 1, 0, 800, 480), (0, 476, 800, 480), (0, 0, 800, 4),
+                (HERO[2] + 1, HERO[1], COLUMN_RULE, HERO[3]), (COLUMN_RULE + 1, LIST[1], LIST[0], HERO[3]),
+                (0, HEADER_H + 1, 800, HERO[1])):
+        assert image.crop(box).getcolors() == [((box[2] - box[0]) * (box[3] - box[1]), colors["paper"])]
+    # Hairlines in the neutral rule colour part the header and the two columns.
+    assert {image.getpixel((x, HEADER_H)) for x in range(MARGIN, 800 - MARGIN)} == {colors["rule"]}
+    assert {image.getpixel((COLUMN_RULE, y)) for y in range(HERO[1], HERO[3])} == {colors["rule"]}
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_the_header_names_the_page_then_ticketmaster_and_sums_the_week_at_the_right(mode):
+    from plugins.ticketmaster_events import week_page
+
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    settings = {"_inkypi_theme": _canonical_theme(mode), "postalCode": "94539", "radiusMiles": 50}
+    colors = plugin._palette(settings)
+    image = Image.new("RGB", (800, 480), colors["paper"])
+    draw = ImageDraw.Draw(image)
+    drawn = []
+    original_text = draw.text
+
+    def record(position, text, **kwargs):
+        drawn.append((text, draw.textbbox(position, text, font=kwargs["font"]), kwargs["fill"]))
+        original_text(position, text, **kwargs)
+
+    draw.text = record
+    days = [{"date": "2026-10-25", "count": 120, "kind_counts": {"music|pop": 80, "music|rock": 20}},
+            {"date": "2026-10-26", "count": 70}]
+    plugin._draw_page_header(image, draw, settings, datetime(2026, 10, 25, 9, 30, tzinfo=timezone.utc), False, days,
+                             colors)
+
+    # Only the summary is written: the week's count over the area and the update time, both at the right.
+    assert [text for text, _box, _fill in drawn] == ["本周 190 场", "94539 周边 50 英里 · 10/25 09:30 更新"]
+    (_count, count_box, count_fill), (_note, note_box, note_fill) = drawn
+    assert count_fill == colors["accent"] and note_fill == colors["ink"]
+    assert abs(count_box[2] - 784) <= 1 and abs(note_box[2] - 784) <= 1 and note_box[3] < week_page.HEADER_H
+    # Ticketmaster's wordmark follows the page's own, clear of it and of the summary.
+    wordmark_right = week_page.MARGIN + week_page._header_wordmark_width(*week_page.HEADER_WORDMARK)
+    logo = week_page._ticketmaster_logo(week_page.TICKETMASTER_LOGO_HEIGHT)
+    left = wordmark_right + week_page.SOURCE_LOGO_GAP
+    gap = image.crop((wordmark_right + 2, 0, left - 1, week_page.HEADER_H))
+    assert gap.getcolors() == [(gap.width * gap.height, colors["paper"])]
+    marked = image.crop((left, 0, left + logo.width, week_page.HEADER_H)).getbbox()
+    assert marked is not None and marked[2] - marked[0] >= logo.width - 2
+    assert left + logo.width + 40 < min(count_box[0], note_box[0])
+    blank = image.crop((left + logo.width + 1, 0, min(count_box[0], note_box[0]) - 1, week_page.HEADER_H))
+    assert blank.getcolors() == [(blank.width * blank.height, colors["paper"])]
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_small_type_is_the_ink_and_colour_stays_on_shapes_and_large_type(mode, monkeypatch, tmp_path):
+    from plugins.ticketmaster_events import week_page
+
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    poster = tmp_path / "poster.jpg"
+    Image.new("RGB", (640, 360), (200, 40, 40)).save(poster)
+    settings = {"_inkypi_theme": _canonical_theme(mode)}
+    colors = plugin._palette(settings)
+    now = datetime(2026, 10, 25, 9, 30, tzinfo=timezone.utc)
+    events = [TicketmasterEvent(rank=index + 1, title=f"Show {index}: The Tour", local_date=f"2026-10-{25 + index // 4}",
+                                local_time="19:30:00", venue_name="Venue", city="San Jose", segment="Music",
+                                genre=genre, status="postponed" if index == 2 else "onsale", price="From $30",
+                                distance="12.0 mi", poster_path=str(poster), extra={"tour_dates": 40, "age": "21+"})
+              for index, genre in enumerate(("Pop", "Rock", "Jazz", "Comedy", "Alternative", "Country", "Pop", "Rock"))]
+    week = {"days": [{"date": f"2026-10-{25 + index}", "count": 30 + index, "sample_count": 25,
+                      "kind_counts": {"music|pop": 10, "music|rock": 8, "music|jazz": 5, "|": 2}} for index in range(7)]}
+    sales = [{"title": "Big Tour", "sale_start": "2026-10-28T17:00:00Z", "kind": "music|pop"}]
+    drawn = []
+    make_draw = week_page.ImageDraw.Draw
+
+    def recording_draw(image):
+        draw = make_draw(image)
+        original_text = draw.text
+
+        def record(position, text, **kwargs):
+            drawn.append((text, kwargs["font"].size, tuple(kwargs["fill"])))
+            original_text(position, text, **kwargs)
+
+        draw.text = record
+        return draw
+
+    monkeypatch.setattr(week_page.ImageDraw, "Draw", recording_draw)
+    plugin._render_events((800, 480), events, settings, "Ticketmaster Discovery", now, week=week, on_sale=sales)
+
+    small = {(text, fill) for text, size, fill in drawn if size < 16}
+    assert len(small) > 30
+    # Small type is the ink on the paper, or the ink that reads on a solid accent chip.
+    allowed = {tuple(colors["ink"]), tuple(week_page.chip_ink(colors["accent"], colors))}
+    assert {fill for _text, fill in small} <= allowed
+    assert {"延期", "$30 起"} <= {text for text, fill in small if fill != tuple(colors["ink"])} or allowed == {tuple(colors["ink"])}
+    assert tuple(colors["accent"]) in {fill for _text, size, fill in drawn if size >= 17}
 
 
 def test_the_featured_title_parts_the_headliner_from_the_rest_of_the_bill():
@@ -1102,8 +1219,12 @@ def test_the_featured_poster_takes_the_room_its_title_leaves():
         feet.append(plugin._draw_featured(image, ImageDraw.Draw(image), event, datetime(2026, 10, 26).date(), colors))
 
     # The text ends where the section under it still has its full room, whatever the title's lines.
-    bottom = week_page.HERO[3] - 8 - week_page.SECTION_H - 16
+    bottom = week_page.HERO[3] - week_page.SECTION_H - week_page.SECTION_GAP
     assert all(abs(foot - bottom) <= 4 for foot in feet)
+    # A taller section under it takes its height from the poster, not from the text.
+    image = Image.new("RGB", (800, 480), colors["paper"])
+    foot = plugin._draw_featured(image, ImageDraw.Draw(image), event, datetime(2026, 10, 26).date(), colors, 120)
+    assert abs(foot - (week_page.HERO[3] - 120 - week_page.SECTION_GAP)) <= 4
 
 
 def test_an_age_limit_after_the_title_is_a_chip_not_the_subtitle():

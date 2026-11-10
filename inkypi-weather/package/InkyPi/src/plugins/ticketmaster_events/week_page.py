@@ -1,12 +1,14 @@
 """The Local Events page: the featured event first, what is next beside it, the week below.
 
-800 x 480, by importance: the featured event (the biggest tour starting soon) largest, its
-poster over its headliner and the rest of the bill, its place, price and kind under them with
-the public sales opening this week; beside it a notice board of the next seven events by start time, one slip each with its
-kind's colour and sticker, time, poster, title, price tag, place, distance and what to know
-before buying; along the foot the next seven days' counts and mix of kinds. The page lies on
-the featured poster, blurred and washed into the paper, so its colour follows what is on, and
-the cards are frosted over it so their text keeps its contrast.
+800 x 480 on plain paper, the parts kept apart by hairlines. The header names the page, then
+Ticketmaster by its own wordmark, with the week's count, the area and the update time at the
+right. The left column is the featured event (the biggest tour starting soon): its poster, when
+it starts and its sale state, the headliner over the rest of the bill, its place and distance,
+its price and kind; under it the public sales opening this week and the week's mix of kinds as
+one stacked bar with a legend of the kinds counted. The right column lists the next seven events
+by start time, one row each: the time, the kind's colour as a bar on the poster's edge, the
+title, then the kind, place, distance and what to know before buying; under the list the next
+seven days, each with its count and a bar of its mix whose length follows the count.
 """
 
 from __future__ import annotations
@@ -16,9 +18,7 @@ from datetime import date, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter, ImageOps
-
-from utils.doodle_backdrop import paint_doodles
+from PIL import Image, ImageDraw, ImageOps
 
 from .team_logos import read_title, team_logo
 from .venue_logos import paste_venue_logo
@@ -30,14 +30,15 @@ STATUS_LABELS = {"onsale": "售票中", "offsale": "停售", "postponed": "延�
 # Each kind's Chinese name and sticker (genre_icons/<icon>.png), by Ticketmaster sub-genre or
 # genre; a kind not named here takes its segment's.
 GENRE_ICON_DIR = Path(__file__).with_name("genre_icons")
-# Ticketmaster's wordmark (tools/build_source_logos.py), this tall before the header's weekly count.
+# The header: the page's wordmark within HEADER_WORDMARK, then, SOURCE_LOGO_GAP on, Ticketmaster's
+# own wordmark (tools/build_source_logos.py) TICKETMASTER_LOGO_HEIGHT tall.
+HEADER_WORDMARK_PATH = Path(__file__).with_name("header_wordmark.png")
+HEADER_WORDMARK, SOURCE_LOGO_GAP = (250, 44), 18
 TICKETMASTER_LOGO_PATH = Path(__file__).with_name("assets") / "ticketmaster.png"
 TICKETMASTER_LOGO_HEIGHT = 18
-# Quiet show doodles in the featured event's kind colour under the featured card.
-DOODLE_PATH = Path(__file__).with_name("assets") / "doodles" / "events.png"
-# The header's kind legend uses at most two balanced rows between the wordmark and source.
-# Visible kinds sharing a colour are named together; every member keeps its statistics key.
-LEGEND_SIZE, LEGEND_LEFT, LEGEND_GAP = 13, 276, 8
+# The mix legend under the stacked bar: its type size, the gap between entries, a row's height
+# and the most rows it may take (one fewer when sales are listed above it).
+LEGEND_SIZE, LEGEND_GAP, LEGEND_ROW_H, LEGEND_ROWS = 11, 9, 15, 3
 OTHER_KINDS, UNCOUNTED = "__other_kinds__", "__uncounted__"
 GENRE_KINDS = {
     "rock": ("摇滚", "guitar"), "metal": ("金属", "guitar"), "alternative": ("另类", "guitar"), "punk": ("朋克", "guitar"),
@@ -74,8 +75,8 @@ KIND_COLOR_KEYS = {
     "rock": "rock", "metal": "rock", "punk": "rock", "comedy": "comedy",
 }
 KIND_COLORS = {
-    "color": {"pop": (160, 48, 80), "rap": (125, 77, 9), "electronic": (39, 87, 152),
-              "alternative": (40, 102, 67), "rock": (155, 61, 40), "comedy": (120, 65, 137)},
+    "color": {"pop": (204, 62, 120), "rap": (140, 84, 10), "electronic": (0, 128, 136),
+              "alternative": (18, 122, 82), "rock": (200, 84, 24), "comedy": (148, 52, 140)},
     "dark": {"pop": (235, 139, 169), "rap": (229, 188, 88), "electronic": (123, 175, 232),
              "alternative": (123, 194, 148), "rock": (238, 136, 102), "comedy": (190, 153, 218)},
 }
@@ -85,14 +86,19 @@ ICON_MIN_CONTRAST, ICON_OUTLINE_LUMINANCE = 2.0, 0.18
 # A tour with at least this many dates is called out as one.
 TOUR_CALLOUT_DATES = 10
 MARGIN, HEADER_H = 16, 54
-CARD_TOP, CARD_BOTTOM = 64, 420
-HERO = (MARGIN, CARD_TOP, 324, CARD_BOTTOM)
-# The featured card, one kind of fact per tier: the poster with the when and the sale on it;
-# the headliner as the title (TITLE_SIZES, two lines at most) beside the kind's colour, the rest
-# of the bill as the subtitle; the place and distance by a pin; the facts as chips; then, past
-# a dotted rule, the week's sales or mix of kinds, kept SECTION_H. The poster takes the room
-# the text leaves, POSTER_H to POSTER_MAX tall.
-POSTER_H, POSTER_MAX, SECTION_H = 140, 172, 60
+# Two columns under the header's rule, a hairline at COLUMN_RULE between them: the featured event
+# (HERO) and, beside it, the list (LIST) over the week (WEEK_BAND).
+COLUMN_TOP, COLUMN_BOTTOM, COLUMN_RULE = 64, 474, 324
+HERO = (MARGIN, COLUMN_TOP, 316, COLUMN_BOTTOM)
+# The featured column, one kind of fact per tier: the poster; the when in the accent colour with
+# the sale state at the right; the headliner as the title (TITLE_SIZES, two lines at most) beside
+# the kind's colour, the rest of the bill as the subtitle; the place and distance by a pin; the
+# facts as chips; then, SECTION_GAP on and ending at the column's foot, the week's sales and mix
+# of kinds (SECTION_H when the page gives no other height). The poster takes the room the text
+# leaves, POSTER_H to POSTER_MAX tall.
+POSTER_H, POSTER_MAX, SECTION_H, SECTION_GAP, SECTION_PAD = 116, 190, 88, 12, 6
+# The foot lists SALE_ROWS public sales at most, SALE_ROW_H each, over a MIX_BAR_H stacked bar.
+SALE_ROWS, SALE_ROW_H, MIX_BAR_H = 2, 17, 10
 TITLE_SIZES, SUBTITLE_SIZE = (21, 19, 17), 14
 # A title's headliner and the rest of the bill part at ' - ', ': ', '|', 'presents', or before
 # 'w/' / 'with' / 'feat.' (which stay on the subtitle).
@@ -109,11 +115,15 @@ def age_notice(text):
     if not match:
         return ""
     return "全龄" if match.group(3) else f"{match.group(1) or match.group(2)}+"
-LIST = (336, CARD_TOP, 800 - MARGIN, CARD_BOTTOM)
-# Seven rows keep a consistent time column, a poster/type tile, and two spacious text lines.
+
+
+LIST = (332, COLUMN_TOP, 800 - MARGIN, 420)
+# Seven rows under the list's heading, a hairline over each: the time over the kind's name and
+# sticker in TIME_COLUMN, the kind's colour as a KIND_BAR on the poster's left edge, the poster (THUMB), and
+# two text lines.
 ROW_H, LIST_ROWS = 47, 7
-SLIP_TOP, SLIP_H = 28, 45
-THUMB = (52, 29)
+SLIP_TOP, SLIP_H = 27, 46
+TIME_COLUMN, KIND_BAR, THUMB = 53, 5, (72, 41)
 # A venue's official logo leads its place: within these boxes on a list row and in the lead card.
 SLIP_VENUE_LOGO, HERO_VENUE_LOGO = (34, 13), (44, 16)
 # A team's (or show's) logo leads its name in a title: as tall as the type plus TEAM_LOGO_RISE, at
@@ -123,13 +133,13 @@ SLIP_VENUE_LOGO, HERO_VENUE_LOGO = (34, 13), (44, 16)
 TEAM_LOGO_RISE, TEAM_LOGO_WIDE, TEAM_LOGO_GAP = 3, 1.5, 4
 SLIP_TITLE_SIZES = (15, 14)
 NAME_FORMS = ("full", "place", "short")
-STICKER = 21
-SLIP_PLACE_MIN, SLIP_FACT_GAP = 72, 8
-WEEK_BAND = (MARGIN, 428, 800 - MARGIN, 474)
-# The page backdrop: the featured poster blurred at a small size, laid over the paper at this
-# strength (day, night); the cards frost it back by CARD_FROST.
-BACKDROP_MIX = {"color": 0.42, "dark": 0.48, "paper": 0.0}
-CARD_FROST = 0.8
+# A row's sticker is STICKER on its longer side. The row's second line: the place (never under
+# SLIP_PLACE_MIN) SLIP_FACT_GAP before the facts, which end at the row's right edge SLIP_CHIP_GAP apart.
+STICKER = 18
+SLIP_PLACE_MIN, SLIP_FACT_GAP, SLIP_CHIP_GAP = 72, 8, 4
+# The week's cells, WEEK_CELL_GAP apart, each over a WEEK_BAR_H bar on the band's foot.
+WEEK_BAND = (332, 426, 800 - MARGIN, COLUMN_BOTTOM)
+WEEK_CELL_GAP, WEEK_BAR_H = 10, 6
 
 
 def _day(value):
@@ -254,6 +264,17 @@ def price_label(price, lowest=False):
 
 
 @lru_cache(maxsize=4)
+def _header_wordmark_width(max_width, max_height):
+    """How wide the page's wordmark is drawn within ``max_width`` x ``max_height`` (0 without the file)."""
+    try:
+        with Image.open(HEADER_WORDMARK_PATH) as source:
+            width, height = source.size
+    except (OSError, ValueError):
+        return 0
+    return round(width * min(max_width / width, max_height / height, 1))
+
+
+@lru_cache(maxsize=4)
 def _ticketmaster_logo(height, ink=None):
     """Ticketmaster's wordmark (assets/ticketmaster.png, black) ``height`` tall, in ``ink`` when
     given (a dark page); None without the file."""
@@ -297,140 +318,47 @@ class WeekPageMixin:
         width, height = 800, 480
         colors = self._palette(settings)
         image = Image.new("RGB", (width, height), colors["paper"])
-        self._draw_backdrop(image, events[0] if events else None, colors)
         draw = ImageDraw.Draw(image)
         today = generated_at.date() if isinstance(generated_at, datetime) else date.today()
         days = (week or {}).get("days") or []
-        legend_keys = self._draw_page_header(image, draw, settings, generated_at, stale, days, colors, events)
-        for box in (HERO, LIST, WEEK_BAND):
-            self._frost(image, box, colors)
-        tint = self._event_color(events[0], colors) if events else colors["accent"]
-        paint_doodles(image, (HERO[0] + 1, HERO[1] + 1, HERO[2] - 1, HERO[3] - 1), DOODLE_PATH, tint, radius=5)
-        foot = self._draw_featured(image, draw, events[0], today, colors) if events else HERO[1] + 8 + POSTER_H
-        self._draw_on_sale(draw, on_sale or [], days, getattr(generated_at, "tzinfo", None), colors, foot + 16, legend_keys)
+        rule = colors.get("rule", colors["line"])
+        self._draw_page_header(image, draw, settings, generated_at, stale, days, colors)
+        draw.line((MARGIN, HEADER_H, width - MARGIN, HEADER_H), fill=rule)
+        draw.line((COLUMN_RULE, HERO[1], COLUMN_RULE, HERO[3]), fill=rule)
+        section = self._plan_section(draw, events, days, on_sale or [], colors)
+        if events:
+            self._draw_featured(image, draw, events[0], today, colors, section["height"])
+        self._draw_section(draw, section, getattr(generated_at, "tzinfo", None), colors)
         self._draw_next(image, draw, events[1:1 + LIST_ROWS], today, colors,
                         now=generated_at if isinstance(generated_at, datetime) else None)
-        self._draw_week_band(draw, days, today, colors, legend_keys)
+        self._draw_week_band(draw, days, today, colors, section["keys"])
         if tuple(dimensions) != (width, height):
             image = image.resize(tuple(dimensions), Image.Resampling.LANCZOS)
         return image
 
-    # -- the page under the cards ---------------------------------------------------------
-    def _draw_backdrop(self, image, featured, colors):
-        """The featured poster, blurred and washed into the paper, under everything below the
-        header band; the plain background (header band and edge stripe) when there is no poster."""
-        draw = ImageDraw.Draw(image)
-        self._draw_background(draw, image.size, colors)
-        strength = BACKDROP_MIX.get(colors["mode"], 0.0)
-        poster = self._load_event_image(featured) if featured is not None and strength else None
-        if poster is None:
-            return
-        small = ImageOps.fit(poster.convert("RGB"), (100, 60), method=Image.Resampling.BILINEAR)
-        wash = small.filter(ImageFilter.GaussianBlur(5)).resize(image.size, Image.Resampling.BICUBIC)
-        top = HEADER_H + 3
-        region = image.crop((0, top, image.width, image.height))
-        image.paste(Image.blend(region, wash.crop((0, top, image.width, image.height)), strength), (0, top))
-        if colors["mode"] == "color":
-            draw.rectangle((0, 0, 6, image.height), fill=colors["accent"])
-
-    def _frost(self, image, box, colors, amount=CARD_FROST):
-        """Frost the backdrop under a card with the paper colour, and edge the card."""
-        x0, y0, x1, y1 = box
-        region = image.crop((x0, y0, x1, y1))
-        image.paste(Image.blend(region, Image.new("RGB", region.size, colors["paper"]), amount), (x0, y0))
-        ImageDraw.Draw(image).rounded_rectangle(box, radius=6, outline=colors["line"], width=1)
-
     # -- header -----------------------------------------------------------------------------
-    def _draw_page_header(self, image, draw, settings, generated_at, stale, days, colors, events=()):
+    def _draw_page_header(self, image, draw, settings, generated_at, stale, days, colors):
+        """The page's wordmark, Ticketmaster's own wordmark after it, and at the right the week's
+        count over the area and the update time."""
         right = 800 - MARGIN
-        wordmark_bottom = self._draw_header_wordmark(image, draw, MARGIN + 2, 4, 250, 44, colors)
+        wordmark_bottom = self._draw_header_wordmark(image, draw, MARGIN, 5, *HEADER_WORDMARK, colors)
         if wordmark_bottom is None:
-            draw.text((MARGIN, 10), "LOCAL EVENTS", fill=colors.get("title", colors["ink"]), font=self._font(28, bold=True))
+            title_font = self._font(28, bold=True)
+            draw.text((MARGIN, 10), "LOCAL EVENTS", fill=colors.get("title", colors["ink"]), font=title_font)
+            source_x = MARGIN + draw.textlength("LOCAL EVENTS", font=title_font) + SOURCE_LOGO_GAP
+        else:
+            source_x = MARGIN + _header_wordmark_width(*HEADER_WORDMARK) + SOURCE_LOGO_GAP
+        mark = _ticketmaster_logo(TICKETMASTER_LOGO_HEIGHT, None if colors["mode"] != "dark" else tuple(colors["ink"]))
+        if mark is not None:
+            image.paste(mark, (round(source_x), HEADER_H // 2 - mark.height // 2), mark)
         counted = [day["count"] for day in days if isinstance(day.get("count"), int)]
         total_font, small = self._font(22, bold=True), self._font(13, bold=True)
         headline = f"本周 {sum(counted):,} 场" if counted else "本地活动"
-        headline_left = right - draw.textlength(headline, font=total_font)
-        draw.text((headline_left, 3), headline, fill=colors.get("accent", colors["ink"]), font=total_font)
-        # The listings' source by Ticketmaster's own wordmark, before the week's count.
-        mark = _ticketmaster_logo(TICKETMASTER_LOGO_HEIGHT, None if colors["mode"] != "dark" else tuple(colors["ink"]))
-        block_left = headline_left
-        if mark is not None:
-            block_left = round(headline_left) - 14 - mark.width
-            image.paste(mark, (block_left, 17 - mark.height // 2), mark)
+        draw.text((right - draw.textlength(headline, font=total_font), 3), headline,
+                  fill=colors.get("accent", colors["ink"]), font=total_font)
         when = generated_at.strftime("%m/%d %H:%M") if isinstance(generated_at, datetime) else ""
         note = f"{self._place_label(settings)} · {'缓存 ' if stale else ''}{when} 更新"
-        note_w = draw.textlength(note, font=small)
-        draw.text((right - note_w, 32), note, fill=colors.get("header_muted", colors["muted"]), font=small)
-        block_left = min(block_left, right - note_w)
-        # The legend names the exact kinds shown below. Weekly kinds take any remaining room;
-        # unlisted weekly kinds are grouped neutrally and labelled beside the distribution.
-        visible = list(dict.fromkeys(event_category(event) for event in events))
-        weekly = {}
-        for day in days:
-            for key, count in (day.get("kind_counts") or {}).items():
-                weekly[key] = weekly.get(key, 0) + count
-        keys = list(visible)
-        groups = {}
-        for key in visible:
-            labels = groups.setdefault(category_color(key, colors), {})
-            labels.setdefault(category_label(key), []).append(key)
-        for key in sorted(weekly, key=weekly.get, reverse=True):
-            if key in keys:
-                continue
-            colour, label = category_color(key, colors), category_label(key)
-            # A fallback main-category colour must not acquire a second meaning in the legend.
-            if colour in groups and label not in groups[colour]:
-                continue
-            keys.append(key)
-            groups.setdefault(colour, {}).setdefault(label, []).append(key)
-        left, room = LEGEND_LEFT, block_left - LEGEND_GAP - LEGEND_LEFT
-        legend_font = self._font(LEGEND_SIZE, bold=True)
-        for size in (LEGEND_SIZE, 12, 11):
-            legend_font = self._font(size, bold=True)
-            items = []
-            for colour, labels in groups.items():
-                words, members = [], []
-                for label, label_keys in labels.items():
-                    joined = " / ".join([*words, label])
-                    if words and 12 + draw.textlength(joined, font=legend_font) > room:
-                        text = " / ".join(words)
-                        items.append((members, text, colour, 12 + draw.textlength(text, font=legend_font)))
-                        words, members = [], []
-                    words.append(label)
-                    members.extend(label_keys)
-                text = " / ".join(words)
-                items.append((members, text, colour, 12 + draw.textlength(text, font=legend_font)))
-            rows, used = [[]], 0
-            for item in items:
-                width = item[3]
-                if used + width > room and rows[-1]:
-                    if len(rows) == 2:
-                        break
-                    rows.append([])
-                    used = 0
-                rows[-1].append(item)
-                used += width + 7
-            included = {key for row in rows for members, _text, _colour, _width in row for key in members}
-            shown = [key for key in keys if key in included]
-            if all(key in shown for key in visible):
-                break
-        if len(rows) == 2:
-            items = [item for row in rows for item in row]
-            def row_width(items):
-                return sum(item[3] for item in items) + max(0, len(items) - 1) * 7
-            splits = [index for index in range(1, len(items))
-                      if max(row_width(items[:index]), row_width(items[index:])) <= room]
-            if splits:
-                split = min(splits, key=lambda index: abs(row_width(items[:index]) - row_width(items[index:])))
-                rows = [items[:split], items[split:]]
-        for index, row in enumerate(rows):
-            x, middle = left, 16 + index * 23 if len(rows) > 1 else 27
-            for _members, text, colour, width in row:
-                draw.ellipse((x, middle - 4, x + 8, middle + 4), fill=colour)
-                draw.text((x + 12, middle), text, fill=colors.get("header_muted", colors["muted"]),
-                          font=legend_font, anchor="lm")
-                x += width + 7
-        return shown
+        draw.text((right - draw.textlength(note, font=small), 32), note, fill=colors["ink"], font=small)
 
     def _place_label(self, settings):
         radius = self._bounded_int(settings.get("radiusMiles"), 50, 1, 250)
@@ -440,15 +368,13 @@ class WeekPageMixin:
         return self._location_label(settings)
 
     # -- the featured event ---------------------------------------------------------------
-    def _draw_featured(self, image, draw, event, today, colors):
-        """The featured event in tiers, each holding one kind of fact: the poster with the day and
-        time on a gold chip and the tour's size and sale status on its top right; the headliner as
-        the title beside the kind's colour, the rest of the bill under it; the place by a pin with
-        the distance at the right; the price, kind, age and repeats as chips. Returns the y where
-        the card's text ends."""
-        x0, y0, x1, _y1 = HERO
-        pad = 8
-        px0, py0, px1 = x0 + pad, y0 + pad, x1 - pad
+    def _draw_featured(self, image, draw, event, today, colors, section_h=SECTION_H):
+        """The featured event in tiers, each holding one kind of fact: the poster; the day and time
+        with the sale status and the tour's size at the right; the headliner as the title beside
+        a bar of the kind's colour, the rest of the bill under it; the place by a pin with the
+        distance at the right; the price, kind, age and repeats as chips. ``section_h`` is the room kept under
+        it for the column's foot. Returns the y where the text ends."""
+        px0, py0, px1, y1 = HERO
         width = px1 - px0
         kind_colour = self._event_color(event, colors)
         # The title's lines are set first: the poster takes the height the text leaves it.
@@ -458,51 +384,44 @@ class WeekPageMixin:
             age, subtitle = age or age_notice(subtitle), ""
         text_x, text_w = px0 + 10, width - 10
         title_font, lines, subtitle = self._featured_title(draw, event, title, subtitle, text_w, colors)
-        text_h = 10 + len(lines) * (title_font.size + 4) + (SUBTITLE_SIZE + 6 if subtitle else 0) + 47
-        poster_h = max(POSTER_H, min(POSTER_MAX, HERO[3] - 8 - SECTION_H - 16 - py0 - text_h))
+        text_h = 36 + len(lines) * (title_font.size + 4) + (SUBTITLE_SIZE + 6 if subtitle else 0) + 47
+        poster_h = max(POSTER_H, min(POSTER_MAX, y1 - section_h - SECTION_GAP - py0 - text_h))
         poster = self._load_event_image(event)
         art = ImageOps.fit((poster or self._placeholder_event_image(event, (width, poster_h), colors)).convert("RGB"),
                            (width, poster_h), method=Image.Resampling.LANCZOS)
         image.paste(art, (px0, py0))
-        draw.rectangle((px0, py0 + poster_h, px1, py0 + poster_h + 3), fill=kind_colour)
-        # When, on the gold chip.
+        # When, in the accent colour; the sale status and the tour's size at the right.
+        y = py0 + poster_h + 8
         day = _day(event.local_date)
-        top_text = day_label(day, today) if day and (day - today).days < 7 else (f"{day:%m/%d}" if day else "待定")
-        bottom_text = clock(event.local_time) or "全天"
-        chip_font, time_font = self._font(12, bold=True), self._font(18, bold=True)
-        chip_w = max(draw.textlength(top_text, font=chip_font), draw.textlength(bottom_text, font=time_font)) + 18
-        draw.rectangle((px0 + 8, py0 + 8, px0 + 8 + chip_w, py0 + 52), fill=colors.get("date_chip", colors["chip"]),
-                       outline=colors["outline"])
-        ink = colors.get("date_ink", colors["chip_ink"])
-        draw.text((px0 + 8 + (chip_w - draw.textlength(top_text, font=chip_font)) / 2, py0 + 11), top_text, fill=ink,
-                  font=chip_font)
-        draw.text((px0 + 8 + (chip_w - draw.textlength(bottom_text, font=time_font)) / 2, py0 + 26), bottom_text,
-                  fill=ink, font=time_font)
+        day_text = day_label(day, today) if day and (day - today).days < 7 else (f"{day:%m/%d}" if day else "待定")
+        when_font, chip_font = self._font(20, bold=True), self._font(12, bold=True)
+        draw.text((px0, y - 3), f"{day_text} {clock(event.local_time) or '全天'}", fill=colors["accent"], font=when_font)
         tags = []
         tour = (event.extra or {}).get("tour_dates") or 0
         if tour >= 5:
-            tags.append((f"巡演 {tour} 场", colors["outline"], colors["paper"]))
+            tags.append((f"巡演 {tour} 场", None))
         sold_out = bool(SOLD_OUT_NOTICE.search(event.title or ""))
         source_status = (event.status or "onsale").lower()
         status = STATUS_LABELS.get(source_status, (event.status or "").upper())
         if sold_out and source_status in {"onsale", "offsale"}:
             status = "售罄"
         if status:
-            tags.append((status, colors.get("status_chip", colors["chip"]), colors.get("status_ink", colors["chip_ink"])))
-        tag_x = px1 - 8
-        for text, fill, color in tags:
+            # A sale that is open is said quietly; one stopped, moved or sold out takes the accent.
+            tags.append((status, None if status == STATUS_LABELS["onsale"] else colors["accent"]))
+        tag_x = px1
+        for text, fill in tags:
             tag_w = draw.textlength(text, font=chip_font) + 14
-            draw.rectangle((tag_x - tag_w, py0 + 8, tag_x, py0 + 28), fill=fill)
-            draw.text((tag_x - tag_w + 7, py0 + 10), text, fill=color, font=chip_font)
+            self._draw_chip(draw, (tag_x - tag_w, y + 1, tag_x, y + 21), text, chip_font, colors, fill, radius=10)
             tag_x -= tag_w + 6
+        y += 28
         # What: the headliner, then the rest of the bill, beside a bar of the kind's colour.
-        block_top = y = py0 + poster_h + 10
+        block_top = y
         for line in lines:
             self._draw_runs(image, draw, line, text_x, y, title_font)
             y += title_font.size + 4
         if subtitle:
             subtitle_font = self._font(SUBTITLE_SIZE, bold=True)
-            draw.text((text_x, y + 1), self._fit_text(draw, subtitle, subtitle_font, text_w), fill=colors["muted"],
+            draw.text((text_x, y + 1), self._fit_text(draw, subtitle, subtitle_font, text_w), fill=colors["ink"],
                       font=subtitle_font)
             y += SUBTITLE_SIZE + 6
         draw.rectangle((px0, block_top + 2, px0 + 3, y - 4), fill=kind_colour)
@@ -512,7 +431,7 @@ class WeekPageMixin:
         distance = event.distance or ""
         distance_w = draw.textlength(distance, font=meta_font) if distance else 0
         if distance:
-            draw.text((px1 - distance_w, y), distance, fill=colors["muted"], font=meta_font)
+            draw.text((px1 - distance_w, y), distance, fill=colors["ink"], font=meta_font)
         self._draw_pin(draw, (px0 + 5, y + 8), colors["accent"], colors["paper"])
         place_x = px0 + 14
         logo_w = paste_venue_logo(image, event.venue_name, place_x, y + 8, HERO_VENUE_LOGO, colors["ink"], colors["paper"])
@@ -524,29 +443,36 @@ class WeekPageMixin:
             place = event.venue_name or place
         draw.text((place_x, y), self._fit_text(draw, place, meta_font, room), fill=colors["ink"], font=meta_font)
         y += 22
-        # The facts as chips: the price solid, the kind edged in its colour.
-        fact_font = self._font(12, bold=True)
+        # The facts as chips: the price solid, the rest edged by a hairline. Small type stays on
+        # paper or the accent: a mid-tone fill would dither under it on the six-colour panel.
         x = px0
-        facts = [("" if sold_out else price_label(event.price), colors["accent"], True),
-                 (self._kind_text(event), kind_colour, False),
-                 (age, colors["muted"], False),
-                 (self._more_text(event), colors["muted"], False)]
+        facts = [("" if sold_out else price_label(event.price), colors["accent"]),
+                 (self._kind_text(event), None),
+                 (age, None),
+                 (self._more_text(event), None)]
         drawn = False
-        for text, colour, solid in facts:
+        for text, fill in facts:
             if not text:
                 continue
-            chip = draw.textlength(text, font=fact_font) + 14
+            chip = draw.textlength(text, font=chip_font) + 14
             if x + chip > px1:
                 break
-            if solid:
-                draw.rounded_rectangle((x, y, x + chip, y + 20), radius=10, fill=colour)
-                draw.text((x + 7, y + 2), text, fill=colors["paper"], font=fact_font)
-            else:
-                draw.rounded_rectangle((x, y, x + chip, y + 20), radius=10, outline=colour, width=2)
-                draw.text((x + 7, y + 2), text, fill=colors["ink"], font=fact_font)
+            self._draw_chip(draw, (x, y, x + chip, y + 20), text, chip_font, colors, fill, radius=10)
             x += chip + 6
             drawn = True
         return y + 20 if drawn else y - 4
+
+    def _draw_chip(self, draw, box, text, font, colors, fill=None, radius=3, drop=2):
+        """A chip with its text centred, ``drop`` under its top: solid in ``fill`` with the ink
+        that reads on it, or, with no fill, edged by a hairline around the page's ink."""
+        x0, y0, x1, y1 = box
+        if fill is None:
+            draw.rounded_rectangle(box, radius=radius, outline=colors.get("rule", colors["line"]), width=1)
+            ink = colors["ink"]
+        else:
+            draw.rounded_rectangle(box, radius=radius, fill=fill)
+            ink = chip_ink(fill, colors)
+        draw.text(((x0 + x1 - draw.textlength(text, font=font)) / 2, y0 + drop), text, fill=ink, font=font)
 
     def _featured_title(self, draw, event, title, subtitle, width, colors):
         """(font, lines, subtitle) for the featured card, each of at most two lines a list of runs.
@@ -650,7 +576,7 @@ class WeekPageMixin:
         logos = [self._title_logo(side.team, font, colors) for side in teams.sides]
         slot = max((logo.width for logo in logos if logo is not None), default=0)
         first, second = (self._side_runs(side, form, font, colors, slot) for side in teams.sides)
-        return [first + [("text", f" {teams.joiner}", colors["muted"])], second]
+        return [first + [("text", f" {teams.joiner}", colors["ink"])], second]
 
     def _title_runs(self, teams, form, font, colors):
         """A list row's title in one line: what leads the game, each side after its logo, 'vs.'
@@ -660,7 +586,7 @@ class WeekPageMixin:
         runs = [("text", f"{teams.prefix} ", ink)] if teams.prefix and not short else []
         for index, side in enumerate(teams.sides):
             if index:
-                runs.append(("text", f" {teams.joiner} ", colors["muted"]))
+                runs.append(("text", f" {teams.joiner} ", colors["ink"]))
             runs += self._side_runs(side, form, font, colors)
         if teams.trailing and not short:
             runs.append(("text", f" {teams.trailing}", ink))
@@ -698,144 +624,213 @@ class WeekPageMixin:
         more = (event.extra or {}).get("more_showtimes")
         return f"+{more} 场" if more else ""
 
-    # -- public sales opening soon (or the week's mix), in the featured card's foot ----------
-    def _draw_on_sale(self, draw, on_sale, days, tz, colors, top, legend_keys=()):
-        """Under a dotted rule from ``top``: the public sales opening this week, else the week's
-        mix of kinds as a bar beside its heading with each kind's share under it."""
-        x0, _y0, x1, y1 = HERO
-        x, right = x0 + 8, x1 - 8
-        head_font, row_font = self._font(13, bold=True), self._font(12, bold=True)
-        for dot in range(x, right, 5):
-            draw.point((dot, top - 8), fill=colors["line"])
+    # -- the featured column's foot: sales opening soon and the week's mix of kinds ----------
+    def _kind_groups(self, events, days, colors):
+        """[(colour, label, keys)]: the kinds that get a colour of their own, the listed events'
+        first, then the week's by count. Listed kinds sharing a colour are named together
+        ('流行 / R&B'), each keeping its statistics key; a week's kind whose colour already
+        means another kind is left to the neutral 'other kinds' bin."""
+        groups = {}
+        for key in dict.fromkeys(event_category(event) for event in events):
+            groups.setdefault(category_color(key, colors), {}).setdefault(category_label(key), []).append(key)
+        weekly = {}
+        for day in days:
+            for key, count in (day.get("kind_counts") or {}).items():
+                weekly[key] = weekly.get(key, 0) + count
+        named = {key for labels in groups.values() for keys in labels.values() for key in keys}
+        for key in sorted(weekly, key=weekly.get, reverse=True):
+            colour, label = category_color(key, colors), category_label(key)
+            if key in named or key == "|" or (colour in groups and label not in groups[colour]):
+                continue
+            groups.setdefault(colour, {}).setdefault(label, []).append(key)
+        return [(colour, " / ".join(labels), [key for keys in labels.values() for key in keys])
+                for colour, labels in groups.items()]
+
+    def _mix_legend(self, draw, events, days, colors, width, max_rows):
+        """(keys, rows, counts, sampled, total) for the week's mix: the kinds with their own
+        colour, the legend's rows of (colour, text, width) for the kinds counted this week, and
+        the bar's counts in the legend's order. Counts stay on the true total: kinds without a
+        colour and events never sampled are their own neutral bins. A legend too long for
+        ``max_rows`` first drops the named kinds' counts, then the week's rarest kinds, which
+        join the 'other kinds' bin; the listed events' kinds always keep their colour."""
+        font = self._font(LEGEND_SIZE, bold=True)
+        groups = self._kind_groups(events, days, colors)
+        listed = {event_category(event) for event in events}
+        while True:
+            keys = [key for _colour, _label, members in groups for key in members]
+            mix, sampled, total = sampled_mix(days, keys)
+            for with_counts in (True, False):
+                items, counts = [], {}
+                for colour, label, members in groups:
+                    count = sum(mix.get(key, 0) for key in members)
+                    if not count:
+                        continue
+                    counts.update({key: mix[key] for key in members if mix.get(key)})
+                    text = self._fit_text(draw, f"{label} {count}" if with_counts else label, font, width - 12)
+                    items.append((colour, text, 12 + draw.textlength(text, font=font)))
+                for key in (OTHER_KINDS, "|", UNCOUNTED):
+                    if mix.get(key) and key not in counts:
+                        counts[key] = mix[key]
+                        text = f"{category_label(key)} {mix[key]}"
+                        items.append((category_color(key, colors), text, 12 + draw.textlength(text, font=font)))
+                rows, used = [[]], 0
+                for item in items:
+                    if rows[-1] and used + item[2] > width:
+                        rows.append([])
+                        used = 0
+                    rows[-1].append(item)
+                    used += item[2] + LEGEND_GAP
+                if len(rows) <= max_rows:
+                    return keys, rows, counts, sampled, total
+            spare = [index for index, (_colour, _label, members) in enumerate(groups) if not listed & set(members)]
+            if not spare:
+                return keys, rows[:max_rows], counts, sampled, total
+            del groups[spare[-1]]
+
+    def _plan_section(self, draw, events, days, on_sale, colors):
+        """What the featured column's foot holds, and its height: the public sales opening this
+        week (SALE_ROWS at most), then the week's mix of kinds, or, from a cache that kept only
+        the main categories, their sampled counts."""
+        width = HERO[2] - HERO[0]
+        sales = list(on_sale)[:SALE_ROWS]
         has_kinds = any(isinstance(day.get("kind_counts"), dict) for day in days)
-        mix, sampled, total = sampled_mix(days, legend_keys)
-        if on_sale:
-            draw.text((x, top), "即将开售", fill=colors["accent"], font=head_font)
-            if has_kinds:
-                self._draw_mix_notes(draw, mix, (x + 65, top + 2, right), colors, show_counts=False)
-            else:
-                draw.text((x + 62, top + 2), "公开售票开始", fill=colors["muted"], font=self._font(11, bold=True))
-            y = top + 21
-            for item in on_sale[:4]:
-                if y + 16 > y1 - 4:
-                    break
+        keys, rows, counts, sampled, total = self._mix_legend(
+            draw, events, days, colors, width, LEGEND_ROWS - 1 if sales else LEGEND_ROWS)
+        plan = {"keys": keys, "sales": sales, "rows": rows, "counts": counts, "sampled": sampled, "total": total,
+                "has_kinds": has_kinds, "segments": {}, "height": 0}
+        if sales:
+            plan["height"] += 22 + len(sales) * SALE_ROW_H
+        if has_kinds:
+            plan["height"] += 37 + sum(1 for row in rows if row) * LEGEND_ROW_H
+        elif total:
+            # Earlier caches retained only main-category samples. Keep their counts neutral until
+            # the regular refresh supplies kinds; visible events cannot reconstruct the whole week.
+            for day in days:
+                for key, count in (day.get("segments") or {}).items():
+                    plan["segments"][key] = plan["segments"].get(key, 0) + count
+            plan["height"] += 22 + (2 * LEGEND_ROW_H if plan["segments"] else 0)
+        # The room between the hairline over the section and its first line.
+        plan["height"] += SECTION_PAD if plan["height"] else 0
+        return plan
+
+    def _draw_section(self, draw, plan, tz, colors):
+        """The planned foot, ending at the column's foot, under a hairline."""
+        if not plan["height"]:
+            return
+        x, _y0, right, y1 = HERO
+        y = y1 - plan["height"]
+        ink = colors["ink"]
+        head_font, row_font, small = self._font(13, bold=True), self._font(12, bold=True), self._font(LEGEND_SIZE, bold=True)
+        draw.line((x, y, right, y), fill=colors.get("rule", colors["line"]))
+        y += SECTION_PAD
+        if plan["sales"]:
+            draw.text((x, y), "即将开售", fill=ink, font=head_font)
+            note = "公开售票开始"
+            draw.text((right - draw.textlength(note, font=small), y + 2), note, fill=ink, font=small)
+            y += 18
+            for item in plan["sales"]:
                 sale = self._parse_datetime(item.get("sale_start"))
                 sale = sale.astimezone(tz) if sale and tz else sale
                 when = f"{sale:%m/%d %H:%M}" if sale else ""
                 kind = item.get("kind")
-                colour = category_color(kind, colors) if kind in legend_keys else colors["muted"]
-                draw.ellipse((x, y + 5, x + 7, y + 12), fill=colour)
+                colour = category_color(kind, colors) if kind in plan["keys"] else colors["muted"]
+                draw.rectangle((x, y + 4, x + 7, y + 11), fill=colour)
                 when_w = draw.textlength(when, font=row_font)
-                draw.text((x + 11, y), when, fill=colors["ink"], font=row_font)
-                draw.text((x + 17 + when_w, y), self._fit_text(draw, item.get("title") or "", row_font,
-                                                               right - x - 17 - when_w),
-                          fill=colors["muted"], font=row_font)
-                y += 19
+                draw.text((x + 12, y), when, fill=ink, font=row_font)
+                draw.text((x + 18 + when_w, y), self._fit_text(draw, item.get("title") or "", row_font,
+                                                               right - x - 18 - when_w), fill=ink, font=row_font)
+                y += SALE_ROW_H
+            y += 4
+        total = plan["total"]
+        if plan["has_kinds"]:
+            # Coverage is said beside the heading: a sample is never normalised to all events.
+            draw.text((x, y), "类型分布", fill=ink, font=head_font)
+            note = f"已统计 {plan['sampled']}/{total} 场"
+            draw.text((right - draw.textlength(note, font=small), y + 2), note, fill=ink, font=small)
+            self._draw_mix_bar(draw, plan["counts"], (x, y + 21, right, y + 21 + MIX_BAR_H - 1), colors, total=total)
+            y += 37
+            for row in plan["rows"]:
+                cursor = x
+                for colour, text, item_w in row:
+                    draw.rectangle((cursor, y + 3, cursor + 7, y + 10), fill=colour)
+                    draw.text((cursor + 12, y), text, fill=ink, font=small)
+                    cursor += item_w + LEGEND_GAP
+                y += LEGEND_ROW_H
             return
-        # No public sale opens this week: show coverage, never normalize a sample to all events.
-        if has_kinds:
-            draw.text((x, top), f"类型分布 · {sampled}/{total}场", fill=colors["accent"], font=head_font)
-            self._draw_mix_bar(draw, mix, (x, top + 22, right, top + 29), colors, total=total)
-            self._draw_mix_notes(draw, mix, (x, top + 37, right), colors)
+        if not total:
             return
-        # Earlier caches retained only main-category samples. Keep their counts neutral until
-        # the regular refresh supplies kinds; visible events cannot reconstruct the whole week.
-        totals = {}
-        for day in days:
-            for key, count in (day.get("segments") or {}).items():
-                totals[key] = totals.get(key, 0) + count
-        whole = sum(totals.values())
-        draw.text((x, top), f"大类样本 · {whole}/{total}场", fill=colors["accent"], font=head_font)
+        whole = sum(plan["segments"].values())
+        draw.text((x, y), f"大类样本 · {whole}/{total}场", fill=ink, font=head_font)
         waiting = "类型待更新"
-        waiting_font = self._font(11, bold=True)
-        draw.text((right - draw.textlength(waiting, font=waiting_font), top + 2), waiting,
-                  fill=colors["muted"], font=waiting_font)
-        if not whole:
-            return
-        cursor, y = x, top + 22
+        draw.text((right - draw.textlength(waiting, font=small), y + 2), waiting, fill=ink, font=small)
+        cursor, y = x, y + 22
         for key, label in SEGMENT_LABELS.items():
-            if not totals.get(key):
+            if not plan["segments"].get(key):
                 continue
-            text = f"{label} {totals[key]}"
-            text_w = draw.textlength(text, font=row_font)
-            if cursor + text_w + 14 > right:
-                cursor, y = x, y + 18
-            draw.ellipse((cursor, y + 5, cursor + 7, y + 12), fill=colors["muted"])
-            draw.text((cursor + 10, y), text, fill=colors["muted"], font=row_font)
-            cursor += text_w + 22
+            text = f"{label} {plan['segments'][key]}"
+            text_w = draw.textlength(text, font=small)
+            if cursor + text_w + 12 > right:
+                cursor, y = x, y + LEGEND_ROW_H
+            draw.rectangle((cursor, y + 3, cursor + 7, y + 10), fill=colors["muted"])
+            draw.text((cursor + 12, y), text, fill=ink, font=small)
+            cursor += text_w + 12 + LEGEND_GAP
 
-    def _draw_mix_notes(self, draw, counts, box, colors, show_counts=True):
-        """Label neutral bins locally even when the header is full of named event kinds."""
-        x, y, right = box
-        font = self._font(11, bold=True)
-        for key in (OTHER_KINDS, "|", UNCOUNTED):
-            if not counts.get(key):
-                continue
-            text = category_label(key) + (f" {counts[key]}" if show_counts else "")
-            width = draw.textlength(text, font=font) + 13
-            if x + width > right:
-                x, y = box[0], y + 16
-            draw.rectangle((x, y + 4, x + 7, y + 11), fill=category_color(key, colors))
-            draw.text((x + 11, y), text, fill=colors["muted"], font=font)
-            x += width + 10
-
-    # -- the next events: a notice board, one slip per event --------------------------------
+    # -- the next events: one row per event ---------------------------------------------------
     def _draw_next(self, image, draw, events, today, colors, now=None):
         x0, y0, x1, _y1 = LIST
-        x0, x1 = x0 + 8, x1 - 8
-        head_font = self._font(16, bold=True)
-        draw.text((x0 + 2, y0 + 5), "接下来", fill=colors.get("title", colors["ink"]), font=head_font)
+        ink = colors["ink"]
+        draw.text((x0, y0 - 2), "接下来", fill=colors.get("title", ink), font=self._font(16, bold=True))
         tonight = sum(1 for event in events if _day(event.local_date) == today)
         note = (f"今天还有 {tonight} 场 · " if tonight else "") + "按开始时间"
         note_font = self._font(11, bold=True)
-        draw.text((x1 - 2 - draw.textlength(note, font=note_font), y0 + 9), note, fill=colors["muted"], font=note_font)
+        draw.text((x1 - draw.textlength(note, font=note_font), y0 + 3), note, fill=ink, font=note_font)
         previous_day = None
         for index, event in enumerate(events[:LIST_ROWS]):
             top = y0 + SLIP_TOP + index * ROW_H
+            draw.line((x0, top - 1, x1, top - 1), fill=colors.get("rule", colors["line"]))
             day = _day(event.local_date)
             label = day_label(day, today) if day and (day - today).days < 7 else (f"{day:%m/%d}" if day else "待定")
-            # The day is said once per run of slips on it.
+            # The day is said once per run of rows on it.
             self._draw_slip(image, draw, event, (x0, top, x1, top + SLIP_H), label if label != previous_day else "",
                             colors, now)
             previous_day = label
         if not events:
-            draw.text((x0, y0 + 40), "近期没有更多活动", fill=colors["muted"], font=self._font(15, bold=True))
+            draw.text((x0, y0 + SLIP_TOP + 10), "近期没有更多活动", fill=ink, font=self._font(15, bold=True))
 
     def _draw_slip(self, image, draw, event, box, day_text, colors, now):
-        """Time and type beside the title; location, full distance and facts on the second line."""
-        sx0, sy0, sx1, sy1 = box
+        """One row: the time over the kind's name and sticker; the poster with the kind's colour
+        as a bar down its left edge; the title across the row's whole text width; then the place,
+        the whole distance, and the facts to know at the right. Where a new day starts, its name
+        sits on the hairline over the row."""
+        sx0, sy0, sx1, _sy1 = box
+        ink = colors["ink"]
         kind_colour = self._event_color(event, colors)
-        draw.rectangle(box, fill=colors["paper"])
-        draw.line((sx0, sy1, sx1, sy1), fill=colors["line"])
-        time_ink = colors["ink"]
-        # The day appears once per chronological group, with a full rule at the boundary.
+        meta_font = self._font(11, bold=True)
         if day_text:
-            draw.line((sx0, sy0, sx1, sy0), fill=colors["muted"])
-            draw.text((sx0 + 2, sy0 + 3), day_text, fill=time_ink, font=self._font(11, bold=True))
-        draw.text((sx0 + 2, sy0 + 20), clock(event.local_time) or "全天", fill=time_ink, font=self._font(16, bold=True))
-        # Colour, label and sticker all express the same provider classification.
-        thumb_x, thumb_y = sx0 + 53, sy0 + 2
-        tile_right = thumb_x + THUMB[0]
-        draw.rectangle((thumb_x, thumb_y, tile_right + 4, sy0 + 43), fill=kind_colour)
-        self._paste_event_image(image, event, (thumb_x, thumb_y, THUMB[0], THUMB[1]), colors)
+            label_w = draw.textlength(day_text, font=meta_font)
+            draw.rectangle((sx0, sy0 - 2, sx0 + label_w + 5, sy0), fill=colors["paper"])
+            draw.text((sx0, sy0 - 9), day_text, fill=ink, font=meta_font)
+        draw.text((sx0, sy0 + 5), clock(event.local_time) or "全天", fill=ink, font=self._font(16, bold=True))
         label, icon = kind_of(event)
         teams = self._title_teams(event)
-        label = (teams.sport if teams and teams.sport else label) or "未分类"
-        label_font = self._font(11, bold=True)
-        label = self._fit_text(draw, label, label_font, THUMB[0] - 4)
-        draw.text((thumb_x + (THUMB[0] - draw.textlength(label, font=label_font)) / 2, sy0 + 31),
-                  label, fill=chip_ink(kind_colour, colors), font=label_font)
+        label = self._fit_text(draw, (teams.sport if teams and teams.sport else label) or "未分类", meta_font,
+                               TIME_COLUMN - 4)
+        y = sy0 + 27
+        draw.text((sx0, y), label, fill=ink, font=meta_font)
+        # The kind's sticker follows its name where the column has the room.
         art = _genre_icon(icon, STICKER, tuple(colors["paper"]), tuple(colors["ink"]))
-        if art is not None:
-            image.paste(art, (tile_right - art.width + 4, sy0 + 10), art)
-        # One category-colour contour encloses the neutral time and coloured poster/type tile.
-        # Draw it last so neither the poster nor its sticker interrupts the outline.
-        draw.rectangle((sx0, sy0 + 2, tile_right + 4, sy0 + 43), outline=kind_colour, width=1)
-        text_x, right = tile_right + 9, sx1 - 3
-        # The title has the full text-column width; prices no longer shorten the artist name.
+        sticker_x = sx0 + TIME_COLUMN - 4
+        if art is not None and draw.textlength(label, font=meta_font) + 3 + art.width <= TIME_COLUMN - 4:
+            image.paste(art, (sticker_x - art.width, y + 8 - art.height // 2), art)
+        # The kind's colour is the poster's left edge: one solid bar, no frame around the picture.
+        bar_x = sx0 + TIME_COLUMN
+        thumb_x, thumb_y = bar_x + KIND_BAR, sy0 + 3
+        self._paste_event_image(image, event, (thumb_x, thumb_y, *THUMB), colors)
+        draw.rectangle((bar_x, thumb_y, thumb_x - 1, thumb_y + THUMB[1] - 1), fill=kind_colour)
+        text_x, right = thumb_x + THUMB[0] + 9, sx1
         self._draw_slip_title(image, draw, event, (text_x, sy0 + 3), right - text_x, colors)
+        place_x = text_x
         # Reserve the complete distance and important facts before fitting the venue.
-        meta_font = self._font(11, bold=True)
         distance = f" · {event.distance}" if event.distance else ""
         distance_w = draw.textlength(distance, font=meta_font)
         facts = self._slip_facts(event, now)
@@ -847,27 +842,24 @@ class WeekPageMixin:
         shown, facts_w = [], 0
         for text, alarm in facts:
             fact_w = draw.textlength(text, font=meta_font) + 8
-            if distance_w + SLIP_PLACE_MIN + facts_w + SLIP_FACT_GAP + fact_w > right - text_x:
+            if place_x - text_x + SLIP_PLACE_MIN + distance_w + SLIP_FACT_GAP + facts_w + fact_w > right - text_x:
                 break
             shown.append((text, alarm, fact_w))
-            facts_w += SLIP_FACT_GAP + fact_w
-        y = sy0 + 25
-        place_x = text_x
+            facts_w += fact_w + SLIP_CHIP_GAP
+        # The facts end at the row's right edge, the most important first.
+        x = right - facts_w + SLIP_CHIP_GAP
+        facts_left = x
+        for text, alarm, fact_w in shown:
+            self._draw_chip(draw, (x, y - 1, x + fact_w, y + 13), text, meta_font, colors,
+                            colors["accent"] if alarm else None, drop=1)
+            x += fact_w + SLIP_CHIP_GAP
         logo_w = paste_venue_logo(image, event.venue_name, place_x, y + 7, SLIP_VENUE_LOGO, colors["ink"], colors["paper"])
         place_x += logo_w + 4 if logo_w else 0
-        room = right - place_x - distance_w - facts_w
+        room = (facts_left - SLIP_FACT_GAP if shown else right) - place_x - distance_w
         place = self._place_line(event)
         if draw.textlength(place, font=meta_font) > room:
             place = event.venue_name or place
-        location = self._fit_text(draw, place, meta_font, max(room, 10)) + distance
-        draw.text((place_x, y), location, fill=colors["muted"], font=meta_font)
-        x = place_x + draw.textlength(location, font=meta_font) + SLIP_FACT_GAP
-        for text, alarm, fact_w in shown:
-            fill = colors["accent"] if alarm else self._blend(colors["paper"], kind_colour, 0.12)
-            fact_ink = chip_ink(fill, colors)
-            draw.rounded_rectangle((x, y - 1, x + fact_w, y + 12), radius=2, fill=fill)
-            draw.text((x + 4, y), text, fill=fact_ink, font=meta_font)
-            x += fact_w + SLIP_FACT_GAP
+        draw.text((place_x, y), self._fit_text(draw, place, meta_font, max(room, 10)) + distance, fill=ink, font=meta_font)
 
     def _draw_slip_title(self, image, draw, event, origin, width, colors):
         """The title in one line at the first of SLIP_TITLE_SIZES that holds it whole: a game's
@@ -911,39 +903,41 @@ class WeekPageMixin:
             facts.append(("多日", False))
         return facts
 
-    # -- the week along the foot ----------------------------------------------------------
+    # -- the week under the list ------------------------------------------------------------
     def _draw_week_band(self, draw, days, today, colors, legend_keys=()):
-        """Seven day cells: the day and date, its count, and a bar of its mix of kinds; today
-        outlined, the weekend's names in the accent colour."""
+        """Seven day cells under a hairline: the day and date, its count, and on one baseline a
+        bar of its mix of kinds as long as its share of the busiest day. Today carries the
+        accent colour: a short rule over its cell and its count."""
         x0, y0, x1, y1 = WEEK_BAND
-        cell_w = (x1 - x0 - 16) / 7
+        cell_w = (x1 - x0) / 7
         label_font, count_font = self._font(11, bold=True), self._font(17, bold=True)
         by_date = {day.get("date"): day for day in days}
-        max_count = max((day.get("count") or 0 for day in days), default=0)
+        max_count = max((day.get("count") or 0 for day in days if isinstance(day.get("count"), int)), default=0)
+        draw.line((x0, y0, x1, y0), fill=colors.get("rule", colors["line"]))
         for index in range(7):
             current = today + timedelta(days=index)
             day = by_date.get(current.isoformat()) or {}
-            left = round(x0 + 8 + index * cell_w)
-            right = round(left + cell_w - 6)
+            left = round(x0 + index * cell_w)
+            right = round(x0 + (index + 1) * cell_w) - WEEK_CELL_GAP
             if index == 0:
-                draw.rounded_rectangle((left - 4, y0 + 3, right + 2, y1 - 3), radius=5, outline=colors["accent"], width=1)
-            label = f"{day_label(current, today)} {current:%m/%d}"
-            draw.text((left, y0 + 5), label, fill=colors["accent"] if current.weekday() >= 5 else colors["muted"],
-                      font=label_font)
+                draw.rectangle((left, y0, right, y0 + 1), fill=colors["accent"])
+            draw.text((left, y0 + 5), f"{day_label(current, today)} {current:%m/%d}", fill=colors["ink"], font=label_font)
             count = day.get("count")
-            text = f"{count:,} 场" if isinstance(count, int) else "–"
-            draw.text((right - draw.textlength(text, font=count_font), y0 + 16), text, fill=colors["ink"],
-                      font=count_font)
-            box = (left, y1 - 9, right - 50, y1 - 6)
+            figure = f"{count:,}" if isinstance(count, int) else "–"
+            draw.text((left, y0 + 17), figure, fill=colors["accent"] if index == 0 else colors["ink"], font=count_font)
+            if isinstance(count, int):
+                draw.text((left + draw.textlength(figure, font=count_font) + 3, y0 + 23), "场", fill=colors["ink"],
+                          font=label_font)
+            if not isinstance(count, int) or count <= 0 or not max_count:
+                continue
+            box = (left, y1 - WEEK_BAR_H, left + max(3, round((right - left) * count / max_count)), y1 - 1)
             if isinstance(day.get("kind_counts"), dict):
                 mix, _sampled, total = sampled_mix([day], legend_keys)
-                self._draw_mix_bar(draw, mix, box, colors, total=total)
+                ordered = {key: mix[key] for key in (*legend_keys, OTHER_KINDS, "|", UNCOUNTED) if mix.get(key)}
+                self._draw_mix_bar(draw, ordered, box, colors, total=total)
             else:
                 # An old cache has no detailed kinds: a neutral quantity bar, not invented shares.
-                draw.rectangle(box, fill=colors["line"])
-                if isinstance(count, int) and count > 0 and max_count:
-                    end = box[0] + (box[2] - box[0]) * count / max_count
-                    draw.rectangle((box[0], box[1], end, box[3]), fill=colors["muted"])
+                draw.rectangle(box, fill=colors["muted"])
 
     def _draw_mix_bar(self, draw, counts, box, colors, total=None):
         x0, y0, x1, y1 = box

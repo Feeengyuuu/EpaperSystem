@@ -24,7 +24,7 @@ from plugins.base_plugin.render_provenance import (
 )
 from plugins.context_cache import write_context
 
-from .week_page import HEADER_H, WeekPageMixin, category_color, category_key, event_category
+from .week_page import WeekPageMixin, category_color, category_key, event_category
 from utils.cache_manager import CacheBudget
 from utils.http_client import get_http_client, get_http_session
 
@@ -711,8 +711,6 @@ class TicketmasterEvents(WeekPageMixin, BoxOfficeTopMovies):
             image = ImageEnhance.Color(image).enhance(0.82)
             image = ImageEnhance.Contrast(image).enhance(1.08)
         target.paste(image, (x, y))
-        draw = ImageDraw.Draw(target)
-        draw.rectangle((x, y, x + w - 1, y + h - 1), outline=colors["outline"], width=1)
 
     def _load_event_image(self, event):
         path = event.poster_path or ""
@@ -794,88 +792,42 @@ class TicketmasterEvents(WeekPageMixin, BoxOfficeTopMovies):
         return lines or [""]
 
     def _draw_background(self, draw, dimensions, colors):
+        """Plain paper in every theme: mid-tone bands would dither on the six-colour panel."""
         width, height = dimensions
         draw.rectangle((0, 0, width, height), fill=colors["paper"])
-        if colors["mode"] == "dark":
-            return
-        if colors["mode"] == "color":
-            draw.rectangle((0, 0, width, HEADER_H), fill=colors["header_band"])
-            draw.rectangle((0, HEADER_H, width, HEADER_H + 3), fill=colors["accent"])
-            draw.rectangle((0, 0, 6, height), fill=colors["accent"])
 
     def _palette(self, settings):
+        """The page's colours. Type is ``ink`` throughout; ``muted`` and ``line`` fill the mix
+        bars' neutral bins, ``rule`` draws hairlines, and the kinds' colours go on solid shapes."""
         injected = settings.get("_inkypi_theme")
         if isinstance(injected, dict) and injected.get("mode") == "night":
             canonical = injected.get("palette") or {}
-            paper = tuple(canonical.get("background", (229, 236, 232)))
-            panel = tuple(canonical.get("panel", paper))
-            ink = tuple(canonical.get("ink", (28, 43, 48)))
-            muted = tuple(canonical.get("muted", (52, 72, 76)))
-            line = tuple(canonical.get("rule", (175, 197, 194)))
-            accent = tuple(canonical.get("accent", (177, 68, 53)))
-            if injected["mode"] == "night":
-                return {
-                    "mode": "dark",
-                    "chromatic_media": True,
-                    "paper": paper,
-                    "ink": ink,
-                    "muted": muted,
-                    "soft": muted,
-                    "line": line,
-                    "outline": ink,
-                    "chip": accent,
-                    "chip_ink": paper,
-                    "title": ink,
-                    "header_muted": muted,
-                    "footer": muted,
-                    "accent": accent,
-                    "wordmark_shadow": accent,
-                    "wordmark_highlight": ink,
-                    "date_chip": accent,
-                    "date_ink": paper,
-                    "status_chip": accent,
-                    "status_ink": paper,
-                    "placeholder_ink": ink,
-                    "shadow": panel,
-                    "segment_colors": {
-                        "music": (238, 106, 92),
-                        "sports": (83, 159, 174),
-                        "arts & theatre": (173, 126, 194),
-                        "film": (126, 150, 203),
-                        "miscellaneous": (229, 188, 88),
-                        "undefined": muted,
-                    },
-                }
+            paper = tuple(canonical.get("background", (0, 0, 0)))
+            ink = tuple(canonical.get("ink", (238, 238, 231)))
+            muted = tuple(canonical.get("muted", (176, 176, 168)))
+            accent = tuple(canonical.get("accent", (229, 188, 88)))
             return {
-                "mode": "color",
+                "mode": "dark",
                 "chromatic_media": True,
                 "paper": paper,
-                "header_band": panel,
-                "footer_band": panel,
-                "title": ink,
                 "ink": ink,
+                "title": ink,
                 "muted": muted,
-                "header_muted": muted,
-                "soft": muted,
-                "footer": muted,
-                "line": line,
-                "outline": ink,
+                "line": tuple(canonical.get("rule", (46, 48, 52))),
+                "rule": (104, 106, 110),
                 "accent": accent,
-                "chip": (229, 188, 88),
-                "chip_ink": ink,
-                "date_chip": (229, 188, 88),
-                "date_ink": ink,
-                "status_chip": (39, 112, 128),
-                "status_ink": (244, 248, 242),
+                "chip": accent,
+                "chip_ink": paper,
+                "wordmark_shadow": accent,
+                "wordmark_highlight": ink,
                 "placeholder_ink": ink,
-                "shadow": panel,
                 "segment_colors": {
-                    "music": accent,
-                    "sports": (39, 112, 128),
-                    "arts & theatre": (122, 83, 142),
-                    "film": (78, 102, 153),
-                    "miscellaneous": (191, 127, 48),
-                    "undefined": (92, 118, 101),
+                    "music": (238, 106, 92),
+                    "sports": (83, 159, 174),
+                    "arts & theatre": (173, 126, 194),
+                    "film": (126, 150, 203),
+                    "miscellaneous": (229, 188, 88),
+                    "undefined": muted,
                 },
             }
 
@@ -887,12 +839,10 @@ class TicketmasterEvents(WeekPageMixin, BoxOfficeTopMovies):
                 "paper": (235, 232, 222),
                 "ink": (28, 30, 32),
                 "muted": (86, 88, 84),
-                "soft": (112, 112, 104),
                 "line": (210, 204, 190),
-                "outline": (42, 42, 40),
+                "accent": (28, 30, 32),
                 "chip": (31, 33, 35),
                 "chip_ink": (246, 244, 235),
-                "shadow": (224, 219, 207),
             }
         if mode == "dark":
             return {
@@ -901,45 +851,34 @@ class TicketmasterEvents(WeekPageMixin, BoxOfficeTopMovies):
                 "paper": (0, 0, 0),
                 "ink": (238, 238, 231),
                 "muted": (176, 176, 168),
-                "soft": (136, 138, 132),
-                "line": (18, 18, 18),
-                "outline": (213, 215, 208),
+                "line": (46, 48, 52),
+                "rule": (104, 106, 110),
+                "accent": (229, 188, 88),
                 "chip": (236, 236, 226),
                 "chip_ink": (20, 22, 24),
                 "wordmark_shadow": (229, 188, 88),
                 "wordmark_highlight": (238, 238, 231),
-                "shadow": (10, 12, 14),
             }
         return {
             "mode": "color",
             "chromatic_media": True,
-            "paper": (229, 236, 232),
-            "header_band": (207, 226, 220),
-            "footer_band": (216, 228, 224),
-            "title": (18, 49, 57),
-            "ink": (28, 43, 48),
-            "muted": (52, 72, 76),
-            "header_muted": (56, 78, 82),
-            "soft": (69, 88, 90),
-            "footer": (88, 102, 103),
-            "line": (175, 197, 194),
-            "outline": (54, 76, 79),
-            "accent": (177, 68, 53),
-            "chip": (229, 188, 88),
-            "chip_ink": (28, 43, 48),
-            "date_chip": (229, 188, 88),
-            "date_ink": (26, 41, 46),
-            "status_chip": (39, 112, 128),
-            "status_ink": (244, 248, 242),
-            "placeholder_ink": (24, 42, 46),
-            "shadow": (196, 213, 210),
+            "paper": (255, 255, 255),
+            "ink": (17, 22, 26),
+            "title": (17, 22, 26),
+            "muted": (112, 116, 120),
+            "line": (206, 208, 210),
+            "rule": (166, 168, 170),
+            "accent": (186, 30, 54),
+            "chip": (186, 30, 54),
+            "chip_ink": (255, 255, 255),
+            "placeholder_ink": (17, 22, 26),
             "segment_colors": {
-                "music": (177, 68, 53),
-                "sports": (39, 112, 128),
-                "arts & theatre": (122, 83, 142),
-                "film": (78, 102, 153),
-                "miscellaneous": (191, 127, 48),
-                "undefined": (92, 118, 101),
+                "music": (186, 30, 54),
+                "sports": (24, 86, 176),
+                "arts & theatre": (112, 70, 164),
+                "film": (62, 78, 128),
+                "miscellaneous": (178, 128, 16),
+                "undefined": (96, 112, 104),
             },
         }
 

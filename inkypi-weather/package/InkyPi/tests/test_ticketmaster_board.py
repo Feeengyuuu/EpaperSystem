@@ -1,6 +1,6 @@
-"""The Local Events list as a notice board: each slip's kind, sticker, price tag and buying facts."""
+"""The Local Events list and the week's mix: each row's kind, sticker, price tag and buying facts."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from PIL import Image, ImageDraw
@@ -120,12 +120,16 @@ def test_the_board_renders_a_slip_per_event_with_its_kind_colour(tmp_path):
 
     image = plugin._render_events((800, 480), events, {}, "Ticketmaster Discovery", NOW)
 
-    from plugins.ticketmaster_events.week_page import LIST, ROW_H, SLIP_TOP
+    from plugins.ticketmaster_events.week_page import KIND_BAR, LIST, ROW_H, SLIP_TOP, THUMB, TIME_COLUMN
 
-    teal = colors["segment_colors"]["sports"]
+    sports = colors["segment_colors"]["sports"]
     for index in range(7):
         top = LIST[1] + SLIP_TOP + index * ROW_H
-        assert image.getpixel((LIST[0] + 8, top + 32)) == teal
+        # The kind's colour is a solid bar down the poster's left edge, as tall as the poster.
+        bar = image.crop((LIST[0] + TIME_COLUMN, top + 3, LIST[0] + TIME_COLUMN + KIND_BAR, top + 3 + THUMB[1]))
+        assert bar.getcolors() == [(KIND_BAR * THUMB[1], sports)]
+        # A hairline parts the row from the one above; nothing frames it.
+        assert image.getpixel((LIST[0] + 200, top - 1)) == colors["rule"]
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])
@@ -179,12 +183,19 @@ def test_dense_slip_preserves_distance_age_and_sale_state_without_overlapping(mo
                  local_time="20:30:00", venue_name="An exceptionally long venue name that must fit", city="San Francisco",
                  distance="123.4 mi", status="rescheduled", price="$38-250",
                  extra={"age": "21+", "sale_start": "2026-10-28T17:00:00Z", "tour_dates": 30})
-    plugin._draw_slip(image, draw, show, (344, 92, 776, 137), "今天", colors, NOW)
+    plugin._draw_slip(image, draw, show, (332, 92, 784, 138), "今天", colors, NOW)
 
     labels = [text for text, _box in calls]
     assert "电子" in labels and "21+" in labels and "改期" in labels and "10/28 开售" in labels
     assert any(text.endswith("123.4 mi") for text in labels)
-    assert all(344 <= box[0] <= box[2] <= 776 and 92 <= box[1] <= box[3] <= 137 for _text, box in calls)
+    # The day's name sits on the hairline over the row; everything else stays within the row.
+    day_box = next(box for text, box in calls if text == "今天")
+    assert day_box[1] < 92 < day_box[3]
+    assert all(332 <= box[0] <= box[2] <= 784 and 92 <= box[1] <= box[3] <= 138
+               for text, box in calls if text != "今天")
+    # The time over the kind's name, both left of the poster.
+    time_box, kind_box = (next(box for text, box in calls if text == label) for label in ("20:30", "电子"))
+    assert time_box[3] < kind_box[1] and max(time_box[2], kind_box[2]) <= 332 + 53
     title_box = next(box for text, box in calls if text.startswith("An exceptionally long artist"))
     place_box = next(box for text, box in calls if text.endswith("123.4 mi"))
     fact_box = next(box for text, box in calls if text == "21+")
@@ -193,6 +204,8 @@ def test_dense_slip_preserves_distance_age_and_sale_state_without_overlapping(mo
     facts = [box for text, box in calls if text in {"改期", "10/28 开售", "21+", "巡演"}]
     assert all(place_box[2] + 8 <= box[0] for box in facts)
     assert all(left[2] + 8 <= right[0] for left, right in zip(facts, facts[1:]))
+    # The facts end at the row's right edge.
+    assert 784 - 6 <= facts[-1][2] <= 784
 
 
 @pytest.mark.parametrize("marker", ["(SOLD OUT)", "[ sold out ]"])
@@ -212,7 +225,7 @@ def test_explicit_sold_out_title_wins_over_conflicting_onsale_zero_price_metadat
     show = event("Music", "Alternative", "Indie Pop", title=f"Blu DeTiger - The Want You Baby Tonight Tour {marker}",
                  status="onsale", price="From $0", extra={"age": "21+"})
     original = show.to_dict()
-    plugin._draw_slip(image, draw, show, (344, 92, 776, 137), "今天", colors, NOW)
+    plugin._draw_slip(image, draw, show, (332, 92, 784, 138), "今天", colors, NOW)
     assert "售罄" in labels and "21+" in labels
     assert "免费" not in labels and "售票中" not in labels
     assert show.to_dict() == original
@@ -279,7 +292,7 @@ def test_week_kinds_count_all_returned_rows_and_leave_unseen_events_unclassified
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])
-def test_legend_uses_the_displayed_kind_words_and_identical_colours(mode):
+def test_each_listed_kind_keeps_its_own_colour_and_the_header_names_none(mode):
     from tests.test_ticketmaster_events import _canonical_theme
 
     plugin = TicketmasterEvents({"id": "ticketmaster_events"})
@@ -295,13 +308,16 @@ def test_legend_uses_the_displayed_kind_words_and_identical_colours(mode):
         original_text(position, text, **kwargs)
 
     draw.text = record
-    shown = plugin._draw_page_header(image, draw, {}, NOW, False, [], colors, shows)
-    assert shown == [event_category(show) for show in shows]
-    for show in shows:
+    groups = plugin._kind_groups(shows, [], colors)
+    assert [keys for _colour, _label, keys in groups] == [[event_category(show)] for show in shows]
+    for show, (colour, label, _keys) in zip(shows, groups):
         key = event_category(show)
-        assert category_label(key) == kind_of(show)[0] and category_label(key) in labels
-        assert category_color(key, colors) == plugin._event_color(show, colors)
-    assert not any(label in labels for label in ("音乐", "体育", "戏剧", "电影", "其他"))
+        assert category_label(key) == kind_of(show)[0] == label
+        assert category_color(key, colors) == plugin._event_color(show, colors) == colour
+    # The header carries the title, the source and the summary: no legend of kinds.
+    plugin._draw_page_header(image, draw, {}, NOW, False, [], colors)
+    words = {label for _colour, label, _keys in groups} | {"音乐", "体育", "戏剧", "电影", "其他"}
+    assert labels and not any(word in text for word in words for text in labels)
 
 
 def test_old_week_cache_remains_neutral_counts_without_inventing_genre_percentages():
@@ -320,13 +336,16 @@ def test_old_week_cache_remains_neutral_counts_without_inventing_genre_percentag
         original_text(position, text, **kwargs)
 
     draw.text = record
-    plugin._draw_on_sale(draw, [], days, NOW.tzinfo, colors, 335, ["music|pop"])
-    plugin._draw_week_band(draw, days, NOW.date(), colors, ["music|pop"])
+    plan = plugin._plan_section(draw, [], days, [], colors)
+    plugin._draw_section(draw, plan, NOW.tzinfo, colors)
+    plugin._draw_week_band(draw, days, NOW.date(), colors, plan["keys"])
     assert "大类样本 · 30/43场" in labels and "类型待更新" in labels
     assert "音乐 20" in labels and not any("%" in label or "流行" in label for label in labels)
     assert "kind_counts" not in days[0]
-    y = WEEK_BAND[3] - 8
-    assert {image.getpixel((x, y)) for x in range(24, 74)} <= {colors["muted"], colors["line"]}
+    # The day's bar is one neutral length, not shares of kinds nobody counted.
+    x0, _y0, x1, y1 = WEEK_BAND
+    bar = {image.getpixel((x, y1 - 3)) for x in range(x0, x0 + (x1 - x0) // 7)}
+    assert bar == {colors["muted"], colors["paper"]}
 
 
 def test_sample_bar_uses_total_events_as_its_denominator():
@@ -340,17 +359,23 @@ def test_sample_bar_uses_total_events_as_its_denominator():
     assert image.getpixel((429, 5)) == category_color(UNCOUNTED, colors)
 
 
+def _legend(plugin, shows, days, colors, max_rows=3):
+    image = Image.new("RGB", (800, 480), colors["paper"])
+    return plugin._mix_legend(ImageDraw.Draw(image), shows, days, colors, 300, max_rows)
+
+
 def test_additional_weekly_kinds_with_a_shared_fallback_colour_are_grouped_neutrally():
     plugin = TicketmasterEvents({"id": "ticketmaster_events"})
     colors = plugin._palette({})
-    image = Image.new("RGB", (800, 480), colors["paper"])
     days = [{"count": 10, "sample_count": 10, "kind_counts": {"music|music": 2, "music|jazz": 8}}]
-    shown = plugin._draw_page_header(image, ImageDraw.Draw(image), {}, NOW, False, days, colors,
-                                     [event(genre="Other")])
+    shown, rows, counts, sampled, total = _legend(plugin, [event(genre="Other")], days, colors)
     assert shown == ["music|music"]
     mix, sampled, total = sampled_mix(days, shown)
     assert mix == {"music|music": 2, OTHER_KINDS: 8} and sampled == total == 10
     assert len({category_color(key, colors) for key in (OTHER_KINDS, "|", UNCOUNTED)}) == 3
+    # The legend names only what the bar shows, each with its count, in the bar's order.
+    assert [text for row in rows for _colour, text, _width in row] == ["音乐 2", "其他类型 8"]
+    assert list(counts.items()) == [("music|music", 2), (OTHER_KINDS, 8)]
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])
@@ -359,25 +384,116 @@ def test_visible_shared_colour_has_one_named_legend_group_and_keeps_all_statisti
 
     plugin = TicketmasterEvents({"id": "ticketmaster_events"})
     colors = plugin._palette({"_inkypi_theme": _canonical_theme(mode)})
-    image = Image.new("RGB", (800, 480), colors["paper"])
-    draw = ImageDraw.Draw(image)
-    shown_text = []
-    original_text = draw.text
-
-    def record(position, text, **kwargs):
-        shown_text.append((text, draw.textbbox(position, text, **{key: kwargs[key] for key in ("font", "anchor") if key in kwargs})))
-        original_text(position, text, **kwargs)
-
-    draw.text = record
     shows = [event(genre="Pop"), event(genre="R&B"), event(genre="Dance/Electronic")]
     days = [{"count": 43, "sample_count": 30,
              "kind_counts": {"music|pop": 10, "music|r&b": 12, "music|dance/electronic": 8}}]
-    shown = plugin._draw_page_header(image, draw, {}, NOW, False, days, colors, shows)
+    shown, rows, counts, sampled, total = _legend(plugin, shows, days, colors)
     assert set(shown) == {event_category(show) for show in shows}
-    labels = [text for text, _box in shown_text]
-    assert labels.count("流行 / R&B") == 1 and "流行" not in labels and "R&B" not in labels
-    group_box = next(box for text, box in shown_text if text == "流行 / R&B")
-    assert 276 <= group_box[0] < group_box[2] < 520 and 0 <= group_box[1] < group_box[3] < 54
+    entries = [(colour, text) for row in rows for colour, text, _width in row]
+    assert [text for _colour, text in entries] == ["流行 / R&B 22", "电子 8", "未统计 13"]
+    assert entries[0][0] == category_color("music|pop", colors) == category_color("music|r&b", colors)
+    assert all(sum(width for _colour, _text, width in row) <= 300 for row in rows)
+    assert counts == {"music|pop": 10, "music|r&b": 12, "music|dance/electronic": 8, UNCOUNTED: 13}
     mix, sampled, total = sampled_mix(days, shown)
     assert mix["music|pop"] == 10 and mix["music|r&b"] == 12 and OTHER_KINDS not in mix
     assert (sampled, total, mix[UNCOUNTED]) == (30, 43, 13)
+
+
+def test_a_legend_too_long_drops_the_counts_then_the_weeks_rarest_kinds():
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    colors = plugin._palette({})
+    kinds = {"music|pop": 30, "music|rock": 25, "music|hip-hop/rap": 20, "music|dance/electronic": 15,
+             "music|alternative": 12, "arts & theatre|comedy": 11, "sports|basketball": 10, "film|film": 10,
+             "arts & theatre|theatre": 10, "music|jazz": 10, "miscellaneous|fairs & festivals": 10}
+    days = [{"count": sum(kinds.values()), "sample_count": sum(kinds.values()), "kind_counts": kinds}]
+    shows = [event(genre="Alternative"), event("Film", "Drama")]
+
+    def entries(rows):
+        return [text for row in rows for _colour, text, _width in row]
+
+    # Three rows hold every kind with its count.
+    shown, rows, counts, _sampled, _total = _legend(plugin, shows, days, colors)
+    assert set(shown) == set(kinds) and counts == kinds and len(rows) == 3
+    assert "流行 30" in entries(rows) and len(entries(rows)) == len(kinds)
+    assert all(sum(width for _colour, _text, width in row) <= 300 for row in rows)
+
+    # Two rows: every kind keeps its colour, named without its count.
+    shown, rows, counts, _sampled, _total = _legend(plugin, shows, days, colors, max_rows=2)
+    assert set(shown) == set(kinds) and len(rows) == 2
+    assert "流行" in entries(rows) and "流行 30" not in entries(rows)
+
+    # One row: the rarest of the week's kinds join the neutral bin; the listed events' kinds stay.
+    shown, rows, counts, _sampled, _total = _legend(plugin, shows, days, colors, max_rows=1)
+    assert len(rows) == 1 and {"music|alternative", "film|film"} <= set(shown) < set(kinds)
+    assert "music|pop" in shown and "miscellaneous|fairs & festivals" not in shown
+    assert counts[OTHER_KINDS] == sum(count for key, count in kinds.items() if key not in shown)
+    assert entries(rows)[-1] == f"其他类型 {counts[OTHER_KINDS]}" and sum(counts.values()) == sum(kinds.values())
+
+
+def test_the_featured_columns_foot_holds_the_sales_over_the_mix_and_ends_at_the_columns_foot():
+    from plugins.ticketmaster_events.week_page import HERO, LEGEND_ROWS, SALE_ROWS
+
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    colors = plugin._palette({})
+    days = [{"count": 43, "sample_count": 30, "kind_counts": {"music|pop": 18, "music|rock": 12}}]
+    sales = [{"title": f"Tour {index}", "sale_start": "2026-10-28T17:00:00Z", "kind": "music|pop"} for index in range(4)]
+    image = Image.new("RGB", (800, 480), colors["paper"])
+    draw = ImageDraw.Draw(image)
+    calls = []
+    original_text = draw.text
+
+    def record(position, text, **kwargs):
+        calls.append((text, draw.textbbox(position, text, font=kwargs["font"])))
+        original_text(position, text, **kwargs)
+
+    draw.text = record
+    quiet = plugin._plan_section(draw, [event(genre="Pop")], days, [], colors)
+    plan = plugin._plan_section(draw, [event(genre="Pop")], days, sales, colors)
+    assert len(plan["sales"]) == SALE_ROWS and len(plan["rows"]) <= LEGEND_ROWS - 1
+    assert quiet["height"] < plan["height"] <= HERO[3] - HERO[1] - 116 - 165
+    plugin._draw_section(draw, plan, NOW.tzinfo, colors)
+    labels = [text for text, _box in calls]
+    assert labels.index("即将开售") < labels.index("Tour 0") < labels.index("类型分布") < labels.index("流行 18")
+    assert "已统计 30/43 场" in labels and "未统计 13" in labels and "Tour 2" not in labels
+    top = HERO[3] - plan["height"]
+    assert all(HERO[0] <= box[0] <= box[2] <= HERO[2] + 1 and top < box[1] <= box[3] <= HERO[3] for _text, box in calls)
+    # One stacked bar across the column: the kinds in the legend's order, then what was never sampled.
+    bar_y = next(box for text, box in calls if text == "类型分布")[3] + 10
+    assert image.getpixel((HERO[0] + 2, bar_y)) == category_color("music|pop", colors)
+    assert image.getpixel((HERO[2] - 3, bar_y)) == category_color(UNCOUNTED, colors)
+
+
+def test_the_weeks_bars_stand_on_one_baseline_as_long_as_each_days_share_of_the_busiest():
+    from plugins.ticketmaster_events.week_page import WEEK_BAND, WEEK_BAR_H
+
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    colors = plugin._palette({})
+    counts = (10, 40, 20, 0, 5, 30, 40)
+    days = [{"date": (NOW.date() + timedelta(days=index)).isoformat(), "count": count, "sample_count": count,
+             "kind_counts": {"music|pop": count}} for index, count in enumerate(counts)]
+    image = Image.new("RGB", (800, 480), colors["paper"])
+    draw = ImageDraw.Draw(image)
+    drawn = []
+    original_text = draw.text
+
+    def record(position, text, **kwargs):
+        drawn.append((text, kwargs["fill"]))
+        original_text(position, text, **kwargs)
+
+    draw.text = record
+    plugin._draw_week_band(draw, days, NOW.date(), colors, ["music|pop"])
+
+    x0, y0, x1, y1 = WEEK_BAND
+    pop = category_color("music|pop", colors)
+    lengths = []
+    for index in range(7):
+        left = round(x0 + index * (x1 - x0) / 7)
+        row = [image.getpixel((x, y1 - 2)) for x in range(left, round(x0 + (index + 1) * (x1 - x0) / 7))]
+        lengths.append(row.count(pop))
+        assert image.getpixel((left, y1 - WEEK_BAR_H - 1)) == colors["paper"]
+    assert lengths[3] == 0 and min(lengths[1], lengths[6]) >= max(lengths) - 1 > 40
+    assert all(abs(length - lengths[1] * count / 40) <= 2 for length, count in zip(lengths, counts))
+    # Every day is named with its date and count; today's count takes the accent.
+    assert [text for text, _fill in drawn][:3] == ["今天 10/26", "10", "场"]
+    assert [fill for text, fill in drawn if text in {"10", "40", "20", "0", "5", "30"}] == [
+        colors["accent"], *[colors["ink"]] * 6]

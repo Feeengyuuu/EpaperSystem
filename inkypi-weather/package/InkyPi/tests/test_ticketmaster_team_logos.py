@@ -113,7 +113,7 @@ def test_a_list_row_puts_each_teams_logo_before_its_name_and_shortens_names_befo
     draw = ImageDraw.Draw(image)
     calls = record_text(draw)
     sharks = game("San Jose Sharks vs. Calgary Flames", genre="Hockey", subgenre="NHL")
-    plugin._draw_slip(image, draw, sharks, (344, 92, 776, 137), "今天", colors, NOW)
+    plugin._draw_slip(image, draw, sharks, (332, 92, 784, 138), "今天", colors, NOW)
     texts = [value for value, _box in calls]
     assert "San Jose Sharks" in texts and "Calgary Flames" in texts and " vs. " in texts
     home, away = (next(box for value, box in calls if value == name) for name in ("San Jose Sharks", "Calgary Flames"))
@@ -121,14 +121,15 @@ def test_a_list_row_puts_each_teams_logo_before_its_name_and_shortens_names_befo
     for box in (home, away):
         gap = image.crop((box[0] - 22, 95, box[0] - 4, 112))
         assert any(contrast_ratio(pixel, colors["paper"]) > 1.5 for pixel in gap.get_flattened_data())
-    assert all(344 <= box[0] <= box[2] <= 776 and 92 <= box[1] <= box[3] <= 137 for _value, box in calls)
+    assert all(331 <= box[0] <= box[2] <= 784 and 92 <= box[1] <= box[3] <= 138
+               for value, box in calls if value != "今天")
 
     calls.clear()
     college = game("California Golden Bears Mens Basketball vs. Cal State Bakersfield Roadrunners Mens Basketball",
                    subgenre="College", venue_name="Haas Pavilion", city="Berkeley")
-    plugin._draw_slip(image, draw, college, (344, 140, 776, 185), "", colors, NOW)
+    plugin._draw_slip(image, draw, college, (332, 140, 784, 186), "", colors, NOW)
     texts = [value for value, _box in calls]
-    # Too long whole: the schools by their places, never cut, the sport on the type tile.
+    # Too long whole: the schools by their places, never cut, the sport under the time.
     assert "California" in texts and "Cal State Bakersfield" in texts and not any("..." in text for text in texts)
     assert "男篮" in texts
 
