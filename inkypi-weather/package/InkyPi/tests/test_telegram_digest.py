@@ -2038,11 +2038,14 @@ def test_list_row_keeps_headlines_at_one_left_edge_with_and_without_a_thumbnail(
 
     assert {x for x, _ in headline_lines(plain)} == {x for x, _ in headline_lines(pictured)} == {486}
     assert "".join(text for _, text in headline_lines(pictured)) == headline
-    # The thumbnail sits under the first line, so the age keeps its column on every row.
+    # The picture comes first: it fills the row's right end from its top to its foot, and the
+    # age ends against it (at the row's end on a row without one).
     assert image.getpixel((760, 110)) == (171, 32, 47)
-    assert image.getpixel((760, 80)) != (171, 32, 47)
+    assert image.getpixel((760, 78)) == (171, 32, 47) and image.getpixel((700, 100)) == (171, 32, 47)
+    assert image.getpixel((684, 100)) != (171, 32, 47)
     age_x = next(x for x, _, text in pictured if text == "25 分钟前")
-    assert age_x > 786 - 66
+    assert 600 < age_x < 786 - 96
+    assert next(x for x, _, text in plain if text == "25 分钟前") > 786 - 96
 
 
 def test_list_row_evens_out_a_headline_whose_second_line_would_be_a_single_character(tmp_path):

@@ -60,6 +60,9 @@ FOCUS_EXTRA_ROWS = 1
 FOCUS_VISIBLE_LIMIT = VISIBLE_COUNT - 2
 # A picture leads when it scores within this much of the best story.
 MEDIA_LEAD_MARGIN = 10
+# The owner wants the page's pictures before its words: a story with a photo or a video scores
+# this much higher, whoever scored it, so pictures take the list's rows first.
+PICTURE_SCORE_STEP = 20
 
 AD_KEYWORDS = re.compile(
     "|".join((
@@ -215,7 +218,8 @@ class Rules:
         return ""
 
     def score(self, item, now_ts):
-        """A rule-only importance: who sent it, the owner's terms, length, picture and age."""
+        """A rule-only importance: who sent it, the owner's terms, length and age (a picture's
+        own step is added with the pin's and the focus chat's, whoever scored the story)."""
         kind = item.get("chat_kind")
         value = 70 if kind == "private" else 50 if kind == "group" else 45
         text = message_text(item)
@@ -226,8 +230,6 @@ class Rules:
             value += 20
         value += FOCUS_SCORE_STEP * self.focus_weight(item)
         value += min(10, len(text) // 30)
-        if str(item.get("media_kind") or "") in {"photo", "video"}:
-            value += 5
         age_hours = max(0, now_ts - int(item.get("date") or now_ts)) // 3600
         value -= min(20, age_hours)
         return max(1, min(100, value))
@@ -361,6 +363,8 @@ class Curator:
         focus = self.rules.focus_weight(item)
         if focus and source == "ai":
             score = min(100, score + FOCUS_SCORE_STEP * focus)
+        if str(item.get("media_kind") or "") in {"photo", "video"}:
+            score = min(100, score + PICTURE_SCORE_STEP)
         return {"score": score, "tag": tag, "headline": headline, "summary": summary,
                 "source": source, "pinned": self.rules.pinned(item), "focus": focus,
                 "fallback_picture": self.rules.fallback_picture(item)}

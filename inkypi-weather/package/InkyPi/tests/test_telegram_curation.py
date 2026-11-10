@@ -318,3 +318,26 @@ def test_the_fallback_picture_chat_is_a_focus_chat_and_marks_its_stories():
     ])
     marks = {item["key"]: item["curation"]["fallback_picture"] for item in ranked}
     assert marks == {"photo": True, "news": False}
+
+
+def test_a_story_with_a_picture_ranks_above_words_alone_whoever_scored_it():
+    from plugins.telegram_digest import curation
+
+    ai = FakeAI({"普通资讯一": {"score": 60}, "一张图": {"score": 45}, "一段视频": {"score": 45},
+                 "重大新闻": {"score": 90}})
+    items = [message("words", "普通资讯一", chat="A"), message("photo", "一张图", chat="B", media_kind="photo"),
+             message("video", "一段视频", chat="C", media_kind="video"), message("big", "重大新闻", chat="D")]
+
+    ranked = curator(ai=ai).curate(items)
+
+    # The picture's step lifts the photo and the video over the plain story; big news still leads.
+    assert [item["key"] for item in ranked][0] == "big"
+    assert {item["key"] for item in ranked[1:3]} == {"photo", "video"}
+    scores = {item["key"]: item["curation"]["score"] for item in ranked}
+    assert scores["photo"] == 45 + curation.PICTURE_SCORE_STEP and scores["words"] == 60
+    # The same step under rule scores, and never past 100.
+    plain, pictured = (curator(settings={"curationMode": "rules"}).curate([message("a", "同样的正文", media_kind=kind)])[0]
+                       for kind in ("text", "photo"))
+    assert pictured["curation"]["score"] - plain["curation"]["score"] == curation.PICTURE_SCORE_STEP
+    top = curator(ai=FakeAI({"满分图": {"score": 95}})).curate([message("x", "满分图", media_kind="photo")])[0]
+    assert top["curation"]["score"] == 100

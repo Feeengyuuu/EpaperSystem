@@ -36,7 +36,7 @@ PORTRAIT_PHOTO_W, PORTRAIT_TEXT_MIN_W, PORTRAIT_FILL_SLACK = 176, 168, 28
 # A list row's headline starts this far under the row's top, below its topic and source line;
 # a row with a picture keeps this width for it beside the headline. A headline's second line
 # shorter than this share of the row's width is evened out with the first.
-ROW_TEXT_TOP, ROW_THUMB_W, ROW_SHORT_LINE = 18, 66, 0.25
+ROW_TEXT_TOP, ROW_THUMB_W, ROW_SHORT_LINE = 18, 96, 0.25
 KIND_LABELS = {"private": "私聊", "group": "群聊", "channel": "频道"}
 ASSETS = Path(__file__).resolve().parent / "assets"
 # Quiet paper-plane and chat doodles in Telegram blue under the lead and the list.
@@ -447,16 +447,17 @@ class BriefingPageMixin:
         return drawn
 
     def _draw_story_row(self, image, draw, item, box, p):
-        """One list row. Its first line names the story at a glance: the topic on a small pill
-        in the topic's colour, the chat's picture and name, and the age set flush right so the
-        ages of all rows read down one column. The headline follows on up to two lines beside
-        the thumbnail; a headline that fits on one line leaves the second to the summary."""
+        """One list row. A story's picture comes before its words: it fills the row's right end
+        from top to foot, and the words keep to its left. The first line names the story at a
+        glance: the topic on a small pill in the topic's colour, the chat's picture and name, and
+        the age set flush right against the picture (the row's end without one). The headline
+        follows on up to two lines; one that fits on one line leaves the second to the summary."""
         x0, y0, x1, y1 = box
         text_top = y0 + self._y(ROW_TEXT_TOP)
         picture = self._open_page_media(item)
         text_right = x1
         if picture is not None:
-            thumb = (x1 - self._x(ROW_THUMB_W), text_top + self._y(2), x1, y1)
+            thumb = (x1 - self._x(ROW_THUMB_W), y0, x1, y1)
             centering = (0.5, 0.15) if picture.height > picture.width * PORTRAIT_RATIO else (0.5, 0.5)
             self._paste_media(image, picture, thumb, p, centering=centering, radius=5)
             text_right = thumb[0] - self._x(8)
@@ -476,7 +477,7 @@ class BriefingPageMixin:
                       font=body_font, fill=p["ink"])
         # Small text stays ink: the topic's colour is the pill's fill, the age's weight sets it apart.
         age, age_font = self._relative_time(item.get("date")), self._f(11, "bold")
-        age_x = x1 - self._text_width(draw, age, age_font)
+        age_x = text_right - self._text_width(draw, age, age_font)
         draw.text((age_x, y0 + self._y(1)), age, font=age_font, fill=p["ink"])
         x = self._row_tag(draw, x0, y0, self._tag(item), self._tag_colour(item, p), p) + self._x(7)
         icon_w = self._paste_source_mark(image, item, x, y0 + self._y(1), self._x(14))
