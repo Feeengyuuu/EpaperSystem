@@ -1304,3 +1304,23 @@ def test_a_model_keeps_the_hub_organisation_openrouter_names_for_it():
 
     # The organisation of the model's repository on the Hub, "" when OpenRouter names none.
     assert [model["hub"] for model in data["models"]] == ["nex-agi", "", "LiquidAI", "", "", ""]
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_openrouter_strip_frames_its_title_with_a_thin_line_and_no_fill(tmp_path, mode):
+    plugin = _plugin(tmp_path)
+    palette = plugin._palette({"_inkypi_theme": canonical_theme(mode)})
+    fonts = {name: plugin._load_font(None, size, weight) for name, (size, weight) in tech_pulse_module.FONT_SPECS.items()}
+    image = Image.new("RGB", (800, 480), palette["background"])
+
+    plugin._draw_openrouter(image, ImageDraw.Draw(image), tech_pulse_module.OPENROUTER_BOX,
+                            _strip_models("tencent/hy4"), palette, fonts, datetime(2026, 11, 5, 18, 0, tzinfo=timezone.utc))
+
+    x0, y0, _x1, y1 = tech_pulse_module.OPENROUTER_BOX
+    middle = (y0 + y1) // 2
+    line = palette["violet"]
+    # A one-pixel frame around the title cell, the strip's own ground inside it, short of the first card.
+    assert image.getpixel((x0 + 6, middle)) == line and image.getpixel((x0 + 142, middle)) == line
+    assert image.getpixel((x0 + 7, middle)) == palette["panel"] and image.getpixel((x0 + 141, middle)) == palette["panel"]
+    assert image.getpixel((x0 + 60, y0 + 6)) == line and image.getpixel((x0 + 60, y1 - 6)) == line
+    assert image.getpixel((x0 + 145, middle)) == palette["panel"]

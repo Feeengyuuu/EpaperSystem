@@ -1302,8 +1302,12 @@ class TechPulse(BasePlugin):
         x0, y0, x1, y1 = box
         self._panel(draw, box, palette, 1.0)
         middle = (y0 + y1) / 2
+        cards_left = x0 + 148
+        # The strip's own title sits in a thin frame of its own, apart from the model cards beside it
+        # (a line only: a tinted block behind it was turned down).
+        draw.rounded_rectangle((x0 + 6, y0 + 6, cards_left - 6, y1 - 6), radius=8, outline=palette["violet"], width=1)
         logo = self._wordmark("openrouter", 15, palette["background"])
-        label_x = x0 + 12
+        label_x = x0 + 14
         if logo is not None:
             image.paste(logo.convert("RGB"), (int(label_x), int(middle - 11 - logo.height / 2)), logo.getchannel("A"))
         else:
@@ -1312,7 +1316,6 @@ class TechPulse(BasePlugin):
         week = (models or {}).get("week")
         caption = f"新模型上架 · 本周 {week} 个" if week else "新模型上架"
         self._draw_text(draw, (label_x, middle + 10), caption, fonts["tiny_bold"], palette["muted"], anchor="lm")
-        cards_left = x0 + 148
         if not rows:
             self._draw_text(draw, ((cards_left + x1) / 2, middle), "暂时无法获取", fonts["small"], palette["muted"],
                             anchor="mm")
