@@ -33,6 +33,8 @@ LEAD_ART_WIDTH = 170
 # logos sized by their shapes, at most this tall, the lead's outlet first.
 LEAD_LOGOS_WIDTH = 250
 SOURCE_LOGO_MAX_HEIGHT = 30
+# In the header the logos stand in rows between the title and the date, at most this tall.
+HEADER_LOGO_MAX_HEIGHT = 22
 SOURCE_LOGO_GAP = (10, 6)
 SOURCE_LOGOS_MAX = 12
 # A logo that is solid lettering from edge to edge looks larger than its row; it is drawn smaller.
@@ -236,10 +238,13 @@ class NewsPage:
     # -- page ---------------------------------------------------------------
     def render(self, *, title, lead, mainland, world, quotes, meta):
         width, height = self.img.size
-        self.header(title, meta, width)
         logos = source_logo_keys(meta.get("source_logos") or [], (lead or {}).get("source_logo"))
-        art_left = width - MARGIN - (LEAD_LOGOS_WIDTH if logos else LEAD_ART_WIDTH)
-        self.lead(lead, width, art_left, logos)
+        self.header(title, meta, width, logos, (lead or {}).get("source_logo"))
+        if logos:
+            # The outlets' logos stand in the header, so the lead runs the page's full width.
+            self.lead(lead, width, width - MARGIN + 12, art=False)
+        else:
+            self.lead(lead, width, width - MARGIN - LEAD_ART_WIDTH)
         column_width = (width - 2 * MARGIN - COLUMN_GAP) // 2
         left_x, right_x = MARGIN, MARGIN + column_width + COLUMN_GAP
         self.column(left_x, column_width, "国内", mainland, sources=meta.get("mainland_sources") or [])
@@ -247,7 +252,7 @@ class NewsPage:
         self.market(left_x, column_width, "A股", quotes.get("a_share") or [], height)
         self.market(right_x, column_width, "美股", quotes.get("us_stock") or [], height)
 
-    def header(self, title, meta, width):
+    def header(self, title, meta, width, logos=(), lead_logo=None):
         c = self.c
         x, y, size = WORDMARK_BOX
         box = self.p._draw_title_wordmark(self.img, x, y, size, c["ink"])
@@ -264,11 +269,18 @@ class NewsPage:
         self.text((right, 11), date_text, 17, True, c["ink"], "ra")
         self.text((right, 36), detail, 11, True, detail_colour, "ra")
         meta_left = right - max(self.width(date_text, 17), self.width(detail, 11))
-        # The newsroom stands on the rule: its objects' feet meet the line drawn over them.
-        self.p._draw_title_background(self.img, (title_right + 12, 1, meta_left - 14, RULE_Y + 1), align="bottom")
+        if logos:
+            # Between the title and the date: the brief's outlets by their official logos, the
+            # lead's first.
+            self.source_wall((title_right + 16, 6, meta_left - 16, RULE_Y - 5), logos, lead_logo,
+                             max_height=HEADER_LOGO_MAX_HEIGHT)
+        else:
+            # Without a logo to show, the newsroom stands on the rule: its objects' feet meet the
+            # line drawn over them.
+            self.p._draw_title_background(self.img, (title_right + 12, 1, meta_left - 14, RULE_Y + 1), align="bottom")
         self.d.line((MARGIN, RULE_Y, right, RULE_Y), fill=c["ink"], width=2)
 
-    def lead(self, lead, width, art_left, logos=()):
+    def lead(self, lead, width, art_left, logos=(), art=True):
         c = self.c
         top, bottom = LEAD_BOX
         if not lead:
@@ -341,6 +353,8 @@ class NewsPage:
         if logos:
             self.source_wall((art_left, top + 2, width - MARGIN, bottom - 2), logos, lead.get("source_logo"))
             return
+        if not art:
+            return
         kind = news_art.topic_kind(lead.get("tag"), lead["title"])
         news_art.draw_topic_art(self.d, (art_left, top + 4, width - MARGIN - 6, bottom - 4), kind,
                                 c["ink"], c["panel"], c["rule"], c["lead"], image=self.img)
@@ -397,14 +411,14 @@ class NewsPage:
             text = text[:-1]
         return text.rstrip() + "…" if text else ""
 
-    def source_wall(self, box, keys, lead_key):
+    def source_wall(self, box, keys, lead_key, max_height=SOURCE_LOGO_MAX_HEIGHT):
         """The brief's outlets as their official logos in rows packed by shape inside ``box``,
         each logo in its own colours on the bare page; a short red rule marks the lead's."""
         left, top, right, bottom = box
         night = sum(tuple(self.c["panel"])[:3]) < 330
         scales = [SOURCE_LOGO_SCALES.get(key, 1.0) for key in keys]
         rows, height = pack_logo_rows([news_art.source_logo_aspect(key) * scale for key, scale in zip(keys, scales)],
-                                      right - left, bottom - top)
+                                      right - left, bottom - top, max_height)
         gap_x, gap_y = SOURCE_LOGO_GAP
         y = top + (bottom - top - len(rows) * height - gap_y * (len(rows) - 1)) / 2
         for row in rows:

@@ -1980,8 +1980,22 @@ def test_render_positions_the_radar_band_between_title_and_meta(monkeypatch):
     monkeypatch.setattr(plugin, "_draw_title_background", fake_draw_title_background)
     monkeypatch.setattr(plugin, "_draw_title_wordmark", lambda image, x, y, size, ink: (18, 10, 168, 46))
 
+    walls = []
+    monkeypatch.setattr(news_layout.NewsPage, "source_wall", lambda self, box, keys, lead_key, **options: walls.append(
+        (tuple(int(value) for value in box), list(keys), options)))
+    monkeypatch.setattr(news_layout, "source_logo_keys", lambda keys, lead_key="": ["bbc", "npr"])
     plugin._render((800, 480), {"brief_title": ""}, _page_payload(), datetime(2026, 10, 21), {"mode": "day"})
 
+    # With outlets to name, their logos stand between the title and the date instead of the
+    # newsroom, and nowhere else: the lead keeps the page's full width.
+    assert "box" not in seen and len(walls) == 1
+    (wall_left, wall_top, wall_right, wall_bottom), keys, options = walls[0]
+    assert wall_left == 168 + 16 and 620 <= wall_right <= 680 and wall_top >= 4 and wall_bottom < news_layout.RULE_Y
+    assert keys == ["bbc", "npr"] and options == {"max_height": news_layout.HEADER_LOGO_MAX_HEIGHT}
+
+    # Without a logo to show, the newsroom art stands there as before.
+    monkeypatch.setattr(news_layout, "source_logo_keys", lambda keys, lead_key="": [])
+    plugin._render((800, 480), {"brief_title": ""}, _page_payload(), datetime(2026, 10, 21), {"mode": "day"})
     left, top, right, bottom = seen["box"]
     assert left == 168 + 12
     # The newsroom stands on the eyebrow rule: its box reaches the rule, its art sits at the bottom.
