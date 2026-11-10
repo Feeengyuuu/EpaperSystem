@@ -427,15 +427,7 @@ def render_page(dimensions, payload, settings, now):
     placed = paste_local_wordmark(canvas.image, ASSETS / "title_wordmark.png", (10, 2, 250, 50), align="left")
     title_right = placed[2] if placed else 14 + canvas.text((14, 26), "湾区路况", 28, anchor="lm")
     date_left = 788 - canvas.text((788, 26), f"{now:%m.%d} 周{WEEKDAYS[now.weekday()]} {now:%H:%M}", 16, anchor="rm")
-    signal = _art("icons", "signal", 34)
-    if signal is not None:
-        date_left -= signal.width + 10
-        _paste(canvas, signal, (date_left, 26 - signal.height / 2))
-    x = title_right + 14
-    cctv = _art("icons", "cctv", 28)
-    if cctv is not None:
-        _paste(canvas, cctv, (x, 26 - cctv.height / 2))
-        x += cctv.width + 8
+    x = title_right + 16
     cameras = payload["cameras"]
     roving = bool(cameras and cameras[0].get("patrol"))
     near = len(cameras) - (1 if roving else 0)
@@ -443,13 +435,13 @@ def render_page(dimensions, payload, settings, now):
     caltrans = _source_logo(canvas, CALTRANS_LOGO_HEIGHT)
     if caltrans is not None:
         _paste(canvas, caltrans, (x, 26 - caltrans.height / 2))
-        x += caltrans.width + 7
+        x += caltrans.width + 12
     note = "实时监控" if caltrans is not None else "Caltrans 实时监控"
     if roving:
         note += " · 湾区随机巡视"
     if near:
         note += f" · 离家最近 {near} 个镜头"
-    canvas.text((x, 26), note, 13, "muted", anchor="lm", bold=False, width=date_left - x - 12)
+    canvas.text((x, 26), note, 13, "ink", anchor="lm", bold=False, width=date_left - x - 12)
     canvas.rule((12, 52, 788, 52), "ink", 2)
     _main(canvas, payload, now)
     _timelapse(canvas, payload, now)

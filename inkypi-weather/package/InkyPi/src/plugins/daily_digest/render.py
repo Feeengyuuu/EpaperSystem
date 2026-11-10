@@ -186,16 +186,10 @@ def _header(canvas, night, payload, now):
         x = 10 + title.width + 18
     else:
         x = 14 + canvas.text((14, 28), "万象速览", 30, anchor="lm") + 18
-    # The date and the colour key of the cards, at the right.
-    date_w = canvas.text((790, 19), f"{now:%m.%d} 周{WEEKDAYS[now.weekday()]}  {now:%H:%M}", 17, anchor="rm")
-    key_x = 790
-    for kind in reversed(KIND_ORDER):
-        key_x -= canvas.width(kind, 10, False)
-        canvas.text((key_x, 43), kind, 10, "muted", anchor="lm", bold=False)
-        key_x -= 12
-        canvas.draw.rounded_rectangle((key_x, 38, key_x + 9, 47), radius=2, fill=canvas.color(kind))
-        key_x -= 8
-    right = min(790 - date_w, key_x) - 16
+    # The date at the right; the line of verse has the rest of the header (the cards wear their
+    # kinds' colours on their own bars, with no key to read them by).
+    date_w = canvas.text((790, 27), f"{now:%m.%d} 周{WEEKDAYS[now.weekday()]}  {now:%H:%M}", 17, anchor="rm")
+    right = 790 - date_w - 16
     poem = (payload.get("poem") or {}).get("data") or {}
     if poem.get("text"):
         x += _paste_logo(canvas, night, "hitokoto", x, 21, 20) + 8

@@ -11,7 +11,7 @@ from PIL import Image, ImageOps
 
 from utils.doodle_backdrop import paint_doodles
 from utils.flat_icons import draw_icon
-from utils.local_wordmark import paste_header_art, paste_local_wordmark
+from utils.local_wordmark import paste_local_wordmark
 from utils.fonts import load_font
 from utils.page_canvas import PageCanvas
 
@@ -143,6 +143,10 @@ def _luminance(rgb):
     channels = [value / 255 for value in rgb[:3]]
     channels = [value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4 for value in channels]
     return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+# The header's source logos (iNaturalist, eBird) this tall, this far apart.
+HEADER_LOGO_HEIGHTS, HEADER_LOGO_GAP = (26, 22), 14
 
 
 @lru_cache(maxsize=8)
@@ -534,14 +538,16 @@ def render_page(dimensions, payload, settings, now, images):
     canvas.serif, canvas.latin = _FaceCanvas(canvas, "serif"), _FaceCanvas(canvas, "latin")
     pasted = paste_local_wordmark(canvas.image, ASSETS / "title_wordmark.png", (12, 4, 232, 50), align="left")
     title_right = pasted[2] if pasted else 16 + canvas.text((16, 27), "湾区德鲁伊", 30, anchor="lm")
-    # The page's source by its own logo, then the area it covers.
-    logo_w = _paste_logo(canvas, "inaturalist", (title_right + 14, 30), 20)
-    subtitle_left = title_right + 14 + (logo_w + 10 if logo_w else 0)
+    # The page's sources by their own logos (iNaturalist's observations, eBird's rarities), then
+    # the area it covers.
+    logo_w = _paste_logo(canvas, "inaturalist", (title_right + 16, 29), HEADER_LOGO_HEIGHTS[0])
+    subtitle_left = title_right + 16 + (logo_w + HEADER_LOGO_GAP if logo_w else 0)
+    bird_w = _paste_logo(canvas, "ebird", (subtitle_left, 29), HEADER_LOGO_HEIGHTS[1])
+    subtitle_left += bird_w + HEADER_LOGO_GAP if bird_w else 0
     subtitle = f"半径 {payload['radius_km']} km · 研究级观察" if logo_w else \
         f"iNaturalist · 半径 {payload['radius_km']} km · 研究级观察"
-    subtitle_right = subtitle_left + canvas.text((subtitle_left, 30), subtitle, 14, "muted", anchor="lm", bold=False)
     date_left = 788 - canvas.text((788, 27), f"{now:%m.%d} 周{WEEKDAYS[now.weekday()]} {now:%H:%M}", 16, anchor="rm")
-    paste_header_art(canvas.image, ASSETS / "header_art.png", subtitle_right, date_left)
+    canvas.text((subtitle_left, 30), subtitle, 14, "ink", anchor="lm", bold=False, width=date_left - 12 - subtitle_left)
     canvas.rule((12, 52, 788, 52), "ink", 2)
     _hero(canvas, payload, images, now)
     _species(canvas, payload, images)
