@@ -46,7 +46,16 @@ ACME_ORG = "https://huggingface.co/api/organizations/acme/avatar"
 ACME_USER = "https://huggingface.co/api/users/acme/avatar"
 ACME = "https://cdn-avatars.huggingface.co/v1/production/uploads/6828d5f2/X6_QZmbo.png"
 ALLOWED_HOSTS = {"t3.gstatic.com", "github.com", "avatars.githubusercontent.com", "huggingface.co",
-                 "cdn-avatars.huggingface.co"}
+                 "cdn-avatars.huggingface.co", "openrouter.ai"}
+# A maker without a mark in the package: OpenRouter's own page for it, the icon that page shows, and
+# the Hub organisation OpenRouter names for its model.
+NEX_PAGE, NEX_ICON = "https://openrouter.ai/nex-agi", "https://openrouter.ai/images/icons/NexAGI.svg"
+NEX_HUB_ORG = "https://huggingface.co/api/organizations/nex-agi/avatar"
+NEX_HUB = "https://cdn-avatars.huggingface.co/v1/production/uploads/65435cad/a_O9jT.png"
+SVG_MARK = (b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">'
+            b'<rect x="2" y="2" width="6" height="6" fill="#102030"/></svg>')
+SITE_FAVICON = ("https://t0.gstatic.com/faviconV2?client=SOCIAL&amp;type=FAVICON&amp;fallback_opts=TYPE,SIZE,URL"
+                "&amp;url={site}&amp;size=256")
 
 
 def _png(colour, size=(48, 48)):
@@ -84,6 +93,9 @@ class _Web:
     def request_json(self, method, url, **kwargs):
         return SimpleNamespace(status=200, data=self._answer(url, kwargs), headers={}, url=url)
 
+    def request_text_head(self, method, url, **kwargs):
+        return SimpleNamespace(status=200, data=self._answer(url, kwargs), headers={}, url=url)
+
     @property
     def urls(self):
         return [url for url, _kwargs in self.asked]
@@ -112,6 +124,28 @@ WANTS = [
 def _load(tmp_path, web, wants=WANTS, *, now=NOW, cached_only=False, context=None):
     return item_icons.load(wants, tmp_path / "icons", tmp_path / "icon-lookups.json", http=web,
                            context=context or _context(), cached_only=cached_only, user_agent=AGENT, now=now)
+
+
+def _author_page(author, src, *, before=""):
+    """An OpenRouter author page as it is served: the author's icon in the card at its head, named
+    for the author's id; other icons (a provider's, named by its display name) may stand around it."""
+    icon = (f'<img width="256" height="256" alt="Favicon for {author}" class="h-full w-full object-cover" '
+            f'src="{src}" loading="lazy" decoding="async"/>')
+    return (f'<!DOCTYPE html><html><body><main>{before}<div class="size-6 rounded-full"><picture>{icon}</picture>'
+            f"</div><h1>A maker</h1></main></body></html>")
+
+
+MAKER_WANTS = [Wanted("maker:nex-agi", "", ("openrouter", "nex-agi")), Wanted("hub:nex-agi", "", ("hub", "nex-agi"))]
+
+
+def _maker_web(**extra):
+    return _Web({NEX_PAGE: _author_page("nex-agi", "/images/icons/NexAGI.svg"), NEX_ICON: SVG_MARK,
+                 NEX_HUB_ORG: {"avatarUrl": NEX_HUB}, NEX_HUB: _png((240, 200, 20, 255)), **extra})
+
+
+def _kept_addresses(tmp_path):
+    path = tmp_path / "icon-lookups.json"
+    return json.loads(path.read_text(encoding="utf-8"))["addresses"] if path.exists() else {}
 
 
 # --- whose icon ------------------------------------------------------------------------------
@@ -152,7 +186,8 @@ def test_an_owner_or_author_always_has_a_key_but_is_only_asked_when_its_name_is_
     assert wants == [Wanted("hub:sp ace"), Wanted("github:we_ird!")]
 
 
-@pytest.mark.parametrize("url", [ANTHROPIC, MORLUTO, ACME])
+@pytest.mark.parametrize("url", [ANTHROPIC, MORLUTO, ACME, NEX_ICON,
+                                 "https://openrouter.ai/images/icons/XingChen-Shield.png"])
 def test_the_modules_own_addresses_are_safe(url):
     assert item_icons.safe_icon_url(url) == url
 
@@ -168,11 +203,90 @@ def test_the_modules_own_addresses_are_safe(url):
     "https://cdn-avatars.huggingface.co/v1/production/uploads/a/b.png?redirect=https://evil.example",
     "https://huggingface.co/avatars/abc.svg",
     "https://example.com/favicon.ico",
+    "https://openrouter.ai/nex-agi",
+    "https://openrouter.ai/images/NexAGI.svg",
+    "https://openrouter.ai/images/icons/nested/NexAGI.svg",
+    "https://openrouter.ai/images/icons/NexAGI.svg?next=https://evil.example",
+    "https://openrouter.ai/images/icons/NexAGI.gif",
+    "https://openrouter.ai.evil.example/images/icons/NexAGI.svg",
+    "http://openrouter.ai/images/icons/NexAGI.svg",
     "",
     None,
 ])
 def test_any_other_address_is_refused(url):
     assert item_icons.safe_icon_url(url) is None
+
+
+@pytest.mark.parametrize("src, address", [
+    # An icon OpenRouter keeps itself, drawn (SVG) or a picture.
+    ("/images/icons/NexAGI.svg", NEX_ICON),
+    ("/images/icons/XingChen-Shield.png", "https://openrouter.ai/images/icons/XingChen-Shield.png"),
+    ("https://openrouter.ai/images/icons/Perplexity.png", "https://openrouter.ai/images/icons/Perplexity.png"),
+    # The maker's own site by Google's favicon service: asked for that site at this module's host.
+    (SITE_FAVICON.format(site="https://www.upstage.ai/"), item_icons.FAVICON_URL.format(host="www.upstage.ai")),
+    (SITE_FAVICON.format(site="https://elorian.ai/assets/favicon.svg"), item_icons.FAVICON_URL.format(host="elorian.ai")),
+    (SITE_FAVICON.format(site="https://NEX.sii.edu.cn/en/"), item_icons.FAVICON_URL.format(host="nex.sii.edu.cn")),
+])
+def test_a_makers_icon_is_the_one_its_openrouter_page_shows(src, address):
+    assert item_icons.maker_icon(_author_page("nex-agi", src), "nex-agi") == address
+    assert item_icons.safe_icon_url(address) == address
+
+
+@pytest.mark.parametrize("src", [
+    # A community author's page shows the Hub's own icon (or another shared site's), not the maker's.
+    SITE_FAVICON.format(site="https://huggingface.co/"),
+    SITE_FAVICON.format(site="https://github.com/someone"),
+    SITE_FAVICON.format(site="https://openrouter.ai/"),
+    SITE_FAVICON.format(site="http://127.0.0.1:8080/"),
+    SITE_FAVICON.format(site="localhost"),
+    "https://t0.gstatic.com/faviconV2?client=SOCIAL&amp;size=256",
+    "https://t0.gstatic.com.evil.example/faviconV2?url=https://www.upstage.ai/",
+    "https://t0.gstatic.com/other?url=https://www.upstage.ai/",
+    "https://evil.example/images/icons/NexAGI.svg",
+    "//evil.example/images/icons/NexAGI.svg",
+    "/images/icons/../../api/v1/key.svg",
+    "/images/icons/nested/NexAGI.svg",
+    "/images/icons/NexAGI.svg?next=https://evil.example",
+    "/images/icons/NexAGI.gif",
+    "/images/other/NexAGI.svg",
+    "data:image/svg+xml;base64,AAAA",
+    "",
+])
+def test_an_icon_that_is_not_the_makers_own_or_not_from_a_known_place_is_not_used(src):
+    assert item_icons.maker_icon(_author_page("nex-agi", src), "nex-agi") == ""
+
+
+def test_only_the_icon_named_for_the_author_counts():
+    page = _author_page("nex-agi", "/images/icons/NexAGI.svg",
+                        before='<img alt="Favicon for Nex AGI" src="/images/icons/Provider.png"/>'
+                               '<img alt="Favicon for nex-agi-labs" src="/images/icons/Other.png"/>'
+                               '<img src="/images/icons/Unnamed.png"/>')
+
+    assert item_icons.maker_icon(page, "nex-agi") == NEX_ICON
+    assert item_icons.maker_icon(page, "elorian") == ""
+    assert item_icons.maker_icon("", "nex-agi") == "" and item_icons.maker_icon(None, "nex-agi") == ""
+
+
+def test_a_card_without_a_bundled_mark_asks_for_its_maker_and_for_the_hub_organisation_named():
+    wants = item_icons.wanted(stories=[{"domain": "anthropic.com"}], skills=[{"source": "vercel-labs/skills"}],
+                              makers=[("nex-agi", "nex-agi"), ("elorian", ""), ("nex-agi", "nex-agi"),
+                                      ("odd name", None), ("", "acme"), ("sao10k", "Sao10K"), ("x", "sp ace")])
+
+    # After the items' own icons, so a slow page never costs them their time. Each maker once: its
+    # icon on OpenRouter, then the avatar of the Hub organisation OpenRouter names for its model.
+    assert wants == [
+        Wanted("site:anthropic.com", ANTHROPIC),
+        Wanted("github:vercel-labs", "", ("github", "vercel-labs")),
+        Wanted("maker:nex-agi", "", ("openrouter", "nex-agi")),
+        Wanted("hub:nex-agi", "", ("hub", "nex-agi")),
+        Wanted("maker:elorian", "", ("openrouter", "elorian")),
+        Wanted("hub:acme", "", ("hub", "acme")),
+        Wanted("maker:sao10k", "", ("openrouter", "sao10k")),
+        Wanted("hub:Sao10K", "", ("hub", "Sao10K")),
+        Wanted("maker:x", "", ("openrouter", "x")),
+    ]
+    assert item_icons.maker_key("nex-agi") == "maker:nex-agi" and item_icons.maker_key("") == ""
+    assert item_icons.hub_key("Sao10K") == "hub:Sao10K" and item_icons.hub_key("sp ace") == "" == item_icons.hub_key(None)
 
 
 def test_a_github_avatar_is_kept_at_the_size_the_page_uses():
@@ -301,6 +415,74 @@ def test_a_spoiled_lookups_file_is_read_as_empty(tmp_path):
 
     assert "hub:acme" in _load(tmp_path, web)
     assert json.loads((tmp_path / "icon-lookups.json").read_text(encoding="utf-8"))["addresses"]["hub:acme"]["url"] == ACME
+
+
+def test_a_makers_icon_is_asked_from_openrouter_drawn_and_kept(tmp_path):
+    web = _maker_web()
+
+    icons = _load(tmp_path, web, MAKER_WANTS)
+
+    # OpenRouter's own SVG is drawn to a picture; the Hub's avatar is at hand beside it.
+    mark = icons["maker:nex-agi"]
+    assert mark.mode == "RGBA" and mark.size == (64, 64)
+    assert mark.getpixel((32, 32)) == (16, 32, 48, 255) and mark.getpixel((2, 2))[3] == 0
+    assert icons["hub:nex-agi"].getpixel((5, 5)) == (240, 200, 20, 255)
+    assert web.urls == [NEX_PAGE, NEX_HUB_ORG, NEX_ICON, NEX_HUB]
+    assert {url.split("/")[2] for url in web.urls} <= ALLOWED_HOSTS
+    # Only the head of the author's page is read, from OpenRouter itself: a redirect is not followed.
+    asked = dict(web.asked)[NEX_PAGE]
+    assert asked["max_bytes"] == item_icons.MAKER_PAGE_BYTES and asked["allow_redirects"] is False
+    assert all(kwargs["headers"]["User-Agent"] == AGENT for _url, kwargs in web.asked)
+    assert _kept_addresses(tmp_path)["openrouter:nex-agi"]["url"] == NEX_ICON
+
+    # A redraw reads the kept picture with no client; the next refresh asks nothing.
+    again = _load(tmp_path, None, MAKER_WANTS, cached_only=True)
+    assert again["maker:nex-agi"].getpixel((32, 32)) == (16, 32, 48, 255)
+    quiet = _maker_web()
+    assert set(_load(tmp_path, quiet, MAKER_WANTS, now=NOW + timedelta(hours=1))) == {"maker:nex-agi", "hub:nex-agi"}
+    assert quiet.urls == []
+
+
+def test_a_page_that_shows_only_the_hubs_icon_is_remembered_as_having_none(tmp_path):
+    wants = [Wanted("maker:sao10k", "", ("openrouter", "sao10k"))]
+    web = _Web({"https://openrouter.ai/sao10k": _author_page("sao10k", SITE_FAVICON.format(site="https://huggingface.co/"))})
+
+    assert _load(tmp_path, web, wants) == {}
+
+    assert _kept_addresses(tmp_path)["openrouter:sao10k"]["url"] == ""
+    # Inside NO_AVATAR it is not asked again; after it, once more.
+    resting = _Web({})
+    _load(tmp_path, resting, wants, now=NOW + timedelta(hours=1))
+    assert resting.urls == []
+    later = _Web({})
+    _load(tmp_path, later, wants, now=NOW + item_icons.NO_AVATAR + timedelta(minutes=1))
+    assert later.urls == ["https://openrouter.ai/sao10k"]
+
+
+@pytest.mark.parametrize("answer, remembered", [
+    (HttpStatusError("GET", "https://openrouter.ai/ghost", 404), True),   # no such author
+    (HttpStatusError("GET", "https://openrouter.ai/ghost", 403), True),   # refused: it is not asked every refresh
+    (HttpStatusError("GET", "https://openrouter.ai/ghost", 308), True),   # moved: not followed
+    (HttpStatusError("GET", "https://openrouter.ai/ghost", 503), False),  # down: asked again next refresh
+    (HttpClientError("transport failed"), False),
+    (ValueError("not text"), False),
+])
+def test_an_author_page_that_cannot_be_read_gives_no_icon(tmp_path, answer, remembered):
+    wants = [Wanted("maker:ghost", "", ("openrouter", "ghost"))]
+
+    assert _load(tmp_path, _Web({"https://openrouter.ai/ghost": answer}), wants) == {}
+
+    assert ("openrouter:ghost" in _kept_addresses(tmp_path)) == remembered
+
+
+def test_an_icon_that_cannot_be_drawn_rests_like_any_failed_picture(tmp_path):
+    web = _maker_web(**{NEX_ICON: b"<!doctype html><html><body>Not found</body></html>"})
+
+    assert _load(tmp_path, web, MAKER_WANTS[:1]) == {}
+
+    kept = json.loads((tmp_path / "icon-lookups.json").read_text(encoding="utf-8"))
+    assert list(kept["missed"]) == [NEX_ICON] and kept["addresses"]["openrouter:nex-agi"]["url"] == NEX_ICON
+    assert list((tmp_path / "icons").glob("*.png")) == []
 
 
 # --- on the page -----------------------------------------------------------------------------
@@ -438,6 +620,36 @@ def test_a_lettered_tile_stands_in_with_the_same_colour_for_the_same_source():
     colours = {item_icons.monogram(f"site:{name}.com", 20, font).getpixel((10, 1))[:3]
                for name in ("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel")}
     assert len(colours) >= 3
+
+
+def test_a_wide_mark_keeps_its_shape_inside_a_cards_slot_without_a_plate():
+    wide = Image.new("RGBA", (64, 16), (255, 255, 255, 255))
+    ImageDraw.Draw(wide).rectangle((2, 3, 61, 12), fill=(0, 0, 0, 255))
+
+    night = item_icons.mark_within(wide, 46, 16, NIGHT_PAPER)
+    day = item_icons.mark_within(wide, 46, 16, DAY_PAPER)
+
+    for mark in (night, day):
+        # The mark alone, as wide as the slot lets it be and no taller than its line: every pixel
+        # of the picture returned is the mark's (nothing of its white paper around it).
+        assert mark.mode == "RGBA" and mark.width == 46 and 6 <= mark.height <= 16
+        assert mark.getpixel((23, mark.height // 2))[3] == 255
+    assert _luma(night.getpixel((23, night.height // 2))) > 230 and _luma(day.getpixel((23, day.height // 2))) < 25
+
+
+def test_a_square_mark_stands_as_tall_as_the_cards_line():
+    black = _drawn((255, 255, 255, 255), (0, 0, 0, 255), shape="ellipse")
+    tile = _drawn((255, 102, 0, 255), (255, 255, 255, 255))
+
+    mark = item_icons.mark_within(black, 46, 16, NIGHT_PAPER)
+    square = item_icons.mark_within(tile, 46, 16, NIGHT_PAPER)
+
+    # Cut from its paper and turned for the night page; a tile of a colour keeps its square.
+    assert mark.height == 16 and mark.width <= 16 and _luma(mark.getpixel((mark.width // 2, 8))) > 230
+    red, green, blue, alpha = square.getpixel((8, 1))
+    assert square.size == (16, 16) and red > 240 and 90 <= green <= 115 and blue < 20 and alpha == 255
+    # Its corners are rounded away (at this size the corner pixel keeps a trace), its drawing whole.
+    assert square.getpixel((0, 0))[3] < 32 and min(square.getpixel((8, 8))[:3]) > 240
 
 
 # --- the page --------------------------------------------------------------------------------
@@ -610,6 +822,82 @@ def test_a_refresh_fetches_icons_only_for_the_rows_drawn(tmp_path, monkeypatch):
         icon.close()
 
 
+def _strip(*rows):
+    """OpenRouter's newest models as the page keeps them: (id, name, the Hub organisation named)."""
+    return {"week": len(rows), "models": [
+        {"id": model_id, "provider": model_id.split("/")[0], "name": name, "hub": hub,
+         "created": "2026-11-09T12:00:00+00:00", "context": 262144, "prompt": 0.2, "completion": 0.6, "vision": False}
+        for model_id, name, hub in rows]}
+
+
+NO_STORIES = {"stories": [], "status": {"source_state": "live"}}
+
+
+@pytest.mark.parametrize("mode", ["night", "day"])
+def test_the_strip_names_a_maker_without_a_bundled_mark_by_the_icon_fetched_for_it(tmp_path, monkeypatch, mode):
+    plugin = _plugin(tmp_path)
+    _marks, texts = _tracked(plugin, monkeypatch)
+    palette = plugin._palette({"_inkypi_theme": _theme(mode)})
+    fonts = {name: plugin._load_font(None, size, weight) for name, (size, weight) in tech_pulse_module.FONT_SPECS.items()}
+    models = _strip(("nex-agi/nex-n2.6", "Nex-N2.6", "nex-agi"), ("sao10k/l3-euryale", "Euryale", "Sao10K"),
+                    ("stealth/crouton-alpha", "Crouton", ""))
+    icons = {"maker:nex-agi": Image.new("RGBA", (64, 64), MAGENTA), "hub:Sao10K": Image.new("RGBA", (64, 64), TEAL)}
+    image = Image.new("RGB", (800, 480), palette["background"])
+
+    plugin._draw_openrouter(image, ImageDraw.Draw(image), tech_pulse_module.OPENROUTER_BOX, models, palette, fonts, NOW,
+                            icons=icons)
+
+    module = tech_pulse_module
+    x0, y0, x1, _y1 = module.OPENROUTER_BOX
+    width = (x1 - 8 - (x0 + 148) - 6 * (module.OPENROUTER_CARDS - 1)) / module.OPENROUTER_CARDS
+    lettered = {text for text, _box in texts}
+    # OpenRouter's icon names the first maker, the Hub's avatar the second: neither keeps a chip.
+    # The third, with no icon at hand, still has the chip with its name.
+    assert not {"Nex", "Sao10K", "Sao10k"} & lettered and "Stealth" in lettered
+    side = module.PROVIDER_MARK_HEIGHT
+    for index, colour in enumerate((MAGENTA, TEAL)):
+        left = int(x0 + 148 + index * (width + 6) + 10)
+        # The mark stands on the card's first line where the chip was, as tall as a bundled mark.
+        slot = image.crop((left, y0 + 9, left + side, y0 + 9 + side)).get_flattened_data()
+        assert sum(1 for pixel in slot if pixel == colour[:3]) > 150, index
+    # The model's name starts clear of the mark.
+    boxes = dict(texts)
+    assert x0 + 148 + 10 + side + 4 <= boxes["Nex-N2.6"][0] <= x0 + 148 + 10 + side + 10
+
+
+def test_a_refresh_asks_for_the_makers_of_the_cards_drawn_that_have_no_bundled_mark(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    web = _maker_web()
+    monkeypatch.setattr(tech_pulse_module, "get_http_client", lambda: web)
+    models = _strip(("anthropic/claude-fable-5.2", "Claude Fable 5.2", ""), ("nex-agi/nex-n2.6", "Nex-N2.6", "nex-agi"),
+                    ("thinkingmachines/inkling-2-small", "Inkling 2 Small", ""), ("elorian/atlas-1", "Atlas 1", ""))
+
+    icons = plugin._icons(NO_STORIES, None, models, cache_only=False)
+
+    # Anthropic and Thinking Machines have their marks in the package; the fourth card is not drawn.
+    assert set(icons) == {"maker:nex-agi", "hub:nex-agi"}
+    assert web.urls == [NEX_PAGE, NEX_HUB_ORG, NEX_ICON, NEX_HUB]
+    for icon in icons.values():
+        icon.close()
+
+    # A theme render reads what was kept, with no client.
+    monkeypatch.setattr(tech_pulse_module, "get_http_client",
+                        lambda: (_ for _ in ()).throw(AssertionError("a theme render must not open a client")))
+    kept = plugin._icons(NO_STORIES, None, models, cache_only=True)
+    assert set(kept) == {"maker:nex-agi", "hub:nex-agi"}
+
+
+def test_a_strip_whose_makers_all_have_bundled_marks_asks_for_nothing(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    web = _maker_web()
+    monkeypatch.setattr(tech_pulse_module, "get_http_client", lambda: web)
+    models = _strip(("anthropic/claude-fable-5.2", "Claude Fable 5.2", ""), ("~openai/gpt-latest", "GPT Latest", "openai"))
+
+    assert plugin._icons(NO_STORIES, None, models, cache_only=False) == {}
+    assert plugin._icons(NO_STORIES, None, None, cache_only=False) == {}
+    assert web.urls == []
+
+
 def test_stand_in_stories_and_demo_boards_ask_for_no_icons(tmp_path, monkeypatch):
     plugin = _plugin(tmp_path)
     web = _web()
@@ -717,14 +1005,16 @@ def test_generate_image_hands_the_icons_to_the_page_and_closes_them(tmp_path, mo
     monkeypatch.setattr(plugin, "_ai_payload", lambda settings, device, now: _boards())
     monkeypatch.setattr(plugin, "_history", lambda *args, **kwargs: {})
     monkeypatch.setattr(plugin, "_write_context", lambda *_args: None)
-    monkeypatch.setattr(plugin, "_openrouter", lambda now, cache_only=False: None)
-    monkeypatch.setattr(plugin, "_icons", lambda payload, ai, cache_only: (asked.append(cache_only),
-                                                                             {"site:anthropic.com": icon})[1])
+    strip = _strip(("nex-agi/nex-n2.6", "Nex-N2.6", "nex-agi"))
+    monkeypatch.setattr(plugin, "_openrouter", lambda now, cache_only=False: strip)
+    monkeypatch.setattr(plugin, "_icons", lambda payload, ai, models, cache_only: (
+        asked.append((models, cache_only)), {"site:anthropic.com": icon})[1])
     monkeypatch.setattr(plugin, "_render_page", lambda *args: (drawn.append(args[-1]),
                                                                Image.new("RGB", (800, 480), "black"))[1])
     settings = {"_inkypi_theme": _theme("night"), **({"_theme_render_only": True} if theme_only else {})}
 
     plugin.generate_image(settings, _Device())
 
-    assert asked == [theme_only] and drawn == [{"site:anthropic.com": icon}]
+    # The icons are asked for the strip's makers too, and handed to the page.
+    assert asked == [(strip, theme_only)] and drawn == [{"site:anthropic.com": icon}]
     icon.close.assert_called_once_with()

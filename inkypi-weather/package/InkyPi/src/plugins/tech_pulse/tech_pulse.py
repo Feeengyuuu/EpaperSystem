@@ -120,7 +120,9 @@ PROVIDER_NAMES = {
     "thinkingmachines": "Thinking Machines",
 }
 # Each OpenRouter author (a model id's part before "/") whose official mark is in assets/logos
-# (tools/build_source_logos.py), by its file's key; an author not here keeps the chip with its name.
+# (tools/build_source_logos.py), by its file's key. An author not here is named by the icon
+# OpenRouter itself shows for it, fetched during a refresh (item_icons.py), and until one is at
+# hand by the chip with its name.
 PROVIDER_LOGOS = {
     "openrouter": "openrouter_icon", "openai": "provider-openai", "anthropic": "provider-anthropic",
     "google": "provider-google", "meta-llama": "provider-meta-llama", "meta": "provider-meta-llama",
@@ -298,7 +300,7 @@ class TechPulse(BasePlugin):
         if not theme_only:
             self._write_context(payload, now, ai)
         models = self._openrouter(now, cache_only=theme_only)
-        icons = self._icons(payload, ai, cache_only=theme_only)
+        icons = self._icons(payload, ai, models, cache_only=theme_only)
         try:
             image = self._render_page(dimensions, payload, settings, now, ai, history, models, icons)
         finally:
@@ -374,16 +376,29 @@ class TechPulse(BasePlugin):
             logger.warning("Tech Pulse AI boards unavailable: %s", exc)
             return None
 
-    def _icons(self, payload, ai, *, cache_only):
+    def _unmarked_makers(self, models):
+        """(author, the Hub organisation OpenRouter names for the model) of each card the strip
+        draws whose maker has no official mark in the package."""
+        makers = []
+        for model in ((models or {}).get("models") or [])[:OPENROUTER_CARDS]:
+            model = model if isinstance(model, dict) else {}
+            author = provider_author(model.get("id") or model.get("provider"))
+            if author and author not in PROVIDER_LOGOS:
+                makers.append((author, model.get("hub")))
+        return makers
+
+    def _icons(self, payload, ai, models=None, *, cache_only):
         """Each drawn item's own mark (item_icons.py), {key: RGBA icon}: what is kept, and during a
-        refresh what can be fetched within ICON_SECONDS. A missing icon only leaves its item a
-        lettered tile; the icons' own time running out never fails the page."""
+        refresh what can be fetched within ICON_SECONDS; with them the icons of the strip's makers
+        that have no bundled mark. A missing icon only leaves its item a lettered tile (a maker its
+        chip); the icons' own time running out never fails the page."""
         # The stand-in stories of an offline page name no real sites.
         sample = (payload.get("status") or {}).get("source_state") == "local_sample"
         wants = item_icons.wanted([] if sample else (payload.get("stories") or [])[:1 + HN_LIST_ROWS],
                                   (self._board_rows(ai, "skills", "skills") or [])[:SKILL_ROWS],
                                   (self._board_rows(ai, "huggingface", "models") or [])[:MODEL_ROWS],
-                                  (self._board_rows(ai, "github", "repos") or [])[:REPO_ROWS])
+                                  (self._board_rows(ai, "github", "repos") or [])[:REPO_ROWS],
+                                  self._unmarked_makers(models))
         if not wants:
             return {}
         parent = task_context_or_default(timeout_seconds=ICON_SECONDS + ICON_RESERVE_SECONDS)
@@ -777,7 +792,7 @@ class TechPulse(BasePlugin):
         self._draw_skills(image, draw, SKILLS_BOX, ai, palette, fonts, history, now, icons=icons)
         self._draw_models(image, draw, MODELS_BOX, ai, palette, fonts, history, now, icons=icons)
         self._draw_repos(image, draw, REPOS_BOX, ai, palette, fonts, now, icons=icons)
-        self._draw_openrouter(image, draw, OPENROUTER_BOX, models, palette, fonts, now)
+        self._draw_openrouter(image, draw, OPENROUTER_BOX, models, palette, fonts, now, icons=icons)
         if tuple(dimensions) != PAGE_SIZE:
             image = image.resize(tuple(dimensions), Image.LANCZOS)
         return image
@@ -1279,9 +1294,11 @@ class TechPulse(BasePlugin):
         for x in range(int(x0), int(x1), 4):
             draw.point((x, int(y)), fill=colour)
 
-    def _draw_openrouter(self, image, draw, box, models, palette, fonts, now):
+    def _draw_openrouter(self, image, draw, box, models, palette, fonts, now, icons=None):
         """The strip of OpenRouter's newest models: its logo and how many arrived this week, then a
-        card per model with its maker's colour, name, the day it arrived, its context and prices."""
+        card per model with its maker's colour, name, the day it arrived, its context and prices.
+        A maker is named by its official mark from the package, else by the icon fetched for it
+        (``icons``), else by a chip with its name."""
         x0, y0, x1, y1 = box
         self._panel(draw, box, palette, 1.0)
         middle = (y0 + y1) / 2
@@ -1313,8 +1330,10 @@ class TechPulse(BasePlugin):
             draw.rounded_rectangle((card[0], card[1], card[0] + 4, card[3]), radius=2, fill=colour)
             top, bottom = card[1] + 11, card[3] - 10
             mark = self._provider_mark(author, palette)
+            if mark is None:
+                mark = self._maker_mark(author, model, palette, icons or {})
             if mark is not None:
-                # The maker's official mark names it; the chip with its name is for makers without one.
+                # The maker's mark names it; the chip with its name is for a maker with none at hand.
                 # A two-line wordmark, taller than the line, stays inside the card.
                 mark_top = max(card[1] + PROVIDER_WORDMARK_TOP, top - mark.height / 2)
                 image.paste(mark.convert("RGB"), (int(card[0] + 10), int(mark_top)), mark.getchannel("A"))
@@ -1365,6 +1384,18 @@ class TechPulse(BasePlugin):
         if mark is not None and mark.width > width:
             mark = load_source_logo(path, max(1, height * width // mark.width), ink)
         return mark
+
+    def _maker_mark(self, author, model, palette, icons):
+        """For a maker without a mark in the package, the icon fetched for it (item_icons.py): its
+        own from OpenRouter's page before the avatar of the Hub organisation OpenRouter names for
+        the model. It stands in a bundled mark's slot, set for the card's ground without a plate
+        (a dark mark turned light on the night page); None with neither at hand."""
+        icon = icons.get(item_icons.maker_key(author))
+        if icon is None:
+            icon = icons.get(item_icons.hub_key(model.get("hub")))
+        if icon is None:
+            return None
+        return item_icons.mark_within(icon, PROVIDER_MARK_WIDTH, PROVIDER_MARK_HEIGHT, palette["row"])
 
     def _wordmark(self, key, height, background):
         """A source's wide logo (assets/logos) ``height`` tall; its dark lettering turns light on a dark page."""

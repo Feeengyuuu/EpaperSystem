@@ -16,11 +16,14 @@ from PIL import Image
 from runtime.refresh_contracts import TaskCancelled
 from utils.cache_manager import CacheBudget, cache_namespace_for_directory
 from utils.safe_image import ImageLimits, safe_open_image
+from utils.svg_logo import is_svg_url, render_svg
 
 
 LIMITS = ImageLimits(max_bytes=1024 * 1024, max_width=2048, max_height=2048, max_pixels=2048 * 2048)
 BUDGET = CacheBudget(max_bytes=6 * 1024 * 1024, max_files=64, max_age_seconds=21 * 86400)
 MIN_SECONDS_PER_IMAGE = 4.0
+# An SVG names itself near its start; an error page served under a logo's address does not.
+SVG_SNIFF_BYTES = 4096
 
 
 def _key(url, keep_alpha=False):
@@ -28,12 +31,26 @@ def _key(url, keep_alpha=False):
     return ("v1a-" if keep_alpha else "v1-") + sha256(url.encode("utf-8")).hexdigest() + ".png"
 
 
+def _drawn_svg(payload, side):
+    """The SVG ``payload`` drawn ``side`` px on its longer side (RGBA); ValueError for a body that
+    is no drawable SVG, whatever its renderer raised (MuPDF's own errors are plain Exceptions)."""
+    if b"<svg" not in bytes(payload[:SVG_SNIFF_BYTES]).lower():
+        raise ValueError("not an SVG")
+    try:
+        return render_svg(payload, side)
+    except Exception as error:
+        raise ValueError("SVG could not be drawn") from error
+
+
 def load_thumbnails(urls, cache_dir, *, http, context, cached_only, safe_url, user_agent,
-                    size=(480, 270), budget=BUDGET, keep_alpha=False, max_bytes=LIMITS.max_bytes, headers=None):
+                    size=(480, 270), budget=BUDGET, keep_alpha=False, max_bytes=LIMITS.max_bytes, headers=None,
+                    svg_side=None):
     """Return {url: RGB thumbnail} for URLs that are cached or could be fetched in time; RGBA
     with ``keep_alpha``, so a transparent seal or logo keeps its transparency. A download may run
     to ``max_bytes`` (a large but poorly compressed figure); its pixels stay within ``LIMITS``.
-    ``headers`` go with each download beside the User-Agent (a CDN that wants its site as Referer)."""
+    ``headers`` go with each download beside the User-Agent (a CDN that wants its site as Referer).
+    With ``svg_side`` an address ending in .svg is drawn that many px on its longer side and kept
+    as a picture like the rest; without it such an address gives none."""
     directory = Path(cache_dir)
     download_limits = replace(LIMITS, max_bytes=max_bytes)
     mode = "RGBA" if keep_alpha else "RGB"
@@ -68,7 +85,8 @@ def load_thumbnails(urls, cache_dir, *, http, context, cached_only, safe_url, us
             response = http.request_bytes("GET", url, timeout=7, max_bytes=max_bytes, context=context,
                                           headers={**(headers or {}), "User-Agent": user_agent},
                                           allow_redirects=False)
-            with safe_open_image(response.data, limits=download_limits) as original:
+            with (_drawn_svg(response.data, svg_side) if svg_side and is_svg_url(url)
+                  else safe_open_image(response.data, limits=download_limits)) as original:
                 original.thumbnail(size, Image.Resampling.LANCZOS)
                 thumb = original.convert(mode)
             output = BytesIO()

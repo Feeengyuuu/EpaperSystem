@@ -43,9 +43,19 @@ def model_name(raw_name, model_id):
     return name or str(model_id or "").split("/")[-1]
 
 
+def hub_organisation(repository):
+    """"nex-agi/Nex-N2.6" -> "nex-agi": whose repository on the Hugging Face Hub a model's weights
+    are in, as OpenRouter names it (``hugging_face_id``); "" for a model it names none for."""
+    if not isinstance(repository, str):
+        return ""
+    organisation, slash, name = repository.strip().partition("/")
+    return organisation.strip()[:96] if slash and organisation.strip() and name.strip() else ""
+
+
 def normalize_models(payload, now):
     """{"week": models added in the past week, "models": the NEWEST newest, each with its provider,
-    name, added time, context length, $/M prices and whether it reads images}."""
+    name, added time, context length, $/M prices, whether it reads images, and the Hub organisation
+    of its weights ("hub", which stands for its maker when the page has no mark for it)}."""
     rows = (payload or {}).get("data") if isinstance(payload, dict) else None
     if not isinstance(rows, list) or not rows:
         raise ValueError("OpenRouter returned no models")
@@ -77,6 +87,7 @@ def normalize_models(payload, now):
             "prompt": None if prompt is None or prompt < 0 else prompt * PER_MILLION,
             "completion": None if completion is None or completion < 0 else completion * PER_MILLION,
             "vision": "image" in inputs,
+            "hub": hub_organisation(row.get("hugging_face_id")),
         })
     return {"week": week, "models": models}
 

@@ -5,6 +5,11 @@
 - An agent skill: the avatar of the GitHub owner of its source repository.
 - A Hugging Face model: its author's avatar on the Hub.
 - A GitHub repository: its owner's avatar, which the search API already names.
+- A new model's maker on OpenRouter's strip, when the package has no official mark for it: the
+  icon OpenRouter's own page for that author shows (one OpenRouter keeps itself, or the maker's
+  site's by the favicon service), which names the right company by construction; and the avatar
+  of the Hub organisation OpenRouter names for the model, for a maker whose page shows none of its
+  own. With neither at hand the card keeps the chip with the maker's name.
 
 Only the hosts named here are ever asked. Icons are downloaded during a data refresh, inside the
 time the page gives them, and kept on disk within ICON_BUDGET; a redraw reads what is kept. An
@@ -26,8 +31,9 @@ import re
 import zlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from html import unescape
 from pathlib import Path
-from urllib.parse import quote, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
@@ -51,6 +57,19 @@ HUB_AVATAR_APIS = ("https://huggingface.co/api/organizations/{name}/avatar",
                    "https://huggingface.co/api/users/{name}/avatar")
 HUB_AVATAR_HOST = "cdn-avatars.huggingface.co"
 HN_HOST = "news.ycombinator.com"
+# OpenRouter's page for a model's author shows the author's icon in the card at its head, well
+# inside the page's first MAKER_PAGE_BYTES (about 90 KB in; a large maker's page runs to megabytes).
+MAKER_HOST = "openrouter.ai"
+MAKER_PAGE = "https://" + MAKER_HOST + "/{author}"
+MAKER_PAGE_BYTES = 256 * 1024
+# The favicon service's hosts as pages name them (this module asks FAVICON_HOST itself).
+FAVICON_HOSTS = frozenset(f"t{shard}.gstatic.com" for shard in range(4))
+# Sites many authors share: such a site's icon on an author's page names the site, not the maker.
+SHARED_HOSTS = frozenset({
+    "huggingface.co", "hf.co", "github.com", "gitlab.com", "openrouter.ai", "x.com", "twitter.com", "linkedin.com",
+    "discord.com", "discord.gg", "reddit.com", "youtube.com", "medium.com", "substack.com", "notion.so",
+    "civitai.com", "google.com",
+})
 
 ICON_PIXELS = (64, 64)
 ICON_BYTES = 512 * 1024
@@ -65,6 +84,10 @@ _GITHUB_NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})")
 _HUB_NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,94}[A-Za-z0-9])?")
 _GITHUB_PICTURE = re.compile(r"/u/(\d{1,12})")
 _HUB_PICTURE = re.compile(r"/v1/production/uploads/[\w./-]{1,200}\.(?:png|jpe?g|webp|gif)")
+_MAKER_NAME = re.compile(r"[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?")
+_MAKER_PICTURE = re.compile(r"/images/icons/[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.(?:svg|png|jpe?g|webp)")
+_IMG = re.compile(r"<img\b[^<>]{0,2000}>", re.IGNORECASE)
+_IMG_ATTRIBUTE = re.compile(r'\b(alt|src)\s*=\s*"([^"]{0,1000})"', re.IGNORECASE)
 # Sites that give each author a host of their own: the author's label names the story's source.
 _SHARED_SITES = ("github.io", "substack.com", "medium.com", "blogspot.com", "wordpress.com", "netlify.app",
                  "vercel.app", "pages.dev", "bearblog.dev", "neocities.org", "tumblr.com")
@@ -155,8 +178,59 @@ def author_key(model):
     return f"hub:{author[:96]}" if author else ""
 
 
+def maker_key(author):
+    """The key of the icon OpenRouter shows for a model's author ("" without an author)."""
+    author = str(author or "").strip()
+    return f"maker:{author[:64]}" if author else ""
+
+
+def hub_key(organisation):
+    """The key of a Hub organisation's avatar (a model author's key there), "" unless the Hub
+    could have such an organisation."""
+    organisation = str(organisation or "")
+    return f"hub:{organisation}" if _HUB_NAME.fullmatch(organisation) else ""
+
+
 def favicon_url(host):
     return FAVICON_URL.format(host=host) if host and _HOST.fullmatch(host) else ""
+
+
+def maker_picture(url):
+    """An icon OpenRouter keeps for a maker, at its own address, or "" for anything else."""
+    url = str(url or "")
+    parts = urlsplit(url)
+    if parts.scheme != "https" or parts.netloc != MAKER_HOST or parts.query or parts.fragment:
+        return ""
+    return url if _MAKER_PICTURE.fullmatch(parts.path) else ""
+
+
+def _maker_address(src):
+    """Where this module asks for the icon an author's page shows at ``src``, or ""."""
+    src = str(src or "")
+    try:
+        parts = urlsplit(src)
+        if parts.scheme == "https" and parts.netloc in FAVICON_HOSTS and parts.path == "/faviconV2":
+            # The maker's site by the favicon service: asked for that site, unless many share it.
+            host = (urlsplit(next(iter(parse_qs(parts.query).get("url", [])), "")).hostname or "").lower().rstrip(".")
+            site = host[4:] if host.startswith("www.") else host
+            return "" if site in SHARED_HOSTS else favicon_url(host)
+        if not parts.scheme and not parts.netloc:
+            return maker_picture(f"https://{MAKER_HOST}{src}")
+        return maker_picture(src)
+    except ValueError:
+        # An address the page mangled (a bad bracketed host) is no address at all.
+        return ""
+
+
+def maker_icon(page, author):
+    """The address of ``author``'s own icon as OpenRouter's page for it shows it ("Favicon for
+    <author>"; another icon there is a provider's, named by its display name), "" without one."""
+    named = f"Favicon for {author}"
+    for tag in _IMG.findall(str(page or "")):
+        attributes = {name.lower(): unescape(value) for name, value in _IMG_ATTRIBUTE.findall(tag)}
+        if attributes.get("alt") == named:
+            return _maker_address(attributes.get("src"))
+    return ""
 
 
 def github_avatar(url):
@@ -183,12 +257,14 @@ def safe_icon_url(url):
     parts = urlsplit(url)
     if parts.scheme == "https" and parts.netloc == FAVICON_HOST and parts.path == "/faviconV2":
         return url
-    return github_avatar(url) or hub_avatar(url) or None
+    return github_avatar(url) or hub_avatar(url) or maker_picture(url) or None
 
 
-def wanted(stories=(), skills=(), models=(), repos=()):
+def wanted(stories=(), skills=(), models=(), repos=(), makers=()):
     """The icons of the items given (the rows the page draws), each key once, in the order they
-    matter when time is short: stories, repositories, models, skills."""
+    matter when time is short: stories, repositories, models, skills; then ``makers``, each the
+    (author, Hub organisation OpenRouter names) of a new model's maker without a bundled mark,
+    last so that a slow author's page never costs the items their time."""
     found = {}
 
     def add(key, url="", lookup=()):
@@ -209,6 +285,12 @@ def wanted(stories=(), skills=(), models=(), repos=()):
         source = (skill if isinstance(skill, dict) else {}).get("source")
         owner = github_owner(source)
         add(owner_key(source), lookup=("github", owner) if owner else ())
+    for author, organisation in makers:
+        author = str(author or "")
+        if _MAKER_NAME.fullmatch(author):
+            add(maker_key(author), lookup=("openrouter", author))
+        if hub_key(organisation):
+            add(hub_key(organisation), lookup=("hub", str(organisation)))
     return list(found.values())
 
 
@@ -240,11 +322,20 @@ def _kept_address(kept, lookup, now):
 
 
 def _look_up(lookup, http, context, user_agent):
-    """(address, answered): the avatar's address ("" when the owner or author has none), and
-    whether the source answered at all (a failure is asked again next refresh)."""
+    """(address, answered): the avatar's or icon's address ("" when the owner, author or maker has
+    none), and whether the source answered at all (a failure is asked again next refresh)."""
     kind, name = lookup
     headers = {"User-Agent": user_agent}
     try:
+        if kind == "openrouter":
+            try:
+                page = http.request_text_head("GET", MAKER_PAGE.format(author=quote(name, safe="")), context=context,
+                                              timeout=LOOKUP_SECONDS, max_bytes=MAKER_PAGE_BYTES, headers=headers,
+                                              allow_redirects=False)
+            except HttpStatusError as error:
+                # No such page, moved or refused: that is its answer. Only OpenRouter being down is not.
+                return "", error.status < 500
+            return maker_icon(page.data, name), True
         if kind == "github":
             result = http.request_bytes("GET", GITHUB_OWNER_PICTURE.format(owner=quote(name, safe="")),
                                         context=context, timeout=LOOKUP_SECONDS, max_bytes=LOOKUP_BYTES, headers=headers)
@@ -292,7 +383,7 @@ def load(wants, directory, lookups, *, http, context, cached_only, user_agent, n
         urls = list(dict.fromkeys(addresses.values()))
         images = load_thumbnails(urls, directory, http=http, context=context, cached_only=cached_only,
                                  safe_url=safe_icon_url, user_agent=user_agent, size=ICON_PIXELS, budget=ICON_BUDGET,
-                                 keep_alpha=True, max_bytes=ICON_BYTES) if urls else {}
+                                 keep_alpha=True, max_bytes=ICON_BYTES, svg_side=max(ICON_PIXELS)) if urls else {}
         if not cached_only and context.remaining_seconds() >= MIN_SECONDS_PER_IMAGE:
             # Time was left, so a picture still missing failed: it rests for a while.
             for url in urls:
@@ -425,19 +516,27 @@ def _rounded(size, scale=4):
     return mask.resize((width, height), Image.Resampling.LANCZOS)
 
 
+def mark_within(icon, width, height, paper):
+    """``icon`` for a page of ``paper``, without a plate behind it (see the module's note), as
+    large as fits ``width`` x ``height`` px and no larger than itself then (RGBA): a wide mark
+    comes out wide, a square one ``height`` px square."""
+    art = icon.convert("RGBA")
+    box = (int(width), int(height))
+    mark = _alone(art)
+    if mark is None:
+        fitted = ImageOps.contain(art, box, method=Image.Resampling.LANCZOS)
+        fitted.putalpha(ImageChops.multiply(fitted.getchannel("A"), _rounded(fitted.size)))
+        return fitted
+    if _hard_to_see(mark, paper):
+        mark = Image.merge("RGBA", (*light_on_dark(mark.convert("RGB")).split(), mark.getchannel("A")))
+    return ImageOps.contain(mark, box, method=Image.Resampling.LANCZOS)
+
+
 def on_page(icon, size, paper):
     """``icon`` as a ``size`` px RGBA tile for a page of ``paper``, without a plate behind it (see
     the module's note)."""
-    art = icon.convert("RGBA")
     size = int(size)
-    mark = _alone(art)
-    if mark is None:
-        fitted = ImageOps.contain(art, (size, size), method=Image.Resampling.LANCZOS)
-        fitted.putalpha(ImageChops.multiply(fitted.getchannel("A"), _rounded(fitted.size)))
-    else:
-        if _hard_to_see(mark, paper):
-            mark = Image.merge("RGBA", (*light_on_dark(mark.convert("RGB")).split(), mark.getchannel("A")))
-        fitted = ImageOps.contain(mark, (size, size), method=Image.Resampling.LANCZOS)
+    fitted = mark_within(icon, size, size, paper)
     tile = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     tile.alpha_composite(fitted, ((size - fitted.width) // 2, (size - fitted.height) // 2))
     return tile

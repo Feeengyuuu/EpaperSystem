@@ -1285,3 +1285,22 @@ def test_model_names_drop_a_repeated_maker_and_aliases_drop_their_tilde():
                                                   "created": 1789000000}]},
                                        datetime(2026, 11, 5, tzinfo=timezone.utc))
     assert data["models"][0]["provider"] == "openai" and data["models"][0]["name"] == "GPT Astra Latest"
+
+
+def test_a_model_keeps_the_hub_organisation_openrouter_names_for_it():
+    rows = [
+        {"id": "nex-agi/nex-n2.6", "name": "Nex AGI: Nex-N2.6", "created": 1794282379,
+         "hugging_face_id": "nex-agi/Nex-N2.6"},
+        {"id": "anthropic/claude-fable-5.2", "name": "Anthropic: Claude Fable 5.2", "created": 1794250000,
+         "hugging_face_id": None},
+        {"id": "liquid/lfm-3-1.7b:free", "name": "LiquidAI: LFM3-1.7B (free)", "created": 1794000000,
+         "hugging_face_id": " LiquidAI/LFM3-1.7B "},
+        {"id": "odd/thing", "name": "Odd: Thing", "created": 1793000000, "hugging_face_id": "not a repository"},
+        {"id": "odder/thing", "name": "Odder: Thing", "created": 1792000000, "hugging_face_id": 42},
+        {"id": "oddest/thing", "name": "Oddest: Thing", "created": 1791000000, "hugging_face_id": "/model"},
+    ]
+
+    data = openrouter.normalize_models({"data": rows}, datetime(2026, 11, 10, 6, tzinfo=timezone.utc))
+
+    # The organisation of the model's repository on the Hub, "" when OpenRouter names none.
+    assert [model["hub"] for model in data["models"]] == ["nex-agi", "", "LiquidAI", "", "", ""]
