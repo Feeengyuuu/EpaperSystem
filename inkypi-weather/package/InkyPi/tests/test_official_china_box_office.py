@@ -370,18 +370,41 @@ def test_a_film_tmdb_left_without_a_poster_takes_maoyans(monkeypatch):
     budget = _MaoyanBudget(
         [{"id": 1365977, "nm": "无可替代的你", "sc": 0, "wish": 34235, "img": poster},
          {"id": 1552906, "nm": "神探之痕迹", "sc": 9.6, "img": poster.replace("6591", "0000")},
-         {"id": 1604748, "nm": "什么意思夫妇", "sc": 0, "img": "http://example.com/not-maoyan.jpg"}],
-        {"id": 1365977, "nm": "无可替代的你", "dur": 110, "cat": "剧情"})
+         {"id": 1604748, "nm": "什么意思夫妇", "sc": 0, "img": "http://example.com/not-maoyan.jpg"}], {})
 
-    plugin._enrich_official_with_maoyan(movies, budget)
+    plugin._maoyan_posters_for_missing(movies, budget)
 
     first, second, third = movies
     assert first.poster_url == plugin._maoyan_poster_url(poster) and first.extra["poster_source"] == "maoyan"
     assert fetched == [("无可替代的你", first.poster_url)]
     assert second.poster_url.startswith("https://image.tmdb.org/") and second.extra["poster_source"] == "tmdb"
     assert third.poster_url.startswith("https://image.tmdb.org/") and "poster_source" not in third.extra
-    # An address that is not Maoyan's own picture host is not taken.
+    assert [url.rsplit("/", 1)[-1] for url, _params in budget.calls] == ["movieOnInfoList"]
+    # An address that is not Maoyan's own picture host is not taken; a failed read changes nothing.
     plain = _official_movies(plugin, ["什么意思夫妇"])
-    plugin._enrich_official_with_maoyan(plain, _MaoyanBudget(
+    plugin._maoyan_posters_for_missing(plain, _MaoyanBudget(
         [{"id": 1604748, "nm": "什么意思夫妇", "img": "http://example.com/not-maoyan.jpg"}], {}))
+    plugin._maoyan_posters_for_missing(plain, _MaoyanBudget([], fail=requests.ConnectionError("down")))
     assert not plain[0].poster_url and "poster_source" not in plain[0].extra
+    with pytest.raises(TaskCancelled):
+        plugin._maoyan_posters_for_missing(plain, _MaoyanBudget([], fail=TaskCancelled("stop")))
+    # Nothing is asked of Maoyan when every film has its poster.
+    quiet = _MaoyanBudget([], {})
+    plugin._maoyan_posters_for_missing([second], quiet)
+    assert quiet.calls == []
+
+
+def test_the_poster_step_asks_maoyan_for_a_cached_chart_too(monkeypatch):
+    """The page redraws a fresh chart from its cache and runs only the poster step: the film
+    without a poster gets Maoyan's there, not only on a full load."""
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    movies = _official_movies(plugin, ["无可替代的你"])
+    monkeypatch.setattr(plugin, "_restore_local_poster", lambda movie: bool(movie.poster_path))
+    monkeypatch.setattr(plugin, "_tmdb_auth", lambda *_args: None)
+    asked = []
+    monkeypatch.setattr(plugin, "_maoyan_posters_for_missing", lambda films, budget: asked.append(
+        [film.title for film in films]))
+
+    plugin._complete_official_posters(movies, {}, None, _MaoyanBudget([], {}))
+
+    assert asked == [["无可替代的你"]]

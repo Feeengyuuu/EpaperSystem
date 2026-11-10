@@ -565,9 +565,8 @@ class BoxOfficeTopMovies(BasePlugin):
                     movie.extra[name] = old.extra[name]
 
     def _enrich_official_with_maoyan(self, movies, budget):
-        """Maoyan's audience score and want-to-see count for each official-chart film it lists, the
-        headliner's genre, runtime and director, and Maoyan's poster for a film that still has
-        none (a new mainland release TMDB does not know yet). Optional: any failure leaves them off."""
+        """Maoyan's audience score and want-to-see count for each official-chart film it lists, and
+        the headliner's genre, runtime and director. Optional: any failure leaves them off."""
         try:
             if budget.remaining_seconds() <= 1:
                 return
@@ -581,7 +580,6 @@ class BoxOfficeTopMovies(BasePlugin):
                 row = listing.get(_normalize_title(movie.extra.get("official_chinese_title") or movie.title))
                 if row is not None:
                     self._apply_maoyan_scores(movie, row)
-                    self._maoyan_poster_for_missing(movie, row, budget)
             hero = movies[0] if movies else None
             if hero is not None and hero.extra.get("maoyan_movie_id") and budget.remaining_seconds() > 1:
                 response = budget.get(MAOYAN_MOVIE_DETAIL_URL, params={"movieId": hero.extra["maoyan_movie_id"]},
@@ -600,19 +598,37 @@ class BoxOfficeTopMovies(BasePlugin):
         except Exception as exc:  # optional enrichment: the chart stands without it
             logger.info("Maoyan scores unavailable for the official chart: %s", type(exc).__name__)
 
-    def _maoyan_poster_for_missing(self, movie, row, budget):
-        """Maoyan's own poster for a film the TMDB lookup left without one; a film with a poster,
-        or with a poster address still to be fetched, keeps what it has."""
-        if movie.poster_path or movie.poster_url:
-            return
-        poster_url = self._maoyan_poster_url(row.get("img"))
-        # Only Maoyan's own picture host, over https.
-        if not re.match(r"^https://[^/]*\.pipi\.cn/", poster_url or ""):
-            return
-        movie.poster_url = poster_url
-        movie.extra["poster_source"] = "maoyan"
-        if budget.remaining_seconds() > 1:
-            self._download_posters([movie], session=budget)
+    def _maoyan_posters_for_missing(self, movies, budget):
+        """Maoyan's own poster for each film the TMDB lookup left without one (a new mainland
+        release TMDB does not know yet), from its now-showing list. A film with a poster, or with
+        a poster address still to be fetched, keeps what it has. Optional: any failure leaves
+        the films as they were."""
+        missing = [movie for movie in movies if not movie.poster_path and not movie.poster_url]
+        try:
+            if not missing or budget.remaining_seconds() <= 2:
+                return
+            response = budget.get(MAOYAN_ON_SHOW_URL, headers=MAOYAN_MOVIE_HEADERS, timeout=8)
+            response.raise_for_status()
+            listing = {}
+            for row in (response.json() or {}).get("movieList") or []:
+                if isinstance(row, dict) and _clean_text(row.get("nm")):
+                    listing.setdefault(_normalize_title(row.get("nm")), row)
+            for movie in missing:
+                row = listing.get(_normalize_title(movie.extra.get("official_chinese_title") or movie.title)) or {}
+                poster_url = self._maoyan_poster_url(row.get("img"))
+                # Only Maoyan's own picture host, over https.
+                if not re.match(r"^https://[^/]*\.pipi\.cn/", poster_url or ""):
+                    continue
+                movie.poster_url = poster_url
+                movie.extra["poster_source"] = "maoyan"
+                if budget.remaining_seconds() > 1:
+                    self._download_posters([movie], session=budget)
+        except TaskDeadlineExceeded:
+            return  # the budget is spent; the next refresh tries again
+        except TaskCancelled:
+            raise
+        except Exception as exc:  # optional: the placeholder stands until a poster is found
+            logger.info("Maoyan posters unavailable for the official chart: %s", type(exc).__name__)
 
     @staticmethod
     def _apply_maoyan_scores(movie, row):
@@ -720,6 +736,9 @@ class BoxOfficeTopMovies(BasePlugin):
                     raise
                 except Exception as exc:
                     logger.warning("Official chart poster images failed for %s: %s", movie.title, type(exc).__name__)
+
+        # What TMDB could not give, Maoyan may: its poster for a film still without one.
+        self._maoyan_posters_for_missing(movies, budget)
 
         # Optional names come after every available basic poster. Search results
         # already supply an English original title for many international films.
