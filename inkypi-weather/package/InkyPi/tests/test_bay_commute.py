@@ -936,7 +936,10 @@ def test_the_header_shows_a_travel_time_sign_and_the_readout_the_measured_water(
     signed = render_page((800, 480), {**payload, "sign": sources.parse_signs(CMS_PAYLOAD, ["I-880"])["signs"][0]},
                          {"_inkypi_theme": {"mode": "day"}}, NOW)
     texts = {text for text, _color in recorded}
-    assert {"MILPITAS", "17 MIN", "南向", "实测此刻", "4.6 ft", "+1.1 ft 高于预测"} <= texts
+    assert {"MILPITAS", "17 MIN", "实测此刻", "4.6 ft", "+1.1 ft 高于预测"} <= texts
+    # The sign names the town it stands in; its direction and the message's time share a line.
+    sign = sources.parse_signs(CMS_PAYLOAD, ["I-880"])["signs"][0]
+    assert sign["place"] in texts and any(text.startswith("南向 ") for text in texts)
     # The advisory is led by its glyph now, not a lettered chip.
     assert not {"延误", "电梯", "单车"} & texts and "在线 56 列 ·" in texts
     assert any(text.startswith("Expect 30-min delays") for text in texts)
@@ -1100,3 +1103,34 @@ def test_the_road_title_row_carries_the_road_works_frieze_clear_of_the_count(mon
     # The art stands in that stretch: some of its orange and yellow, nothing past it.
     strip = image.crop((x0, y0, x1, y1 + 1)).convert("RGB")
     assert any(r > 200 and 120 < g < 200 and b < 90 for r, g, b in strip.get_flattened_data())
+
+
+def test_the_headers_sign_is_always_the_nearest_one_with_the_time_to_downtown_san_francisco():
+    rows = CMS_PAYLOAD["data"] + [
+        cms_entry(7, "US-101", "North", 37.5348, -122.2785, ("SFO ARPT   8 MIN", "SF DWNTWN 22 MIN", "HAYWARD   13 MIN"),
+                  place="San Mateo"),
+        cms_entry(8, "I-580", "West", 37.8162, -122.2515, ("SF DWNTWN 15 MIN", "CARQ BRDG 20 MIN", "WALNUT CR 14 MIN"),
+                  place="Oakland"),
+        # The airport is not the city, and a sign out of service is not read.
+        cms_entry(9, "I-880", "North", 37.56, -122.0, ("SFO ARPT  30 MIN", "OAKLAND   20 MIN", "HAYWARD    9 MIN")),
+        cms_entry(10, "I-880", "North", 37.55, -121.99, ("SF DWNTWN 40 MIN", "OAKLAND   20 MIN", "HAYWARD    9 MIN"),
+                  in_service="false"),
+    ]
+    data = sources.parse_signs({"data": rows}, sources.DEFAULT_ROUTES)
+
+    # US-101 is not one of the page's routes: the city sign is kept apart from the routes' own.
+    assert sources.valid_signs(data) and "US-101" not in {sign["route"] for sign in data["signs"]}
+    city = data["city"]
+    assert (city["route"], city["direction"], city["place"]) == ("US-101", "North", "San Mateo")
+    assert {"to": "SF DWNTWN", "minutes": 22} in city["lines"]
+    # Whatever the draw would have picked, the header gets the city sign; stale readings give none.
+    assert sources.pick_sign(data, NOW, choose=lambda signs: signs[-1]) is city
+    assert sources.pick_sign(data, NOW + timedelta(hours=1)) is None
+    # No sign shows the city (the fixture's own list): one of the routes' signs, as before.
+    plain = sources.parse_signs(CMS_PAYLOAD, sources.DEFAULT_ROUTES)
+    assert plain["city"] is None and sources.valid_signs(plain)
+    assert sources.pick_sign(plain, NOW, choose=lambda signs: signs[0])["route"] == "I-880"
+    assert not sources.valid_signs({**data, "city": {"route": "US-101", "lines": [{"to": "", "minutes": 3}]}})
+    # Its route has a shield of its own on the page.
+    from plugins.bay_commute import command_render
+    assert "US-101" in command_render.SIGN_SHIELDS and (command_render.ASSETS / "US-101.png").is_file()

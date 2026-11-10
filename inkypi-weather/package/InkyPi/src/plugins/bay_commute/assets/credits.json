@@ -65,6 +65,21 @@
           "sha256": "cd653149c522030069f7b69a772fafb9557999ee13cf50c6516b6b21162d3e51"
         }
       ]
+    },
+    {
+      "route": "US-101",
+      "description_page": "https://commons.wikimedia.org/wiki/File:US_101_(CA).svg",
+      "author": "See the description page",
+      "license": "Public domain (see the description page)",
+      "note": "Standard-design reproduction of the California US route shield hosted on Wikimedia Commons; not claimed to be a file published by Caltrans/FHWA.",
+      "modifications": "Wikimedia's 240 px PNG rendering of the SVG, unchanged.",
+      "files": [
+        {
+          "file": "US-101.png",
+          "url": "https://commons.wikimedia.org/wiki/Special:FilePath/US_101_(CA).svg?width=240",
+          "sha256": "ea01534c1ff1c134308b4426b9089dd1d2e44bd6c749745015d61a0cae41d628"
+        }
+      ]
     }
   ]
 }

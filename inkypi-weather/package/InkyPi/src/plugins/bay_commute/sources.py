@@ -56,6 +56,9 @@ MAX_CMS_BYTES = 1024 * 1024
 MAX_CACHED_SIGNS = 12
 # Home for the signs' order: Fremont, the same point Bay Alerts and Nature Nearby use.
 COMMUTE_HOME = (37.5485, -121.9886)
+# The header's sign is the nearest one that gives the time to downtown San Francisco, whatever
+# route it stands on ("SF DWNTWN 22 MIN"; not the airport, SFO).
+CITY_LINE = re.compile(r"^(SF|S\.F\.|SAN FRAN)(?!O)")
 # A travel-time line as the sign shows it: "MILPITAS  17 MIN".
 TRAVEL_LINE = re.compile(r"^(?P<to>[A-Z0-9][A-Z0-9 /.&'-]{0,18}?)\s+(?P<minutes>\d{1,3})\s*MIN$")
 # The NOAA station's latest observed water level, set against its prediction.
@@ -590,11 +593,13 @@ def _local_stamp(date, clock):
 
 def parse_signs(payload, routes, home=COMMUTE_HOME):
     """District 4's in-service travel-time signs on ``routes``, nearest ``home`` first:
-    {signs: [{id, route, direction, place, lat, lon, distance_km, lines, time}], source_updated_at}."""
+    {signs: [{id, route, direction, place, lat, lon, distance_km, lines, time}], source_updated_at},
+    and under ``city`` the nearest sign on any route that gives the time to downtown San Francisco
+    (None when no sign shows it)."""
     rows = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(rows, list) or len(rows) > 2000:
         raise ValueError("Caltrans returned no sign list")
-    wanted, signs, stamps = set(routes), [], []
+    wanted, signs, stamps, city = set(routes), [], [], None
     for entry in rows:
         sign = (entry or {}).get("cms") if isinstance(entry, dict) else None
         if not isinstance(sign, dict):
@@ -606,7 +611,7 @@ def parse_signs(payload, routes, home=COMMUTE_HOME):
         # its age is read from the newest message any sign shows (travel times change minutes apart).
         if stamp and str(sign.get("inService")).lower() == "true":
             stamps.append(stamp)
-        if str(sign.get("inService")).lower() != "true" or location.get("route") not in wanted:
+        if str(sign.get("inService")).lower() != "true":
             continue
         lines = _sign_lines(message, "phase1") or _sign_lines(message, "phase2")
         try:
@@ -615,15 +620,20 @@ def parse_signs(payload, routes, home=COMMUTE_HOME):
             continue
         if not lines or not valid_coordinates(lat, lon):
             continue
-        signs.append({"id": _text(sign.get("index"), 12), "route": _text(location.get("route"), 10),
-                      "direction": _text(location.get("direction"), 10), "place": _text(location.get("nearbyPlace"), 40),
-                      "lat": round(lat, 5), "lon": round(lon, 5),
-                      "distance_km": round(_distance_km(home, (lat, lon)), 1), "lines": lines,
-                      "time": stamp.isoformat() if stamp else None})
+        record = {"id": _text(sign.get("index"), 12), "route": _text(location.get("route"), 10),
+                  "direction": _text(location.get("direction"), 10), "place": _text(location.get("nearbyPlace"), 40),
+                  "lat": round(lat, 5), "lon": round(lon, 5),
+                  "distance_km": round(_distance_km(home, (lat, lon)), 1), "lines": lines,
+                  "time": stamp.isoformat() if stamp else None}
+        if any(CITY_LINE.match(line["to"]) for line in lines) and (
+                city is None or (record["distance_km"], record["id"]) < (city["distance_km"], city["id"])):
+            city = record
+        if location.get("route") in wanted:
+            signs.append(record)
     if rows and not stamps:
         raise ValueError("Caltrans sign timestamps are unavailable")
     signs.sort(key=lambda sign: (sign["distance_km"], sign["id"]))
-    return {"signs": signs[:MAX_CACHED_SIGNS], "routes": list(routes),
+    return {"signs": signs[:MAX_CACHED_SIGNS], "routes": list(routes), "city": city,
             "source_updated_at": max(stamps).isoformat() if stamps else None}
 
 
@@ -644,20 +654,25 @@ def fetch_signs(routes, context):
 
 def valid_signs(data):
     signs = data.get("signs") if isinstance(data, dict) else None
+    city = data.get("city") if isinstance(data, dict) else None
     return (isinstance(signs, list) and len(signs) <= MAX_CACHED_SIGNS
             and all(isinstance(sign, dict) and sign.get("route") and isinstance(sign.get("lines"), list)
                     and 1 <= len(sign["lines"]) <= 3
                     and all(isinstance(line, dict) and line.get("to") and type(line.get("minutes")) is int
-                            for line in sign["lines"]) for sign in signs))
+                            for line in sign["lines"]) for sign in signs + ([city] if city is not None else [])))
 
 
 def pick_sign(data, now, choose=None, nearest=4, max_age_minutes=45):
-    """One of the ``nearest`` travel-time signs, drawn at random (by ``choose``) each time the page
-    is made; None without any, or when Caltrans' reading is older than ``max_age_minutes`` (its
-    travel times would no longer hold)."""
+    """The header's travel-time sign: the nearest one that gives the time to downtown San
+    Francisco, every time; while no sign shows that, one of the ``nearest`` signs on the page's
+    routes, drawn at random (by ``choose``) each time the page is made. None without any, or when
+    Caltrans' reading is older than ``max_age_minutes`` (its travel times would no longer hold)."""
     recorded = parse_time((data or {}).get("source_updated_at"))
     if recorded is None or not -300 <= (local_now(now) - recorded).total_seconds() <= max_age_minutes * 60:
         return None
+    city = (data or {}).get("city")
+    if isinstance(city, dict) and city.get("lines"):
+        return city
     signs = [sign for sign in (data or {}).get("signs") or [] if sign.get("lines")][:nearest]
     return (choose or random.choice)(signs) if signs else None
 
