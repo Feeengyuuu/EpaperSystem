@@ -69,7 +69,19 @@ FRIEND_GAP = 3
 TITLE_OUTLINE = 2
 # Under the hero's status line: the owner's achievements in that game (a bar of those unlocked)
 # and the rarest one unlocked, each line this tall with this gap; the rarest share in gold.
-PROGRESS_LINE, PROGRESS_GAP, PROGRESS_TOP = 17, 6, 10
+PROGRESS_LINE, PROGRESS_GAP, PROGRESS_TOP = 17, 4, 8
+# Where type lies on game artwork the artwork is blurred, so its own lettering dissolves into
+# tone, and dimmed toward the panel, so the page's white ink reads without plates or strokes.
+QUIET_BLUR = 6
+# The hero keeps its art clear above a quiet band along the card's foot that holds the icon,
+# the title and the facts: (inset round the group, rows the band takes to ease in above it, dim).
+HERO_ICON = 56
+HERO_BAND_PAD, HERO_BAND_FADE, HERO_BAND_DIM = 9, 26, 0.6
+HERO_TITLE_GAP = 9
+# Rows and tiles that are covered by their text end to end are blurred whole.
+ROW_ART_BLUR = 6
+# A playing friend's cover is blurred under the names and comes into focus toward its far end.
+FRIEND_COVER_BLUR, FRIEND_COVER_CLEAR_FROM = 4, 0.62
 RARE_GOLD = (249, 202, 77)
 RAIL_SIZE = (181, 480)
 # The bordered plate behind the persona name and its STEAM PLAYER caption; it keeps the
@@ -376,10 +388,9 @@ class _Console:
             if rank.lp:
                 self.draw.rounded_rectangle((x, 301, x + round((176 - x) * rank.lp / 100), 306),
                                             radius=2, fill=rank.color)
-            self.text((x, 309, 178, 320), f"{rank.lp} LP", 10, self.c["muted"])
+            self.text((x, 309, 178, 320), f"{rank.lp} LP", 10)
         if rank.next_name:
-            self.text((x, 321, 178, 332), f"距{rank.next_name} 差{rank.levels_to_next}级", 10,
-                      self.c["muted"], min_size=7)
+            self.text((x, 321, 178, 332), f"距{rank.next_name} 差{rank.levels_to_next}级", 10, min_size=7)
         self.rank_ladder(rank)
 
     def rank_ladder(self, rank):
@@ -439,8 +450,12 @@ class _Console:
                                         fill=self.c["header"])
             self.draw.rectangle((x, y + header - 4, right, y + header), fill=self.c["header"])
 
-    def art(self, box, appid, strength=145):
-        """Keep original game artwork separate from the flat page canvas."""
+    def art(self, box, appid, strength=145, blur=0):
+        """Keep original game artwork separate from the flat page canvas.
+
+        ``blur`` softens artwork that lies under text from edge to edge, so lettering in the
+        picture cannot compete with the words drawn on it.
+        """
         x, y, right, bottom = box
         size = (right - x, bottom - y)
         source = self.plugin._game_background(self.data, appid, size) if appid else None
@@ -448,6 +463,8 @@ class _Console:
             self.draw.rectangle((x, y, right - 1, bottom - 1), fill=self.c["panel"])
             return
         fitted = ImageOps.fit(source.convert("RGB"), size, method=Image.Resampling.LANCZOS)
+        if blur:
+            fitted = fitted.filter(ImageFilter.GaussianBlur(blur))
         veil = Image.new("RGBA", size)
         painter = ImageDraw.Draw(veil)
         # Preserve the approved art shading regardless of the page canvas colour.
@@ -456,6 +473,21 @@ class _Console:
             painter.line((column, 0, column, size[1]), fill=(*self.c["navy"], min(225, alpha)))
         fitted.paste(veil, (0, 0), veil)
         self.image.paste(fitted, (x, y))
+
+    def quiet(self, box, *, dim, fade=0, blur=QUIET_BLUR):
+        """Turn the artwork already drawn in ``box`` into a calm ground for type: blurred and
+        dimmed toward the panel colour, easing in from untouched art over the top ``fade`` rows."""
+        x, y, right, bottom = box
+        size = (right - x, bottom - y)
+        if size[0] <= 0 or size[1] <= 0:
+            return
+        with self.image.crop(box) as region, Image.new("RGB", size, self.c["navy"]) as flat, \
+                Image.new("L", size, 255) as mask:
+            soft = Image.blend(region.filter(ImageFilter.GaussianBlur(blur)), flat, dim)
+            pen = ImageDraw.Draw(mask)
+            for row in range(min(fade, size[1])):
+                pen.line((0, row, size[0], row), fill=round(255 * row / fade))
+            self.image.paste(soft, (x, y), mask)
 
     def icon(self, appid, x, y, size):
         icon = self.plugin._game_square_icon(self.data, appid, size) if appid else None
@@ -541,13 +573,14 @@ class _Console:
         name = self._text_bitmap(persona, 147, 29, 29, WHITE, True, 1, 18, outline=TITLE_OUTLINE)
         self.text((19, 178, 166, 207), persona, prepared=name)
         # Steam's round mark leads the caption, in the caption's colour (Steam's one-colour mark,
-        # which reads on any backdrop where its blue app icon sinks into the dark rail).
+        # which reads on any backdrop where its blue app icon sinks into the dark rail). The
+        # rail's small type lies on the profile backdrop, so all of it is the page's white ink.
         caption_x = 20
         mark = sidebar_asset("steam", STEAM_MARK)
         if mark is not None:
-            self.image.paste(Image.new("RGB", mark.size, self.c["muted"]), (caption_x, 212), mark)
+            self.image.paste(Image.new("RGB", mark.size, WHITE), (caption_x, 212), mark)
             caption_x += STEAM_MARK + 4
-        self.text((caption_x, 212, 164, 225), "STEAM PLAYER", 10, self.c["muted"])
+        self.text((caption_x, 212, 164, 225), "STEAM PLAYER", 10)
         self.draw.line((14, 230, 167, 230), fill=self.c["border"])
         self.rank_card(data)
         owned = data.get("owned_games") or []
@@ -569,7 +602,7 @@ class _Console:
                 self.image.paste(icon, (x, y + 5), icon)
             else:
                 self.small_symbol(symbol, x, y + 4)
-            self.text((x + 20, y, x + 78, y + 10), label, 9, self.c["muted"])
+            self.text((x + 20, y, x + 78, y + 10), label, 9)
             self.text((x + 20, y + 10, x + 78, y + 25), number, 15, bold=True, min_size=11)
         self.draw.line((14, 405, 167, 405), fill=self.c["border"])
         badges = data.get("badges") or {}
@@ -580,7 +613,7 @@ class _Console:
                 self.image.paste(icon, (16, y + 1), icon)
             else:
                 self.draw.ellipse((17, y, 34, y + 17), outline=self.c["accent"], width=2)
-            self.text((43, y + 1, 86, y + 20), label, 14, self.c["muted"])
+            self.text((43, y + 1, 86, y + 20), label, 14)
             self.text((87, y, 168, y + 23), _value(number), 20, bold=True, min_size=14, align="right")
 
     def hero(self, recent):
@@ -615,13 +648,23 @@ class _Console:
         achievements = achievements if isinstance(achievements, dict) and _number(achievements.get("total")) else None
         lines = (1 + bool(achievements.get("rarest"))) if achievements else 0
         progress_height = PROGRESS_TOP + lines * PROGRESS_LINE + (lines - 1) * PROGRESS_GAP if lines else 0
-        title = self._text_bitmap(name, 290, 72 if not lines else 60, 25, WHITE, True, 2, 19, outline=TITLE_OUTLINE)
-        status_line = self._text_bitmap(detail, 290, 24, 15, self.c["accent"], min_size=12)
-        group_height = title.height + 13 + status_line.height + progress_height
-        group_y = 43 + (162 - group_height) // 2
-        self.icon(appid, 209, 96, 56)
+        title = self._text_bitmap(name, 290, 60, 25, WHITE, True, 2, 19, outline=TITLE_OUTLINE)
+        # The facts are small type: the page's white ink at full strength, never a tint.
+        status_line = self._text_bitmap(detail, 290, 24, 15, WHITE, min_size=12)
+        group_height = title.height + HERO_TITLE_GAP + status_line.height + progress_height
+        # The icon and the text group share one centre line on a band along the card's foot,
+        # clear of the lettering game art carries in its upper half and middle.
+        block = max(HERO_ICON, group_height)
+        top = 205 - HERO_BAND_PAD - block
+        group_y = top + (block - group_height) // 2
+        # The large title tolerates a half-quiet ground, so the band eases in across it and
+        # is complete from the first line of small type down.
+        ease = HERO_BAND_FADE + (title.height if group_height >= HERO_ICON else 0)
+        band_top = max(43, top - HERO_BAND_PAD - HERO_BAND_FADE)
+        self.quiet((195, band_top, 583, 205), dim=HERO_BAND_DIM, fade=min(ease, 205 - band_top))
+        self.icon(appid, 209, top + (block - HERO_ICON) // 2, HERO_ICON)
         self.text((281, group_y, 571, group_y + title.height), name, prepared=title)
-        status_y = group_y + title.height + 13
+        status_y = group_y + title.height + HERO_TITLE_GAP
         self.text((281, status_y, 571, status_y + status_line.height), detail,
                   prepared=status_line)
         if achievements:
@@ -629,7 +672,8 @@ class _Console:
 
     def hero_progress(self, achievements, x, y, right):
         """The owner's achievements in the hero game: unlocked of all on a bar in the game's hue and
-        the share, then the rarest one unlocked with how few players have it."""
+        the share, then the rarest one unlocked with how few players have it. The words are all
+        white; the colour stays on the bar and the gem."""
         total, unlocked = _number(achievements.get("total")), _number(achievements.get("unlocked"))
         unlocked = min(unlocked, total)
         middle = y + PROGRESS_LINE / 2
@@ -638,14 +682,14 @@ class _Console:
             self.image.paste(icon, (x, round(middle - icon.height / 2)), icon)
         left = x + 22
         label, label_font = "成就", self.font(12)
-        self.draw.text((left, middle), label, font=label_font, fill=self.c["muted"], anchor="lm")
+        self.draw.text((left, middle), label, font=label_font, fill=WHITE, anchor="lm")
         left += self.draw.textlength(label, font=label_font) + 5
         count, count_font = f"{unlocked}/{total}", self.font(14, True)
         self.draw.text((left, middle), count, font=count_font, fill=WHITE, anchor="lm")
         left += self.draw.textlength(count, font=count_font) + 10
         share, share_font = f"{round(100 * unlocked / total)}%", self.font(13, True)
         share_w = self.draw.textlength(share, font=share_font)
-        self.draw.text((right, middle), share, font=share_font, fill=self.c["accent"], anchor="rm")
+        self.draw.text((right, middle), share, font=share_font, fill=WHITE, anchor="rm")
         bar = (left, round(middle - 3), right - share_w - 8, round(middle + 3))
         if bar[2] - bar[0] >= 30:
             self.draw.rounded_rectangle(bar, radius=3, fill=self.c["border"])
@@ -662,12 +706,12 @@ class _Console:
                            (gem[0] - 6, gem[1] - 1)), fill=RARE_GOLD)
         left = x + 22
         label = "最稀有"
-        self.draw.text((left, middle), label, font=label_font, fill=self.c["muted"], anchor="lm")
+        self.draw.text((left, middle), label, font=label_font, fill=WHITE, anchor="lm")
         left += self.draw.textlength(label, font=label_font) + 6
         percent = f"{rarest.get('percent')}% 玩家"
         percent_font = self.font(12, True)
         percent_w = self.draw.textlength(percent, font=percent_font)
-        self.draw.text((right, middle), percent, font=percent_font, fill=RARE_GOLD, anchor="rm")
+        self.draw.text((right, middle), percent, font=percent_font, fill=WHITE, anchor="rm")
         name_font = self.font(13, True)
         name = str(rarest["name"])
         room = right - percent_w - 8 - left
@@ -769,7 +813,7 @@ class _Console:
                 self._friend_grid_cell(friend, box, game_icons, backgrounds, portraits)
             if overflow:
                 self.text((FRIEND_LIST[0], bottom - 13, FRIEND_LIST[2], bottom), f"另有 {overflow} 位在线", 10,
-                          self.c["muted"], min_size=9, align="right")
+                          min_size=9, align="right")
         else:
             row_height = (bottom - top) / max(1, len(primary))
             for index, friend in enumerate(primary):
@@ -848,7 +892,7 @@ class _Console:
             self.draw.ellipse((mx - 1, my - 1, mx + mini, my + mini), outline=self._friend_ring_colour(friend), width=1)
         if hidden:
             tail = x + cluster_width(len(small)) + (2 if small else 0)
-            self.text((tail, y, right, y + 2 * mini + 2), f"+{hidden}", 10, self.c["muted"], bold=True,
+            self.text((tail, y, right, y + 2 * mini + 2), f"+{hidden}", 10, bold=True,
                       min_size=8, align="center")
         if names_h and friends:
             name_top = start + used_lines * size + (used_lines - 1) * FRIEND_PILE_LINE_GAP + 4
@@ -958,14 +1002,15 @@ class _Console:
         if height >= 35:
             middle = (top + bottom) // 2
             self.text((text_x, middle - 17, right - 3, middle + 2), name, 13, WHITE, bold=True, min_size=10)
-            self.text((text_x, middle + 3, right - 3, middle + 17), status, 10, self.c["muted"], min_size=9)
+            # The status is small type on the scene: white like the name, told apart by weight.
+            self.text((text_x, middle + 3, right - 3, middle + 17), status, 10, min_size=9)
         else:
             show_status = right - left >= 160
             self.text((text_x, top + 2, right - (30 if show_status else 3), bottom - 1), name,
                       11, WHITE, bold=True, min_size=9)
             if show_status:
                 self.text((right - 27, top + 2, right - 2, bottom - 1), status, 9,
-                          self.c["muted"], min_size=9, align="right")
+                          min_size=9, align="right")
 
     def _friend_grid_cell(self, friend, box, game_icons, backgrounds, portraits):
         left, top, right, bottom = box
@@ -1027,10 +1072,20 @@ class _Console:
             rgb = owned.enter_context(source.convert("RGB") if source is not None
                                       else Image.new("RGB", (cover_width, height), self.c["navy"]))
             art = owned.enter_context(ImageOps.fit(rgb, (cover_width, height), method=Image.Resampling.LANCZOS))
+            # Under the names the cover is out of focus, so a logo in it does not read through
+            # them; it sharpens toward the far end, where no text reaches.
+            soft = owned.enter_context(art.filter(ImageFilter.GaussianBlur(FRIEND_COVER_BLUR)))
+            focus = owned.enter_context(Image.new("L", (cover_width, height), 255))
+            pen = ImageDraw.Draw(focus)
+            clear_from = round(cover_width * FRIEND_COVER_CLEAR_FROM)
+            for column in range(clear_from, cover_width):
+                pen.line((column, 0, column, height),
+                         fill=round(255 * (cover_width - 1 - column) / max(1, cover_width - 1 - clear_from)))
+            art.paste(soft, (0, 0), focus)
             shade = owned.enter_context(Image.new("RGBA", (cover_width, height)))
             pen = ImageDraw.Draw(shade)
-            # Keep the cover visible across the entire rectangle. Glyph outlines
-            # carry contrast, so the name area no longer needs an opaque wash.
+            # Keep the cover's colours visible across the entire rectangle. Glyph outlines
+            # carry contrast, so the name area needs no opaque wash.
             for column in range(cover_width):
                 pen.line((column, 0, column, height), fill=(*self.c["navy"], round(86 - 68 * column / max(1, cover_width - 1))))
             art.paste(shade, (0, 0), shade)
@@ -1145,7 +1200,7 @@ class _Console:
         for index, item in enumerate(items[:4]):
             y = 244 + index * 29
             appid = item.get("appid")
-            self.art((195, y, 790, y + 28), appid, strength=175)
+            self.art((195, y, 790, y + 28), appid, strength=175, blur=ROW_ART_BLUR)
             self.icon(appid, 206, y + 2, 24)
             playing = bool(current_appid and _appid(appid) == current_appid)
             right = 509 if playing else 588
@@ -1175,7 +1230,7 @@ class _Console:
         for index, item in enumerate(items):
             x = 199 + index * 197
             appid = item.get("appid")
-            self.art((x, 399, x + 192, 459), appid, strength=145)
+            self.art((x, 399, x + 192, 459), appid, strength=145, blur=ROW_ART_BLUR)
             rank_color = ((249, 202, 77), (181, 205, 223), (210, 153, 88))[index]
             self.draw.polygon(((x, 399), (x + 19, 399), (x + 12, 459), (x, 459)), fill=rank_color)
             self.text((x + 2, 400, x + 15, 459), item.get("rank", index + 1),
