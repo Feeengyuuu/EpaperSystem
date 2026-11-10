@@ -7,7 +7,8 @@ its top (titles and small text stay pure ink):
 - 天象 (amber), left: the month's Webb or Hubble picture, feathered into the page, its title beneath;
   then the live sun (SDO's 193 Å picture), its corona fading into the page.
 - 世界 (cobalt), middle: the newest headlines of DW 中文, 纽约时报中文网 and 少数派, each outlet in a
-  block of its own brand colour (DW Blue, the Times' black, 少数派 red) with its mark reversed out.
+  block of its own on the page's ground, its brand colour (DW Blue, the Times' black, 少数派 red) a
+  thin line round it, quiet doodles behind its headlines.
 - 数字 (emerald), right, a 2 x 2 of tiles: the US public debt with its day's change and who holds
   it; California's regular gasoline with its weekly change and six weeks' line; the crypto Fear &
   Greed Index on a half dial with its last seven days. 游戏 (violet): yesterday's Wordle answer.
@@ -32,6 +33,7 @@ from utils.flat_icons import draw_icon
 from utils.local_wordmark import load_source_logo
 from utils.page_canvas import PageCanvas
 from utils.picture_grounds import light_on_dark
+from utils.theme_utils import contrast_ratio
 
 
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -296,25 +298,20 @@ def _sky(canvas, night, box, payload, images):
 NEWS_SOURCES = (("dw", "德国之声"), ("nyt", "中文网"), ("sspai", "少数派"))
 # Each source's logo height in its section's heading: the NYT's wide masthead a little lower.
 NEWS_LOGO_HEIGHTS = {"dw": 15, "nyt": 15, "sspai": 16}
-# Each outlet's block in its own brand colour, its mark reversed out in white on it, its headlines in
-# white: DW Blue #002D5A (dw.com's own interface; its 2012 symbol is #012D5B), the Times' black (its
-# nameplate), and 少数派 red #D71A1B (sspai.com's --sspai-red, the same in its light and dark themes).
+# Each outlet's block stands on the page's own ground, its brand colour only a thin line round it: DW
+# Blue #002D5A (dw.com's own interface; its 2012 symbol is #012D5B), the Times' black (its nameplate),
+# and 少数派 red #D71A1B (sspai.com's --sspai-red, the same in its light and dark themes). Its logo keeps
+# its own colours and its headlines are the page's ink.
 NEWS_BRANDS = {"dw": (0x00, 0x2D, 0x5A), "nyt": (0x00, 0x00, 0x00), "sspai": (0xD7, 0x1A, 0x1B)}
-ON_BRAND = (255, 255, 255)
+NEWS_EDGE = 1
+# A brand colour this close to the page (DW's navy and the Times' black by night) is lightened for the
+# line, its hue kept, the way its logo is.
+NEWS_EDGE_CONTRAST = 3.0
 # Behind each block's headlines, quiet line doodles of its own world (assets/doodles: DW's broadcasting,
-# the Times' newsroom and type, 少数派's devices and apps), drawn a shade off the block's colour: a little
-# lighter on DW Blue and the Times' black, a little darker on 少数派 red, so white type stays clear.
-NEWS_DOODLES = {"dw": ((255, 255, 255), 0.16), "nyt": ((255, 255, 255), 0.17), "sspai": ((80, 0, 0), 0.34)}
+# the Times' newsroom and type, 少数派's devices and apps), a shade off the page in its ink (day, night);
+# the type clears them by a thin halo of the page.
+NEWS_DOODLE_STRENGTH = (0.12, 0.17)
 NEWS_GAP = 5
-
-
-def reversed_logo(art):
-    """An outlet's official mark reversed out in white, for its own colour: its coloured or black parts
-    white, its white parts (DW's letters, 少数派's π) left open to the panel beneath."""
-    red, green, blue, alpha = art.split()
-    lightest = ImageChops.darker(ImageChops.darker(red, green), blue)
-    white = Image.new("L", art.size, 255)
-    return Image.merge("RGBA", (white, white, white, ImageChops.multiply(alpha, ImageChops.invert(lightest))))
 
 
 def _band(canvas, box, kind):
@@ -324,12 +321,19 @@ def _band(canvas, box, kind):
                                   corners=(True, True, False, False))
 
 
+def brand_edge(colour, paper):
+    """An outlet's brand colour as the line round its block: itself where it shows on ``paper``, else
+    its lightness inverted with its hue kept (navy to a pale blue, black to white)."""
+    colour = tuple(colour[:3])
+    if contrast_ratio(colour, paper) >= NEWS_EDGE_CONTRAST:
+        return colour
+    return light_on_dark(Image.new("RGB", (1, 1), colour)).getpixel((0, 0))
+
+
 def _brand_panel(canvas, night, box, colour):
-    """An outlet's block in its brand colour. By night a black one (the Times') keeps a quiet edge so it
-    still reads as a block on the black page."""
-    canvas.draw.rounded_rectangle(box, radius=RADIUS, fill=colour,
-                                  outline=canvas.color("rule") if night and max(colour) < 40 else None,
-                                  width=1)
+    """An outlet's block: the page's ground with its brand colour as a thin line round it."""
+    canvas.draw.rounded_rectangle(box, radius=RADIUS, outline=brand_edge(colour, canvas.color("paper")),
+                                  width=NEWS_EDGE)
 
 
 def _news(canvas, night, box, payload):
@@ -350,20 +354,16 @@ def _news(canvas, night, box, payload):
     for (name, label, items), share in zip(feeds, shares):
         height = NEWS_HEAD + share * NEWS_LINE + spare // len(feeds)
         _brand_panel(canvas, night, (left, y, right, y + height), NEWS_BRANDS[name])
-        tint, strength = NEWS_DOODLES[name]
-        paint_doodles(canvas.image, (left + 1, y + 1, right - 1, y + height - 1), ASSETS / "doodles" / f"{name}.png",
-                      tint, strength=strength, radius=RADIUS - 1, offset=(left * 3 + y, y * 2))
+        paint_doodles(canvas.image, (left + NEWS_EDGE, y + NEWS_EDGE, right - NEWS_EDGE, y + height - NEWS_EDGE),
+                      ASSETS / "doodles" / f"{name}.png", canvas.color("ink"), strength=NEWS_DOODLE_STRENGTH[night],
+                      radius=RADIUS - NEWS_EDGE, offset=(left * 3 + y, y * 2))
         middle = y + NEWS_HEAD / 2 + 1
-        mark = logo(name, NEWS_LOGO_HEIGHTS.get(name, 16), False, None)
         x = left + 10
-        if mark is not None:
-            mark = reversed_logo(mark)
-            canvas.image.paste(mark, (x, round(middle - mark.height / 2)), mark)
-            x += mark.width + 6
-        canvas.text((x, middle), label, 12, ON_BRAND, anchor="lm")
+        x += _paste_logo(canvas, night, name, x, middle, NEWS_LOGO_HEIGHTS.get(name, 16)) + 6
+        canvas.text((x, middle), label, 12, anchor="lm", stroke="paper")
         if items[0].get("time"):
-            canvas.text((text_right, middle), ago(items[0]["time"], payload.get("_now")), 10, ON_BRAND, anchor="rm",
-                        bold=False)
+            canvas.text((text_right, middle), ago(items[0]["time"], payload.get("_now")), 10, "muted", anchor="rm",
+                        bold=False, stroke="paper")
         line_y = y + NEWS_HEAD
         left_lines = share
         for index, item in enumerate(items):
@@ -372,9 +372,9 @@ def _news(canvas, night, box, payload):
             # The newest headline may take two lines when the share allows; the rest take one.
             allowed = 2 if index == 0 and left_lines >= 3 else 1
             wrapped = canvas.wrap(item["title"], NEWS_SIZE, text_right - text_x, allowed)
-            canvas.draw.rectangle((left + 10, line_y + 6, left + 14, line_y + 10), fill=ON_BRAND)
+            canvas.draw.rectangle((left + 10, line_y + 6, left + 14, line_y + 10), fill=canvas.color("ink"))
             for line in wrapped:
-                canvas.text((text_x, line_y), line, NEWS_SIZE, ON_BRAND, anchor="la", bold=index == 0)
+                canvas.text((text_x, line_y), line, NEWS_SIZE, anchor="la", bold=index == 0, stroke="paper")
                 line_y += NEWS_LINE
             left_lines -= len(wrapped)
         y += height + NEWS_GAP
