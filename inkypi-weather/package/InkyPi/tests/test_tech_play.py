@@ -617,3 +617,28 @@ def test_the_wishlist_column_and_world_record_tags_are_drawn(mode):
     gold = render._rgb((render.NIGHT if mode == "night" else render.DAY)["gold"])
     speed = image.crop(render.SPEED_CARD).convert("RGB").get_flattened_data()
     assert sum(1 for pixel in speed if pixel == gold) > 60
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_the_header_names_the_sources_by_their_logos_between_the_title_and_the_date(monkeypatch, mode):
+    from plugins.tech_play import render
+
+    drawn = []
+    original = render.PageCanvas.text
+    monkeypatch.setattr(render.PageCanvas, "text", lambda self, xy, text, *args, **kwargs: drawn.append(str(text)) or original(
+        self, xy, text, *args, **kwargs))
+
+    image = render.render_page((800, 480), _payload(), {"_inkypi_theme": {"mode": mode}}, NOW, {})
+
+    # No subtitle in words, no decorative art: one row of official logos, clear of the title and the date.
+    assert not any(text.startswith("服务状态 · ") for text in drawn)
+    left, right = image.info["header_sources"]
+    assert 220 < left < right < 650 and right - left > 250
+    paper = image.getpixel((5, 5))
+    assert sum(pixel != paper for pixel in image.crop((left, 8, right + 1, 48)).get_flattened_data()) > 2000
+    # A row too wide gives up the spare logos first; nothing is drawn where nothing fits.
+    canvas = render.PageCanvas(render._palette({"_inkypi_theme": {"mode": mode}}))
+    wide = render._header_sources(canvas, 0, 2000)
+    tight = render._header_sources(canvas, 0, (wide[1] - wide[0]) - 1)
+    assert tight is not None and tight[1] - tight[0] < wide[1] - wide[0]
+    assert render._header_sources(canvas, 0, 5) is None

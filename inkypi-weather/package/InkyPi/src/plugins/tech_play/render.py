@@ -15,7 +15,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageOps
 
 from utils.flat_icons import draw_icon
-from utils.local_wordmark import paste_header_art, paste_local_wordmark
+from utils.local_wordmark import paste_local_wordmark
 from utils.page_canvas import PageCanvas
 from utils.picture_grounds import (
     blend_drawing, cut_flat_ground, drawn_on_white, light_on_dark, readable_on, trim_white, white_share,
@@ -107,6 +107,38 @@ def _palette(settings):
     theme = settings.get("_inkypi_theme") or {}
     palette = NIGHT if theme.get("mode", settings.get("themeMode")) == "night" else DAY
     return {key: _rgb(value) for key, value in palette.items()}
+
+
+# The header names the page's sources by their official logos, in the cards' order (the watched
+# services, arXiv, Epic, IGDB, Steam, speedrun.com), this tall with this gap, between the title
+# and the date; a row too wide gives up HEADER_LOGO_SPARE first, then its last logos.
+HEADER_LOGOS = ("claude", "github", "openai", "cloudflare", "discord", "arxiv", "epic", "igdb", "steam", "speedrun")
+HEADER_LOGO_HEIGHT, HEADER_LOGO_GAP = 26, 12
+# Wordmarks are wide: they sit lower than the square marks so the row reads as one weight.
+HEADER_LOGO_HEIGHTS = {"arxiv": 22, "igdb": 14, "cloudflare": 18}
+HEADER_LOGO_SPARE = ("steam", "discord", "cloudflare", "github")
+
+
+def _header_sources(canvas, left, right):
+    """The sources' logos in one centred row between ``left`` and ``right``, a dark mark made
+    readable on the night page; the row's (left, right), or None when nothing was drawn."""
+    row = {}
+    for name in HEADER_LOGOS:
+        height = HEADER_LOGO_HEIGHTS.get(name, HEADER_LOGO_HEIGHT)
+        logo = _logo(name, height, max_width=height * 5)
+        if logo is not None:
+            row[name] = readable_on(logo, canvas.color("paper"), canvas.color("ink"))
+    spare = [name for name in HEADER_LOGO_SPARE if name in row]
+    while row and sum(logo.width for logo in row.values()) + HEADER_LOGO_GAP * (len(row) - 1) > right - left:
+        row.pop(spare.pop(0) if spare else next(reversed(row)))
+    if not row:
+        return None
+    width = sum(logo.width for logo in row.values()) + HEADER_LOGO_GAP * (len(row) - 1)
+    x = start = round((left + right - width) / 2)
+    for logo in row.values():
+        canvas.image.paste(logo, (x, round(28 - logo.height / 2)), logo)
+        x += logo.width + HEADER_LOGO_GAP
+    return start, x - HEADER_LOGO_GAP
 
 
 def _logo(name, height, max_width=None):
@@ -764,10 +796,9 @@ def render_page(dimensions, payload, settings, now, images):
         title_right = pasted[2]
     else:
         title_right = 16 + canvas.text((16, 27), "科技与游戏", 30, anchor="lm")
-    subtitle_right = title_right + 14 + canvas.text((title_right + 14, 30), "服务状态 · 免费游戏 · 新作 · 论文 · 速通", 14, "muted",
-                                                    anchor="lm", bold=False)
     date_left = 788 - canvas.text((788, 27), f"{now:%m.%d} 周{WEEKDAYS[now.weekday()]} {now:%H:%M}", 16, anchor="rm")
-    paste_header_art(canvas.image, ASSETS / "header_art.png", subtitle_right, date_left)
+    # Between the title and the date: where the page's data comes from, by the sources' own logos.
+    canvas.image.info["header_sources"] = _header_sources(canvas, title_right + 16, date_left - 16)
     canvas.rule((12, 52, 788, 52), "ink", 2)
     _status(canvas, payload)
     _papers(canvas, payload, now, images)
