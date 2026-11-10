@@ -63,8 +63,7 @@ LEVEL_EVEN_FT = 0.1
 # The travel-time sign in the header, between the title and the Caltrans mark: a dark plate like the
 # sign itself, the route's shield and direction at its left, its three lines at its right.
 SIGN_BOX = (250, 7, 512, 58)
-SIGN_SHIELDS = {"I-680", "I-880", "SR-84", "US-101"}
-SIGN_PLACE_STRIP = 58
+SIGN_SHIELDS = {"I-680", "I-880", "SR-84"}
 # A destination's leader to its times is drawn only with at least this much room (px); the
 # station's stop ring before its name is this wide.
 BART_LEADER_MIN = 14
@@ -224,17 +223,15 @@ def header(page, now):
 
 
 def sign_plate(page, sign, box=SIGN_BOX):
-    """One of Caltrans' travel-time signs laid out as the sign shows it, straight on the page with
-    no plate behind it: at the left the route's shield, the town the sign stands in (its minutes
-    count from there), its direction and the message's time; then each destination with its
-    minutes aligned at the right. Nothing without a current sign."""
+    """One of Caltrans' travel-time signs near home laid out as the sign shows it, straight on the
+    page with no plate behind it: the route's shield, its direction and the message's time at the
+    left, then each destination with its minutes aligned at the right. Nothing without a current
+    sign."""
     if not sign or not sign.get("lines"):
         return
     left, top, right, bottom = box
     d, p = page.draw, page.palette
-    place = str(sign.get("place") or "")
-    # The left block is wider when it names the sign's town under the shield.
-    strip = left + (SIGN_PLACE_STRIP if place else 44)
+    strip = left + 44
     route = str(sign.get("route") or "")
     if route in SIGN_SHIELDS:
         with Image.open(ASSETS / f"{route}.png") as source:
@@ -244,22 +241,13 @@ def sign_plate(page, sign, box=SIGN_BOX):
     else:
         page.text(((left + strip) / 2, top + 9), route.replace("SR-", "").replace("US-", ""), 11, "ink",
                   role="number", align="center", width=40)
-    if place:
-        page.text(((left + strip) / 2, top + 29), place, 8, "ink", role="road", align="center", width=strip - left - 2,
-                  min_size=6)
     direction = DIRECTIONS.get(sign.get("direction"), "")
+    if direction:
+        page.text(((left + strip) / 2, top + 30), direction, 9, "ink", align="center", width=40)
     shown = parse_time(sign.get("time"))
-    clock = shown.astimezone(PACIFIC).strftime("%H:%M") if shown else ""
-    if place and (direction or clock):
-        # With the town named, the direction and the time share the last line.
-        page.text(((left + strip) / 2, top + 40), " ".join(part for part in (direction, clock) if part), 8, "ink",
-                  bold=False, align="center", width=44, min_size=7)
-    else:
-        if direction:
-            page.text(((left + strip) / 2, top + 30), direction, 9, "ink", align="center", width=40)
-        if clock:
-            page.text(((left + strip) / 2, top + 41), clock, 8, "muted", role="number", bold=False, align="center",
-                      width=40)
+    if shown:
+        page.text(((left + strip) / 2, top + 41), shown.astimezone(PACIFIC).strftime("%H:%M"), 8, "muted",
+                  role="number", bold=False, align="center", width=40)
     d.line((strip, top + 6, strip, bottom - 6), fill=p["muted"], width=1)
     lines = sign["lines"][:3]
     pitch = (bottom - top - 8) / 3
