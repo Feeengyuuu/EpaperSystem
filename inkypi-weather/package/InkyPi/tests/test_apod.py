@@ -2097,6 +2097,15 @@ def _photo_edge_pixels(image):
     )
 
 
+def _header_rule_is_complete(page, rendered):
+    """The header's rule runs the page's width, white only where the first group's lead sits."""
+    lead = range(page.KP_RECT[0] + page.PANEL_INSET, page.KP_RECT[0] + page.PANEL_INSET + page.RULE_LEAD)
+    return all(
+        rendered.getpixel((x, page.HEADER_RECT[3] - 1)) == (page.TEXT_COLOR if x in lead else page.DIVIDER_COLOR)
+        for x in range(page.PAGE_SIZE[0])
+    )
+
+
 def test_apod_header_wordmark_asset_is_transparent_and_nonempty():
     page = _apod_page_module()
 
@@ -2160,10 +2169,7 @@ def test_apod_header_uses_wordmark_instead_of_plain_title_text(monkeypatch):
         for y in range(0, page.HEADER_RECT[3] - 1)
         for x in range(page.WORDMARK_RECT[2] + 8, 675)
     } <= {page.HEADER_COLOR, page.ORBIT_COLOR, page.STAR_COLOR}
-    assert all(
-        rendered.getpixel((x, page.HEADER_RECT[3] - 1)) == page.DIVIDER_COLOR
-        for x in range(page.PAGE_SIZE[0])
-    )
+    assert _header_rule_is_complete(page, rendered)
 
 
 def test_apod_header_falls_back_to_plain_title_when_wordmark_is_missing(
@@ -2262,13 +2268,144 @@ def test_apod_page_uses_every_approved_fixed_rectangle_exactly():
 
     assert page.HEADER_RECT == (0, 0, 800, 65)
     assert page.LEFT_RECT == (0, 65, 368, 480)
-    assert page.KP_RECT == (16, 74, 352, 190)
-    assert page.GRS_RECT == (16, 198, 352, 236)
-    assert page.METRICS_RECT == (16, 244, 352, 330)
-    assert page.PROBABILITIES_RECT == (16, 338, 352, 384)
-    assert page.ALERT_RECT == (16, 392, 352, 434)
-    assert page.SOURCE_RECT == (16, 448, 352, 472)
+    assert page.KP_RECT == (16, 73, 352, 164)
+    assert page.GRS_RECT == (16, 178, 352, 216)
+    assert page.METRICS_RECT == (16, 229, 352, 321)
+    assert page.PROBABILITIES_RECT == (16, 339, 352, 384)
+    assert page.ALERT_RECT == (16, 399, 352, 437)
+    assert page.SOURCE_RECT == (16, 452, 352, 476)
     assert page.PHOTO_RECT == (220, 65, 800, 480)
+    # A rule closes each group, between its zone and the next one.
+    assert page.RULE_YS == (174, 220, 275, 330, 393, 444)
+    zones = (page.KP_RECT, page.GRS_RECT, page.METRICS_RECT, page.PROBABILITIES_RECT, page.ALERT_RECT,
+             page.SOURCE_RECT)
+    rules = (page.KP_RULE, page.GRS_RULE, page.METRICS_RULE, page.NEO_RULE, page.ALERT_RULE)
+    for above, rule, below in zip(zones, rules, zones[1:]):
+        assert above[3] < rule < below[1]
+    assert page.METRICS_RECT[1] < page.WIND_RULE < page.METRICS_RECT[1] + page.METRIC_ROW_PITCH
+    assert page.KP_RECT[0] + page.KP_TEXT_LEFT == page.SECOND_COLUMN
+
+
+def _storm_weather():
+    """The widest copy each reading carries, with the flares and their odds."""
+    return replace(
+        _page_weather(),
+        current_kp={"value": 8.67, "mode": "estimated"},
+        current_scales={"g": 4, "r": 3, "s": 2},
+        forecast_48h={"max_kp": 9.0, "noaa_scale": "G5"},
+        solar_wind={"speed_km_s": 1284},
+        magnetic_field={"bt_nt": 38.4, "bz_nt": -27.55, "direction": "south"},
+        probabilities={"r1_r2": 100, "r3_r5": 75, "s1_plus": 100},
+        xray={"current_class": "X12.8", "peak_class": "X28.0"},
+        flare_probabilities={"c": [100, 100, 100], "m": [95, 90, 85], "x": [75, 70, 60]},
+    )
+
+
+STORM_SKY = {"neos": {"count": 128, "objects": [
+    {"name": "(2026 WQ147)", "when": "2026-11-28T20:05:00+00:00", "lunar": 0.07, "size_m": 1250},
+    {"name": "2026 VA1", "lunar": 9.9},
+]}}
+
+
+def _render_storm_page(page):
+    return page.render_apod_page(
+        apod=_page_record(title_en="Aurora", title_zh="极光"),
+        title_zh="极光",
+        translation_unavailable=False,
+        weather=_storm_weather(),
+        source_image=Image.new("RGB", (960, 640), PHOTO_BLUE),
+        rendered_at_utc=NOW_UTC,
+        sky=STORM_SKY,
+    )
+
+
+def test_apod_page_closes_every_group_with_a_hairline_led_in_white():
+    page = _apod_page_module()
+    rendered = _render_storm_page(page)
+    left, right = page.KP_RECT[0] + page.PANEL_INSET, page.KP_RECT[2] - page.PANEL_INSET
+
+    # The rules stay on the page ground: they end with the readings, before the photo fades in.
+    assert right < page.SCRIM_SOLID
+    for y in page.RULE_YS:
+        row = [rendered.getpixel((x, y)) for x in range(left, right + 1)]
+        assert row[:page.RULE_LEAD] == [page.TEXT_COLOR] * page.RULE_LEAD
+        assert set(row[page.RULE_LEAD:]) == {page.DIVIDER_COLOR}
+        assert rendered.getpixel((left - 1, y)) == page.PAGE_COLOR
+        assert rendered.getpixel((right + 1, y)) == page.PAGE_COLOR
+    # The lead is two pixels deep, on every rule and on the header's.
+    for y in (page.HEADER_RECT[3] - 1, *page.RULE_YS):
+        assert rendered.getpixel((left + page.RULE_LEAD - 1, y - 1)) == page.TEXT_COLOR
+        assert rendered.getpixel((left + page.RULE_LEAD, y - 1)) != page.TEXT_COLOR
+        assert rendered.getpixel((left, y - 2)) != page.TEXT_COLOR
+
+
+def test_apod_page_parts_the_cells_of_a_row_with_hairlines_clear_of_the_rules():
+    page = _apod_page_module()
+    rendered = _render_storm_page(page)
+    left, right = page.KP_RECT[0] + page.PANEL_INSET, page.KP_RECT[2] - page.PANEL_INSET
+    half = page.SECOND_COLUMN - page.CELL_GUTTER // 2
+    third = (right - left + page.CELL_GUTTER) / 3
+    dividers = [
+        (round(left + third) - page.CELL_GUTTER // 2, page.KP_RULE, page.GRS_RULE),
+        (round(left + 2 * third) - page.CELL_GUTTER // 2, page.KP_RULE, page.GRS_RULE),
+        (half, page.GRS_RULE, page.WIND_RULE),
+        (half, page.WIND_RULE, page.METRICS_RULE),
+        (half, page.METRICS_RULE, page.NEO_RULE),
+    ]
+
+    assert half == page.SECOND_COLUMN - 8 and page.CELL_DIVIDER_CLEAR >= 6
+    for x, above, below in dividers:
+        top, bottom = above + page.CELL_DIVIDER_CLEAR, below - page.CELL_DIVIDER_CLEAR
+        assert {rendered.getpixel((x, y)) for y in range(top, bottom + 1)} == {page.DIVIDER_COLOR}
+        assert {rendered.getpixel((x, y)) for y in (*range(above + 1, top), *range(bottom + 1, below))} == {
+            page.PAGE_COLOR
+        }
+
+
+def test_apod_page_storm_copy_keeps_to_its_cells_on_one_grid(monkeypatch):
+    page = _apod_page_module()
+    original_text = page.MixedDraw.text
+    calls = []
+
+    def capture_text(draw, xy, text, *args, **kwargs):
+        calls.append((xy, str(text), draw.textbbox(xy, str(text), font=kwargs.get("font")), kwargs.get("font")))
+        return original_text(draw, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(page.MixedDraw, "text", capture_text)
+    _render_storm_page(page)
+
+    right = page.KP_RECT[2] - page.PANEL_INSET
+    first_cell_right = page.SECOND_COLUMN - page.CELL_GUTTER
+    left_calls = [call for call in calls if call[0][0] < 368 and call[0][1] >= 65]
+    assert all(bbox[2] <= right for _xy, _text, bbox, _font in left_calls)
+    assert all(font.size >= 10 for _xy, _text, _bbox, font in left_calls)
+    # Below the scales every row has two cells: what starts in the first never reaches the second.
+    for xy, text, bbox, _font in left_calls:
+        if page.GRS_RULE < xy[1] < page.NEO_RULE and xy[0] < first_cell_right:
+            assert bbox[2] <= first_cell_right, text
+    by_text = {text: (xy, bbox) for xy, text, bbox, _font in left_calls}
+    # The Kp number, the field, the flare odds and the nearest NEO share the second column.
+    for copy in ("8.7", "G4 严重磁暴（估算）", "48 小时最高 Kp 9.0，G5", "磁场 Bt / Bz", "1-3 天耀斑概率", "C",
+                 "距离最近", "(2026 WQ147)"):
+        assert by_text[copy][0][0] == page.SECOND_COLUMN, copy
+    # The class keeps its size; the high's label gives way.
+    assert {"X12.8", "24h 最高", "X28.0"} <= set(by_text) and "24 小时最高" not in by_text
+    # The odds are measured: the last class ends on the column's right edge.
+    assert by_text["75%"][1][2] == right
+    assert by_text["128 颗 < 10 LD"][1][2] == first_cell_right
+    assert by_text["近地天体 30 天"][1][2] + 8 <= by_text["128 颗 < 10 LD"][1][0]
+
+
+def test_apod_neo_name_steps_down_to_fit_its_cell():
+    page = _apod_page_module()
+    draw = page.MixedDraw(ImageDraw.Draw(Image.new("RGB", page.PAGE_SIZE)))
+    width = page.KP_RECT[2] - page.PANEL_INSET - page.SECOND_COLUMN
+
+    assert page._fit_neo_name(draw, "2019 XF2", width).size == 13
+    long_name = "(2026 WQ147) Apophis B"
+    font = page._fit_neo_name(draw, long_name, width)
+    assert 10 <= font.size < 13
+    assert page._text_width(draw, long_name, font) <= width
 
 
 def test_apod_page_icons_are_transparent_and_drawn_in_pure_white():
@@ -2342,7 +2479,7 @@ def test_apod_page_composed_photo_edges_are_exact_cover_pixels(source):
     }
     for x, y in edge_points:
         assert rendered.getpixel((left + x, top + y)) == expected.getpixel((x, y))
-    assert all(rendered.getpixel((x, page.HEADER_RECT[3] - 1)) == page.DIVIDER_COLOR for x in range(800))
+    assert _header_rule_is_complete(page, rendered)
 
 
 def test_apod_page_maximum_caption_has_fixed_photo_boundary():
@@ -2760,7 +2897,7 @@ def test_apod_page_kp_rect_is_direct_and_invariant(monkeypatch, scenario):
     )
 
     assert len(calls) == 1
-    assert calls[0][0] == (16, 74, 352, 190)
+    assert calls[0][0] == (16, 73, 352, 164)
     assert calls[0][0] == page.KP_RECT
     assert calls[0][1] is weather
 
