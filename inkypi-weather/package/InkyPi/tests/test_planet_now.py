@@ -480,3 +480,34 @@ def test_the_exoplanet_count_is_a_weekly_optional_feed():
     text = Path(planet_now.__file__).read_text(encoding="utf-8")
     assert '"exoplanets": load("exoplanets", sources.fetch_exoplanets, 7 * DAY' in text
     assert "exoplanets" not in planet_now.CORE_FEEDS
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_the_header_names_the_sources_by_their_logos_between_the_title_and_the_date(monkeypatch, mode):
+    drawn = []
+    original = render.PageCanvas.text
+    monkeypatch.setattr(render.PageCanvas, "text", lambda self, xy, text, *args, **kwargs: drawn.append(str(text)) or original(
+        self, xy, text, *args, **kwargs))
+    now = datetime(2026, 11, 10, 11, 12, tzinfo=sources.PACIFIC)
+
+    image = render.render_page((800, 480), _payload(), {"_inkypi_theme": {"mode": mode}}, now, {})
+
+    # No subtitle in words, no decorative art: a row of official logos, clear of the title and the date.
+    assert "卫星 · 电网 · 热度 · 太空" not in drawn
+    left, right = image.info["header_sources"]
+    assert 230 < left < right < 640
+    paper = image.getpixel((5, 5))
+    row = image.crop((left, 8, right + 1, 48))
+    assert sum(pixel != paper for pixel in row.get_flattened_data()) > 2000
+    # The space sources stay when the row is tight: the spare ones go first.
+    kept = []
+    monkeypatch.setattr(render, "_paste", lambda canvas, logo, xy, mask=None: kept.append(logo.size))
+    canvas = render.PageCanvas(render._palette({"_inkypi_theme": {"mode": mode}}))
+    assert render._header_sources(canvas, 0, 2000) is not None and len(kept) == len(render.HEADER_LOGOS)
+    kept.clear()
+    full = [render._header_logo(name, mode == "night") for name in render.HEADER_LOGOS]
+    spare = render._header_logo(render.HEADER_LOGO_SPARE[0], mode == "night")
+    width = sum(logo.width for logo in full) + render.HEADER_LOGO_GAP * (len(full) - 1)
+    render._header_sources(canvas, 0, width - 1)
+    assert len(kept) == len(full) - 1 and spare.size not in kept[:1] and kept[-1] == full[-1].size
+    assert render._header_sources(canvas, 0, 5) is None

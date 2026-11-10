@@ -21,7 +21,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageOps
 
 from utils.doodle_backdrop import paint_doodles
-from utils.local_wordmark import load_source_logo, paste_header_art, paste_local_wordmark
+from utils.local_wordmark import load_source_logo, paste_local_wordmark
 from utils.page_canvas import PageCanvas
 from utils.safe_image import ImageLimits, safe_open_image
 from utils.space_typography import SpaceCanvas
@@ -76,6 +76,14 @@ SOURCE_LOGOS = {"noaa": (18, "NOAA"), "caiso": (16, "CAISO"), "apple_music": (12
                 "wikipedia": (18, "Wikipedia")}
 # Places marked on the satellite crop: (name, lat, lon, label side); a None side is a sea's
 # name with no dot.
+# The header names the page's sources by their official logos, in the cards' order (sky, grid,
+# trends, space), HEADER_LOGO_HEIGHT tall with this gap, between the title and the date.
+HEADER_LOGOS = ("noaa", "caiso", "apple_music", "google_trends", "wikipedia", "nasa", "jpl")
+HEADER_LOGO_HEIGHT, HEADER_LOGO_GAP = 26, 12
+# Wordmarks are wide: they sit lower than the round seals so the row reads as one weight.
+HEADER_LOGO_HEIGHTS = {"apple_music": 13, "caiso": 18, "google_trends": 16, "jpl": 16}
+# When the row is too wide for the header, these go first, in this order.
+HEADER_LOGO_SPARE = ("google_trends", "wikipedia", "apple_music")
 SKY_PLACES = (("旧金山", 37.7793, -122.4193, "left"), ("奥克兰", 37.8044, -122.2712, "right"),
               ("圣何塞", 37.3382, -121.8863, "right"), ("太平洋", 37.36, -122.86, None))
 STATIONS = {"tiangong": "天宫", "iss": "国际空间站"}
@@ -168,6 +176,41 @@ def _logo(name, night):
             return image.resize((max(1, round(image.width * height / image.height)), height),
                                 Image.Resampling.LANCZOS)
     return None
+
+
+@lru_cache(maxsize=32)
+def _header_logo(name, night):
+    """A source's official logo for the header row in its published colours (the brand's own
+    dark-page version by night when there is one); None without the file."""
+    height = HEADER_LOGO_HEIGHTS.get(name, HEADER_LOGO_HEIGHT)
+    for stem in ((f"{name}_night", name) if night else (name,)):
+        path = ASSETS / "logos" / f"{stem}.png"
+        if path.is_file():
+            with safe_open_image(path, limits=_LIMITS) as source:
+                image = source.convert("RGBA")
+            return image.resize((max(1, round(image.width * height / image.height)), height),
+                                Image.Resampling.LANCZOS)
+    return None
+
+
+def _header_sources(canvas, left, right):
+    """The sources' logos in one centred row between ``left`` and ``right``, in the cards' order;
+    a row too wide gives up HEADER_LOGO_SPARE first, then its last logos. Returns the row's
+    (left, right), or None when nothing was drawn."""
+    row = {name: _header_logo(name, canvas.palette["night"]) for name in HEADER_LOGOS}
+    row = {name: logo for name, logo in row.items() if logo is not None}
+    spare = [name for name in HEADER_LOGO_SPARE if name in row]
+    while row and sum(logo.width for logo in row.values()) + HEADER_LOGO_GAP * (len(row) - 1) > right - left:
+        row.pop(spare.pop(0) if spare else next(reversed(row)))
+    logos = list(row.values())
+    if not logos:
+        return None
+    width = sum(logo.width for logo in logos) + HEADER_LOGO_GAP * (len(logos) - 1)
+    x = start = round((left + right - width) / 2)
+    for logo in logos:
+        _paste(canvas, logo, (x, round(28 - logo.height / 2)))
+        x += logo.width + HEADER_LOGO_GAP
+    return start, x - HEADER_LOGO_GAP
 
 
 @lru_cache(maxsize=1)
@@ -946,10 +989,9 @@ def render_page(dimensions, payload, settings, now, images):
     canvas = PageCanvas(_palette(settings), family=settings.get("fontFamily") or "Microsoft YaHei")
     pasted = paste_local_wordmark(canvas.image, ASSETS / "wordmark.png", (12, 4, 222, 50), align="left")
     title_right = pasted[2] if pasted else 16 + canvas.text((16, 27), "环球此刻", 30, anchor="lm")
-    subtitle_right = title_right + 12 + canvas.text((title_right + 12, 30), "卫星 · 电网 · 热度 · 太空", 14, "muted",
-                                                    anchor="lm", bold=False)
     date_left = 788 - canvas.text((788, 27), f"{now:%m.%d} 周{WEEKDAYS[now.weekday()]} {now:%H:%M}", 16, anchor="rm")
-    paste_header_art(canvas.image, ASSETS / "header_art.png", subtitle_right, date_left)
+    # Between the title and the date: where the page's data comes from, by the sources' own logos.
+    canvas.image.info["header_sources"] = _header_sources(canvas, title_right + 16, date_left - 16)
     canvas.rule((12, 52, 788, 52), "ink", 2)
     _earth(canvas, payload)
     _grid(canvas, payload)
