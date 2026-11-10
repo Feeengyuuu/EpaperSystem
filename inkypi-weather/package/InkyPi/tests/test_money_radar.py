@@ -746,3 +746,27 @@ def test_trending_is_an_extra_feed_outside_the_pages_provenance(monkeypatch, tmp
     assert captured["trending"]["data"]["coins"][0]["symbol"] == "TAO"
     text = Path(money_module.__file__).read_text(encoding="utf-8")
     assert '"trending"' in text and 'results["trending"]' not in text
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_the_header_is_one_row_of_source_logos_without_the_colour_key(monkeypatch, mode):
+    from plugins.money_radar import render as money_render
+
+    drawn = []
+    original = money_render.PageCanvas.text
+    monkeypatch.setattr(money_render.PageCanvas, "text", lambda self, xy, text, *args, **kwargs: drawn.append(
+        str(text)) or original(self, xy, text, *args, **kwargs))
+    for name in ("_fx_tile", "_crypto_tiles", "_yield_tile", "_curve", "_fear_greed", "_macro_tiles", "_holdings"):
+        monkeypatch.setattr(money_render, name, lambda *args, **options: None)
+
+    image = render_page((800, 480), {}, {"_inkypi_theme": {"mode": mode}}, NOW)
+
+    # The kinds' colour key is gone from the header (the cards still wear their colours).
+    assert not set(drawn) & set(money_render.KIND_COLOURS)
+    left, right = image.info["source_logos"]
+    assert 150 < left < right < 650 and right - left > 300
+    # One row: every logo is centred on the header's middle line, the tallest that fits.
+    canvas = money_render.PageCanvas(money_render._palette({"_inkypi_theme": {"mode": mode}}))
+    assert money_render._source_logos(canvas, 0, 40, mode == "night") is None
+    wide = money_render._source_logos(canvas, 0, 2000, mode == "night")
+    assert wide is not None and wide[1] - wide[0] > right - left

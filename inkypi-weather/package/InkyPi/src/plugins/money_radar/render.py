@@ -42,13 +42,13 @@ COIN_NAMES = {"bitcoin": "比特币", "ethereum": "以太坊", "solana": "Solana
 # the flags FX_FLAG_HEIGHT tall.
 FX_OTHERS = (("EUR", "flag-eu", "€"), ("JPY", "flag-jp", "¥"), ("HKD", "flag-hk", "HK$"))
 FX_FLAG_HEIGHT = 10
-# The header names the page's sources by their logos (assets/logos), between the colour key and
-# the date: official statistics over market data, the tallest that fits two rows of them.
-# The second row names the earnings calendar in use: Finnhub's with its key, else Nasdaq's.
-SOURCE_LOGO_ROWS = (("ecb", "fred", "bls", "sec"), ("yahoo_finance", "coingecko", "finnhub"))
+# The header names the page's sources by their logos (assets/logos) in one row between the title
+# and the date: official statistics first, then market data, as tall as the row fits. The last
+# names the earnings calendar in use: Finnhub's with its key, else Nasdaq's.
+SOURCE_LOGO_ROW = ("ecb", "fred", "bls", "sec", "yahoo_finance", "coingecko", "finnhub")
 EARNINGS_SOURCE_LOGOS = {"nasdaq": "nasdaq"}
-SOURCE_LOGO_HEIGHTS = range(19, 11, -1)
-SOURCE_LOGO_GAP = 6
+SOURCE_LOGO_HEIGHTS = range(26, 11, -1)
+SOURCE_LOGO_GAP = 12
 # Logos whose black lettering takes the night ink (True: every dark part, as Yahoo prints its
 # wordmark white on dark grounds); the seals and emblems keep their printed colours.
 SOURCE_LOGO_INKED = {"fred": False, "coingecko": False, "nasdaq": False, "yahoo_finance": True}
@@ -854,36 +854,23 @@ def _holdings(canvas, payload, now):
     _news(canvas, news, now, middle + 10, right - 10, body, rows)
 
 
-def _kind_key(canvas, x, y):
-    """The subtitle as the colour key: each kind of figure after a square in its card colour."""
-    for kind, colour in KIND_COLOURS.items():
-        fill = canvas.color(colour) if isinstance(colour, str) else colour
-        canvas.draw.rounded_rectangle((x, y - 5, x + 10, y + 5), radius=2, fill=fill)
-        x += 14 + canvas.text((x + 14, y), kind, 14, anchor="lm", bold=False) + 10
-    return x - 10
-
-
 def _source_logos(canvas, left, right, night, earnings_source=None):
-    """The sources' logos in two centred rows between ``left`` and ``right``, as tall as they fit;
-    nothing when even the smallest do not."""
+    """The sources' logos in one centred row between ``left`` and ``right``, as tall as the row
+    fits; nothing when even the smallest do not. Returns the row's (left, right), or None."""
     ink = canvas.color("ink") if night else None
     calendar = EARNINGS_SOURCE_LOGOS.get(earnings_source, "finnhub")
-    names_rows = [tuple(calendar if name == "finnhub" else name for name in names) for names in SOURCE_LOGO_ROWS]
+    names = tuple(calendar if name == "finnhub" else name for name in SOURCE_LOGO_ROW)
     for height in SOURCE_LOGO_HEIGHTS:
-        rows = [[load_source_logo(ASSETS / "logos" / f"{name}.png", height,
-                                  ink if name in SOURCE_LOGO_INKED else None,
-                                  dark_parts=SOURCE_LOGO_INKED.get(name, False)) for name in names]
-                for names in names_rows]
-        rows = [[logo for logo in row if logo is not None] for row in rows]
-        widths = [sum(logo.width for logo in row) + SOURCE_LOGO_GAP * (len(row) - 1) for row in rows if row]
-        if widths and max(widths) <= right - left:
+        row = [load_source_logo(ASSETS / "logos" / f"{name}.png", height, ink if name in SOURCE_LOGO_INKED else None,
+                                dark_parts=SOURCE_LOGO_INKED.get(name, False)) for name in names]
+        row = [logo for logo in row if logo is not None]
+        width = sum(logo.width for logo in row) + SOURCE_LOGO_GAP * (len(row) - 1)
+        if row and width <= right - left:
             break
     else:
-        return
-    middles = (28 - height / 2 - 2, 28 + height / 2 + 2)
-    for row, middle in zip(rows, middles):
-        width = sum(logo.width for logo in row) + SOURCE_LOGO_GAP * (len(row) - 1)
-        paste_source_logos(canvas.image, row, (left + right - width) / 2, middle, SOURCE_LOGO_GAP)
+        return None
+    start = (left + right - width) / 2
+    return start, paste_source_logos(canvas.image, row, start, 28, SOURCE_LOGO_GAP)
 
 
 def render_page(dimensions, payload, settings, now):
@@ -897,10 +884,10 @@ def render_page(dimensions, payload, settings, now):
         title_right = pasted[2]
     else:
         title_right = 16 + canvas.text((16, 27), "资金雷达", 30, anchor="lm")
-    subtitle_right = _kind_key(canvas, title_right + 14, 30)
     date_left = 788 - canvas.text((788, 27), f"{now:%m.%d} 周{WEEKDAYS[now.weekday()]} {now:%H:%M}", 16, anchor="rm")
-    _source_logos(canvas, subtitle_right + 12, date_left - 12, night,
-                  ((payload.get("earnings") or {}).get("data") or {}).get("source"))
+    # Between the title and the date: where the page's figures come from, by the sources' own logos.
+    canvas.image.info["source_logos"] = _source_logos(
+        canvas, title_right + 16, date_left - 16, night, ((payload.get("earnings") or {}).get("data") or {}).get("source"))
     canvas.rule((12, 52, 788, 52), "ink", 2)
     _fx_tile(canvas, payload, TILES[0])
     _crypto_tiles(canvas, payload)
