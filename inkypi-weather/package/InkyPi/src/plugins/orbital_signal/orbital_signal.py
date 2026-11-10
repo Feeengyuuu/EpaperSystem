@@ -89,7 +89,17 @@ PERSON_HINT = re.compile(r"\(born \d{4}\)|footballer|player|politician|president
 # Mission-control layout: the launch side with a photo, flip-clock countdown,
 # fact grid and launch timeline; the market side with three gauge columns.
 LAUNCH_SPLIT_X = 462
-PHOTO_BOX = (16, 72, 124, 272)
+# The launch photo runs from the panel's left edge and the header's rule down to the fact grid's
+# hairline, and over its last PHOTO_FADE px melts into the paper, where the text column begins.
+PHOTO_BOX = (0, 58, 146, 284)
+PHOTO_FADE = 42
+# The launch panel's rows in px below its top: the NEXT LAUNCH tag, the countdown, the rocket,
+# the mission, the local time (the site 20 px under it), the fact grid's two rows and the timeline.
+TAG_ROW, CLOCK_ROW, ROCKET_ROW, MISSION_ROW, WHEN_ROW = 10, 40, 114, 150, 178
+FACT_ROWS, TIMELINE_ROW = (234, 266), 298
+# The fact grid's four columns as shares of its width; every cell is a label over its value.
+FACT_COLUMNS = (0.28, 0.25, 0.21, 0.26)
+FACT_GUTTER = 10
 # Quiet launch doodles (rockets, gantries, fairings, trajectories) in the page's blue under the
 # launch panel, and each coming launch's provider logo under its stop, this tall at most.
 LAUNCH_DOODLES = Path(__file__).with_name("assets") / "doodles" / "launch.png"
@@ -158,7 +168,7 @@ ROCKET_LINE, MISSION_LINE = 34, 20
 WORDMARK_MAX_WIDTH = 220
 # Below this brightness a logo's dark parts would vanish on the night paper; they take the ink.
 NIGHT_LOGO_INK_BELOW = 90
-FACT_ICON = 24
+FACT_ICON = 22
 # The rocket-launch badge that carries the launch date beside the countdown.
 LAUNCH_DAY_ICON = 50
 FACT_ICONS = {"WINDOW": "clock", "PAD": "tower", "ORBIT": "orbit", "WORLD": "world", "WEATHER": "weather"}
@@ -943,8 +953,10 @@ class OrbitalSignal(BasePlugin):
         )
 
     def _draw_launch_photo(self, image, draw, primary, palette, family):
-        """The next launch's photo in the left column, or a drawn rocket on an orbit arc."""
+        """The next launch's photo bleeding off the panel's left edge and fading into the paper
+        on its right, or a drawn rocket on an orbit arc straight on the paper."""
         left, top, right, bottom = PHOTO_BOX
+        solid = right - PHOTO_FADE
         photo = self._load_cached_launch_photo(primary)
         fitted = None
         if photo is not None:
@@ -955,19 +967,25 @@ class OrbitalSignal(BasePlugin):
             finally:
                 photo.close()
         if fitted is None:
-            draw.rectangle(PHOTO_BOX, fill=palette["panel"])
-            draw.arc((left - 40, top + 30, right + 20, bottom + 60), 200, 320, fill=palette["orange"], width=3)
-            self._draw_rocket_icon(draw, (left + right) // 2, top + 34, 132, palette["ink"], palette)
-        else:
-            image.paste(fitted, (left, top))
-            fitted.close()
-            credit = str(primary.get("photo_credit") or "").strip()
-            if credit:
-                credit_font = self._font(8, bold=True, family=family)
-                label = self._fit_text(draw, f"PHOTO: {credit.upper()}", credit_font, right - left - 7)
-                draw.rectangle((left + 1, bottom - 17, right - 2, bottom - 2), fill=palette["ink"])
-                draw.text((left + 3, bottom - 15), label, font=credit_font, fill=palette["paper"])
-        draw.rectangle((left, top, right - 1, bottom - 1), outline=palette["rule"], width=1)
+            draw.arc((left + 6, top + 84, solid + 34, bottom + 70), 196, 330, fill=palette["orange"], width=3)
+            self._draw_rocket_icon(draw, (left + solid) // 2 + 8, top + 44, 132, palette["ink"], palette)
+            return
+        credit = str(primary.get("photo_credit") or "").strip()
+        if credit:
+            # The credit's strip belongs to the photo and fades with it.
+            ImageDraw.Draw(fitted).rectangle((0, fitted.height - 15, fitted.width, fitted.height),
+                                             fill=palette["ink"])
+        # Opaque up to the fade, then eased out so no edge shows where the text column starts.
+        ramp = [255] * (solid - left) + [round(255 * (1 - (step + 1) / PHOTO_FADE) ** 2)
+                                         for step in range(PHOTO_FADE)]
+        mask = Image.new("L", (right - left, 1))
+        mask.putdata(ramp)
+        image.paste(fitted, (left, top), mask.resize(fitted.size))
+        fitted.close()
+        if credit:
+            credit_font = self._font(8, bold=True, family=family)
+            label = self._fit_text(draw, f"PHOTO: {credit.upper()}", credit_font, solid - left - 8)
+            draw.text((left + 4, bottom - 13), label, font=credit_font, fill=palette["paper"])
 
     @staticmethod
     def _countdown_units(now, launch_time):
@@ -1099,9 +1117,9 @@ class OrbitalSignal(BasePlugin):
         x, y, width = cell
         count = launch.get("provider_launches_year")
         label = f"PROVIDER  #{count} YTD" if isinstance(count, int) and count > 0 else "PROVIDER"
-        draw.text((x, y), label, font=label_font, fill=palette["orange"])
+        draw.text((x, y), label, font=label_font, fill=palette["ink"])
         fitted = logo.copy()
-        fitted.thumbnail((int(width), 18), Image.Resampling.LANCZOS)
+        fitted.thumbnail((int(width), 16), Image.Resampling.LANCZOS)
         paper = "night" if sum(palette["paper"]) < 300 else "day"
         if provider_id in PROVIDER_LOGO_SILHOUETTE[paper]:
             silhouette = Image.new("RGBA", fitted.size, (*palette["ink"], 0))
@@ -1225,98 +1243,96 @@ class OrbitalSignal(BasePlugin):
         primary = launches[0]
         launch_time = _parse_time(primary.get("net")) or _utc(now)
         self._draw_launch_photo(image, draw, primary, palette, family)
-        text_left, text_right = PHOTO_BOX[2] + 12, right - 16
+        # One text column from the photo's fading edge to the panel's margin.
+        text_left, text_right = PHOTO_BOX[2] - 4, right - 16
 
         tab_font = self._font(12, bold=True, family=family)
+        tab_top = top + TAG_ROW
         tab_w = draw.textbbox((0, 0), "NEXT LAUNCH", font=tab_font)[2] + 18
-        draw.rectangle((text_left, PHOTO_BOX[1], text_left + tab_w, PHOTO_BOX[1] + 21), fill=palette["orange"])
-        draw.text((text_left + 9, PHOTO_BOX[1] + 3), "NEXT LAUNCH", font=tab_font, fill=palette["white"])
+        draw.rectangle((text_left, tab_top, text_left + tab_w, tab_top + 21), fill=palette["orange"])
+        draw.text((text_left + 9, tab_top + 3), "NEXT LAUNCH", font=tab_font, fill=palette["white"])
         if primary.get("webcast_live"):
             live_left = text_left + tab_w + 8
             live_w = draw.textbbox((0, 0), "WEBCAST LIVE", font=tab_font)[2] + 24
-            draw.rectangle((live_left, PHOTO_BOX[1], live_left + live_w, PHOTO_BOX[1] + 21), outline=palette["red"],
-                           width=2)
-            draw.ellipse((live_left + 7, PHOTO_BOX[1] + 7, live_left + 14, PHOTO_BOX[1] + 14), fill=palette["red"])
-            draw.text((live_left + 18, PHOTO_BOX[1] + 3), "WEBCAST LIVE", font=tab_font, fill=palette["red"])
+            draw.rectangle((live_left, tab_top, live_left + live_w, tab_top + 21), outline=palette["red"], width=2)
+            draw.ellipse((live_left + 7, tab_top + 7, live_left + 14, tab_top + 14), fill=palette["red"])
+            draw.text((live_left + 18, tab_top + 3), "WEBCAST LIVE", font=tab_font, fill=palette["red"])
 
-        clock_top = PHOTO_BOX[1] + 30
+        clock_top = top + CLOCK_ROW
         clock_right = self._draw_flip_countdown(
             draw, text_left, clock_top, self._countdown_units(now, launch_time), palette, family
         )
-
         self._draw_launch_day(image, draw, primary, launch_time, now, clock_right, text_right, clock_top,
                               palette, family)
 
-        width = text_right - text_left
         rocket = str(primary.get("rocket") or "UPCOMING").strip().upper()
         self._draw_marked_name(image, draw, rocket, ROCKET_MARKS, text_left, text_right,
-                               clock_top + FLIP_CARD[1] + 12, ROCKET_LINE, 30, 14, palette, family)
+                               top + ROCKET_ROW, ROCKET_LINE, 30, 14, palette, family)
         mission = str(primary.get("mission") or "MISSION").strip().upper()
         self._draw_marked_name(image, draw, mission, MISSION_MARKS, text_left, text_right,
-                               clock_top + FLIP_CARD[1] + 46, MISSION_LINE, 16, 12, palette, family)
+                               top + MISSION_ROW, MISSION_LINE, 16, 12, palette, family)
         self._draw_when_and_where(image, draw, primary, launch_time, now, text_left, text_right,
-                                  clock_top + FLIP_CARD[1] + 71, palette, family)
+                                  top + WHEN_ROW, palette, family)
 
-        grid_top = PHOTO_BOX[3] + 8
-        draw.line((16, grid_top, right - 18, grid_top), fill=palette["rule"], width=2)
-        label_font = self._font(9, True, family)
-        cell_w = (right - 18 - 16) / 3
-        facts = self._launch_facts(primary)
-        # With Launch Library's mission description, the mission takes the last two cells and says
-        # what the flight is for; the forecast, when there is one, joins its label.
-        described = bool(str(primary.get("description") or "").strip())
-        for index, (label, value) in enumerate(facts):
-            cell_x = 16 + (index % 3) * cell_w + (0 if index % 3 == 0 else 8)
-            cell_y = grid_top + 6 + (index // 3) * 34
-            if described and index == 5:
-                continue
-            if described and label == "MISSION":
-                weather = facts[5][1] if facts[5][0] == "WEATHER" and facts[5][1] != "NO FORECAST" else ""
-                self._draw_description_cell(image, draw, primary, value, weather,
-                                            (cell_x, cell_y, 2 * cell_w - 12), label_font, palette, family)
-                continue
-            if label == "PROVIDER" and self._draw_provider_cell(image, draw, primary, (cell_x, cell_y, cell_w - 12),
-                                                                label_font, palette, family):
-                continue
-            icon = self._fact_icon(label, primary)
-            text_x = cell_x + (FACT_ICON + 6 if icon else 0)
-            text_w = cell_w - 12 - (text_x - cell_x)
-            if icon:
-                self._paste_icon(image, icon, cell_x, cell_y + 1, FACT_ICON, palette)
-            draw.text((text_x, cell_y), label, font=label_font, fill=palette["orange"])
-            value = value.upper()
-            flag = _flag(primary.get("country_code")) if label == "PAD" else None
-            if flag is not None:
-                # The pad's country reads from its flag rather than its code.
-                value = self._short_pad(primary.get("pad")).upper() or "TBD"
-                text_w -= 22
-            value_font = self._fit_font(draw, value, text_w, 12, 9, family)
-            shown = self._fit_text(draw, value, value_font, text_w)
-            draw.text((text_x, cell_y + 12), shown, font=value_font, fill=palette["ink"])
-            if flag is not None:
-                flag_x = text_x + draw.textbbox((0, 0), shown, font=value_font)[2] + 6
-                self._paste_flag(image, draw, flag, flag_x, cell_y + 14, palette)
-        for column in (1, 2):
-            divider = 16 + column * cell_w
-            draw.line((divider, grid_top + 8, divider, grid_top + (34 if described and column == 2 else 68)),
-                      fill=palette["rule"], width=1)
-        self._draw_timeline(draw, (16, grid_top + 76, right - 18, bottom - 6), launches, now, palette, family,
+        # The photo stands on the fact grid's hairline.
+        draw.line((16, PHOTO_BOX[3], right - 18, PHOTO_BOX[3]), fill=palette["rule"], width=1)
+        self._draw_fact_grid(image, draw, primary, 16, right - 18, top, palette, family)
+        self._draw_timeline(draw, (16, top + TIMELINE_ROW, right - 18, bottom - 6), launches, now, palette, family,
                             image=image, events=getattr(self, "_events", ()))
 
-    def _draw_description_cell(self, image, draw, launch, mission, weather, cell, label_font, palette, family):
-        """MISSION and its type (and the weather forecast) over two lines of the mission's description."""
+    def _draw_fact_grid(self, image, draw, launch, left, right, panel_top, palette, family):
+        """The launch's facts as label-over-value cells on four shared columns and two rows: WINDOW,
+        PAD, ORBIT and PROVIDER, then MISSION with Launch Library's description beside it and the
+        forecast in the last column. Without a description the forecast (or the world's launch
+        count) follows the mission."""
+        label_font = self._font(9, True, family)
+        edges = [left]
+        for share in FACT_COLUMNS:
+            edges.append(edges[-1] + (right - left) * share)
+
+        def cell(row, column, span=1):
+            x = edges[column] + (FACT_GUTTER if column else 0)
+            return x, panel_top + FACT_ROWS[row], edges[column + span] - x
+
+        facts = self._launch_facts(launch)
+        for column, (label, value) in enumerate(facts[:4]):
+            if label == "PROVIDER" and self._draw_provider_cell(image, draw, launch, cell(0, column), label_font,
+                                                                palette, family):
+                continue
+            self._draw_fact_cell(image, draw, launch, label, value, cell(0, column), label_font, palette, family)
+        (mission_label, mission), (last_label, last) = facts[4], facts[5]
+        self._draw_fact_cell(image, draw, launch, mission_label, mission, cell(1, 0), label_font, palette, family)
+        description = str(launch.get("description") or "").strip()
+        forecast = last_label == "WEATHER" and last != "NO FORECAST"
+        if description:
+            x, y, width = cell(1, 1, 2 if forecast else 3)
+            font = self._font(10, True, family)
+            for row, line in enumerate(self._wrap_lines(draw, description, font, width)):
+                draw.text((x, y + 1 + row * 12), line, font=font, fill=palette["ink"])
+        if forecast or not description:
+            self._draw_fact_cell(image, draw, launch, last_label, last, cell(1, 3 if description else 1),
+                                 label_font, palette, family)
+
+    def _draw_fact_cell(self, image, draw, launch, label, value, cell, label_font, palette, family):
+        """One fact: its icon, then the label over the value; a fact without an icon keeps the
+        icon's room, so every cell's text starts on its column's line. A pad's country reads from
+        its flag beside the label, which leaves the pad's name the cell's whole width."""
         x, y, width = cell
-        icon = self._fact_icon("MISSION", launch)
-        text_x = x + (FACT_ICON + 6 if icon else 0)
+        icon = self._fact_icon(label, launch)
+        text_x = x + FACT_ICON + 5
+        text_w = x + width - text_x
         if icon:
-            self._paste_icon(image, icon, x, y + 1, FACT_ICON, palette)
-        label = "  /  ".join(part for part in ("MISSION", str(mission or "").upper() if mission != "TBD" else "",
-                                               f"WEATHER {weather}" if weather else "") if part)
-        draw.text((text_x, y), self._fit_text(draw, label, label_font, x + width - text_x), font=label_font,
-                  fill=palette["orange"])
-        font = self._font(10, True, family)
-        for row, line in enumerate(self._wrap_lines(draw, launch.get("description"), font, x + width - text_x)):
-            draw.text((text_x, y + 11 + row * 12), line, font=font, fill=palette["ink"])
+            self._paste_icon(image, icon, x, y + 2, FACT_ICON, palette)
+        draw.text((text_x, y), label, font=label_font, fill=palette["ink"])
+        value = str(value).upper()
+        flag = _flag(launch.get("country_code")) if label == "PAD" else None
+        if flag is not None:
+            value = self._short_pad(launch.get("pad")).upper() or "TBD"
+            self._paste_flag(image, draw, flag, text_x + draw.textbbox((0, 0), label, font=label_font)[2] + 6,
+                             y + 1, palette, size=(15, 10))
+        value_font = self._fit_font(draw, value, text_w, 12, 9, family)
+        draw.text((text_x, y + 12), self._fit_text(draw, value, value_font, text_w), font=value_font,
+                  fill=palette["ink"])
 
     @staticmethod
     def _gap_label(earlier, later):
@@ -1375,7 +1391,7 @@ class OrbitalSignal(BasePlugin):
         the time to the next stop on the line between. The next spaceflight
         event (a spacewalk, docking or flyby) joins them as a diamond."""
         left, top, right, bottom = box
-        draw.line((left, top, right, top), fill=palette["rule"], width=2)
+        draw.line((left, top, right, top), fill=palette["rule"], width=1)
         title_font = self._font(10, True, family)
         stops = [(launch, when) for launch in launches[:4] if (when := _parse_time(launch.get("net"))) is not None]
         event = next(((self._event_stop(row), when) for row in events

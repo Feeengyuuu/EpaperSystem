@@ -40,6 +40,8 @@ from plugins.orbital_signal.orbital_signal import (  # noqa: E402
     MISSION_MARKS,
     NIGHT_PALETTE,
     PERCENT_Y,
+    PHOTO_BOX,
+    PHOTO_FADE,
     PLUGIN_ID,
     QUESTION_TOP,
     ROCKET_MARKS,
@@ -848,11 +850,16 @@ def test_cached_launch_photo_renders_in_color_for_day_and_night(tmp_path):
     day = plugin._render_page((800, 480), payload, {}, NOW)
     night = plugin._render_page((800, 480), payload, {"themeMode": "night"}, NOW)
 
-    assert day.getpixel((60, 130)) == (20, 170, 230)
-    assert night.getpixel((60, 130)) == (20, 170, 230)
-    # The photo column keeps a one-pixel rule frame.
-    assert day.getpixel((123, 120)) == DAY_PALETTE["rule"]
-    assert night.getpixel((123, 120)) == NIGHT_PALETTE["rule"]
+    left, top, right, bottom = PHOTO_BOX
+    assert (left, top) == (0, 58)
+    for page, palette in ((day, DAY_PALETTE), (night, NIGHT_PALETTE)):
+        # The photo bleeds off the panel's left edge from the header's rule down, without a frame.
+        for point in ((0, top), (60, 130), (right - PHOTO_FADE - 1, bottom - 20)):
+            assert page.getpixel(point) == (20, 170, 230)
+        # Over its last PHOTO_FADE px it melts into the paper: ever closer to it, the paper at the end.
+        row = [page.getpixel((x, 62)) for x in range(right - PHOTO_FADE, right)]
+        distance = [sum(abs(a - b) for a, b in zip(pixel, palette["paper"])) for pixel in row]
+        assert distance == sorted(distance, reverse=True) and distance[0] > 100 and distance[-1] == 0
 
 
 def test_launch_photo_credit_is_one_line_and_empty_credit_draws_no_label(tmp_path):
@@ -885,7 +892,8 @@ def test_launch_photo_credit_is_one_line_and_empty_credit_draws_no_label(tmp_pat
 
     labels = [call for call in draw.text_calls if call["text"].startswith("PHOTO:")]
     assert len(labels) == 1
-    assert labels[0]["bbox"][2] <= 126
+    # The credit stays on the photo's opaque part, clear of its fading edge.
+    assert labels[0]["bbox"][2] <= PHOTO_BOX[2] - PHOTO_FADE
 
     launches[0]["photo_credit"] = ""
     no_credit_draw = RecordingDraw()
@@ -1259,6 +1267,65 @@ def test_fact_cells_get_icons_and_mission_types_read_short():
     # Every mapped icon exists.
     for name in {*module.FACT_ICONS.values(), *module.MISSION_ICONS.values(), "pin"}:
         assert (module.ICON_DIR / f"{name}.png").is_file(), name
+
+
+def _fact_grid(palette=DAY_PALETTE, **fields):
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    draw = RecordingDraw()
+    launch = {**_representative_launches()[0], "window_start": "2026-07-18T06:00:00Z",
+              "window_end": "2026-07-18T08:00:00Z", "pad": "Space Launch Complex 4E", "country_code": "US",
+              "orbit": "LEO", "provider_id": 121, "provider_launches_year": 122,
+              "mission_type": "Communications", **fields}
+    plugin._draw_fact_grid(draw.image, draw, launch, 16, 444, 58, palette, None)
+    return draw, {call["text"]: call for call in draw.text_calls}
+
+
+def test_the_facts_are_label_over_value_cells_on_shared_lines_in_ink():
+    from plugins.orbital_signal import orbital_signal as module
+
+    draw, calls = _fact_grid()
+    labels = ["WINDOW", "PAD", "ORBIT", "PROVIDER  #122 YTD", "MISSION", "WEATHER"]
+    assert all(label in calls for label in labels)
+    first_row, second_row = (58 + row for row in module.FACT_ROWS)
+    # One line for the first row's labels, one for the second's, each value 12 px under its label.
+    assert {calls[label]["xy"][1] for label in labels[:4]} == {first_row}
+    assert {calls[label]["xy"][1] for label in labels[4:]} == {second_row}
+    for label, value in (("WINDOW", "06:00-08:00 UTC"), ("PAD", "SLC-4E"), ("ORBIT", "LEO"), ("MISSION", "COMMS"),
+                         ("WEATHER", "NO FORECAST")):
+        assert calls[value]["xy"] == (calls[label]["xy"][0], calls[label]["xy"][1] + 12)
+    # Columns run left to right inside the grid, and the second row starts on the first's columns.
+    lefts = [calls[label]["xy"][0] for label in labels[:4]]
+    assert lefts == sorted(lefts) and 16 <= lefts[0] and calls["PROVIDER  #122 YTD"]["bbox"][2] <= 444
+    assert calls["MISSION"]["xy"][0] == calls["WINDOW"]["xy"][0]
+    assert calls["WEATHER"]["xy"][0] == calls["PAD"]["xy"][0]
+    # Small type is pure ink; the colour is in the icons.
+    assert {call["fill"] for call in draw.text_calls} == {DAY_PALETTE["ink"]}
+    # The pad's country is its flag beside the label, so the pad's name has the cell's width.
+    flag = draw.image.crop((calls["PAD"]["bbox"][2] + 5, first_row, calls["PAD"]["bbox"][2] + 22, first_row + 12))
+    assert len(flag.getcolors(maxcolors=4096) or []) > 8
+
+
+def test_a_mission_without_an_icon_keeps_its_text_on_the_columns_line():
+    _draw, calls = _fact_grid(mission_type="Unknown")
+    assert calls["TBD"]["xy"][0] == calls["MISSION"]["xy"][0] == calls["WINDOW"]["xy"][0]
+
+
+def test_the_description_stands_beside_the_mission_and_leaves_a_forecast_its_column():
+    words = "Sixty broadband satellites for the constellation's polar shell, flown from the west coast."
+    _draw, calls = _fact_grid(description=words)
+    lines = [call for text, call in calls.items() if text.startswith("Sixty") or text.endswith("...")
+             or text.endswith("coast.")]
+    assert lines and all(call["xy"][0] == lines[0]["xy"][0] for call in lines)
+    assert lines[0]["xy"][0] > calls["COMMS"]["bbox"][2]
+    assert max(call["bbox"][2] for call in lines) <= 444
+    # Without a forecast the description has the rest of the row; the world's count stays out.
+    assert "WEATHER" not in calls and "WORLD" not in calls
+
+    _draw, calls = _fact_grid(description=words, weather_go=80)
+    lines = [call for text, call in calls.items() if text.startswith("Sixty") or text.endswith("...")]
+    assert calls["80% GO"]["xy"][0] == calls["WEATHER"]["xy"][0] > max(call["bbox"][2] for call in lines)
+    # The forecast's icon starts on the provider's column.
+    assert calls["WEATHER"]["xy"][0] > calls["PROVIDER  #122 YTD"]["xy"][0]
 
 
 def test_two_tone_icons_take_the_page_ink_and_orange():
