@@ -91,6 +91,8 @@ BILI_LEAD_FADE = 0.44
 BILI_THUMB_FADE = 0.42
 BILI_THUMB_TITLE = 0.8
 BILI_TWO_LINE_SIZE = 14
+# The uploader's avatar, round, before the lead's uploader name and before each row's view count.
+BILI_FACE = 14
 # The translucent chips over the covers: how much of their fill covers the picture.
 CHIP_ALPHA, PILL_ALPHA = 0.8, 0.58
 # 今日新番: a show among Bangumi's top BANGUMI_TOP_RANK wears its rank on its cover; every show
@@ -285,7 +287,8 @@ def _bilibili(canvas, payload, images):
         canvas.text((left + 10, y), line, size)
         y += size + 5
     meta = " · ".join(part for part in (lead.get("owner"), lead.get("section"), lead.get("reason")) if part)
-    canvas.text((left + 10, cover_box[3] + 3), meta, 10, "muted", bold=False, width=right - left - 20)
+    meta_x = left + 10 + _face(canvas, images, lead, left + 10, cover_box[3] + 10)
+    canvas.text((meta_x, cover_box[3] + 3), meta, 10, "muted", bold=False, width=right - 10 - meta_x)
     row_top = cover_box[3] + 23
     row_h = (bottom - 6 - row_top) / 3
     for index, video in enumerate(videos[1:4], start=2):
@@ -311,12 +314,23 @@ def _bilibili(canvas, payload, images):
         block = len(lines) * (size + 4) - 4
         for number, line in enumerate(lines):
             canvas.text((text_x, y0 + (title_h - block) / 2 + number * (size + 4)), line, size)
-        x = text_x
+        x = text_x + _face(canvas, images, video, text_x, meta_y + 7)
         x += canvas.text((x, meta_y), f"{count_text(video.get('views'))}播放", 10, "muted", bold=False) + 6
         gain = _view_gain(video, previous_views)
         if gain:
             x += canvas.text((x, meta_y), f"+{gain}", 10, "up") + 6
         _move_badge(canvas, (right - 10, meta_y + 6), moves.get(video.get("title")), anchor_right=True)
+
+
+def _face(canvas, images, video, x, middle):
+    """The video's uploader as a small round avatar from ``x``, centred on ``middle``; the width
+    it took with its gap, 0 without the picture."""
+    photo = images.get(sources.safe_image_url(video.get("face")))
+    if photo is None:
+        return 0
+    top = round(middle - BILI_FACE / 2)
+    _paste_fit(canvas, photo, (round(x), top, round(x) + BILI_FACE, top + BILI_FACE), radius=BILI_FACE // 2)
+    return BILI_FACE + 4
 
 
 def _fitted_title(canvas, text, width, height, *, largest, smallest):

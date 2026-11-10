@@ -416,3 +416,38 @@ def test_bilibili_titles_are_plain_ink_on_a_cover_that_has_all_but_faded(monkeyp
     assert strokes and all(stroke is None for _text, stroke in strokes)
     # The covers start fading before their middle, so the titles over them sit on a thin ground.
     assert render.BILI_LEAD_FADE < 0.5 and render.BILI_THUMB_FADE < 0.5 < render.BILI_THUMB_TITLE
+
+
+def test_bilibili_videos_carry_their_uploaders_avatars_beside_the_name_and_the_views(monkeypatch):
+    from plugins.daily_pop import render
+
+    row = {"title": "视频", "owner": {"name": "UP", "face": "http://i2.hdslb.com/bfs/face/ab12.jpg"},
+           "pic": "http://i0.hdslb.com/bfs/archive/a.jpg", "stat": {"view": 5}}
+    video = sources.normalize_bilibili({"data": {"list": [row]}})["videos"][0]
+    # The avatar comes over https at the small size the page shows; one with no avatar keeps "".
+    assert video["face"] == "https://i2.hdslb.com/bfs/face/ab12.jpg"
+    assert sources.safe_image_url(video["face"]) == "https://i2.hdslb.com/bfs/face/ab12.jpg" + sources.BILIBILI_FACE_SIZE
+    bare = sources.normalize_bilibili({"data": {"list": [{**row, "owner": {"name": "UP"}}]}})["videos"][0]
+    assert not bare["face"] and sources.safe_image_url(bare["face"]) is None
+
+    payload = _payload()
+    videos = payload["bilibili"]["data"]["videos"]
+    for index, item in enumerate(videos):
+        item["face"] = f"https://i2.hdslb.com/bfs/face/{index}.jpg"
+    green = Image.new("RGB", (96, 96), (20, 200, 60))
+    images = {sources.safe_image_url(item["face"]): green for item in videos[:3]}
+    placed = []
+    original = render._paste_fit
+    monkeypatch.setattr(render, "_paste_fit", lambda canvas, picture, box, **options: placed.append((box, options)) or original(
+        canvas, picture, box, **options))
+
+    image = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, images)
+
+    left, _top, right, bottom = render.CARDS["bilibili"]
+    faces = [box for box, options in placed if options.get("radius") == render.BILI_FACE // 2
+             and box[2] - box[0] == render.BILI_FACE and left < box[0] < right]
+    # The lead and the two rows whose avatars are at hand show them, round; the fourth goes without.
+    assert len(faces) == 3 and all(box[3] <= bottom for box in faces)
+    for box in faces:
+        assert image.getpixel(((box[0] + box[2]) // 2, (box[1] + box[3]) // 2)) == (20, 200, 60)
+        assert image.getpixel((box[0], box[1])) != (20, 200, 60)

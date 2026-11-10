@@ -62,6 +62,8 @@ ARTIST_PHOTO_CROP = "120x120cc.jpg"
 _OG_IMAGE = re.compile(r"<meta\b[^>]*property=[\"']og:image[\"'][^>]*content=[\"']([^\"']+)[\"']", re.I)
 _MZSTATIC_SIZE = re.compile(r"/\d+x\d+[a-z]{0,3}\.(?:png|jpe?g|webp)$", re.I)
 BILIBILI_COVER_SIZE = "@640w_360h_1c.jpg"
+# An uploader's avatar, as small as the page shows it (twice over, for a clean circle).
+BILIBILI_FACE_SIZE = "@96w_96h_1c.jpg"
 MAX_ARTICLES = 6
 # Wikipedia's most-read list always has its main page and search pages on top.
 WIKI_SKIP = re.compile(r"^(?:Wikipedia|Special|Help|File|Portal|Template|Category|Talk|User):|^首页$", re.I)
@@ -93,6 +95,8 @@ def safe_image_url(value):
         return None
     if parts.hostname.endswith(".hdslb.com") and parts.path.startswith("/bfs/archive/") and "@" not in parts.path:
         return url + BILIBILI_COVER_SIZE
+    if parts.hostname.endswith(".hdslb.com") and parts.path.startswith("/bfs/face/") and "@" not in parts.path:
+        return url + BILIBILI_FACE_SIZE
     return url
 
 
@@ -172,6 +176,7 @@ def normalize_bilibili(payload):
             "title": _clean(row.get("title"), 80), "owner": _clean((row.get("owner") or {}).get("name"), 30),
             "section": _clean(row.get("tname"), 12), "views": _count(stat.get("view")),
             "likes": _count(stat.get("like")), "cover": https(row.get("pic")),
+            "face": https((row.get("owner") or {}).get("face")),
             "reason": _clean((row.get("rcmd_reason") or {}).get("content"), 12),
         })
         if len(videos) >= MAX_VIDEOS:

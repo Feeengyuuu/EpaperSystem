@@ -211,6 +211,11 @@ class DailyPop(BasePlugin):
                    "user_agent": sources.USER_AGENT}
         images = load_thumbnails(urls, self._cache_subdir("covers"), cached_only=not allow_network,
                                  size=(480, 480), **options)
+        # The shown videos' uploaders, small, beside their names and view counts.
+        faces = [video.get("face") for video in payload["bilibili"]["data"].get("videos", [])[:4] if video.get("face")]
+        if faces:
+            images.update(load_thumbnails(faces, self._cache_subdir("faces"), cached_only=not allow_network,
+                                          size=ARTIST_PIXELS, **options))
         # The shown songs' artists, small, beside their names.
         artists = list((payload.get("artist_photos") or {}).values())
         if artists:
