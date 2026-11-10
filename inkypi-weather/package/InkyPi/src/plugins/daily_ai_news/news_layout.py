@@ -41,13 +41,14 @@ SOURCE_LOGOS_MAX = 12
 SOURCE_LOGO_SCALES = {"pbs_newshour": 0.68}
 # A vertical red seal reading 头条 marks the lead story.
 SEAL_SIZE = (28, 54)
-# A lead story with a picture (its RSS item's) shows it across the band's left LEAD_PHOTO_SPAN px,
-# the seal on its corner, rounded and fading into the page from LEAD_PHOTO_FADE of its width; the
+# A lead story with a picture (its RSS item's) shows it across the whole band (at most
+# LEAD_PHOTO_SPAN px, short of art at the band's right when there is some), the seal on its
+# corner, rounded and fading into the page from LEAD_PHOTO_FADE of its width; the
 # headline and its dek start right beside the seal, set over the picture in plain ink, with no
 # outline round the letters. So that they read there, the picture is laid at LEAD_PHOTO_STRENGTH,
 # the page showing through the rest of it: a quiet ground for the type.
-LEAD_PHOTO_SPAN = 340
-LEAD_PHOTO_FADE = 0.35
+LEAD_PHOTO_SPAN = 780
+LEAD_PHOTO_FADE = 0.7
 LEAD_PHOTO_STRENGTH = 0.34
 # The headline's letters start LEAD_HEADLINE_TOP px into the band; over a photo, the seal and they
 # sit LEAD_PHOTO_PAD px in from its left and top edges (the column cards' own bleed).
@@ -294,7 +295,7 @@ class NewsPage:
             # The seal and the headline sit the same LEAD_PHOTO_PAD in from its left and top edges: its
             # left edge lines up with the column cards' below (CARD_BLEED past the text), its top
             # stands that far above the headline's letters, and the seal's top is level with them.
-            span = min(LEAD_PHOTO_SPAN, art_left - 12 - MARGIN)
+            span = min(LEAD_PHOTO_SPAN, art_left - 12 - MARGIN + LEAD_PHOTO_PAD)
             seal_top = top + LEAD_HEADLINE_TOP
             self.lead_photo(photo, (MARGIN - LEAD_PHOTO_PAD, seal_top - LEAD_PHOTO_PAD, MARGIN + span, bottom - 1))
         # The generated 头条 badge is 1:2; drawn as a plain seal when the file is missing.

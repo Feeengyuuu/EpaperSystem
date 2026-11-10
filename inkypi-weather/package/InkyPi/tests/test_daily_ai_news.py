@@ -2123,8 +2123,10 @@ def test_words_stay_ink_with_red_and_blue_as_sparing_accents(monkeypatch):
     # Refined tones rather than the panel's pure inks.
     assert not {palette["red"], palette["blue"], palette["green"]} & {(255, 0, 0), (0, 0, 255), (0, 255, 0)}
     assert "domestic" not in palette and "world" not in palette
-    # The lead stands on the open white page, as does the margin round the cards.
-    assert image.getpixel((5, 300)) == image.getpixel((400, 100)) == (255, 255, 255)
+    # The margin round the cards is the open white page; the lead's picture, laid thin, runs under
+    # the whole lead band and has faded into that page by the band's right end.
+    assert image.getpixel((5, 300)) == image.getpixel((796, 100)) == (255, 255, 255)
+    assert image.getpixel((400, 100)) != (255, 255, 255) and min(image.getpixel((400, 100))) > 150
 
 
 def test_the_stories_and_markets_read_off_cards_every_other_story_banded(monkeypatch):
