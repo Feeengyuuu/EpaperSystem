@@ -29,7 +29,7 @@ def _ui(size, bold):
 STYLE_FACES = [
     ("gallery", TITLE, "Spectral-BoldItalic.ttf"), ("gallery", TEXT, "Spectral-SemiBold.ttf"),
     ("gallery", STRONG, "Spectral-Bold.ttf"), ("gallery", CHIP, "Spectral-Bold.ttf"),
-    ("comic", TITLE, "Bangers-Regular.ttf"), ("comic", TEXT, "ComicNeue-Bold.ttf"),
+    ("comic", TITLE, "Bangers-Regular.ttf"), ("comic", TEXT, "Boogaloo-Regular.ttf"),
     ("comic", STRONG, "Bangers-Regular.ttf"), ("comic", CHIP, "Bangers-Regular.ttf"),
     ("newsstand", TITLE, "BodoniModa-Variable.ttf"), ("newsstand", TEXT, "Jost.ttf"),
     ("newsstand", STRONG, "Jost.ttf"), ("newsstand", CHIP, "Jost.ttf"),
@@ -106,12 +106,13 @@ def test_every_cover_font_is_in_the_repository_with_its_source_and_licence():
         assert hashlib.sha256(data).hexdigest() == entry["sha256"] and len(data) == entry["bytes"], name
         assert entry["source"].startswith("https://github.com/google/fonts/raw/main/ofl/"), name
         licence = re.search(r"\(([\w-]+\.txt)\)", entry["licence"]).group(1)
-        assert "SIL Open Font License" in (cover_type.COVER_FONTS / licence).read_text(encoding="utf-8"), name
+        # Read as bytes: a licence text is kept as its foundry published it, whatever its encoding.
+        assert b"SIL Open Font License" in (cover_type.COVER_FONTS / licence).read_bytes(), name
 
 
 @pytest.mark.parametrize("style, title, chip, fact", [
     ("gallery", "Spectral-BoldItalic.ttf", "Spectral-Bold.ttf", "Spectral-SemiBold.ttf"),
-    ("comic", "Bangers-Regular.ttf", "Bangers-Regular.ttf", "ComicNeue-Bold.ttf"),
+    ("comic", "Bangers-Regular.ttf", "Bangers-Regular.ttf", "Boogaloo-Regular.ttf"),
     ("newsstand", "BodoniModa-Variable.ttf", "Jost.ttf", "Jost.ttf"),
 ])
 def test_a_page_draws_its_header_labels_and_timeline_in_its_styles_type(monkeypatch, style, title, chip, fact):

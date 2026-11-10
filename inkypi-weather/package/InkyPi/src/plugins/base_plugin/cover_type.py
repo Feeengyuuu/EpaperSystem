@@ -5,8 +5,9 @@ Each page is set in the type of the place its covers come from:
 - "gallery" (Daily Art), a museum's wall label: Spectral, a work's title in its bold italic, as
   titles are set, and its facts in the semibold (sturdy enough for the panel's small type);
   Chinese in Noto Serif SC.
-- "comic" (GCD Comic Covers), comic lettering: Bangers for titles, dates and figures, Comic Neue
-  for the facts; Chinese in ZCOOL KuaiLe.
+- "comic" (GCD Comic Covers), comic lettering: Bangers for titles, dates and figures, Boogaloo's
+  hand-lettered roman for the facts (not a Comic Sans look-alike: Comic Neue read as one);
+  Chinese in ZCOOL KuaiLe.
 - "newsstand" (Magazine Covers), a masthead's Didone over a geometric sans: Bodoni Moda for
   titles (Chinese ones in Noto Serif SC Black), Jost for everything else.
 
@@ -70,7 +71,7 @@ STYLES = {
     },
     "comic": {
         TITLE: Role(Face(COVER_FONTS / "Bangers-Regular.ttf", 1.3), KUAILE, bold=True),
-        TEXT: Role(Face(COVER_FONTS / "ComicNeue-Bold.ttf", 1.12), KUAILE),
+        TEXT: Role(Face(COVER_FONTS / "Boogaloo-Regular.ttf", 1.25), KUAILE),
         STRONG: Role(Face(COVER_FONTS / "Bangers-Regular.ttf", 1.25), KUAILE, bold=True),
         CHIP: Role(Face(COVER_FONTS / "Bangers-Regular.ttf", 1.25), KUAILE, bold=True),
     },

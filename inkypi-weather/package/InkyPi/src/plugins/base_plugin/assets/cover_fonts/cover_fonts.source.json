@@ -25,11 +25,11 @@
       "sha256": "4160a7311de9342674cce9160cde9fcbb30f48190397d86ff1b70b455af65824",
       "bytes": 93148
     },
-    "ComicNeue-Bold.ttf": {
-      "source": "https://github.com/google/fonts/raw/main/ofl/comicneue/ComicNeue-Bold.ttf",
-      "licence": "SIL Open Font License 1.1 (ComicNeue-OFL.txt)",
-      "sha256": "3e7e5fccfd7e0788f317b43312151c1bd5cf058c9697a8d83eac3939050bd61e",
-      "bytes": 55716
+    "Boogaloo-Regular.ttf": {
+      "source": "https://github.com/google/fonts/raw/main/ofl/boogaloo/Boogaloo-Regular.ttf",
+      "licence": "SIL Open Font License 1.1 (Boogaloo-OFL.txt)",
+      "sha256": "c38febf770bec2b8e30ea6bc1ddb39c9b0ce0e8625d94ceeafbe3af1c7096d9d",
+      "bytes": 33960
     },
     "ZCOOLKuaiLe-Regular.ttf": {
       "source": "https://github.com/google/fonts/raw/main/ofl/zcoolkuaile/ZCOOLKuaiLe-Regular.ttf",
