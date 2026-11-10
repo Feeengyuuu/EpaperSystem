@@ -23,11 +23,12 @@ from plugins.base_plugin.render_provenance import (
 from plugins.ai_ecosystem_pulse.ai_ecosystem_pulse import AiEcosystemPulse
 from plugins.ai_ecosystem_pulse.sources import parameter_text, pipeline_label
 from plugins.context_cache import write_context
-from plugins.tech_pulse import openrouter, trends
-from runtime.refresh_contracts import TaskCancelled
+from plugins.tech_pulse import item_icons, openrouter, trends
+from runtime.long_task_executor import task_context_or_default
+from runtime.refresh_contracts import TaskCancelled, TaskContext
 from utils.app_utils import DEFAULT_FONT_FAMILY, bounded_int, coerce_bool, get_available_font_names, get_font
 from utils.flat_icons import draw_icon
-from utils.http_client import get_http_session
+from utils.http_client import get_http_client, get_http_session
 from utils.image_utils import text_width
 from utils.doodle_backdrop import paint_doodles
 from utils.local_wordmark import load_source_logo
@@ -136,6 +137,21 @@ PROVIDER_MARK_HEIGHT, PROVIDER_MARK_WIDTH = 16, 46
 PROVIDER_BADGE_COVER, PROVIDER_BADGE_LIGHT, PROVIDER_BADGE_COLOUR = 0.55, 0.02, 0.25
 HN_LIST_ROWS = 3
 SKILL_ROWS = 4
+MODEL_ROWS = REPO_ROWS = 3
+# Every item carries its own mark (item_icons.py): a story its site's icon, a skill and a repository
+# their GitHub owner's avatar, a model its author's. They are fetched within ICON_SECONDS of a
+# refresh, ending ICON_RESERVE_SECONDS before the refresh's own deadline so the page is still drawn
+# in time, and kept in the cache's ICON_DIR, the avatar addresses asked in ICON_LOOKUPS beside it.
+# Sizes in px: the lead story's, a listed story's, a model's or repository's, a skill's.
+ICON_DIR = "icons"
+ICON_LOOKUPS = "icon-lookups.json"
+ICON_SECONDS, ICON_RESERVE_SECONDS = 20, 15
+LEAD_ICON, STORY_ICON, BOARD_ICON, SKILL_ICON = 40, 30, 20, 15
+# A story's rank sits on its icon's upper left corner as a small disc, RANK_OVERHANG px past it. A
+# model's or repository's icon is too small to carry one: its rank is a plain figure before the
+# icon, in a column BOARD_RANK_W wide.
+STORY_RANK_DISC, RANK_OVERHANG = 17, 5
+BOARD_RANK_W = 12
 # The trending Spaces close the Hugging Face panel on one line this tall.
 SPACES_LINE_H = 22
 SPACES_SHOWN = 2
@@ -274,7 +290,12 @@ class TechPulse(BasePlugin):
         if not theme_only:
             self._write_context(payload, now, ai)
         models = self._openrouter(now, cache_only=theme_only)
-        image = self._render_page(dimensions, payload, settings, now, ai, history, models)
+        icons = self._icons(payload, ai, cache_only=theme_only)
+        try:
+            image = self._render_page(dimensions, payload, settings, now, ai, history, models, icons)
+        finally:
+            for icon in icons.values():
+                icon.close()
         return attach_source_provenance(
             image,
             payload.get("_source_provenance", SourceProvenance.LOCAL_FALLBACK),
@@ -344,6 +365,39 @@ class TechPulse(BasePlugin):
         except Exception as exc:
             logger.warning("Tech Pulse AI boards unavailable: %s", exc)
             return None
+
+    def _icons(self, payload, ai, *, cache_only):
+        """Each drawn item's own mark (item_icons.py), {key: RGBA icon}: what is kept, and during a
+        refresh what can be fetched within ICON_SECONDS. A missing icon only leaves its item a
+        lettered tile; the icons' own time running out never fails the page."""
+        # The stand-in stories of an offline page name no real sites.
+        sample = (payload.get("status") or {}).get("source_state") == "local_sample"
+        wants = item_icons.wanted([] if sample else (payload.get("stories") or [])[:1 + HN_LIST_ROWS],
+                                  (self._board_rows(ai, "skills", "skills") or [])[:SKILL_ROWS],
+                                  (self._board_rows(ai, "huggingface", "models") or [])[:MODEL_ROWS],
+                                  (self._board_rows(ai, "github", "repos") or [])[:REPO_ROWS])
+        if not wants:
+            return {}
+        parent = task_context_or_default(timeout_seconds=ICON_SECONDS + ICON_RESERVE_SECONDS)
+        deadline = min(parent.deadline_monotonic - ICON_RESERVE_SECONDS, parent.clock() + ICON_SECONDS)
+        context = TaskContext(parent.cancel_event, deadline, parent.clock)
+        try:
+            cache = self._cache_dir(create=not cache_only)
+            options = {"context": context, "user_agent": USER_AGENT}
+            try:
+                return item_icons.load(wants, cache / ICON_DIR, cache / ICON_LOOKUPS, cached_only=cache_only,
+                                       http=None if cache_only else get_http_client(), **options)
+            except TaskCancelled:
+                # The page's own task ending passes on; the icons' time alone running out leaves
+                # the page the ones already kept.
+                parent.raise_if_cancelled()
+                return item_icons.load(wants, cache / ICON_DIR, cache / ICON_LOOKUPS, cached_only=True, http=None,
+                                       **options)
+        except TaskCancelled:
+            raise
+        except (OSError, ValueError, RuntimeError) as exc:
+            logger.warning("Tech Pulse icons unavailable: %s", exc)
+            return {}
 
     def _history(self, payload, ai, now, record=True):
         """The boards' snapshot history; a refresh first adds what this fetch saw."""
@@ -700,20 +754,21 @@ class TechPulse(BasePlugin):
             logger.warning("Tech Pulse OpenRouter models unavailable: %s", exc)
             return cached or None
 
-    def _render_page(self, dimensions, payload, settings, now, ai=None, history=None, models=None):
+    def _render_page(self, dimensions, payload, settings, now, ai=None, history=None, models=None, icons=None):
         palette = self._palette(settings)
         image = Image.new("RGB", PAGE_SIZE, palette["background"])
         draw = ImageDraw.Draw(image)
         family = settings.get("fontFamily") or settings.get("font_family") or DEFAULT_FONT
         fonts = {name: self._load_font(family, size, weight) for name, (size, weight) in FONT_SPECS.items()}
         history = history or {}
+        icons = icons or {}
 
         self._draw_background_grid(draw, *PAGE_SIZE, palette, 1.0)
         self._draw_header(image, draw, payload, ai, now, palette, fonts)
-        self._draw_hn_panel(image, draw, HN_BOX, payload, settings, palette, fonts, history, now)
-        self._draw_skills(image, draw, SKILLS_BOX, ai, palette, fonts, history, now)
-        self._draw_models(image, draw, MODELS_BOX, ai, palette, fonts, history, now)
-        self._draw_repos(image, draw, REPOS_BOX, ai, palette, fonts, now)
+        self._draw_hn_panel(image, draw, HN_BOX, payload, settings, palette, fonts, history, now, icons=icons)
+        self._draw_skills(image, draw, SKILLS_BOX, ai, palette, fonts, history, now, icons=icons)
+        self._draw_models(image, draw, MODELS_BOX, ai, palette, fonts, history, now, icons=icons)
+        self._draw_repos(image, draw, REPOS_BOX, ai, palette, fonts, now, icons=icons)
         self._draw_openrouter(image, draw, OPENROUTER_BOX, models, palette, fonts, now)
         if tuple(dimensions) != PAGE_SIZE:
             image = image.resize(tuple(dimensions), Image.LANCZOS)
@@ -795,7 +850,34 @@ class TechPulse(BasePlugin):
         self._draw_text(draw, (title_right + 8, centre + 1), detail, fonts["tiny"], palette["muted"], anchor="lm")
         return centre
 
-    def _draw_hn_panel(self, image, draw, box, payload, settings, palette, fonts, history, now):
+    def _mark(self, image, key, xy, size, palette, fonts, icons):
+        """An item's own mark ``size`` px with its upper left corner at ``xy``: its icon without a
+        plate (item_icons.on_page), or its lettered tile when the icon is not at hand. A story on
+        Hacker News itself (no key) carries Hacker News' logo."""
+        x, y = round(xy[0]), round(xy[1])
+        if not key:
+            self._paste_logo(image, "hn", (x, y), size, palette)
+            return
+        icon, tile = (icons or {}).get(key), None
+        if icon is not None:
+            try:
+                tile = item_icons.on_page(icon, size, palette["panel"])
+            except (OSError, ValueError):
+                tile = None
+        if tile is None:
+            font = fonts["lead" if size >= 28 else "label" if size >= 20 else "tiny_bold"]
+            tile = item_icons.monogram(key, size, font)
+        image.paste(tile, (x, y), tile)
+
+    def _rank_disc(self, draw, corner, size, rank, fill, ink, palette, fonts):
+        """A story's rank as a disc over its icon's upper left ``corner``, RANK_OVERHANG px past it,
+        ringed in the panel's colour so it parts from the icon."""
+        left, top = corner[0] - RANK_OVERHANG, corner[1] - RANK_OVERHANG
+        draw.ellipse((left - 1, top - 1, left + size, top + size), fill=palette["panel"])
+        draw.ellipse((left, top, left + size - 1, top + size - 1), fill=fill)
+        self._draw_text(draw, (left + size / 2, top + size / 2), str(rank), fonts["metric"], ink, anchor="mm")
+
+    def _draw_hn_panel(self, image, draw, box, payload, settings, palette, fonts, history, now, icons=None):
         x0, y0, x1, y1 = box
         stories = payload.get("stories") or []
         stats = payload.get("stats") or {}
@@ -809,28 +891,31 @@ class TechPulse(BasePlugin):
             return
         board = history.get("hn") or {}
         lead_bottom = self._draw_lead(image, draw, (x0 + 12, y0 + 30, x1 - 12, y1), stories[0], settings, palette,
-                                      fonts, board, now)
+                                      fonts, board, now, icons=icons)
         draw.line((x0 + 12, lead_bottom + 6, x1 - 12, lead_bottom + 6), fill=palette["rule"], width=1)
         self._draw_story_list(draw, (x0 + 12, lead_bottom + 8, x1 - 12, y1 - 4), stories[1:1 + HN_LIST_ROWS],
-                              settings, palette, fonts, board, now)
+                              settings, palette, fonts, board, now, HN_LIST_ROWS, image, icons)
 
-    def _draw_lead(self, image, draw, box, story, settings, palette, fonts, history, now):
-        """The top story: title, meta, points trend and top comment; returns its bottom edge."""
+    def _draw_lead(self, image, draw, box, story, settings, palette, fonts, history, now, icons=None):
+        """The top story: its site's icon with the rank on its corner, title, meta, points trend and
+        top comment; returns its bottom edge."""
         x0, y0, x1, _y1 = box
-        badge = (x0, y0, x0 + 22, y0 + 22)
-        draw.rounded_rectangle(badge, radius=5, fill=palette["orange"])
-        self._draw_text(draw, (x0 + 11, y0 + 11), str(story.get("rank") or 1), fonts["label"], (255, 255, 255),
-                        anchor="mm")
-        lines = self._wrap_text(draw, story.get("title") or "No story available", fonts["lead"], x1 - x0 - 30,
+        icon_x = x0 + RANK_OVERHANG
+        self._mark(image, item_icons.story_key(story), (icon_x, y0), LEAD_ICON, palette, fonts, icons)
+        self._rank_disc(draw, (icon_x, y0), STORY_RANK_DISC, story.get("rank") or 1, palette["orange"],
+                        (255, 255, 255), palette, fonts)
+        # The title and the line under it share one column beside the icon.
+        text_x = icon_x + LEAD_ICON + 8
+        lines = self._wrap_text(draw, story.get("title") or "No story available", fonts["lead"], x1 - text_x,
                                 max_lines=2, ellipsis=True)
         for index, line in enumerate(lines):
-            self._draw_text(draw, (x0 + 30, y0 + 11 + index * 23), line, fonts["lead"], palette["ink"], anchor="lm")
+            self._draw_text(draw, (text_x, y0 + 11 + index * 23), line, fonts["lead"], palette["ink"], anchor="lm")
 
         meta_y = y0 + 11 + len(lines) * 23 + 2
         right = self._draw_story_metrics(draw, x1, meta_y, story, palette, fonts)
         meta = self._story_meta(story, settings, byline=True)
         if meta:
-            self._draw_text(draw, (x0, meta_y), self._fit_text(draw, meta, fonts["small"], right - x0 - 10),
+            self._draw_text(draw, (text_x, meta_y), self._fit_text(draw, meta, fonts["small"], right - text_x - 10),
                             fonts["small"], palette["muted"], anchor="lm")
 
         trend_y = meta_y + 20
@@ -851,25 +936,31 @@ class TechPulse(BasePlugin):
                                     fonts["label"], fonts["body"])
         return preview_top + 78
 
-    def _draw_story_list(self, draw, box, stories, settings, palette, fonts, history, now, rows=HN_LIST_ROWS):
+    def _draw_story_list(self, draw, box, stories, settings, palette, fonts, history, now, rows=HN_LIST_ROWS,
+                         image=None, icons=None):
         x0, y0, x1, y1 = box
         row_h = (y1 - y0) / max(1, rows)
         for index, story in enumerate(stories):
             top = y0 + index * row_h
-            self._story_row(draw, (x0, top, x1, top + row_h), story, settings, palette, fonts, history, now)
+            self._story_row(draw, (x0, top, x1, top + row_h), story, settings, palette, fonts, history, now,
+                            image=image, icons=icons)
             if index < len(stories) - 1:
                 self._dotted(draw, x0, x1, top + row_h, palette["rule"])
 
-    def _story_row(self, draw, box, story, settings, palette, fonts, history, now):
+    def _story_row(self, draw, box, story, settings, palette, fonts, history, now, image=None, icons=None):
+        """A listed story: its site's icon with the rank on its corner, then its title over its
+        source, age and figures. Without an ``image`` to paste on, only the rank's disc stands there."""
         x0, y0, x1, y1 = box
         middle = (y0 + y1) / 2
         title_y, meta_y = middle - 9, middle + 10
-        badge = (x0, title_y - 10, x0 + 20, title_y + 10)
-        draw.rounded_rectangle(badge, radius=5, fill=palette["orange"])
-        self._draw_text(draw, (x0 + 10, title_y), str(story.get("rank") or ""), fonts["label"], (255, 255, 255),
-                        anchor="mm")
-        title = self._fit_text(draw, story.get("title") or "", fonts["row"], x1 - x0 - 28)
-        self._draw_text(draw, (x0 + 28, title_y), title, fonts["row"], palette["ink"], anchor="lm")
+        icon_x, icon_y = x0 + RANK_OVERHANG, middle - STORY_ICON / 2
+        if image is not None:
+            self._mark(image, item_icons.story_key(story), (icon_x, icon_y), STORY_ICON, palette, fonts, icons)
+        self._rank_disc(draw, (icon_x, round(icon_y)), STORY_RANK_DISC, story.get("rank") or "", palette["orange"],
+                        (255, 255, 255), palette, fonts)
+        text_x = icon_x + STORY_ICON + 8
+        title = self._fit_text(draw, story.get("title") or "", fonts["row"], x1 - text_x)
+        self._draw_text(draw, (text_x, title_y), title, fonts["row"], palette["ink"], anchor="lm")
 
         right = self._draw_story_metrics(draw, x1, meta_y, story, palette, fonts)
         rate, measured = self._velocity(story, history, now)
@@ -882,7 +973,7 @@ class TechPulse(BasePlugin):
             right -= 44
         meta = self._story_meta(story, settings, byline=False)
         if meta:
-            self._draw_text(draw, (x0 + 28, meta_y), self._fit_text(draw, meta, fonts["small"], right - x0 - 36),
+            self._draw_text(draw, (text_x, meta_y), self._fit_text(draw, meta, fonts["small"], right - text_x - 8),
                             fonts["small"], palette["muted"], anchor="lm")
 
     def _draw_story_metrics(self, draw, right, y, story, palette, fonts):
@@ -925,7 +1016,7 @@ class TechPulse(BasePlugin):
         value = f"{round(rate):d}/h"
         return f"+{value}" if measured and rate > 0 else f"~{value}"
 
-    def _draw_skills(self, image, draw, box, ai, palette, fonts, history, now):
+    def _draw_skills(self, image, draw, box, ai, palette, fonts, history, now, icons=None):
         x0, y0, x1, y1 = box
         centre = self._section_title(image, draw, box, "skills", "AGENT SKILLS", "skills.sh / 24H", palette["violet"],
                                      palette, fonts)
@@ -951,16 +1042,32 @@ class TechPulse(BasePlugin):
             if self._sparkline(draw, (right - 40, middle - 5, right - 6, middle + 5),
                                trends.series(points, "installs", now), palette):
                 right -= 40
-            # The name keeps its full width while the source can still show ~40 px after it.
-            room = right - (x0 + 56) - 8
-            name = self._fit_text(draw, skill.get("name") or "", fonts["name"], room - 46)
-            self._draw_text(draw, (x0 + 56, middle), name, fonts["name"], palette["ink"], anchor="lm")
-            source_x = x0 + 62 + self._text_width(draw, name, fonts["name"])
+            # Its GitHub owner's avatar leads the name.
+            owner = item_icons.owner_key(skill.get("source")) or f"skill:{skill.get('name') or '?'}"
+            self._mark(image, owner, (x0 + 56, middle - SKILL_ICON / 2), SKILL_ICON, palette, fonts, icons)
+            name_x = x0 + 56 + SKILL_ICON + 5
+            # The name keeps its full width while the source can still show a little after it (the
+            # avatar already stands for the owner, so the name keeps the width it had without it).
+            room = right - name_x - 8
+            name = self._fit_text(draw, skill.get("name") or "", fonts["name"], room - 26)
+            self._draw_text(draw, (name_x, middle), name, fonts["name"], palette["ink"], anchor="lm")
+            source_x = name_x + 6 + self._text_width(draw, name, fonts["name"])
             if right - source_x - 8 >= 24:
                 source = self._fit_text(draw, skill.get("source") or "", fonts["tiny"], right - source_x - 8)
                 self._draw_text(draw, (source_x, middle + 1), source, fonts["tiny"], palette["muted"], anchor="lm")
 
-    def _draw_models(self, image, draw, box, ai, palette, fonts, history, now):
+    def _board_mark(self, image, draw, key, row, rank, colour, palette, fonts, icons):
+        """A model's or repository's rank as a plain figure in ``colour`` at the left of its ``row``
+        (left, top, height), then its own mark; the x its name starts at."""
+        left, top, height = row
+        self._draw_text(draw, (left + BOARD_RANK_W / 2 - 1, top + height / 2), str(rank), fonts["name"], colour,
+                        anchor="mm")
+        icon_x = left + BOARD_RANK_W
+        self._mark(image, key or "item:?", (icon_x, top + (height - BOARD_ICON) / 2), BOARD_ICON, palette, fonts,
+                   icons)
+        return icon_x + BOARD_ICON + 6
+
+    def _draw_models(self, image, draw, box, ai, palette, fonts, history, now, icons=None):
         x0, y0, x1, y1 = box
         self._section_title(image, draw, box, "huggingface", "HUGGING FACE", "TRENDING MODELS", palette["hf_text"],
                             palette, fonts)
@@ -974,24 +1081,24 @@ class TechPulse(BasePlugin):
         columns = (("trend", "fire", "trending_score", palette["orange"]),
                    ("likes", "heart", "likes", palette["down"]),
                    ("downloads", "download", "downloads_30d", palette["cyan"]))
-        for index, model in enumerate(rows[:3]):
+        for index, model in enumerate(rows[:MODEL_ROWS]):
             top = y0 + 28 + row_h * index
             line1, line2 = top + row_h * 0.31, top + row_h * 0.77
             points = board.get(str(model.get("id") or ""))
-            badge = (x0 + 12, line1 - 8, x0 + 30, line1 + 8)
-            draw.rounded_rectangle(badge, radius=4, fill=palette["hf"])
-            self._draw_text(draw, (x0 + 21, line1), str(index + 1), fonts["tiny_bold"], (24, 27, 31), anchor="mm")
-            moved_w = self._rank_move(draw, x0 + 38, line2, points, now, palette, fonts)
+            # Its rank in the Hub's yellow, then its author's avatar.
+            text_x = self._board_mark(image, draw, item_icons.author_key(model), (x0 + 12, top, row_h), index + 1,
+                                      palette["hf_text"], palette, fonts, icons)
+            moved_w = self._rank_move(draw, text_x, line2, points, now, palette, fonts)
             right = x1 - 12
             for metric, icon, field, colour in reversed(columns):
                 self._metric(draw, right, line1, icon, self._compact_number(model.get(field) or 0), colour, palette,
                              fonts)
                 self._delta(draw, right, line2, trends.change(points, metric, now), palette, fonts)
                 right -= 60
-            width = right - (x0 + 38)
-            self._draw_text(draw, (x0 + 38, line1), self._fit_text(draw, model.get("id") or "", fonts["name"], width),
+            width = right - text_x
+            self._draw_text(draw, (text_x, line1), self._fit_text(draw, model.get("id") or "", fonts["name"], width),
                             fonts["name"], palette["ink"], anchor="lm")
-            self._model_facts(draw, x0 + 38 + (moved_w + 6 if moved_w else 0), line2, right - 6, model, palette, fonts)
+            self._model_facts(draw, text_x + (moved_w + 6 if moved_w else 0), line2, right - 6, model, palette, fonts)
             if index < 2:
                 self._dotted(draw, x0 + 12, x1 - 12, top + row_h, palette["rule"])
         if spaces:
@@ -1044,7 +1151,7 @@ class TechPulse(BasePlugin):
             self._metric(draw, end, middle, "heart", likes, palette["down"], palette, fonts)
             x = end + 14
 
-    def _draw_repos(self, image, draw, box, ai, palette, fonts, now):
+    def _draw_repos(self, image, draw, box, ai, palette, fonts, now, icons=None):
         x0, y0, x1, y1 = box
         self._section_title(image, draw, box, "github", "GITHUB", "AI RISING / STARS", palette["gh"], palette, fonts)
         rows = self._board_rows(ai, "github", "repos")
@@ -1052,11 +1159,13 @@ class TechPulse(BasePlugin):
             return self._board_offline(draw, box, palette, fonts)
         stars = (ai or {}).get("_star_history") or {}
         row_h = (y1 - y0 - 30) / 3
-        for index, repo in enumerate(rows[:3]):
+        for index, repo in enumerate(rows[:REPO_ROWS]):
             top = y0 + 28 + row_h * index
             # A little more apart than the models' lines: the star count sits right above the chip.
             line1, line2 = top + row_h * 0.29, top + row_h * 0.78
-            self._draw_text(draw, (x0 + 21, line1), str(index + 1), fonts["name"], palette["gh"], anchor="mm")
+            # Its rank in GitHub's green, then its owner's avatar.
+            text_x = self._board_mark(image, draw, item_icons.owner_key(repo.get("full_name")), (x0 + 12, top, row_h),
+                                      index + 1, palette["gh"], palette, fonts, icons)
             right = self._metric(draw, x1 - 12, line1, "star", self._compact_number(repo.get("stars") or 0),
                                  palette["amber"], palette, fonts)
             delta = repo.get("stars_24h")
@@ -1071,12 +1180,12 @@ class TechPulse(BasePlugin):
             if not self._sparkline(draw, trend_box, values, palette) and delta is None:
                 self._draw_text(draw, (badge_box[0] - 6, line2), "tracking", fonts["tiny"], palette["muted"],
                                 anchor="rm")
-            width = right - (x0 + 38) - 8
-            self._draw_text(draw, (x0 + 38, line1), self._fit_text(draw, repo.get("full_name") or "", fonts["name"],
-                                                                    width), fonts["name"], palette["ink"], anchor="lm")
+            width = right - text_x - 8
+            self._draw_text(draw, (text_x, line1), self._fit_text(draw, repo.get("full_name") or "", fonts["name"],
+                                                                  width), fonts["name"], palette["ink"], anchor="lm")
             language = str(repo.get("language") or "Other")
-            draw.ellipse((x0 + 38, line2 - 4, x0 + 46, line2 + 4), fill=LANGUAGE_COLOURS.get(language, palette["muted"]))
-            self._draw_text(draw, (x0 + 51, line2), language, fonts["tiny"], palette["muted"], anchor="lm")
+            draw.ellipse((text_x, line2 - 4, text_x + 8, line2 + 4), fill=LANGUAGE_COLOURS.get(language, palette["muted"]))
+            self._draw_text(draw, (text_x + 13, line2), language, fonts["tiny"], palette["muted"], anchor="lm")
             if index < 2:
                 self._dotted(draw, x0 + 12, x1 - 12, top + row_h, palette["rule"])
 

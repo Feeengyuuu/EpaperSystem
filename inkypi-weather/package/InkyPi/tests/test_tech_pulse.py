@@ -36,6 +36,17 @@ from plugins.base_plugin.render_provenance import read_source_provenance  # noqa
 from runtime.refresh_contracts import TaskCancelled  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _item_icons_offline(monkeypatch):
+    """No test here reaches the network for the items' icons: a refresh finds no HTTP client for
+    them and draws the lettered tiles (tests/test_tech_pulse_item_icons.py covers the icons)."""
+
+    def offline():
+        raise RuntimeError("item icons are offline in tests")
+
+    monkeypatch.setattr(tech_pulse_module, "get_http_client", offline)
+
+
 def test_background_layer_stays_flat_for_color_epaper():
     plugin = TechPulse({"id": "tech_pulse"})
     background = (12, 17, 28)
