@@ -565,8 +565,9 @@ class BoxOfficeTopMovies(BasePlugin):
                     movie.extra[name] = old.extra[name]
 
     def _enrich_official_with_maoyan(self, movies, budget):
-        """Maoyan's audience score and want-to-see count for each official-chart film it lists, and
-        the headliner's genre, runtime and director. Optional: any failure leaves them off."""
+        """Maoyan's audience score and want-to-see count for each official-chart film it lists, the
+        headliner's genre, runtime and director, and Maoyan's poster for a film that still has
+        none (a new mainland release TMDB does not know yet). Optional: any failure leaves them off."""
         try:
             if budget.remaining_seconds() <= 1:
                 return
@@ -580,6 +581,7 @@ class BoxOfficeTopMovies(BasePlugin):
                 row = listing.get(_normalize_title(movie.extra.get("official_chinese_title") or movie.title))
                 if row is not None:
                     self._apply_maoyan_scores(movie, row)
+                    self._maoyan_poster_for_missing(movie, row, budget)
             hero = movies[0] if movies else None
             if hero is not None and hero.extra.get("maoyan_movie_id") and budget.remaining_seconds() > 1:
                 response = budget.get(MAOYAN_MOVIE_DETAIL_URL, params={"movieId": hero.extra["maoyan_movie_id"]},
@@ -597,6 +599,20 @@ class BoxOfficeTopMovies(BasePlugin):
             raise
         except Exception as exc:  # optional enrichment: the chart stands without it
             logger.info("Maoyan scores unavailable for the official chart: %s", type(exc).__name__)
+
+    def _maoyan_poster_for_missing(self, movie, row, budget):
+        """Maoyan's own poster for a film the TMDB lookup left without one; a film with a poster,
+        or with a poster address still to be fetched, keeps what it has."""
+        if movie.poster_path or movie.poster_url:
+            return
+        poster_url = self._maoyan_poster_url(row.get("img"))
+        # Only Maoyan's own picture host, over https.
+        if not re.match(r"^https://[^/]*\.pipi\.cn/", poster_url or ""):
+            return
+        movie.poster_url = poster_url
+        movie.extra["poster_source"] = "maoyan"
+        if budget.remaining_seconds() > 1:
+            self._download_posters([movie], session=budget)
 
     @staticmethod
     def _apply_maoyan_scores(movie, row):

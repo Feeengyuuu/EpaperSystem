@@ -354,3 +354,34 @@ def test_auto_mode_reads_maoyans_403_as_no_chart_and_other_errors_as_errors(monk
     monkeypatch.setattr(plugin, "_fetch_json", lambda *_a: (_ for _ in ()).throw(_forbidden(500)))
     with pytest.raises(requests.HTTPError):
         plugin._load_movies({"sourceMode": "auto"}, 5)
+
+
+def test_a_film_tmdb_left_without_a_poster_takes_maoyans(monkeypatch):
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    movies = _official_movies(plugin, ["无可替代的你", "神探之痕迹", "什么意思夫妇"])
+    # The second already has its TMDB poster; the third's address is known but not fetched yet.
+    movies[1].poster_url, movies[1].poster_path = "https://image.tmdb.org/t/p/w342/a.jpg", "a.jpg"
+    movies[1].extra["poster_source"] = "tmdb"
+    movies[2].poster_url = "https://image.tmdb.org/t/p/w342/b.jpg"
+    fetched = []
+    monkeypatch.setattr(plugin, "_download_posters", lambda films, session=None: fetched.extend(
+        (film.title, film.poster_url) for film in films))
+    poster = "https://p0.pipi.cn/mediaplus/friday_image_fe/e429586e4946e3d8a101e8dac84cb1d3a6591.jpg?imageMogr2/quality/80"
+    budget = _MaoyanBudget(
+        [{"id": 1365977, "nm": "无可替代的你", "sc": 0, "wish": 34235, "img": poster},
+         {"id": 1552906, "nm": "神探之痕迹", "sc": 9.6, "img": poster.replace("6591", "0000")},
+         {"id": 1604748, "nm": "什么意思夫妇", "sc": 0, "img": "http://example.com/not-maoyan.jpg"}],
+        {"id": 1365977, "nm": "无可替代的你", "dur": 110, "cat": "剧情"})
+
+    plugin._enrich_official_with_maoyan(movies, budget)
+
+    first, second, third = movies
+    assert first.poster_url == plugin._maoyan_poster_url(poster) and first.extra["poster_source"] == "maoyan"
+    assert fetched == [("无可替代的你", first.poster_url)]
+    assert second.poster_url.startswith("https://image.tmdb.org/") and second.extra["poster_source"] == "tmdb"
+    assert third.poster_url.startswith("https://image.tmdb.org/") and "poster_source" not in third.extra
+    # An address that is not Maoyan's own picture host is not taken.
+    plain = _official_movies(plugin, ["什么意思夫妇"])
+    plugin._enrich_official_with_maoyan(plain, _MaoyanBudget(
+        [{"id": 1604748, "nm": "什么意思夫妇", "img": "http://example.com/not-maoyan.jpg"}], {}))
+    assert not plain[0].poster_url and "poster_source" not in plain[0].extra
