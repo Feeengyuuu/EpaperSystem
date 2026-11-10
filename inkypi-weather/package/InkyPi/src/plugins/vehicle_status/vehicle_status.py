@@ -58,9 +58,9 @@ LOCATION_MAP_MAX_BYTES = 128 * 1024
 LOCATION_ADDRESS_MAX_CHARS = 256
 LOCATION_MAX_AGE_SECONDS = 86_400
 LOCATION_FUTURE_TOLERANCE_SECONDS = 300
-# The map takes the location section down to a rule; the address sits under it on the column's foot.
+# The map heads the right-hand column, under the section's name; the address sits under it.
 # Its size is what Google is asked for, so a stored map stays valid only while the size holds.
-LOCATION_MAP_BOX = (538, 234, 764, 338)
+LOCATION_MAP_BOX = (520, 137, 764, 261)
 LOCATION_MAP_SIZE = (
     LOCATION_MAP_BOX[2] - LOCATION_MAP_BOX[0],
     LOCATION_MAP_BOX[3] - LOCATION_MAP_BOX[1],
@@ -2608,12 +2608,13 @@ def _render_colors(theme):
         "battery_mid": (230, 168, 0) if not night else (247, 199, 64),
         "battery_low": (214, 48, 38) if not night else (255, 104, 90),
         # The status lamps: red to act on now, amber to check, blue worth knowing, green a
-        # feature at work, and a quiet tile when all is well. Glyphs on a lit tile knock out.
+        # feature at work, and a quiet grey glyph when all is well. "lamp_glyph" knocks a glyph
+        # or a word out of a solid shape in one of those colours.
         "alert_crit": (200, 30, 50) if not night else (255, 96, 96),
         "alert_warn": (217, 119, 6) if not night else (245, 166, 35),
         "alert_info": (37, 84, 199) if not night else (110, 160, 255),
         "alert_active": (5, 150, 105) if not night else (52, 211, 153),
-        "lamp_idle": (226, 222, 213) if not night else (44, 53, 64),
+        "lamp_idle": role("muted"),
         "lamp_glyph": (255, 255, 255) if not night else (11, 16, 23),
     }
 
@@ -2669,9 +2670,10 @@ def _dashboard_row(
     label_width=72,
     value_color=None,
 ):
-    label_font = _font(label_size, True)
+    # Label and value are both ink; the value's weight sets them apart.
+    label_font = _font(label_size)
     value_font = _font(value_size, True)
-    draw.text((left, top), label, font=label_font, fill=colors["muted"])
+    draw.text((left, top), label, font=label_font, fill=colors["ink"])
     available = max(24, right - left - label_width)
     value_text = _ellipsize_text(draw, str(value), value_font, available)
     _right_text(draw, right, top - 1, value_text, value_font, value_color or colors["ink"])
@@ -3148,15 +3150,6 @@ def _draw_alert_glyph(canvas, name, left, top, size, color):
     return True
 
 
-def _draw_lamp_tile(canvas, draw, level, icon, left, top, size, colors, radius):
-    """A rounded tile: the quiet tile with a muted glyph, or the level's colour with its glyph knocked out."""
-    draw.rounded_rectangle((left, top, left + size - 1, top + size - 1), radius=radius,
-                           fill=colors[LAMP_LEVEL_COLOURS[level]])
-    inset = max(3, round(size * 0.17))
-    _draw_alert_glyph(canvas, icon, left + inset, top + inset, size - 2 * inset,
-                      colors["muted"] if level == "idle" else colors["lamp_glyph"])
-
-
 def _draw_lamp_badge(canvas, draw, level, icon, center, size, colors):
     """A round badge pinned to a spot on the car; a quiet one is the panel with an ink glyph."""
     x, y = round(center[0]), round(center[1])
@@ -3441,24 +3434,31 @@ def _center_text(draw, center_x, top, text, font, fill):
 
 
 # -- The dashboard page --------------------------------------------------------------------
-# Status lamps under a one-line header, then three columns: battery and charging with the car;
-# a top-down body map with the tyres, the lock and anything left open; climate above the
-# location map. A strip of vehicle facts and the freshness footer close the page.
+# Status lamps under a one-line header, then three columns: the charge and range as the page's
+# largest figures over the car and its charging; a top-down body map with the tyres, the lock
+# and anything left open; the location map and address above the climate. A grid of vehicle
+# facts and the freshness footer close the page.
+#
+# Type follows one rule throughout: small text is ink, a label in the regular weight over or
+# before its value in bold. Colour is kept for solid shapes, glyphs and the large figures.
 PAGE_LEFT, PAGE_RIGHT = 36, 764
-HEADER_RULE_Y = 62
-LAMP_TILE_TOP, LAMP_TILE_SIZE, LAMP_TEXT_Y, LAMP_RULE_Y = 70, 30, 104, 124
-COLUMNS = ((36, 318), (338, 516), (538, 764))
-COLUMN_TOP, COLUMN_BOTTOM = 130, 392
-CHARGING_RULE_Y = 306
-LOCATION_RULE_Y = LOCATION_MAP_BOX[1] - 29
-STRIP_RULE_Y = 398
-FOOTER_Y = 441
+HEADER_RULE_Y = 60
+LAMP_GLYPH_TOP, LAMP_GLYPH_SIZE, LAMP_TEXT_Y, LAMP_RULE_Y = 66, 26, 95, 113
+COLUMNS = ((36, 306), (326, 500), (520, 764))
+COLUMN_TOP, COLUMN_BOTTOM = 119, 394
+CHARGING_RULE_Y = 315
+CLIMATE_RULE_Y = 319
+STRIP_RULE_Y = 400
+FOOTER_Y = 445
+LABEL_SIZE, VALUE_SIZE = 10, 13
+# The vehicle strip's grid: where its first cell starts and how wide each cell but the last is.
+STRIP_GRID_LEFT, STRIP_CELL_WIDTHS = 122, (80, 100, 56, 118, 158)
 # Tesla, whose fleet API the snapshot comes from, named by its wordmark after the freshness line
 # (assets/logos/tesla.png, tools/build_source_logos.py).
 TESLA_LOGO_PATH = Path(__file__).resolve().parent / "assets" / "logos" / "tesla.png"
 TESLA_LOGO_HEIGHT, TESLA_LOGO_GAP = 10, 12
 VEHICLE_TOP_IMAGE_NAME = "vehicle_top.png"
-BODY_MAP_TOP, BODY_MAP_HEIGHT, BODY_ROWS_TOP = 152, 160, 330
+BODY_MAP_TOP, BODY_MAP_HEIGHT, BODY_ROWS_TOP = 142, 176, 334
 # Where parts sit on vehicle_top.png (nose up), as fractions of its width or height.
 BODY_SIDES = (0.08, 0.92)
 WHEEL_ROWS = {"front": 0.22, "rear": 0.77}
@@ -3488,8 +3488,8 @@ def _draw_dashboard(canvas, draw, summary, theme, settings, colors, language, lo
     draw.rounded_rectangle((20, 16, 780, 464), radius=18, fill=colors["surface"], outline=colors["rule"], width=2)
     _draw_dashboard_header(canvas, draw, vehicle, lamps, colors, language)
     _draw_lamp_row(canvas, draw, lamps, colors)
-    for x in (COLUMNS[0][1] + 10, COLUMNS[1][1] + 11):
-        draw.line((x, COLUMN_TOP - 4, x, COLUMN_BOTTOM), fill=colors["rule"], width=1)
+    for x in (COLUMNS[0][1] + 10, COLUMNS[1][1] + 10):
+        draw.line((x, COLUMN_TOP - 2, x, COLUMN_BOTTOM), fill=colors["rule"], width=1)
     _draw_energy_column(canvas, draw, summary, charging, extended, lamps, settings, preferences, colors, language)
     _draw_body_column(canvas, draw, vehicle, summary["closures"], tires, charging, extended, settings, preferences,
                       colors, language)
@@ -3529,7 +3529,7 @@ def _draw_model_badge(draw, vehicle, left, right, colors, language):
         # No room for the spaced capitals: the plain line, shortened to the room left.
         line = " / ".join(part for part in (model, trim) if part)
         draw.text((left, middle), _ellipsize_text(draw, line, _font(15), right - left), font=_font(15),
-                  fill=colors["muted"], anchor="lm")
+                  fill=colors["ink"], anchor="lm")
         return
     x = right - (model_width + rule + trim_width)
     for letter, width in zip(letters, widths):
@@ -3542,7 +3542,7 @@ def _draw_model_badge(draw, vehicle, left, right, colors, language):
         draw.line((x, middle - 8, x, middle + 8), fill=colors["rule"], width=1)
         x += MODEL_BADGE_GAP + 1
     if trim:
-        draw.text((x, middle), trim, font=trim_font, fill=colors["muted"], anchor="lm")
+        draw.text((x, middle), trim, font=trim_font, fill=colors["ink"], anchor="lm")
 
 
 def _draw_verdict_pill(canvas, draw, lamps, colors, language):
@@ -3559,19 +3559,27 @@ def _draw_verdict_pill(canvas, draw, lamps, colors, language):
 
 
 def _draw_lamp_row(canvas, draw, lamps, colors):
-    """The lamps side by side across the page, each a tile over its short state."""
+    """The lamps side by side across the page, each a glyph over its short state.
+
+    A lamp with nothing to say is a grey glyph over a regular-weight state. A lit one takes its
+    level's colour and a bold state, and one that needs the owner also colours its stretch of the
+    rule under the row, so the eye lands on it first.
+    """
     width = (PAGE_RIGHT - PAGE_LEFT) / len(lamps)
+    draw.line((PAGE_LEFT, LAMP_RULE_Y, PAGE_RIGHT, LAMP_RULE_Y), fill=colors["rule"], width=1)
     for index, lamp in enumerate(lamps):
         center = round(PAGE_LEFT + width * (index + 0.5))
-        _draw_lamp_tile(canvas, draw, lamp.level, lamp.icon, center - LAMP_TILE_SIZE // 2, LAMP_TILE_TOP,
-                        LAMP_TILE_SIZE, colors, radius=8)
+        lit = lamp.level != "idle"
+        colour = colors[LAMP_LEVEL_COLOURS[lamp.level]]
+        _draw_alert_glyph(canvas, lamp.icon, center - LAMP_GLYPH_SIZE // 2, LAMP_GLYPH_TOP, LAMP_GLYPH_SIZE, colour)
         # A long state steps down a size before it is shortened.
-        font = next((font for font in (_font(size, True) for size in (12, 11, 10))
-                     if draw.textbbox((0, 0), lamp.text, font=font)[2] <= width - 6), _font(10, True))
+        font = next((font for font in (_font(size, lit) for size in (12, 11, 10))
+                     if draw.textbbox((0, 0), lamp.text, font=font)[2] <= width - 6), _font(10, lit))
         _center_text(draw, center, LAMP_TEXT_Y + (12 - font.size) // 2,
-                     _ellipsize_text(draw, lamp.text, font, width - 6), font,
-                     colors["muted"] if lamp.level == "idle" else colors["ink"])
-    draw.line((PAGE_LEFT, LAMP_RULE_Y, PAGE_RIGHT, LAMP_RULE_Y), fill=colors["rule"], width=1)
+                     _ellipsize_text(draw, lamp.text, font, width - 6), font, colors["ink"])
+        if lamp.level in ATTENTION_LEVELS:
+            draw.line((round(PAGE_LEFT + width * index) + 6, LAMP_RULE_Y,
+                       round(PAGE_LEFT + width * (index + 1)) - 6, LAMP_RULE_Y), fill=colour, width=3)
 
 
 def _draw_energy_column(canvas, draw, summary, charging, extended, lamps, settings, preferences, colors, language):
@@ -3580,11 +3588,14 @@ def _draw_energy_column(canvas, draw, summary, charging, extended, lamps, settin
     _section_label(canvas, draw, left, COLUMN_TOP, _t(language, "energy"), colors, "energy")
     level = battery["level_percent"]
     level_text = "--" if level is None else str(int(round(level)))
-    level_font = _font(42 if len(level_text) >= 3 else 48, True)
-    baseline = COLUMN_TOP + 56
-    draw.text((left - 2, baseline), level_text, font=level_font, fill=colors["ink"], anchor="ls")
-    level_right = draw.textbbox((left - 2, baseline), level_text, font=level_font, anchor="ls")[2]
-    draw.text((level_right + 6, baseline), "%", font=_font(21, True), fill=colors["muted"], anchor="ls")
+    # The charge is the page's largest figure; three digits step down to leave the range its room.
+    level_font = _font(54 if len(level_text) >= 3 else 64, True)
+    percent_font = _font(26, True)
+    baseline = COLUMN_TOP + 68
+    draw.text((left - 3, baseline), level_text, font=level_font, fill=colors["ink"], anchor="ls")
+    level_right = draw.textbbox((left - 3, baseline), level_text, font=level_font, anchor="ls")[2]
+    draw.text((level_right + 8, baseline), "%", font=percent_font, fill=colors["muted"], anchor="ls")
+    percent_right = level_right + 8 + draw.textbbox((0, 0), "%", font=percent_font)[2]
 
     rated = extended and battery["rated_range"] is not None
     hero_range = battery["rated_range"] if rated else battery["estimated_range"]
@@ -3593,18 +3604,19 @@ def _draw_energy_column(canvas, draw, summary, charging, extended, lamps, settin
     if usable is not None and level is not None and abs(usable - level) >= 1:
         # Shown only when it differs from the level: the range is figured on the usable part.
         range_label = _t(language, "usable_with_label", value=int(round(usable)), label=range_label)
-    _right_text(draw, right, COLUMN_TOP + 2, range_label, _font(11, True), colors["muted"])
+    _right_text(draw, right, COLUMN_TOP + 1, range_label, _font(11), colors["ink"])
     limit = charging["charge_limit_percent"]
-    _draw_range_figure(draw, right, baseline - 13, hero_range, settings, preferences, colors, language)
-    _draw_limit_legend(draw, right, baseline - 2, hero_range, level, limit, settings, preferences, colors, language)
-    gauge_top = baseline + 13
-    _battery_gauge(draw, (left, gauge_top, right, gauge_top + 11), level, limit, colors)
+    _draw_range_figure(draw, right, baseline - 19, hero_range, settings, preferences, colors, language)
+    _draw_limit_legend(draw, right, baseline - 6, hero_range, level, limit, settings, preferences, colors, language,
+                       room=right - percent_right - 10)
+    gauge_top = baseline + 12
+    _battery_gauge(draw, (left, gauge_top, right, gauge_top + 12), level, limit, colors)
     # The side-on car fills the column between the gauge's scale and the charging rule.
     _paste_vehicle_art(canvas, _load_vehicle_art(charging["state"]),
-                       (left + 6, gauge_top + 30, right - 6, CHARGING_RULE_Y - 4))
+                       (left + 2, gauge_top + 32, right - 2, CHARGING_RULE_Y - 3))
 
     draw.line((left, CHARGING_RULE_Y, right, CHARGING_RULE_Y), fill=colors["rule"], width=1)
-    heading_top = CHARGING_RULE_Y + 8
+    heading_top = CHARGING_RULE_Y + 7
     heading_right = _section_label(canvas, draw, left, heading_top, _t(language, "charging"), colors, "charging")
     lamp = next(lamp for lamp in lamps if lamp.key == "charging")
     state_font = _font(15, True)
@@ -3614,25 +3626,26 @@ def _draw_energy_column(canvas, draw, summary, charging, extended, lamps, settin
     if extended and _charging_plugged(charging):
         # While plugged in, what the charge is set to do sits right of the state, never under it.
         room = right - (heading_right + 14 + draw.textbbox((0, 0), state_text, font=state_font)[2] + 10)
-        flags = _ellipsize_text(draw, _charging_flags_text(charging, language), _font(10, True), room)
+        flags = _ellipsize_text(draw, _charging_flags_text(charging, language), _font(10), room)
         if room > 20 and flags:
-            _right_text(draw, right, heading_top + 1, flags, _font(10, True), colors["muted"])
-    _draw_stat_cells(draw, left, right, heading_top + 22,
+            _right_text(draw, right, heading_top + 1, flags, _font(10), colors["ink"])
+    _draw_stat_cells(draw, left, right, heading_top + 20,
                      _charging_cells(battery, charging, extended, settings, preferences, language), colors)
 
 
-def _draw_stat_cells(draw, left, right, top, cells, colors, *, columns=3, widths=None, row_height=26):
-    """Figures in a grid, a small label over each value and a hairline between the columns."""
+def _draw_stat_cells(draw, left, right, top, cells, colors, *, columns=3, widths=None, row_height=27):
+    """Figures in a grid, a regular-weight label over each bold value and a hairline between the
+    columns; every label of a row shares one line and every value the next."""
     widths = widths or [(right - left) / columns] * columns
-    label_font, value_font = _font(9, True), _font(12, True)
+    label_font, value_font = _font(LABEL_SIZE), _font(VALUE_SIZE, True)
     for index, (label, value) in enumerate(cells):
         row, column = divmod(index, len(widths))
         x, y = round(left + sum(widths[:column])), top + row * row_height
         room = widths[column] - (10 if column < len(widths) - 1 else 0)
         if column:
-            draw.line((x - 6, y + 2, x - 6, y + row_height - 4), fill=colors["rule"], width=1)
-        draw.text((x, y), _ellipsize_text(draw, label, label_font, room), font=label_font, fill=colors["muted"])
-        draw.text((x, y + 11), _ellipsize_text(draw, str(value), value_font, room), font=value_font,
+            draw.line((x - 6, y + 2, x - 6, y + row_height - 3), fill=colors["rule"], width=1)
+        draw.text((x, y), _ellipsize_text(draw, label, label_font, room), font=label_font, fill=colors["ink"])
+        draw.text((x, y + 12), _ellipsize_text(draw, str(value), value_font, room), font=value_font,
                   fill=colors["ink"])
 
 
@@ -3643,26 +3656,31 @@ def _draw_range_figure(draw, right, baseline, measurement, settings, preferences
         number, unit = unit, ""
     unit_left = right
     if unit:
-        unit_font = _font(14, True)
+        unit_font = _font(15, True)
         unit_left = right - draw.textbbox((0, 0), unit, font=unit_font)[2]
-        draw.text((unit_left, baseline), unit, font=unit_font, fill=colors["muted"], anchor="ls")
-        unit_left -= 4
-    draw.text((unit_left, baseline), number, font=_font(30, True), fill=colors["ink"], anchor="rs")
+        draw.text((unit_left, baseline), unit, font=unit_font, fill=colors["ink"], anchor="ls")
+        unit_left -= 5
+    draw.text((unit_left, baseline), number, font=_font(38, True), fill=colors["ink"], anchor="rs")
 
 
-def _draw_limit_legend(draw, right, middle, measurement, level, limit, settings, preferences, colors, language):
-    """ "▼ 上限 80% · 约 241 英里": the gauge's marker, explained, with the range a charge to it gives."""
+def _draw_limit_legend(draw, right, middle, measurement, level, limit, settings, preferences, colors, language,
+                       room=None):
+    """ "▼ 上限 80% · 约 241 英里": the gauge's marker, explained, with the range a charge to it gives.
+
+    The projected range is left out when the line would not fit in ``room`` beside the charge figure.
+    """
     if limit is None:
         return
     limit_text = f"{int(round(limit))}%"
     value = (measurement or {}).get("value")
+    font = _font(11, True)
+    legend = _t(language, "limit_range", limit=limit_text)
     if value is not None and level is not None and level >= 5:
         projected = {"value": value * limit / level, "unit": measurement["unit"]}
-        legend = _t(language, "limit_range_projection", limit=limit_text,
-                    range=_measurement_text(projected, settings, preferences, language))
-    else:
-        legend = _t(language, "limit_range", limit=limit_text)
-    font = _font(10, True)
+        full = _t(language, "limit_range_projection", limit=limit_text,
+                  range=_measurement_text(projected, settings, preferences, language))
+        if room is None or draw.textbbox((0, 0), full, font=font)[2] + 12 <= room:
+            legend = full
     width = draw.textbbox((0, 0), legend, font=font)[2]
     draw.text((right, middle), legend, font=font, fill=colors["ink"], anchor="rm")
     x = right - width - 6
@@ -3694,7 +3712,7 @@ def _battery_gauge(draw, box, level, limit, colors):
             label = str(step * 10)
             width = draw.textbbox((0, 0), label, font=font)[2]
             label_x = left if step == 0 else right - width if step == 10 else x - width / 2
-            draw.text((label_x, bottom + 7), label, font=font, fill=colors["muted"])
+            draw.text((label_x, bottom + 7), label, font=font, fill=colors["ink"])
     if limit is not None:
         x = round(left + span * max(0, min(100, limit)) / 100)
         draw.line((x, top - 3, x, bottom + 3), fill=colors["ink"], width=2)
@@ -3709,14 +3727,14 @@ def _draw_body_column(canvas, draw, vehicle, closures, tires, charging, extended
         unit = _preferred_unit(settings, preferences, "pressureUnit", "pressure_unit", {"psi", "bar"}) or "bar"
         unit_text = _t(language, "pressure_unit_label",
                        unit=_t(language, "unit_psi" if unit == "psi" else "unit_bar"))
-        _right_text(draw, right, COLUMN_TOP + 2, unit_text, _font(10, True), colors["muted"])
+        _right_text(draw, right, COLUMN_TOP + 1, unit_text, _font(11), colors["ink"])
     _draw_body_map(canvas, draw, vehicle, closures, tires, charging, settings, preferences, colors, language)
 
     # Doors, trunks and windows by where they sit on the map; the charge port has its own row.
     states = _opening_states(closures)
     opened = [_opening_short_text(item, vehicle, language) for item in _OPENING_ORDER if states[item] is True]
     if opened:
-        font = _font(11, True)
+        font = _font(12, True)
         used = sum(draw.textbbox((0, 0), text, font=font)[2]
                    for text in (_t(language, "openings"), _t(language, "openings_detail", items=""))) + 12
         line = _closure_detail_line(draw, opened, font, right - left - used, language)
@@ -3742,18 +3760,21 @@ def _draw_body_column(canvas, draw, vehicle, closures, tires, charging, extended
 
 def _draw_body_map(canvas, draw, vehicle, closures, tires, charging, settings, preferences, colors, language):
     """The car from above: each tyre's pressure by its wheel, the lock on the roof, open doors swung
-    out, open windows and trunks in red and the charge port badged where it sits."""
+    out, open windows and trunks in red and the charge port badged where it sits.
+
+    A tyre that needs air shows its figure, its lead and its wheel mark in the warning's colour.
+    """
     left, right = COLUMNS[1]
     center = (left + right) // 2
     car = _paste_vehicle_art(canvas, _load_vehicle_top_art(),
-                             (center - 42, BODY_MAP_TOP, center + 42, BODY_MAP_TOP + BODY_MAP_HEIGHT))
-    car_left, car_top, car_right, car_bottom = car or (center - 40, BODY_MAP_TOP, center + 40,
+                             (center - 44, BODY_MAP_TOP, center + 44, BODY_MAP_TOP + BODY_MAP_HEIGHT))
+    car_left, car_top, car_right, car_bottom = car or (center - 42, BODY_MAP_TOP, center + 42,
                                                        BODY_MAP_TOP + BODY_MAP_HEIGHT)
     width, height = car_right - car_left, car_bottom - car_top
     sides = (car_left + width * BODY_SIDES[0], car_left + width * BODY_SIDES[1])
 
     levels = _tyre_levels(tires)[0] if tires is not None else dict.fromkeys(_TYRE_ORDER, "idle")
-    value_font, label_font = _font(22, True), _font(10, True)
+    value_font, label_font = _font(24, True), _font(11)
     for position in _TYRE_ORDER:
         wheel_y = round(car_top + height * WHEEL_ROWS[position.split("_")[0]])
         level = levels[position]
@@ -3763,21 +3784,18 @@ def _draw_body_map(canvas, draw, vehicle, closures, tires, charging, settings, p
                     else _pressure_text(tires["pressures"][position], settings, preferences, language).split(" ")[0])
         text_width = draw.textbbox((0, 0), pressure, font=value_font)[2]
         label = _tire_abbreviation(position, language)
-        label_top, plate_top = wheel_y - 24, wheel_y - 11
+        label_top, value_top = wheel_y - 27, wheel_y - 13
         if position.endswith("left"):
-            draw.text((left + 2, label_top), label, font=label_font, fill=colors["muted"])
-            plate = (left, plate_top, left + text_width + 10, plate_top + 28)
+            draw.text((left, label_top), label, font=label_font, fill=colors["ink"])
+            value_left = left
             tick_x = round(sides[0]) - 3
-            lead = (plate[2] + 4, tick_x - 4)
+            lead = (value_left + text_width + 5, tick_x - 4)
         else:
-            _right_text(draw, right - 2, label_top, label, label_font, colors["muted"])
-            plate = (right - text_width - 10, plate_top, right, plate_top + 28)
+            _right_text(draw, right, label_top, label, label_font, colors["ink"])
+            value_left = right - text_width
             tick_x = round(sides[1]) + 3
-            lead = (tick_x + 4, plate[0] - 4)
-        if lit:
-            draw.rounded_rectangle(plate, radius=6, fill=colour)
-        draw.text((plate[0] + 5, plate_top + 1), pressure, font=value_font,
-                  fill=colors["lamp_glyph"] if lit else colors["ink"])
+            lead = (tick_x + 4, value_left - 5)
+        draw.text((value_left, value_top), pressure, font=value_font, fill=colour if lit else colors["ink"])
         if lead[1] - lead[0] >= 2:
             draw.line((lead[0], wheel_y, lead[1], wheel_y), fill=colour if lit else colors["rule"],
                       width=2 if lit else 1)
@@ -3825,31 +3843,35 @@ def _ruled_rows(draw, left, right, top, rows, colors, step=21, label_width=74):
         y = top + index * step
         if index:
             draw.line((left, y - 5, right, y - 5), fill=colors["rule"], width=1)
-        width = label_width if label_width is not None else draw.textbbox((0, 0), label, font=_font(11, True))[2] + 12
-        _dashboard_row(draw, left, right, y, label, value, colors, label_size=11, value_size=11,
+        width = label_width if label_width is not None else draw.textbbox((0, 0), label, font=_font(11))[2] + 12
+        _dashboard_row(draw, left, right, y, label, value, colors, label_size=11, value_size=12,
                        label_width=width, value_color=value_color)
 
 
 def _draw_climate_column(canvas, draw, climate, extended, settings, preferences, colors, language):
+    """The climate at the foot of the right-hand column, under a rule: its state and the cabin and
+    outside temperatures on one line, then the set temperatures, fan and overheat protection."""
     left, right = COLUMNS[2]
-    _section_label(canvas, draw, left, COLUMN_TOP, _t(language, "climate"), colors, "climate")
+    draw.line((left, CLIMATE_RULE_Y, right, CLIMATE_RULE_Y), fill=colors["rule"], width=1)
+    top = CLIMATE_RULE_Y + 7
+    _section_label(canvas, draw, left, top, _t(language, "climate"), colors, "climate")
     note = _climate_note(climate, extended, language)
     if note:
-        _right_text(draw, right, COLUMN_TOP + 2, _ellipsize_text(draw, note, _font(10, True), 90), _font(10, True),
-                    colors["muted"])
+        _right_text(draw, right, top + 1, _ellipsize_text(draw, note, _font(11, True), 110), _font(11, True),
+                    colors["ink"])
     status = _bool_status(climate["is_climate_on"], _t(language, "hvac_on"), _t(language, "hvac_off"),
                           _t(language, "unknown"))
-    status_font = _font(20, True)
-    draw.text((left, COLUMN_TOP + 17), status, font=status_font, fill=colors["ink"])
+    status_font = _font(18, True)
+    draw.text((left, top + 17), status, font=status_font, fill=colors["ink"])
     status_right = left + draw.textbbox((0, 0), status, font=status_font)[2]
     temperature_line = _t(language, "inside_outside",
                           inside=_temperature_text(climate["inside_temp_c"], settings, preferences, language),
                           outside=_temperature_text(climate["outside_temp_c"], settings, preferences, language))
-    _right_text(draw, right, COLUMN_TOP + 24,
-                _ellipsize_text(draw, temperature_line, _font(12, True), right - status_right - 10), _font(12, True),
+    _right_text(draw, right, top + 22,
+                _ellipsize_text(draw, temperature_line, _font(13, True), right - status_right - 10), _font(13, True),
                 colors["ink"])
-    _draw_stat_cells(draw, left, right, COLUMN_TOP + 47, _climate_cells(climate, extended, settings, preferences,
-                                                                        language), colors, widths=(52, 52, 42, 80))
+    _draw_stat_cells(draw, left, right, top + 43, _climate_cells(climate, extended, settings, preferences,
+                                                                 language), colors, widths=(58, 58, 46, 82))
 
 
 def _climate_note(climate, extended, language):
@@ -3884,37 +3906,39 @@ def _climate_cells(climate, extended, settings, preferences, language):
 
 
 def _draw_location_column(canvas, draw, location_presentation, colors, language):
+    """Where the car is, heading the right-hand column: the map, then the address led by its pin."""
     left, right = COLUMNS[2]
-    draw.line((left, LOCATION_RULE_Y, right, LOCATION_RULE_Y), fill=colors["rule"], width=1)
     map_left, map_top, map_right, map_bottom = LOCATION_MAP_BOX
-    _section_label(canvas, draw, left, map_top - 22, _t(language, "location"), colors, "location")
+    _section_label(canvas, draw, left, COLUMN_TOP, _t(language, "location"), colors, "location")
     location_map = (location_presentation or {}).get("map_image")
     if not (isinstance(location_map, Image.Image) and location_map.size == LOCATION_MAP_SIZE):
-        draw.rounded_rectangle(LOCATION_MAP_BOX, radius=6, outline=colors["rule"], width=1)
-        _center_text(draw, (map_left + map_right) // 2, (map_top + map_bottom) // 2 - 7,
-                     _t(language, "location_unavailable"), _font(11, True), colors["muted"])
+        draw.rounded_rectangle((map_left, map_top + 6, map_right, CLIMATE_RULE_Y - 8), radius=6,
+                               outline=colors["rule"], width=1)
+        _center_text(draw, (map_left + map_right) // 2, (map_top + CLIMATE_RULE_Y) // 2 - 8,
+                     _t(language, "location_unavailable"), _font(12), colors["ink"])
         return
     _paste_faded_map(canvas, location_map.convert("RGB"), (map_left, map_top), colors["surface"])
     # A rule parts the map (and Google's attribution) from the address under it.
     draw.line((left, map_bottom + 4, right, map_bottom + 4), fill=colors["rule"], width=1)
-    address_font = _font(13, True)
-    address_top = map_bottom + 9
+    address_font = _font(15, True)
+    address_top = map_bottom + 8
     # The map's red pin leads the address, the lines aligned after it.
-    text_left = left + (ADDRESS_PIN_SIZE + 1 if _draw_alert_glyph(canvas, "pin", left - 3, address_top - 1,
+    text_left = left + (ADDRESS_PIN_SIZE + 2 if _draw_alert_glyph(canvas, "pin", left - 3, address_top + 1,
                                                                   ADDRESS_PIN_SIZE, colors["alert_crit"]) else 0)
     lines = _address_lines(draw, location_presentation["formatted_address"], address_font, right - text_left)
     age = max(0, location_presentation.get("age_seconds", 0))
     stale = age > 900
     for index, line in enumerate(lines):
-        # The street leads in ink; the city and postcode follow smaller and muted.
-        font, fill = (address_font, colors["ink"]) if index == 0 else (_font(11, True), colors["muted"])
-        draw.text((text_left, address_top + index * 16), line.rstrip(",，") if len(lines) > 1 else line, font=font,
-                  fill=fill)
+        # The street leads in bold; the city and postcode follow in the regular weight.
+        font = address_font if index == 0 else _font(12)
+        text = line.rstrip(",，") if len(lines) > 1 else line
+        draw.text((text_left, address_top + index * 20), _ellipsize_text(draw, text, font, right - text_left),
+                  font=font, fill=colors["ink"])
     if stale:
-        draw.text((text_left, address_top + len(lines) * 16 - 1),
+        draw.text((text_left, address_top + len(lines) * 20 - 5 * (len(lines) - 1)),
                   _ellipsize_text(draw, _t(language, "location_last_known", age=_age_text(age, language)),
-                                  _font(9, True), right - text_left),
-                  font=_font(9, True), fill=colors["muted"])
+                                  _font(10), right - text_left),
+                  font=_font(10), fill=colors["ink"])
 
 
 def _faded_map_mask(size):
@@ -3968,37 +3992,42 @@ def _draw_vehicle_strip(canvas, draw, vehicle, software_update, extended, settin
     if extended:
         cells += [(_t(language, "body_wheel"), _vehicle_appearance_text(vehicle, language)),
                   (_t(language, "config"), _vehicle_config_text(vehicle, language))]
-    widths = (74, 96, 54, 140, 134, 0)
-    x = max(heading_right + 18, 112)
+    # One grid: the labels on one line, the values on the next, a hairline before each cell.
+    label_font, value_font = _font(LABEL_SIZE), _font(VALUE_SIZE, True)
+    x = max(heading_right + 22, STRIP_GRID_LEFT)
     for index, (label, value) in enumerate(cells):
-        cell_right = PAGE_RIGHT if index == len(cells) - 1 else x + widths[index]
-        draw.text((x, STRIP_RULE_Y + 5), label, font=_font(9, True), fill=colors["muted"])
-        draw.text((x, STRIP_RULE_Y + 17), _ellipsize_text(draw, str(value), _font(11, True), cell_right - x - 6),
-                  font=_font(11, True), fill=colors["ink"])
+        cell_right = PAGE_RIGHT if index == len(cells) - 1 else x + STRIP_CELL_WIDTHS[index]
+        room = cell_right - x - (12 if index < len(cells) - 1 else 0)
+        draw.line((x - 8, STRIP_RULE_Y + 7, x - 8, STRIP_RULE_Y + 30), fill=colors["rule"], width=1)
+        draw.text((x, STRIP_RULE_Y + 5), _ellipsize_text(draw, label, label_font, room), font=label_font,
+                  fill=colors["ink"])
+        draw.text((x, STRIP_RULE_Y + 16), _ellipsize_text(draw, str(value), value_font, room), font=value_font,
+                  fill=colors["ink"])
         if label == _t(language, "update") and any(
             update.get(key) is not None for key in ("download_percent", "install_percent", "expected_duration_minutes")
         ):
             progress = _t(language, "progress_line", download=_percent_text(update["download_percent"]),
                           install=_percent_text(update["install_percent"]),
                           duration=_minutes_text(update["expected_duration_minutes"], language))
-            draw.text((x, STRIP_RULE_Y + 31), _ellipsize_text(draw, progress, _font(9, True), cell_right - x - 6),
-                      font=_font(9, True), fill=colors["muted"])
-        x = cell_right + 6
+            # Nothing else is on the progress line, so it may run on under the cells after it.
+            draw.text((x, STRIP_RULE_Y + 32), _ellipsize_text(draw, progress, label_font, PAGE_RIGHT - x),
+                      font=label_font, fill=colors["ink"])
+        x = cell_right
 
 
 def _draw_dashboard_footer(canvas, draw, snapshot, colors, language):
-    left = PAGE_LEFT + 22 if _draw_dashboard_icon(canvas, "freshness", PAGE_LEFT, FOOTER_Y - 2, colors, size=16) \
+    left = PAGE_LEFT + 22 if _draw_dashboard_icon(canvas, "freshness", PAGE_LEFT, FOOTER_Y - 1, colors, size=16) \
         else PAGE_LEFT
     freshness = _enum_text(language, "freshness", snapshot["freshness"])
     updated = _t(language, "updated", age=_age_text(snapshot["age_seconds"], language), freshness=freshness)
     font = _font(12, True)
-    draw.text((left, FOOTER_Y), updated, font=font, fill=colors["muted"])
+    draw.text((left, FOOTER_Y), updated, font=font, fill=colors["ink"])
     logo = load_source_logo(TESLA_LOGO_PATH, TESLA_LOGO_HEIGHT)
     if logo is not None:
         top, bottom = draw.textbbox((left, FOOTER_Y), updated, font=font)[1::2]
         x = left + draw.textlength(updated, font=font) + TESLA_LOGO_GAP
         canvas.paste(logo, (round(x), round((top + bottom - logo.height) / 2)), logo)
-    _right_text(draw, PAGE_RIGHT, FOOTER_Y, _t(language, "read_only_footer"), _font(12, True), colors["accent"])
+    _right_text(draw, PAGE_RIGHT, FOOTER_Y, _t(language, "read_only_footer"), _font(12), colors["ink"])
 
 
 def _paste_vehicle_art(canvas, art, box):

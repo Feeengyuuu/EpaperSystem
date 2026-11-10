@@ -338,25 +338,26 @@ def _summary_v2(*, freshness="live", connectivity="online"):
 
 
 # The page's regions: the verdict in the header (with the model badge set against it), the status
-# lamps under it, three columns, the vehicle strip and the footer.
+# lamps under it, three columns (energy; the body map; location over climate), the vehicle strip
+# and the footer.
 VERDICT_REGION = (300, 20, 765, 58)
-LAMP_REGION = (36, 66, 765, 124)
-ENERGY_REGION = (36, 126, 320, 396)
-BODY_COLUMN_REGION = (338, 126, 518, 392)
-CLIMATE_REGION = (538, 126, 765, 204)
-RIGHT_COLUMN_REGION = (538, 126, 765, 396)
-STRIP_REGION = (36, 399, 765, 436)
-FOOTER_REGION = (36, 436, 330, 460)
-BODY_REGION = (36, 66, 765, 396)
+LAMP_REGION = (36, 62, 765, 116)
+ENERGY_REGION = (36, 116, 308, 398)
+BODY_COLUMN_REGION = (326, 116, 502, 396)
+CLIMATE_REGION = (520, 320, 765, 398)
+RIGHT_COLUMN_REGION = (520, 116, 765, 398)
+STRIP_REGION = (36, 401, 765, 445)
+FOOTER_REGION = (36, 445, 330, 462)
+BODY_REGION = (36, 62, 765, 398)
 LAMP_KEYS = ("link", "battery", "charging", "lock", "openings", "tyres", "modes", "climate", "update")
 
 
 def _lamp_box(key):
-    """One lamp's slot in the row: its tile and the short state under it."""
+    """One lamp's slot in the row: its glyph, the short state under it and its stretch of the rule."""
     width = (vehicle_module.PAGE_RIGHT - vehicle_module.PAGE_LEFT) / len(LAMP_KEYS)
     index = LAMP_KEYS.index(key)
-    return (int(vehicle_module.PAGE_LEFT + width * index), 66, int(vehicle_module.PAGE_LEFT + width * (index + 1)) + 1,
-            124)
+    return (int(vehicle_module.PAGE_LEFT + width * index), 62, int(vehicle_module.PAGE_LEFT + width * (index + 1)) + 1,
+            116)
 
 
 def _assert_changes_only_within(before, after, *boxes):
@@ -885,19 +886,23 @@ def test_header_reads_wordmark_model_then_verdict_on_one_ruled_line(tmp_path, mo
     image = _render_payload(tmp_path, monkeypatch, _summary_v2(),
                             {"language": "en", "_inkypi_theme": {"mode": "day", "palette": {}}})
 
-    # The fixture's open rear trunk is a red lamp, so the verdict pill is red.
-    ink, muted, red = (24, 28, 33), (91, 96, 102), (200, 30, 50)
-    wordmark_bbox = _visible_color_bbox(image, (30, 16, 260, 60), ink)
-    model_bbox = _visible_color_bbox(image, (200, 16, 520, 60), muted)
-    verdict_bbox = _visible_color_bbox(image, (520, 16, 770, 60), red)
-    assert wordmark_bbox is not None and model_bbox is not None and verdict_bbox is not None
+    # The fixture's open rear trunk is a red lamp, so the verdict pill is red. The wordmark and the
+    # model badge are both ink (the trim is small type), told apart by where they sit.
+    ink, red = (24, 28, 33), (200, 30, 50)
+    wordmark_bbox = _visible_color_bbox(image, (30, 16, 200, 58), ink)
+    verdict_bbox = _visible_color_bbox(image, (520, 16, 770, 58), red)
+    assert wordmark_bbox is not None and verdict_bbox is not None
+    verdict_left = 520 + verdict_bbox[0]
+    model_bbox = _visible_color_bbox(image, (200, 16, verdict_left, 58), ink)
+    assert model_bbox is not None
     wordmark_right = 30 + wordmark_bbox[2]
     assert wordmark_right - (30 + wordmark_bbox[0]) >= 130
     assert 200 + model_bbox[0] - wordmark_right >= 8
-    assert 520 + verdict_bbox[0] > 200 + model_bbox[2]
+    # The badge ends a clear gap before the pill, balancing the wordmark across the header.
+    assert 8 <= verdict_left - (200 + model_bbox[2]) <= 24
     assert 520 + verdict_bbox[2] == vehicle_module.PAGE_RIGHT + 1
     # The header rule spans the page under all three.
-    rule = image.crop((36, 62, 764, 63))
+    rule = image.crop((36, vehicle_module.HEADER_RULE_Y, 764, vehicle_module.HEADER_RULE_Y + 1))
     assert set(getattr(rule, "get_flattened_data", rule.getdata)()) == {ink}
 
 
@@ -1065,12 +1070,12 @@ def test_long_chinese_v2_payload_keeps_panel_gutters_clean(tmp_path, monkeypatch
 
     assert read_source_provenance(image) is SourceProvenance.LIVE
     surface = (251, 249, 244)
-    # Under the lamps, either side of the two column rules stays clear of the long copy.
+    # Under the lamps, either side of the two column rules (x 316 and 510) stays clear of the long copy.
     for gutter in (
-        (319, 126, 327, 396),
-        (329, 126, 337, 396),
-        (517, 126, 526, 396),
-        (528, 126, 537, 396),
+        (308, 116, 316, 398),
+        (317, 116, 325, 398),
+        (502, 116, 510, 398),
+        (511, 116, 519, 398),
     ):
         crop = image.crop(gutter)
         assert crop.getcolors(maxcolors=crop.width * crop.height) == [(crop.width * crop.height, surface)]
@@ -1114,11 +1119,17 @@ def test_v2_rr_hard_warning_changes_only_the_tyre_map_lamp_and_verdict(tmp_path,
     safe_image = _render_payload(tmp_path / "safe", monkeypatch, safe, settings)
     warning_image = _render_payload(tmp_path / "warning", monkeypatch, warning, settings)
 
-    # The rear-right pressure sits on a red plate, its lamp lights and the verdict counts one more.
-    _assert_changes_only_within(safe_image, warning_image, (338, 126, 518, 330), _lamp_box("tyres"), VERDICT_REGION)
-    rear_right_plate = (466, 250, 518, 300)
-    assert _visible_color_bbox(warning_image, rear_right_plate, red) is not None
-    assert _visible_color_bbox(safe_image, rear_right_plate, red) is None
+    # The rear-right pressure, its lead and its wheel mark turn red (no plate behind the figure), its
+    # lamp lights and the verdict counts one more.
+    _assert_changes_only_within(safe_image, warning_image, (326, 116, 502, 330), _lamp_box("tyres"), VERDICT_REGION)
+    rear_right_figure = (440, 255, 502, 300)
+    assert _visible_color_bbox(warning_image, rear_right_figure, red) is not None
+    assert _visible_color_bbox(safe_image, rear_right_figure, red) is None
+    digits = warning_image.crop((470, 266, 502, 290))
+    red_pixels = sum(count for count, colour in digits.getcolors(maxcolors=digits.width * digits.height)
+                     if colour == red)
+    # Red strokes on the panel, not a red block: most of the digits' box is still the panel.
+    assert 0 < red_pixels < digits.width * digits.height // 2
 
 
 def test_v2_charging_values_change_only_energy_region(tmp_path, monkeypatch):
@@ -2070,21 +2081,25 @@ def test_battery_percent_keeps_a_visible_gap_after_level(
         },
     )
 
-    hero_box = (36, 148, 180, 190)  # below the section heading, left of the range figure
+    hero_box = (33, 136, 150, 192)  # below the section heading, left of the legend and the range figure
     number_bbox = _visible_color_bbox(image, hero_box, ink)
     percent_bbox = _visible_color_bbox(image, hero_box, muted)
     # Under the range figure, the charge-limit legend in ink explains the gauge's marker.
-    legend_box = (180, 175, 320, 190)  # above the gauge marker, which starts at 191
+    legend_box = (150, 176, 306, 190)  # above the gauge marker, which starts at 191
     legend_bbox = _visible_color_bbox(image, legend_box, ink)
-    bar_box = (36, 190, 320, 212)
+    bar_box = (36, 189, 306, 214)
     bar_bbox = _visible_non_background_bbox(image, bar_box, surface)
 
     assert number_bbox is not None
     assert percent_bbox is not None
     assert legend_bbox is not None
     assert bar_bbox is not None
+    # The charge is the page's largest figure: its digits stand at least 40 px tall.
+    assert number_bbox[3] - number_bbox[1] >= 40
     assert number_bbox[2] + 8 <= percent_bbox[0]
     assert abs(number_bbox[3] - percent_bbox[3]) <= 1
+    # The legend starts clear of the percent sign.
+    assert legend_box[0] + legend_bbox[0] - (hero_box[0] + percent_bbox[2]) >= 8
     bar_top = bar_box[1] + bar_bbox[1]
     assert bar_top - (hero_box[1] + number_bbox[3]) >= 3
     assert bar_top - (legend_box[1] + legend_bbox[3]) >= 1
@@ -2109,11 +2124,12 @@ def test_car_art_sits_between_the_gauge_and_charging_and_amid_the_tyres(tmp_path
                             {"language": "zh-CN", "_inkypi_theme": {"mode": "day", "palette": {}}})
 
     left, top_y, right, bottom = _visible_color_bbox(image, (0, 0, 800, 480), side_color)
-    # Below the gauge's ruler, above the charging rule at y 306.
-    assert 227 <= top_y and bottom <= vehicle_module.CHARGING_RULE_Y - 3
-    assert right - left >= 160 and abs((left + right) / 2 - 177) <= 1
+    # Below the gauge's ruler, above the charging rule, centred in the energy column.
+    assert 229 <= top_y and bottom <= vehicle_module.CHARGING_RULE_Y - 3
+    energy_left, energy_right = vehicle_module.COLUMNS[0]
+    assert right - left >= 180 and abs((left + right) / 2 - (energy_left + energy_right) / 2) <= 1
     left, top_y, right, bottom = _visible_color_bbox(image, (0, 0, 800, 480), top_color)
-    assert (left, top_y, right, bottom) == (397, 172, 457, 292)
+    assert (left, top_y, right, bottom) == (383, 170, 443, 290)
 
 
 @pytest.mark.parametrize(
@@ -2371,11 +2387,11 @@ def test_dashboard_icons_are_static_scan_anchors_with_clean_title_gaps(
     }
     full = _render_payload(tmp_path, monkeypatch, _summary_v2(), settings)
     empty = _render_payload(tmp_path, monkeypatch, _null_v2_summary(), settings)
-    # Battery, body, climate, location, charging and the vehicle strip: their places hold whatever
+    # Battery, body, location, climate, charging and the vehicle strip: their places hold whatever
     # the data says, so each section is found in the same spot every time.
     icon_boxes = tuple(
         ((left, top, left + 20, top + 20), (left + 20, top, left + 26, top + 20))
-        for left, top in ((36, 127), (338, 127), (538, 127), (538, 209), (36, 311), (36, 406))
+        for left, top in ((36, 116), (326, 116), (520, 116), (520, 323), (36, 319), (36, 408))
     )
 
     for icon_box, gap_box in icon_boxes:
@@ -2392,8 +2408,8 @@ def test_dashboard_icons_are_static_scan_anchors_with_clean_title_gaps(
         gap_pixels = getattr(gap, "get_flattened_data", gap.getdata)
         assert set(gap_pixels()) == {surface}
 
-    freshness_box = (36, 439, 52, 455)
-    freshness_gap_box = (52, 439, 58, 455)
+    freshness_box = (36, 444, 52, 460)
+    freshness_gap_box = (52, 444, 58, 460)
     freshness_visible = _visible_non_background_bbox(full, freshness_box, surface)
     assert freshness_visible is not None
     assert freshness_visible[2] - freshness_visible[0] >= 12
@@ -2459,7 +2475,7 @@ def test_one_broken_dashboard_icon_falls_back_without_losing_live_page(
     assert degraded.mode == "RGB"
     assert degraded.size == (800, 480)
     assert read_source_provenance(degraded) is SourceProvenance.LIVE
-    for box in ((338, 126, 460, 150), (36, 436, 220, 458)):
+    for box in ((326, 114, 450, 138), (36, 442, 220, 462)):
         assert (
             ImageChops.difference(
                 degraded.crop(box),
@@ -2656,7 +2672,7 @@ def test_verdict_pill_is_green_when_clear_and_takes_the_worst_lamps_colour(tmp_p
 
     assert _visible_color_bbox(clear, VERDICT_REGION, colors["alert_active"]) is not None
     assert _visible_color_bbox(unlocked, VERDICT_REGION, colors["alert_crit"]) is not None
-    # The lock lamp lights in the same red; quiet lamps keep their grey tiles.
+    # The lock lamp's glyph lights in the same red; a quiet lamp's glyph stays grey.
     assert _visible_color_bbox(unlocked, _lamp_box("lock"), colors["alert_crit"]) is not None
     assert _visible_color_bbox(clear, _lamp_box("lock"), colors["alert_crit"]) is None
     assert _visible_color_bbox(clear, _lamp_box("lock"), colors["lamp_idle"]) is not None
@@ -2788,6 +2804,100 @@ def test_the_address_is_led_by_a_red_pin(tmp_path, mode):
                                    location_presentation=presentation)
     red = vehicle_module._render_colors({"mode": mode})["alert_crit"]
     left, _top, _right, bottom = vehicle_module.LOCATION_MAP_BOX
-    pin = (left - 3, bottom + 8, left - 3 + vehicle_module.ADDRESS_PIN_SIZE, bottom + 8 + vehicle_module.ADDRESS_PIN_SIZE)
+    pin = (left - 3, bottom + 9, left - 3 + vehicle_module.ADDRESS_PIN_SIZE, bottom + 9 + vehicle_module.ADDRESS_PIN_SIZE)
 
     assert _visible_color_bbox(image, pin, red) is not None
+
+
+def _rule_colours(image, key):
+    """The colours along the rule under the lamp row, within one lamp's slot."""
+    left, _top, right, _bottom = _lamp_box(key)
+    strip = image.crop((left + 8, vehicle_module.LAMP_RULE_Y, right - 8, vehicle_module.LAMP_RULE_Y + 1))
+    return set(getattr(strip, "get_flattened_data", strip.getdata)())
+
+
+@pytest.mark.parametrize("theme_mode", ["day", "night"])
+def test_only_a_lamp_that_needs_the_owner_takes_colour(tmp_path, monkeypatch, theme_mode):
+    settings = {"language": "zh-CN", "_inkypi_theme": {"mode": theme_mode, "palette": {}}}
+    colors = vehicle_module._render_colors({"mode": theme_mode})
+    alert_colours = {colors[name] for name in ("alert_crit", "alert_warn", "alert_info", "alert_active")}
+    clear = _render_payload(tmp_path / "clear", monkeypatch, _all_clear_v3(), settings)
+    payload = _all_clear_v3()
+    payload["vehicle"].update(locked=False, sentry_mode="on")
+    lit = _render_payload(tmp_path / "lit", monkeypatch, payload, settings)
+
+    # A quiet row: grey glyphs straight on the panel (no tile behind them), ink states, a plain rule.
+    row = clear.crop(LAMP_REGION)
+    used = {colour for _count, colour in row.getcolors(maxcolors=row.width * row.height)}
+    assert not used & alert_colours
+    assert colors["lamp_idle"] in used and colors["ink"] in used
+    glyph_left = _lamp_box("lock")[0] + (_lamp_box("lock")[2] - _lamp_box("lock")[0]) // 2 - 13
+    assert clear.getpixel((glyph_left, vehicle_module.LAMP_GLYPH_TOP)) == colors["surface"]
+    assert all(_rule_colours(clear, key) == {colors["rule"]} for key in LAMP_KEYS)
+
+    # The unlocked car lights its glyph red and its stretch of the rule; sentry at work is a green
+    # glyph over a plain rule, and the other lamps stay as they were.
+    assert _visible_color_bbox(lit, _lamp_box("lock"), colors["alert_crit"]) is not None
+    assert _rule_colours(lit, "lock") == {colors["alert_crit"]}
+    assert _visible_color_bbox(lit, _lamp_box("modes"), colors["alert_active"]) is not None
+    assert _rule_colours(lit, "modes") == {colors["rule"]}
+    _assert_changes_only_within(clear, lit, _lamp_box("lock"), _lamp_box("modes"), VERDICT_REGION,
+                                BODY_COLUMN_REGION)
+
+
+@pytest.mark.parametrize("theme_mode", ["day", "night"])
+def test_small_type_is_ink_throughout(tmp_path, theme_mode):
+    plugin = _plugin(tmp_path)
+    summary = vehicle_module.sanitize_summary(_all_clear_v3())
+    presentation = {"map_image": Image.new("RGB", vehicle_module.LOCATION_MAP_SIZE, (230, 232, 236)),
+                    "formatted_address": "1600 Amphitheatre Parkway, Mountain View, CA 94043", "age_seconds": 7200}
+    image = plugin._render_summary(summary, (800, 480), {"mode": theme_mode}, {"language": "zh-CN"},
+                                   location_presentation=presentation)
+    colors = vehicle_module._render_colors({"mode": theme_mode})
+
+    # The grey and the accent are kept for shapes and the large percent sign: none of the labels in
+    # the charging grid, the body rows, the address, the climate, the strip or the footer use them.
+    map_bottom = vehicle_module.LOCATION_MAP_BOX[3]
+    for region in ((36, vehicle_module.CHARGING_RULE_Y + 28, 308, 398), (326, 326, 502, 396),
+                   (540, map_bottom + 6, 765, 398), (118, 401, 765, 445), (56, 445, 765, 462)):
+        assert _visible_color_bbox(image, region, colors["muted"]) is None
+        assert _visible_color_bbox(image, region, colors["accent"]) is None
+        assert _visible_color_bbox(image, region, colors["ink"]) is not None
+
+
+def test_location_heads_the_right_column_with_a_larger_map_over_the_climate():
+    left, top, right, bottom = vehicle_module.LOCATION_MAP_BOX
+    column_left, column_right = vehicle_module.COLUMNS[2]
+
+    # The map spans its column under the section's name and leaves the address its three lines
+    # above the climate's rule.
+    assert (left, right) == (column_left, column_right)
+    assert vehicle_module.LOCATION_MAP_SIZE[0] >= 240 and vehicle_module.LOCATION_MAP_SIZE[1] >= 120
+    assert top >= vehicle_module.COLUMN_TOP + 17
+    assert vehicle_module.CLIMATE_RULE_Y - bottom >= 56
+    assert vehicle_module.CLIMATE_RULE_Y + 70 <= vehicle_module.STRIP_RULE_Y
+
+
+def test_vehicle_strip_is_one_grid_of_labels_over_values(tmp_path, monkeypatch):
+    settings = {"language": "zh-CN", "_inkypi_theme": {"mode": "day", "palette": {}}}
+    image = _render_payload(tmp_path, monkeypatch, _summary_v2(), settings)
+    colors = vehicle_module._render_colors({"mode": "day"})
+    rule_y = vehicle_module.STRIP_RULE_Y
+
+    # A hairline stands before each of the six cells, all at the same height.
+    x = vehicle_module.STRIP_GRID_LEFT
+    starts = [x]
+    for width in vehicle_module.STRIP_CELL_WIDTHS:
+        x += width
+        starts.append(x)
+    assert len(starts) == 6 and starts[-1] < vehicle_module.PAGE_RIGHT - 100
+    for start in starts:
+        hairline = image.crop((start - 8, rule_y + 7, start - 7, rule_y + 31))
+        assert set(getattr(hairline, "get_flattened_data", hairline.getdata)()) == {colors["rule"]}
+    # Every label starts on one line: the row over them is clear right across the grid.
+    row = image.crop((starts[0], rule_y + 3, vehicle_module.PAGE_RIGHT + 1, rule_y + 4))
+    assert set(getattr(row, "get_flattened_data", row.getdata)()) == {colors["surface"]}
+    # Each cell holds a label and a value in ink.
+    for start, end in zip(starts, starts[1:] + [vehicle_module.PAGE_RIGHT + 1]):
+        assert _visible_color_bbox(image, (start, rule_y + 5, end - 8, rule_y + 16), colors["ink"]) is not None
+        assert _visible_color_bbox(image, (start, rule_y + 18, end - 8, rule_y + 31), colors["ink"]) is not None
