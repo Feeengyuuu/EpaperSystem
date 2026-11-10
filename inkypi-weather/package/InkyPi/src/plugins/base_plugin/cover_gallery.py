@@ -4,8 +4,9 @@ A header names the page with what is on it and the date; up to four works stand 
 side on one shelf line, each framed with a soft shadow and as large as the page allows,
 over a compact wall label of three lines (a numbered title; its date chip, first fact and
 colour swatches; then its other facts run together); Daily Art adds a timeline that
-places each work in its century. Everything stays inside the 8 px inset the theme chrome
-frames.
+places each work in its century. Each page is set in typefaces of its own (cover_type.py):
+a museum label's serif, comic lettering, a masthead's display type. Everything stays inside
+the 8 px inset the theme chrome frames.
 """
 
 from __future__ import annotations
@@ -18,8 +19,8 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
 
+from plugins.base_plugin.cover_type import CHIP, STRONG, TEXT, TITLE, CoverType
 from plugins.base_plugin.publisher_logos import publisher_logo
-from utils.app_utils import get_base_ui_font
 from utils.safe_image import safe_open_image
 
 MARGIN = 14
@@ -137,10 +138,6 @@ def source_logo(name, colors, height):
     return _inked_wordmark(art, colors, height) if art is not None else None
 
 
-def _font(size, bold=False):
-    return get_base_ui_font(int(size), bold=bold)
-
-
 def _clip(draw, text, font, width):
     text = str(text or "")
     if draw.textlength(text, font=font) <= width:
@@ -208,8 +205,11 @@ def compose(images, labels, dimensions, *, title, subtitle="", date_text="", acc
     ``fact_rows`` 2 gives each label a second fact line (the body, then its source facts).
     ``fillers`` ((image, label), ...) are more works for the room a wide work leaves above it,
     under ``filler_heading``.
+
+    The page is set in the style's own typefaces (cover_type.py).
     """
     colors = palette(dark)
+    faces = CoverType(style)
     width, height = dimensions
     page = Image.new("RGB", (width, height), colors["paper"])
     boxes = columns(len(images), dimensions, timeline=timeline, fact_rows=fact_rows)
@@ -220,7 +220,7 @@ def compose(images, labels, dimensions, *, title, subtitle="", date_text="", acc
     if len(years) >= 2 and max(years) > min(years):
         span = f"跨越 {_year_text(min(years))}–{_year_text(max(years))} · {max(years) - min(years)} 年"
     _header(page, draw, title, subtitle, date_text, accent, colors, width, logo, wordmark, header_art,
-            sources=sources, span=span)
+            sources=sources, span=span, faces=faces)
     fillers = list(fillers)
     for index, (image, label, (image_box, label_box)) in enumerate(zip(images, labels, boxes), start=1):
         # A wide work stands on its foot when more works fill the room above it; otherwise it is
@@ -231,19 +231,20 @@ def compose(images, labels, dimensions, *, title, subtitle="", date_text="", acc
         if filled:
             taken, fillers = fillers[:FILLER_PER_GAP], fillers[FILLER_PER_GAP:]
             _fill_gap(page, draw, (image_box[0], image_box[1], image_box[2], frame[1] - FILLER_GAP), taken,
-                      filler_heading, accent, colors)
+                      filler_heading, accent, colors, faces)
         label_box = _under(frame, label_box)
         swatch_w = _swatches(draw, image, (label_box[2], label_box[1] + TITLE_ROW + 4), colors)
-        _label(draw, label, label_box, index, accent, colors, numbered=timeline, reserve=swatch_w + 6, page=page,
-               fact_rows=fact_rows)
+        _label(draw, label, label_box, index, accent, colors, faces, numbered=timeline, reserve=swatch_w + 6,
+               page=page, fact_rows=fact_rows)
     if timeline:
         _timeline(draw, labels, (MARGIN, height - BOTTOM - TIMELINE_H + 6, width - MARGIN, height - BOTTOM), accent,
-                  colors)
+                  colors, faces)
     return page
 
 
 def _header(page, draw, title, subtitle, date_text, accent, colors, width, logo, wordmark=None, art=None, sources=(),
-            span=""):
+            span="", faces=None):
+    faces = faces or CoverType(None)
     x = MARGIN
     if logo is not None:
         page.paste(logo, (x, HEADER_TOP + (28 - logo.height) // 2), logo)
@@ -256,14 +257,14 @@ def _header(page, draw, title, subtitle, date_text, accent, colors, width, logo,
         if logo is None:
             draw.rectangle((x, HEADER_TOP + 8, x + 10, HEADER_TOP + 18), fill=accent)
             x += 18
-        title_font = _font(22, True)
+        title_font = faces.font(TITLE, 22)
         draw.text((x, HEADER_TOP - 1), title, font=title_font, fill=colors["ink"])
         x += draw.textlength(title, font=title_font) + 14
-    date_font = _font(12, True)
+    date_font = faces.font(STRONG, 12)
     date_w = draw.textlength(date_text, font=date_font) if date_text else 0
     if date_text:
         draw.text((width - MARGIN - date_w, HEADER_TOP + 8), date_text, font=date_font, fill=colors["ink"])
-    sub_font = _font(12)
+    sub_font = faces.font(TEXT, 12)
     limit = width - MARGIN - date_w - 16
     # The subtitle, then its sources by their logos (or names), then the works' span.
     parts = [("text", subtitle)] if subtitle else []
@@ -331,16 +332,16 @@ def _framed(page, image, box, colors, centre=False):
     return x, y, x + art.width, y + art.height
 
 
-def _fill_gap(page, draw, box, works, heading, accent, colors):
+def _fill_gap(page, draw, box, works, heading, accent, colors, faces):
     """``works`` side by side in ``box``, under a short accent heading, each titled under its frame."""
     left, top, right, bottom = box
     if heading:
         draw.rectangle((left, top + 3, left + 4, top + 15), fill=accent)
-        draw.text((left + 10, top + 1), heading, font=_font(12, True), fill=colors["ink"])
+        draw.text((left + 10, top + 1), heading, font=faces.font(STRONG, 12), fill=colors["ink"])
         top += FILLER_HEAD
     count = len(works)
     slot_w = (right - left - (count - 1) * COLUMN_GAP) / count
-    caption_font = _font(11, True)
+    caption_font = faces.font(TITLE, 11)
     for index, (image, label) in enumerate(works):
         slot_left = round(left + index * (slot_w + COLUMN_GAP))
         slot = (slot_left, top, round(slot_left + slot_w), bottom - FILLER_CAPTION)
@@ -363,7 +364,7 @@ def _under(frame, box, min_width=LABEL_MIN_W):
     return x0, top, x1, bottom
 
 
-def _label(draw, label, box, index, accent, colors, numbered, reserve=0, page=None, fact_rows=1):
+def _label(draw, label, box, index, accent, colors, faces, numbered, reserve=0, page=None, fact_rows=1):
     """Three tight lines under a work: its (numbered) title; its chip and first fact, leaving
     ``reserve`` px at the right for the swatches; then its source's logo and its other facts
     run together."""
@@ -371,7 +372,7 @@ def _label(draw, label, box, index, accent, colors, numbered, reserve=0, page=No
     x = left
     if numbered:
         draw.ellipse((x, top + 1, x + 16, top + 17), fill=accent)
-        number_font = _font(10, True)
+        number_font = faces.font(CHIP, 10)
         number = str(index)
         draw.text((x + 8 - draw.textlength(number, font=number_font) / 2, top + 2), number, font=number_font,
                   fill=(255, 255, 255))
@@ -381,13 +382,13 @@ def _label(draw, label, box, index, accent, colors, numbered, reserve=0, page=No
     if masthead is not None:
         page.paste(masthead, (round(x), top + 7 - masthead.height // 2), masthead)
         x += masthead.width + 6
-    title_font = _font(14, True)
+    title_font = faces.font(TITLE, 14)
     draw.text((x, top - 1), _clip(draw, label.title or "-", title_font, right - x), font=title_font, fill=colors["ink"])
     y = top + TITLE_ROW
-    fact_font = _font(11)
+    fact_font = faces.font(TEXT, 11)
     x = left
     if label.chip:
-        chip_font = _font(10, True)
+        chip_font = faces.font(CHIP, 10)
         chip_w = draw.textlength(label.chip, font=chip_font) + 10
         draw.rounded_rectangle((left, y + 1, left + chip_w, y + 16), radius=4, fill=accent)
         draw.text((left + 5, y + 2), label.chip, font=chip_font, fill=(255, 255, 255))
@@ -419,7 +420,7 @@ def _label(draw, label, box, index, accent, colors, numbered, reserve=0, page=No
     if fact_rows > 1 and (label.badges or label.note):
         # The facts on one line beside the logo, the badges and note on the line under it.
         rows = (" · ".join(str(part) for part in (*label.lines[1:], label.body, label.source, named) if part),)
-        _badge_row(draw, label, (left, y + FACT_ROW, right), colors)
+        _badge_row(draw, label, (left, y + FACT_ROW, right), colors, faces)
     elif fact_rows > 1 and label.body and label.source:
         # Two fact lines: the body beside the logo, the source facts under it.
         rows = (" · ".join(str(part) for part in (*label.lines[1:], label.body, named) if part), label.source)
@@ -441,11 +442,11 @@ def _label(draw, label, box, index, accent, colors, numbered, reserve=0, page=No
                       fill=colors["ink"])
 
 
-def _badge_row(draw, label, row, colors):
+def _badge_row(draw, label, row, colors, faces):
     """``label``'s badges as solid chips from the left of ``row`` (left, top, right), each in the
     longest of its wordings that fits, then its note in ink in the room left."""
     left, top, right = row
-    chip_font, note_font = _font(10, True), _font(11)
+    chip_font, note_font = faces.font(CHIP, 10), faces.font(TEXT, 11)
     x = left
     for text, fill in label.badges:
         wordings = (text,) if isinstance(text, str) else tuple(text)
@@ -461,7 +462,7 @@ def _badge_row(draw, label, row, colors):
         draw.text((x, top), _clip(draw, label.note, note_font, right - x), font=note_font, fill=colors["ink"])
 
 
-def _timeline(draw, labels, box, accent, colors):
+def _timeline(draw, labels, box, accent, colors, faces):
     """Each work's year on a century axis, numbered like its label."""
     left, top, right, bottom = box
     years = [label.year for label in labels if isinstance(label.year, int)]
@@ -476,7 +477,7 @@ def _timeline(draw, labels, box, accent, colors):
     def x_of(year):
         return left + (right - left) * (year - start) / max(1, end - start)
 
-    tick_font = _font(9)
+    tick_font = faces.font(TEXT, 9)
     step = 100 if end - start <= 900 else 200
     for year in range(start, end + 1, step):
         x = x_of(year)
@@ -485,7 +486,7 @@ def _timeline(draw, labels, box, accent, colors):
         text_w = draw.textlength(text, font=tick_font)
         draw.text((min(max(left, x - text_w / 2), right - text_w), axis_y + 5), text, font=tick_font,
                   fill=colors["muted"])
-    number_font = _font(10, True)
+    number_font = faces.font(CHIP, 10)
     for index, label in enumerate(labels, start=1):
         if not isinstance(label.year, int):
             continue

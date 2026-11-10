@@ -1,0 +1,41 @@
+{
+  "purpose": "The cover pages' own typefaces (plugins/base_plugin/cover_type.py): a museum label's serif for Daily Art, comic lettering for GCD Comic Covers. Magazine Covers uses Bodoni Moda (plugins/stocktracker/assets/fonts) and Jost (static/fonts), already in the repository. All files are copied unchanged from the Google Fonts repository.",
+  "fonts": {
+    "Spectral-BoldItalic.ttf": {
+      "source": "https://github.com/google/fonts/raw/main/ofl/spectral/Spectral-BoldItalic.ttf",
+      "licence": "SIL Open Font License 1.1 (Spectral-OFL.txt)",
+      "sha256": "709fa4f2da9be216fd52125db2d6caa4f90150f48de1a453c9ecf91117ab49b6",
+      "bytes": 284356
+    },
+    "Spectral-SemiBold.ttf": {
+      "source": "https://github.com/google/fonts/raw/main/ofl/spectral/Spectral-SemiBold.ttf",
+      "licence": "SIL Open Font License 1.1 (Spectral-OFL.txt)",
+      "sha256": "5f86915a744832ecf6e4a17ab04bea091b9fa992ef5164ff65ae34c1da2fe94b",
+      "bytes": 273068
+    },
+    "Spectral-Bold.ttf": {
+      "source": "https://github.com/google/fonts/raw/main/ofl/spectral/Spectral-Bold.ttf",
+      "licence": "SIL Open Font License 1.1 (Spectral-OFL.txt)",
+      "sha256": "70ddb1ec6ae3b0b8d0c79231f670de786978f19baeba2130757526e407aebf9b",
+      "bytes": 273220
+    },
+    "Bangers-Regular.ttf": {
+      "source": "https://github.com/google/fonts/raw/main/ofl/bangers/Bangers-Regular.ttf",
+      "licence": "SIL Open Font License 1.1 (Bangers-OFL.txt)",
+      "sha256": "4160a7311de9342674cce9160cde9fcbb30f48190397d86ff1b70b455af65824",
+      "bytes": 93148
+    },
+    "ComicNeue-Bold.ttf": {
+      "source": "https://github.com/google/fonts/raw/main/ofl/comicneue/ComicNeue-Bold.ttf",
+      "licence": "SIL Open Font License 1.1 (ComicNeue-OFL.txt)",
+      "sha256": "3e7e5fccfd7e0788f317b43312151c1bd5cf058c9697a8d83eac3939050bd61e",
+      "bytes": 55716
+    },
+    "ZCOOLKuaiLe-Regular.ttf": {
+      "source": "https://github.com/google/fonts/raw/main/ofl/zcoolkuaile/ZCOOLKuaiLe-Regular.ttf",
+      "licence": "SIL Open Font License 1.1 (ZCOOLKuaiLe-OFL.txt)",
+      "sha256": "812a6fc1fe54b6d73a419245c32dfeba8aa33104d5be90d1cf6af082007cb71d",
+      "bytes": 1514968
+    }
+  }
+}
