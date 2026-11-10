@@ -1954,3 +1954,106 @@ def test_the_leads_tag_shares_the_headlines_first_line(tmp_path):
     # The first line leaves the tag's room before it; the next ones use the full width.
     assert len(lines) >= 2
     assert plugin._text_width(draw, lines[0], font) <= 180 < plugin._text_width(draw, lines[0] + lines[1][:1], font) + 60
+
+
+def _drawn_row(plugin, item, theme="day"):
+    """Draw one list row at the list's place; returns (the image, the texts drawn as (x, y, text))."""
+    palette = plugin._palette({"mode": theme})
+    image = Image.new("RGB", (800, 480), palette["background"])
+    draw = ImageDraw.Draw(image)
+    plugin._sx = plugin._sy = plugin._page_scale = 1
+    texts = []
+    original = draw.text
+
+    def record(xy, text, **kwargs):
+        texts.append((xy[0], xy[1], text))
+        return original(xy, text, **kwargs)
+
+    draw.text = record
+    plugin._draw_story_row(image, draw, item, (486, 72, 786, 128), palette)
+    return image, texts
+
+
+def _row_item(now, headline, summary="", minutes=25, **extra):
+    return {
+        "key": "row", "message_id": 1, "date": int(now.timestamp()) - minutes * 60, "chat_id": "c",
+        "chat_title": "科技早知道", "chat_kind": "channel", "raw_text": headline, "media_kind": "text",
+        "curation": {"score": 60, "tag": "科技", "headline": headline, "summary": summary}, **extra,
+    }
+
+
+def test_list_row_wraps_a_long_headline_to_two_lines_instead_of_cutting_it(tmp_path):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 11, 10, 18, 0, tzinfo=timezone.utc)
+    plugin._now_utc = lambda: now
+    headline = "苹果确认明年春季发布折叠屏手机，起售价或超一万五千元"
+
+    _, texts = _drawn_row(plugin, _row_item(now, headline, "供应链消息称首批备货八百万台。"))
+
+    words = [text for _, _, text in texts]
+    lines = [text for text in words if text and text in headline]
+    assert len(lines) == 2 and "".join(lines) == headline
+    # The second headline line takes the summary's place.
+    assert not any("供应链" in text for text in words)
+
+    _, texts = _drawn_row(plugin, _row_item(now, "美联储维持利率不变", "鲍威尔称通胀回落仍需更多证据。"))
+    words = [text for _, _, text in texts]
+    assert "美联储维持利率不变" in words and "鲍威尔称通胀回落仍需更多证据。" in words
+
+
+def test_list_row_leads_with_its_topic_pill_and_source_and_sets_the_age_flush_right(tmp_path):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 11, 10, 18, 0, tzinfo=timezone.utc)
+    plugin._now_utc = lambda: now
+    palette = plugin._palette({"mode": "day"})
+
+    ends = []
+    for minutes in (25, 185):
+        image, texts = _drawn_row(plugin, _row_item(now, "标题", minutes=minutes))
+        by_text = {text: (x, y) for x, y, text in texts}
+        age = plugin._relative_time(int(now.timestamp()) - minutes * 60)
+        age_x, age_y = by_text[age]
+        ends.append(round(age_x + ImageDraw.Draw(image).textlength(age, font=plugin._f(11, "bold"))))
+        # Topic, source and age share the row's first line, above the headline.
+        assert by_text["科技"][0] < by_text["科技早知道"][0] < age_x
+        assert max(by_text["科技"][1], by_text["科技早知道"][1], age_y) < by_text["标题"][1]
+        # The topic's colour fills its pill; the row's left edge carries it.
+        assert image.getpixel((489, 80)) == palette["tags"]["科技"]
+    assert ends == [786, 786]
+
+
+def test_list_row_keeps_headlines_at_one_left_edge_with_and_without_a_thumbnail(tmp_path):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 11, 10, 18, 0, tzinfo=timezone.utc)
+    plugin._now_utc = lambda: now
+    media_path = tmp_path / "thumb.png"
+    Image.new("RGB", (320, 180), (171, 32, 47)).save(media_path)
+    headline = "湾区周四起连续三天大雨，部分公路路段可能积水封闭"
+
+    _, plain = _drawn_row(plugin, _row_item(now, headline))
+    image, pictured = _drawn_row(plugin, _row_item(now, headline, media_kind="photo", media_path=str(media_path)))
+
+    def headline_lines(texts):
+        return [(x, text) for x, _, text in texts if text and text in headline]
+
+    assert {x for x, _ in headline_lines(plain)} == {x for x, _ in headline_lines(pictured)} == {486}
+    assert "".join(text for _, text in headline_lines(pictured)) == headline
+    # The thumbnail sits under the first line, so the age keeps its column on every row.
+    assert image.getpixel((760, 110)) == (171, 32, 47)
+    assert image.getpixel((760, 80)) != (171, 32, 47)
+    age_x = next(x for x, _, text in pictured if text == "25 分钟前")
+    assert age_x > 786 - 66
+
+
+def test_list_row_evens_out_a_headline_whose_second_line_would_be_a_single_character(tmp_path):
+    plugin = _plugin(tmp_path)
+    draw = ImageDraw.Draw(Image.new("RGB", (800, 480)))
+    plugin._sx = plugin._sy = plugin._page_scale = 1
+    font = plugin._f(15, "bold")
+    headline = "国" * 21
+    assert [len(line) for line in plugin._wrap_text(draw, headline, font, 300, 2)] == [20, 1]
+
+    lines = plugin._row_headline(draw, headline, font, 300, 0)
+
+    assert "".join(lines) == headline and len(lines) == 2
+    assert draw.textlength(lines[1], font=font) >= 300 * 0.25

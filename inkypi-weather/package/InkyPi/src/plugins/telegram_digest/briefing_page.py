@@ -1,9 +1,10 @@
 """The Telegram Digest page: one lead story beside a ranked list of the rest.
 
 The lead takes a landscape picture across the top, a portrait one (phone
-screenshots) down its left side, or none at all; list rows carry a topic bar,
-a headline, one summary line, the source and a small thumbnail. Every
-coordinate is laid out for 800x480 and scaled to the panel.
+screenshots) down its left side, or none at all; list rows open with a line
+of topic pill, source and right-aligned age, then carry a headline of up to
+two lines (one, with a summary line, when it is short) and a small thumbnail.
+Every coordinate is laid out for 800x480 and scaled to the panel.
 """
 
 from __future__ import annotations
@@ -32,6 +33,10 @@ SECOND_MIN_H, SECOND_LEAD_SUMMARY_LINES = 120, 4
 # the text runs down the column to within PORTRAIT_FILL_SLACK of its foot. Text too short for
 # even that column lies on a band at the foot of the photo, which then fills the whole lead.
 PORTRAIT_PHOTO_W, PORTRAIT_TEXT_MIN_W, PORTRAIT_FILL_SLACK = 176, 168, 28
+# A list row's headline starts this far under the row's top, below its topic and source line;
+# a row with a picture keeps this width for it beside the headline. A headline's second line
+# shorter than this share of the row's width is evened out with the first.
+ROW_TEXT_TOP, ROW_THUMB_W, ROW_SHORT_LINE = 18, 66, 0.25
 KIND_LABELS = {"private": "私聊", "group": "群聊", "channel": "频道"}
 ASSETS = Path(__file__).resolve().parent / "assets"
 # Quiet paper-plane and chat doodles in Telegram blue under the lead and the list.
@@ -280,7 +285,7 @@ class BriefingPageMixin:
         meta_y = y1 - self._y(24)
         meta_x = self._paste_marks(image, item, x, meta_y, self._x(16))
         meta_font = self._f(12, "bold")
-        draw.text((meta_x, meta_y), self._fit_text(draw, self._story_meta(item, with_tag=False), meta_font,
+        draw.text((meta_x, meta_y), self._fit_text(draw, self._story_meta(item), meta_font,
                                                    x1 - self._x(50) - meta_x), font=meta_font, fill=(214, 220, 226))
         self._score_dots(draw, x1 - self._x(46), meta_y + self._y(8), item, colour, p)
 
@@ -355,7 +360,7 @@ class BriefingPageMixin:
                       fill=(236, 240, 244))
         meta_font = self._f(11, "bold")
         draw.text((x0 + self._x(10), y1 - self._y(19)),
-                  self._fit_text(draw, self._story_meta(item, with_tag=False), meta_font, x1 - x0 - self._x(20)),
+                  self._fit_text(draw, self._story_meta(item), meta_font, x1 - x0 - self._x(20)),
                   font=meta_font, fill=(214, 220, 226))
 
     def _draw_lead_text(self, image, draw, item, p, box, headline_size, headline_lines, summary_lines, show_tag=True,
@@ -400,7 +405,7 @@ class BriefingPageMixin:
             for line in self._wrap_text(draw, f"原文 · {excerpt}", note_font, x1 - x0, left) if excerpt and left else ():
                 draw.text((x0, y + self._y(8)), line, font=note_font, fill=p["muted"])
                 y += note_h
-        meta = self._story_meta(item, with_tag=False)
+        meta = self._story_meta(item)
         meta_font = self._f(12, "bold")
         meta_x = self._paste_marks(image, item, x0, meta_y, self._x(16))
         draw.text((meta_x, meta_y), self._fit_text(draw, meta, meta_font, x1 - meta_x - self._x(44)), font=meta_font,
@@ -442,36 +447,76 @@ class BriefingPageMixin:
         return drawn
 
     def _draw_story_row(self, image, draw, item, box, p):
+        """One list row. Its first line names the story at a glance: the topic on a small pill
+        in the topic's colour, the chat's picture and name, and the age set flush right so the
+        ages of all rows read down one column. The headline follows on up to two lines beside
+        the thumbnail; a headline that fits on one line leaves the second to the summary."""
         x0, y0, x1, y1 = box
-        colour = self._tag_colour(item, p)
-        draw.rectangle((x0, y0 + self._y(2), x0 + max(2, self._x(3)), y1), fill=colour)
+        text_top = y0 + self._y(ROW_TEXT_TOP)
         picture = self._open_page_media(item)
-        text_x = x0 + self._x(10)
         text_right = x1
         if picture is not None:
-            thumb = (x1 - self._x(64), y0 + self._y(2), x1, y1)
+            thumb = (x1 - self._x(ROW_THUMB_W), text_top + self._y(2), x1, y1)
             centering = (0.5, 0.15) if picture.height > picture.width * PORTRAIT_RATIO else (0.5, 0.5)
             self._paste_media(image, picture, thumb, p, centering=centering, radius=5)
             text_right = thumb[0] - self._x(8)
-        width = text_right - text_x
         headline_font = self._f(15, "bold")
-        headline_x = text_x
+        indent = 0
         if self._important(item):
-            headline_x += self._paste_icon(image, "important", text_x, y0 + self._y(1), self._x(17)) + self._x(5)
-        draw.text((headline_x, y0), self._fit_text(draw, display_headline(item), headline_font, text_right - headline_x),
-                  font=headline_font, fill=p["ink"])
+            icon_w = self._paste_icon(image, "important", x0, text_top + self._y(1), self._x(17))
+            indent = icon_w + self._x(5) if icon_w else 0
+        lines = self._row_headline(draw, display_headline(item), headline_font, text_right - x0, indent)
+        for index, line in enumerate(lines):
+            draw.text((x0 + (0 if index else indent), text_top + index * self._y(19)), line, font=headline_font,
+                      fill=p["ink"])
         summary = display_summary(item)
-        if summary:
+        if summary and len(lines) < 2:
             body_font = self._f(12)
-            draw.text((text_x, y0 + self._y(21)), self._fit_text(draw, summary, body_font, width),
+            draw.text((x0, text_top + self._y(21)), self._fit_text(draw, summary, body_font, text_right - x0),
                       font=body_font, fill=p["ink"])
-        meta_font = self._f(11, "bold")
-        meta_y = y0 + self._y(39)
-        icon_w = self._paste_source_mark(image, item, text_x, meta_y, self._x(14))
-        meta_x = text_x + (icon_w + self._x(4) if icon_w else 0)
-        # The source line in ink: the topic's colour is the bar on the left, small text stays plain.
-        draw.text((meta_x, meta_y), self._fit_text(draw, self._story_meta(item), meta_font, text_right - meta_x),
-                  font=meta_font, fill=p["muted"])
+        # Small text stays ink: the topic's colour is the pill's fill, the age's weight sets it apart.
+        age, age_font = self._relative_time(item.get("date")), self._f(11, "bold")
+        age_x = x1 - self._text_width(draw, age, age_font)
+        draw.text((age_x, y0 + self._y(1)), age, font=age_font, fill=p["ink"])
+        x = self._row_tag(draw, x0, y0, self._tag(item), self._tag_colour(item, p), p) + self._x(7)
+        icon_w = self._paste_source_mark(image, item, x, y0 + self._y(1), self._x(14))
+        x += icon_w + self._x(4) if icon_w else 0
+        name_font = self._f(11)
+        draw.text((x, y0 + self._y(1)), self._fit_text(draw, self._chat_name(item), name_font, age_x - self._x(10) - x),
+                  font=name_font, fill=p["ink"])
+
+    def _row_headline(self, draw, text, font, width, indent):
+        """A row's headline on at most two lines. A second line of only a character or two is
+        evened out: the first line gives up characters until the second holds a few."""
+        lines = self._wrap_text(draw, text, font, width, 2, first_indent=indent)
+        if len(lines) < 2 or self._text_width(draw, lines[1], font) >= width * ROW_SHORT_LINE:
+            return lines
+        whole = "".join(lines).replace(" ", "")
+        step = max(1, int(self._text_width(draw, "国", font)))
+        for narrower in range(int(width) - step, int(width * 0.6), -step):
+            even = self._wrap_text(draw, text, font, narrower, 2, first_indent=indent)
+            if "".join(even).replace(" ", "") != whole:
+                break
+            lines = even
+            if self._text_width(draw, even[1], font) >= width * ROW_SHORT_LINE:
+                break
+        return lines
+
+    def _row_tag(self, draw, x, y, text, fill, p):
+        """A list row's topic on a pill of the topic's colour; returns the pill's right edge.
+
+        The word takes whichever of white and the page's darkest tone reads on the fill: the
+        night page's topic colours are light."""
+        font = self._f(11, "bold")
+        pad, height = self._x(6), self._y(16)
+        width = self._text_width(draw, text, font) + pad * 2
+        draw.rounded_rectangle((x, y, x + width, y + height), radius=height // 2, fill=fill)
+        light_fill = fill[0] * 299 + fill[1] * 587 + fill[2] * 114 > 150_000
+        dark = min(p["ink"], p["background"], key=sum)
+        bbox = draw.textbbox((0, 0), text, font=font)
+        draw.text((x + pad, y + (height - (bbox[1] + bbox[3])) / 2), text, font=font,
+                  fill=dark if light_fill else (255, 255, 255))
+        return x + width
 
     # --- pieces -------------------------------------------------------------------
 
@@ -531,15 +576,14 @@ class BriefingPageMixin:
             cx = x + index * self._x(7)
             draw.ellipse((cx - radius, y - radius, cx + radius, y + radius), fill=colour if index < filled else p["rule"])
 
-    def _story_meta(self, item, with_tag=True):
-        parts = [self._tag(item)] if with_tag else []
-        chat = str(item.get("chat_title") or item.get("chat_username") or "").strip()
-        if chat:
-            parts.append(chat)
-        kind = KIND_LABELS.get(str(item.get("chat_kind") or ""))
-        if kind and not with_tag:
-            parts.append(kind)
-        parts.append(self._relative_time(item.get("date")))
+    @staticmethod
+    def _chat_name(item):
+        return str(item.get("chat_title") or item.get("chat_username") or "").strip()
+
+    def _story_meta(self, item):
+        """The lead's source line: its chat, the chat's kind and the story's age."""
+        parts = [self._chat_name(item), KIND_LABELS.get(str(item.get("chat_kind") or "")),
+                 self._relative_time(item.get("date"))]
         return " · ".join(part for part in parts if part)
 
     @staticmethod
