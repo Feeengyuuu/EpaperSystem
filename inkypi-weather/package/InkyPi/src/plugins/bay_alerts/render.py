@@ -6,8 +6,9 @@ mark the Bay map."""
 
 from __future__ import annotations
 
+import math
 import re
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 from pathlib import Path
 
 from PIL import Image
@@ -92,8 +93,10 @@ def ago(stamp, now):
 
 def until(stamp, now):
     local = stamp.astimezone(PACIFIC)
-    day = "今天" if local.date() == now.date() else "明天" if local.date() == (now + timedelta(days=1)).date() \
-        else f"{local:%m/%d} 周{WEEKDAYS[local.weekday()]}"
+    days = (local.date() - now.date()).days
+    # Within the week the weekday alone names the day; further out it takes its date too.
+    weekday = f"周{WEEKDAYS[local.weekday()]}"
+    day = "今天" if days == 0 else "明天" if days == 1 else weekday if 1 < days < 7 else f"{local:%m/%d} {weekday}"
     return f"至 {day} {local:%H:%M}"
 
 
@@ -259,7 +262,18 @@ COLUMN_BOTTOM = 467
 CARD_GAP = 6
 COLUMN_SPACE = COLUMN_BOTTOM - COLUMN_TOP - 2 * CARD_GAP
 ALERT_ROW = 43
+# An alert under another of the same name and severity is one line beneath it: its tag, when it
+# ends and where, without the name again.
+ALERT_FOLLOW_ROW = 22
+# Each alert's span on a small track from now to ALERT_SPAN_HOURS ahead, a notch at each midnight.
+ALERT_SPAN_HOURS = 72
+ALERT_SPAN_WIDTH = 40
 QUAKE_ROW = 21
+# The quake card's week: counts on the left, then a time axis with a stick per quake.
+QUAKE_WEEK_DAYS = 7
+QUAKE_WEEK_TOP, QUAKE_WEEK_BASE, QUAKE_WEEK_STICK = 36, 62, 22
+QUAKE_COUNTS_WIDTH = 74
+QUAKE_LIST_TOP = 87
 EVENT_ROW = 38
 # The event card's California minimap grows with the card up to this width, which
 # still leaves room for a line like "12 天前 · 距家 625 km · 13,260 英亩".
@@ -279,16 +293,30 @@ def key_height(lines):
     return KEY_HEAD + KEY_LINE * lines + 2 if lines else 0
 
 
-def _card_height(name, rows, total):
-    """Height of a card showing `rows` of its `total` items."""
+def alert_row_heights(items):
+    """Each alert's row height in order: a full row, or the short one under an alert of the same
+    name and severity just above it."""
+    heights, previous = [], None
+    for alert in items:
+        key = (alert.get("name") or alert.get("event"), alert.get("severity"))
+        heights.append(ALERT_FOLLOW_ROW if key == previous else ALERT_ROW)
+        previous = key
+    return heights
+
+
+def _card_height(name, rows, total, alert_heights=None):
+    """Height of a card showing `rows` of its `total` items (the alerts' rows as tall as
+    `alert_heights` says, else a full row each)."""
     if name == "alerts":
-        # No alert (or no data) is one compact line; each alert row is 43 px.
+        # No alert (or no data) is one compact line; each alert row is 43 px, or 22 px under
+        # an alert of the same name.
         if rows == 0:
             return 80
-        return 79 + ALERT_ROW * (rows - 1) + (MORE_LINE if total > rows else 0)
+        shown = (list(alert_heights or []) + [ALERT_ROW] * rows)[:rows]
+        return 36 + sum(shown) + (MORE_LINE if total > rows else 0)
     if name == "quakes":
-        # The three statistics, then one line per quake (or a "none" line).
-        return 76 + QUAKE_ROW * max(rows, 1)
+        # The week's counts and time axis, then one line per quake (or a "none" line).
+        return QUAKE_LIST_TOP - 5 + QUAKE_ROW * max(rows, 1)
     # The California minimap sets the smallest height; two events fit beside it.
     return max(111, 70 + EVENT_ROW * (rows - 1))
 
@@ -309,7 +337,8 @@ def plan_column(counts, space=COLUMN_SPACE):
             "key_lines": 0}
 
     def heights():
-        planned = {name: _card_height(name, rows[name], counts.get(name, 0)) for name in CARD_ORDER}
+        planned = {name: _card_height(name, rows[name], counts.get(name, 0), counts.get("alert_heights"))
+                   for name in CARD_ORDER}
         planned["alerts"] += key_height(rows["key_lines"])
         return planned
 
@@ -346,6 +375,8 @@ def _column_boxes(payload, key_lines=0):
         for name in CARD_ORDER
     }
     counts["key_lines"] = key_lines
+    if counts["alerts"]:
+        counts["alert_heights"] = alert_row_heights(payload["alerts"]["data"]["items"])
     rows, heights = plan_column(counts)
     boxes, top = {}, COLUMN_TOP
     for name in CARD_ORDER:
@@ -403,23 +434,83 @@ def _alerts_card(canvas, payload, now, box, rows, key_lines=0):
                     anchor="lm", bold=False)
         return
     tag_width = alert_tag_size(canvas.font(12))[0]
-    for index, alert in enumerate(items[:rows]):
-        y = top + 34 + index * ALERT_ROW
+    text_left = left + tag_width + 8
+    y = top + 34
+    for index, (alert, height) in enumerate(zip(items[:rows], alert_row_heights(items))):
         label, tone = SEVERITY.get(alert.get("severity"), ("提示", "minor"))
         # The same tag marks the alert's area on the map.
         draw_alert_tag(canvas.draw, canvas.palette, canvas.font(12), (left, y + 1), index + 1, alert.get("kind"), tone)
-        pill_width = canvas.width(label, 12) + 14
-        canvas.draw.rounded_rectangle((right - pill_width, y + 1, right, y + 19), radius=9, fill=canvas.color(tone))
-        canvas.text((right - pill_width / 2, y + 10), label, 12, tone_ink(tone, canvas.palette), anchor="mm")
-        text_left = left + tag_width + 8
-        canvas.text((text_left, y + 10), alert.get("name") or alert.get("event"), 16, anchor="lm",
-                    width=right - text_left - 10 - pill_width)
+        detail_y = y + 10
+        if height == ALERT_ROW:
+            pill_width = canvas.width(label, 12) + 14
+            canvas.draw.rounded_rectangle((right - pill_width, y + 1, right, y + 19), radius=9, fill=canvas.color(tone))
+            canvas.text((right - pill_width / 2, y + 10), label, 12, tone_ink(tone, canvas.palette), anchor="mm")
+            canvas.text((text_left, y + 10), alert.get("name") or alert.get("event"), 16, anchor="lm",
+                        width=right - text_left - 10 - pill_width)
+            detail_y = y + 29
         ends = parse_time(alert.get("ends"))
-        detail = (until(ends, now) + " · " if ends else "") + "、".join(alert.get("counties", []))
-        canvas.text((text_left, y + 29), detail, 12, "muted", anchor="lm", bold=False, width=right - text_left)
+        span = alert_span(alert, now)
+        detail_right = right
+        if span:
+            _alert_span(canvas, (right - ALERT_SPAN_WIDTH, detail_y), span, tone, now)
+            detail_right = right - ALERT_SPAN_WIDTH - 6
+        detail = until(ends, now) + " · " if ends else ""
+        detail += county_text(canvas, alert.get("counties", []), detail_right - text_left - canvas.width(detail, 12, False))
+        canvas.text((text_left, detail_y), detail, 12, "muted", anchor="lm", bold=False, width=detail_right - text_left)
+        y += height
     if len(items) > rows:
         canvas.text((right, box[3] - 4 - key_height(key_lines)), f"另有 {len(items) - rows} 条", 11, "muted",
                     anchor="rb", bold=False)
+
+
+def county_text(canvas, counties, width):
+    """An alert's counties in ``width``: all of them, else as many whole names as fit and how many
+    there are ("Marin、Sonoma 等5县"), so a name is never cut in the middle."""
+    full = "、".join(counties)
+    if canvas.width(full, 12, False) <= width:
+        return full
+    for shown in range(len(counties) - 1, 0, -1):
+        text = "、".join(counties[:shown]) + f" 等{len(counties)}县"
+        if canvas.width(text, 12, False) <= width:
+            return text
+    return f"{len(counties)} 县"
+
+
+def alert_span(alert, now):
+    """Where an alert starts and ends on the track from now to ALERT_SPAN_HOURS ahead, as
+    fractions of it, and whether it runs on beyond the track; None for an alert without an end."""
+    ends = parse_time(alert.get("ends"))
+    if ends is None:
+        return None
+    window = ALERT_SPAN_HOURS * 3600
+    onset = parse_time(alert.get("onset"))
+    start = max(0.0, (onset - now).total_seconds() / window) if onset else 0.0
+    end = (ends - now).total_seconds() / window
+    if end <= start or start >= 1.0:
+        return None
+    return min(start, 1.0), min(end, 1.0), end > 1.0
+
+
+def _alert_span(canvas, origin, span, tone, now):
+    """An alert's span on its track: a thin grey line for the hours ahead with a notch at each
+    midnight, and the alert's hours on it as a bar in its severity colour, pointed at the end
+    when the alert runs on beyond the track."""
+    x, y = origin
+    start, end, beyond = span
+    width = ALERT_SPAN_WIDTH
+    rule, colour = canvas.color("rule"), canvas.color(tone)
+    canvas.draw.line((x, y, x + width, y), fill=rule, width=1)
+    midnight = datetime.combine(now.date() + timedelta(days=1), time(), tzinfo=now.tzinfo)
+    while (midnight - now).total_seconds() < ALERT_SPAN_HOURS * 3600:
+        notch = x + width * (midnight - now).total_seconds() / (ALERT_SPAN_HOURS * 3600)
+        canvas.draw.line((notch, y - 4, notch, y + 4), fill=canvas.color("ink"), width=1)
+        midnight += timedelta(days=1)
+    left, right = x + width * start, max(x + width * start + 3, x + width * end)
+    if beyond:
+        canvas.draw.rectangle((left, y - 2, right - 5, y + 2), fill=colour)
+        canvas.draw.polygon([(right - 5, y - 5), (right, y), (right - 5, y + 5)], fill=colour)
+    else:
+        canvas.draw.rectangle((left, y - 2, right, y + 2), fill=colour)
 
 
 def key_message_wraps(canvas, payload):
@@ -559,44 +650,126 @@ def _quakes_card(canvas, payload, now, box, rows):
         return
     day_count = sum(1 for item in items if quake_age_class(item, now) == "day")
     strongest = max(items, key=lambda item: item.get("mag", 0), default=None)
-    stats = (("24 小时", f"{day_count} 次"), ("7 天", f"{len(items)} 次"),
-             ("7 天最大", f"M{strongest['mag']:.1f}" if strongest else "—"))
-    gap = 8
-    width = (right - left - gap * 2) / 3
-    # The week's strongest quake is the card's headline: its box takes the colour its size earns,
-    # and so does the map's callout for it.
-    hero_tone = quake_tone(strongest["mag"] if strongest else 0)
-    for index, (label, value) in enumerate(stats):
-        x = left + index * (width + gap)
-        box_xy = (x, top + 34, x + width, top + 66)
-        if index == 2 and hero_tone:
-            canvas.draw.rounded_rectangle(box_xy, radius=5, fill=canvas.color(hero_tone))
-            ink = tone_ink(hero_tone, canvas.palette)
-            canvas.text((x + 8, top + 42), label, 10, ink, anchor="lm", bold=False)
-            canvas.text((x + 8, top + 57), value, 20, ink, anchor="lm")
-            continue
-        canvas.draw.rounded_rectangle(box_xy, radius=5, outline=canvas.color("rule"))
-        canvas.text((x + 8, top + 42), label, 10, "muted", anchor="lm", bold=False)
-        canvas.text((x + 8, top + 57), value, 20, anchor="lm")
+    # The week at a glance: how many, then when and how strong, each quake a stick on a time axis.
+    canvas.text((left, top + 44), f"{len(items)} 次", 18, anchor="lm")
+    canvas.text((left + canvas.width(f"{len(items)} 次", 18) + 4, top + 46), "7 天", 10, "muted", anchor="lm", bold=False)
+    canvas.text((left, top + 63), f"24 小时 {day_count} 次", 11, "alert" if day_count else "muted", anchor="lm",
+                bold=bool(day_count))
+    _quake_week(canvas, (left + QUAKE_COUNTS_WIDTH, right), top, items, strongest, now)
     if not items:
-        canvas.text((left, top + 81), f"过去 7 天半径 {radius} km 内没有地震", 12, "muted", anchor="lm", bold=False)
+        canvas.text((left, top + QUAKE_LIST_TOP), f"过去 7 天半径 {radius} km 内没有地震", 12, "muted", anchor="lm",
+                    bold=False)
         return
-    for index, quake in enumerate(listed_quakes(items, rows)):
-        y = top + 81 + index * QUAKE_ROW
+    listed = listed_quakes(items, rows)
+    # When and how far, in two columns of their own down the right.
+    ages = [ago(parse_time(quake["time"]), now) for quake in listed]
+    distances = [f"{quake.get('distance_km', 0):.0f} km" for quake in listed]
+    distance_width = max(canvas.width(value, 11, bold=False) for value in distances)
+    age_width = max(canvas.width(value, 11, bold=False) for value in ages)
+    for index, quake in enumerate(listed):
+        y = top + QUAKE_LIST_TOP + index * QUAKE_ROW
         # The same chip marks the quake on the map.
         fill, label_color = quake_chip_colors(quake_age_class(quake, now), canvas.palette)
         canvas.draw.rounded_rectangle((left, y - 8, left + 40, y + 8), radius=3, fill=fill)
         canvas.text((left + 20, y), f"M{quake['mag']:.1f}", 12, label_color, anchor="mm")
-        meta = f"{ago(parse_time(quake['time']), now)} · {quake.get('distance_km', 0):.0f} km"
-        meta_width = canvas.text((right, y), meta, 11, "muted", anchor="rm", bold=False)
-        place_left = left + 48
+        canvas.text((right, y), distances[index], 11, "muted", anchor="rm", bold=False)
+        canvas.text((right - distance_width - 10, y), ages[index], 11, "muted", anchor="rm", bold=False)
+        place_left, place_right = left + 48, right - distance_width - 10 - age_width - 8
         if quake.get("felt"):
             # People who felt it, as USGS's "Did You Feel It?" counts them: a small people icon
             # and the count.
             draw_icon(canvas.draw, "users", (place_left, y - 6), 12, canvas.color("ink"), canvas.color("paper"))
             place_left += 14 + canvas.text((place_left + 14, y), f"{quake['felt']:,}人", 11, anchor="lm") + 6
-        canvas.text((place_left, y), quake.get("place"), 12, anchor="lm",
-                    width=right - place_left - 8 - meta_width)
+        _quake_place(canvas, quake.get("place"), place_left, place_right, y)
+
+
+BEARINGS = {name: index * 22.5 for index, name in enumerate((
+    "北", "北偏东", "东北", "东偏北", "东", "东偏南", "东南", "南偏东", "南", "南偏西", "西南", "西偏南", "西", "西偏北",
+    "西北", "北偏西"))}
+PLACE = re.compile(r"(.+) (" + "|".join(sorted(BEARINGS, key=len, reverse=True)) + r") (\d+(?:\.\d+)?) 公里")
+
+
+def place_parts(place):
+    """("San Ramon", 315.0, "5") from USGS's place as the page words it ("San Ramon 西北 5 公里"):
+    the town, the compass bearing from it to the quake and the kilometres; None for any other wording."""
+    match = PLACE.fullmatch(str(place or ""))
+    return (match.group(1), BEARINGS[match.group(2)], match.group(3)) if match else None
+
+
+def _quake_place(canvas, place, left, right, y):
+    """Where a quake struck, in the room between ``left`` and ``right``: the town in full first,
+    then a small arrow for the way from the town to the quake and the kilometres, so a narrow
+    row drops the offset before it cuts the name."""
+    parts = place_parts(place)
+    if parts is None:
+        canvas.text((left, y), place, 12, anchor="lm", width=right - left)
+        return
+    town, bearing, km = parts
+    offset = f"{km} km"
+    tail = 14 + canvas.width(offset, 11, bold=False)
+    if canvas.width(town, 12) + 4 + tail > right - left:
+        canvas.text((left, y), town, 12, anchor="lm", width=right - left)
+        return
+    x = left + canvas.text((left, y), town, 12, anchor="lm") + 4
+    _bearing_arrow(canvas.draw, (x + 5, y), bearing, canvas.color("ink"))
+    canvas.text((x + 14, y), offset, 11, "muted", anchor="lm", bold=False)
+
+
+def _bearing_arrow(draw, centre, bearing, colour, reach=5):
+    """A small solid arrow about ``centre`` pointing along a compass bearing (0 is up, 90 right)."""
+    angle = math.radians(bearing)
+    ux, uy = math.sin(angle), -math.cos(angle)
+    x, y = centre
+    tip, tail = (x + ux * reach, y + uy * reach), (x - ux * reach, y - uy * reach)
+    draw.line((tail[0], tail[1], x, y), fill=colour, width=2)
+    draw.polygon([tip, (x - uy * 3.5, y + ux * 3.5), (x + uy * 3.5, y - ux * 3.5)], fill=colour)
+
+
+def quake_stick(magnitude):
+    """How tall a quake stands on the week's axis: 5 px at M1, the full height from M4."""
+    return round(5 + (QUAKE_WEEK_STICK - 5) * min(1.0, max(0.0, (float(magnitude) - 1.0) / 3.0)))
+
+
+def _quake_week(canvas, span, top, items, strongest, now):
+    """The last seven days as a time axis from ``span[0]`` to ``span[1]`` (now at the right end): a
+    notch and the weekday at each midnight, and each quake a stick as tall as its size, coloured by
+    its age like its dot on the map (older than three days in ink), the strongest one named."""
+    left, right = span
+    base = top + QUAKE_WEEK_BASE
+    seconds = QUAKE_WEEK_DAYS * 86400
+    ink = canvas.color("ink")
+
+    def at(stamp):
+        return right - (now - stamp).total_seconds() / seconds * (right - left)
+
+    canvas.draw.line((left, base, right, base), fill=ink, width=1)
+    midnight = datetime.combine(now.date(), time(), tzinfo=now.tzinfo)
+    for _day in range(QUAKE_WEEK_DAYS + 1):
+        x = at(midnight)
+        if x >= left:
+            canvas.draw.line((x, base, x, base + 3), fill=ink, width=1)
+        # Each day's name under the middle of its stretch of the axis, where the stretch has room.
+        day_left, day_right = max(left, x), min(right, at(midnight + timedelta(days=1)))
+        name = "今天" if midnight.date() == now.date() else f"周{WEEKDAYS[midnight.weekday()]}"
+        if day_right - day_left >= canvas.width(name, 10, bold=False) + 4:
+            canvas.text(((day_left + day_right) / 2, base + 9), name, 10, "muted", anchor="mm", bold=False)
+        midnight -= timedelta(days=1)
+    sticks = {}
+    for quake in sorted(items, key=lambda item: item.get("mag", 0)):
+        stamp = parse_time(quake.get("time"))
+        if stamp is None or not 0 <= (now - stamp).total_seconds() <= seconds:
+            continue
+        x, height = round(at(stamp)), quake_stick(quake.get("mag", 0))
+        age = quake_age_class(quake, now)
+        colour = canvas.color("quake_day") if age == "day" else canvas.color("quake_recent") if age == "recent" else ink
+        canvas.draw.rectangle((x - 1, base - height, x + 1, base - 1), fill=colour)
+        sticks[id(quake)] = (x, base - height)
+    if strongest is not None and id(strongest) in sticks:
+        x, stick_top = sticks[id(strongest)]
+        label = f"M{strongest['mag']:.1f}"
+        half = canvas.width(label, 11) / 2
+        canvas.text((min(max(x, left + half), right - half), stick_top - 2), label, 11, anchor="mb", stroke="paper")
+    canvas.image.info["quake_week"] = {"box": (left, top + QUAKE_WEEK_TOP, right, base), "sticks": len(sticks)}
 
 
 def _events_card(canvas, payload, now, box, rows):

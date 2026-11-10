@@ -145,8 +145,9 @@ def _stipple(shade, density):
     return ImageChops.subtract(scaled, bayer).point(lambda value: 255 if value > 0 else 0)
 
 
-def _draw_contours(image, palette, size):
-    """The land's contour lines over the relief; skipped when the layer is missing."""
+def _draw_contours(image, palette, size, minor=True):
+    """The land's contour lines over the relief (without ``minor``, only the 500 m index lines);
+    skipped when the layer is missing."""
     try:
         with safe_open_image(ASSETS / f"{CONTOURS}.png", limits=_LIMITS) as source:
             lines = source.convert("L")
@@ -154,7 +155,8 @@ def _draw_contours(image, palette, size):
         return
     if lines.size != tuple(size):
         return
-    image.paste(palette["contour"], mask=lines.point(lambda value: 255 if 0 < value < 255 else 0))
+    if minor:
+        image.paste(palette["contour"], mask=lines.point(lambda value: 255 if 0 < value < 255 else 0))
     image.paste(palette["contour_index"], mask=lines.point(lambda value: 255 if value == 255 else 0))
 
 
@@ -565,14 +567,13 @@ def _draw_arrow(draw, palette, edge, direction, fill, reach=EDGE_ARROW_SIZE):
     return (x - reach - 2, y - reach - 2, x + reach + 2, y + reach + 2)
 
 
-def _draw_distance(draw, palette, fonts, home, point, quake, beyond=False):
-    """The headline quake's distance from home ("79 km", "图外 79 km" when it lies beyond the map)
-    in a small ink-ringed label at the middle of the line between them; its box, or None when the
-    line is too short to carry it."""
+def _draw_distance(draw, palette, fonts, home, point, quake):
+    """The headline quake's distance from home ("79 km") in a small ink-ringed label at the middle
+    of the line between them; its box, or None when the line is too short to carry it."""
     distance = quake.get("distance_km") if quake else None
     if distance is None or math.dist(home, point) < 60:
         return None
-    text = f"{'图外 ' if beyond else ''}{float(distance):.0f} km"
+    text = f"{float(distance):.0f} km"
     font = fonts(11)
     width, height = draw.textlength(text, font=font) + 10, 16
     x, y = (home[0] + point[0]) / 2, (home[1] + point[1]) / 2
@@ -693,7 +694,8 @@ def render_bay_map(size, palette, fonts, *, quakes, alerts, home, home_label, no
         waterlines = source.convert("L")
     image = Image.new("RGB", size, palette["paper"])
     image.paste(palette["relief"], mask=_stipple(shade, palette["relief_density"]))
-    _draw_contours(image, palette, size)
+    # Only the 500 m lines: the 100 m ones filled the hills with dots that fought the labels.
+    _draw_contours(image, palette, size, minor=False)
     image.paste(palette["water"], mask=water)
     areas = _draw_alert_areas(image, palette, alerts, water, manifest, size)
     image.paste(palette["water_line"], mask=waterlines)
@@ -735,8 +737,9 @@ def render_bay_map(size, palette, fonts, *, quakes, alerts, home, home_label, no
     focus_point = project(focus_quake.get("lat"), focus_quake.get("lon"), manifest, size) if focus_quake else None
     beyond = focus_point is None and focus_quake is not None
     if beyond:
-        # Beyond the map, the line runs to the quake's edge arrow.
-        focus_point = next((group["edge"] for group in groups if focus_quake in group["quakes"]), None)
+        # Beyond the map its edge arrow and one chip name it (the card lists the rest): a line and
+        # a callout for a quake that is not on the map only covered what is.
+        focus_point = None
     # The headline callout keeps off the line, so it can be followed from home to the quake.
     line_boxes = []
     if home_point is not None and focus_point is not None:
@@ -786,7 +789,7 @@ def render_bay_map(size, palette, fonts, *, quakes, alerts, home, home_label, no
             occupied.append(box)
 
     if home_point is not None and focus_point is not None:
-        distance_box = _draw_distance(draw, palette, fonts, home_point, focus_point, focus_quake, beyond)
+        distance_box = _draw_distance(draw, palette, fonts, home_point, focus_point, focus_quake)
         if distance_box is not None:
             occupied.append(distance_box)
         steps = max(1, int(math.dist(home_point, focus_point) // 10))
@@ -838,27 +841,20 @@ def render_bay_map(size, palette, fonts, *, quakes, alerts, home, home_label, no
         callout = box
     for group in groups:
         lead, (x, y) = group["quake"], group["edge"]
+        extra = f"{float(lead.get('distance_km', 0)):.0f} km"
         if lead is focus_quake:
-            width, height = _callout_size(draw, fonts, lead, focus)
-        else:
-            extra = f"{float(lead.get('distance_km', 0)):.0f} km"
-            if len(group["quakes"]) > 1:
-                extra += f" · {len(group['quakes'])} 次"
-            width = _chip_width(draw, chip_font, lead) + 8 + draw.textlength(extra, font=fonts(10, False))
-            height = 15
+            extra += f" · {focus['title']}"
+        elif len(group["quakes"]) > 1:
+            extra += f" · {len(group['quakes'])} 次"
+        width = _chip_width(draw, chip_font, lead) + 8 + draw.textlength(extra, font=fonts(10, False))
+        height = 15
         corners = _edge_corners((x, y), group["side"], width, height)
-        avoid = line_boxes if lead is focus_quake else []
-        box = (_free_box(width, height, corners, occupied + small_dots + avoid, frame)
-               or _free_box(width, height, corners, occupied + small_dots, frame)
+        box = (_free_box(width, height, corners, occupied + small_dots, frame)
                or _clamped(corners[0], width, height, frame))
         _leader(draw, (x, y), box, palette["ink"], gap=8)
-        if lead is focus_quake:
-            _draw_callout(draw, palette, fonts, box, lead, focus)
-            callout = box
-        else:
-            chip = _draw_chip(draw, palette, chip_font, box[:2], lead, now)
-            draw.text((chip[2] + 4, chip[1] + 7.5), extra, font=fonts(10, False), fill=palette["ink"],
-                      anchor="lm", stroke_width=2, stroke_fill=palette["paper"])
+        chip = _draw_chip(draw, palette, chip_font, box[:2], lead, now)
+        draw.text((chip[2] + 4, chip[1] + 7.5), extra, font=fonts(10, False), fill=palette["ink"],
+                  anchor="lm", stroke_width=2, stroke_fill=palette["paper"])
         occupied.append(box)
 
     chips = set()
