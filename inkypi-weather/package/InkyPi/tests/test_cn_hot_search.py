@@ -464,3 +464,19 @@ def test_the_most_read_card_takes_its_turn_under_the_wikipedia_mark(monkeypatch)
                 {"_inkypi_theme": {"mode": "day"}}, NOW, {})
 
     assert "wikipedia_zh" in logos and {"维基热读", "美国中期选举", "4.3万次浏览"} <= set(drawn)
+
+
+def test_a_platforms_own_label_is_a_smaller_chip_than_the_shared_one():
+    from plugins.cn_hot_search import render
+
+    canvas = render.PageCanvas(render._palette({"_inkypi_theme": {"mode": "day"}}))
+    paper = canvas.image.getpixel((0, 0))
+    solid = render._chip(canvas, 20, 30, "热", (224, 35, 35))
+    shared = render._chip(canvas, 80, 30, "全网2", render.SHARED, outline=True)
+
+    # 热 / 新 / 升: 8 px type on an 11 px chip; the outlined "on N lists" chip keeps its 14 px.
+    assert solid == canvas.width("热", 8) + 6 and shared == canvas.width("全网2", 9) + 8
+    column = [canvas.image.getpixel((22, y)) for y in range(15, 45)]
+    assert sum(pixel != paper for pixel in column) == 12
+    outline = [canvas.image.getpixel((80 + shared // 2, y)) for y in range(15, 45)]
+    assert outline.index(next(p for p in outline if p != paper)) == 30 - 7 - 15

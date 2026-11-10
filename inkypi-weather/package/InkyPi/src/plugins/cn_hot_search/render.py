@@ -214,14 +214,16 @@ def _glass(canvas, box, tint, *, fill_alpha, edge_alpha, radius=6):
 
 
 def _chip(canvas, x, middle, text, fill, *, outline=False):
-    """A small label chip from ``x``; returns its width."""
-    width = canvas.width(text, 9) + 8
+    """A small label chip from ``x``; returns its width. A platform's own label (热, 新, 升...) is a
+    solid chip a size smaller than the outlined "on N lists" one, so it sits quietly by the heat."""
     if outline:
+        width = canvas.width(text, 9) + 8
         canvas.draw.rounded_rectangle((x, middle - 7, x + width, middle + 7), radius=7, outline=fill, width=1)
         canvas.text((x + width / 2, middle), text, 9, fill, anchor="mm")
     else:
-        canvas.draw.rounded_rectangle((x, middle - 7, x + width, middle + 7), radius=3, fill=fill)
-        canvas.text((x + width / 2, middle), text, 9, (255, 255, 255), anchor="mm")
+        width = canvas.width(text, 8) + 6
+        canvas.draw.rounded_rectangle((x, middle - 6, x + width, middle + 5), radius=3, fill=fill)
+        canvas.text((x + width / 2, middle), text, 8, (255, 255, 255), anchor="mm")
     return width
 
 
