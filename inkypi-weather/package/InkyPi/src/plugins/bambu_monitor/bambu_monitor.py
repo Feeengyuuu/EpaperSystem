@@ -234,6 +234,16 @@ STAGE_ICONS = (
     (("calibrat", "inspecting", "cleaning"), "stage"),
     (("printing",), "nozzle"),
 )
+# States in which no job is running. Their page leads with the state itself instead of a
+# percentage; every other state (printing, preparing, paused, unknown) keeps the print layout.
+RESTING_STATES = frozenset({"IDLE", "DONE", "ERROR", "OFFLINE", "CONFIG"})
+# The headline word where it differs from the state label, and the line under it when the
+# printer names neither a stage nor an error.
+RESTING_HEADLINES = {"DONE": "FINISHED", "CONFIG": "SETUP"}
+RESTING_NOTES = {"IDLE": "Ready", "DONE": "Print complete", "ERROR": "Print stopped", "OFFLINE": "Switched off"}
+# How far the last job got, worded by how it ended.
+RESTING_PROGRESS_LABELS = {"DONE": "COMPLETED", "ERROR": "STOPPED"}
+RESTING_ICON_SIZE = 40
 # The printer's stg_cur sub-stage codes; others (and -1/255 idle) are not shown.
 PRINT_STAGE_NAMES = {
     0: "Printing",
@@ -628,7 +638,7 @@ class BambuMonitor(BasePlugin):
                 )
                 if cached.get("offline_since"):
                     # Switched off when last asked: the redraw keeps saying so (a reading, not a stale one).
-                    status.update(source="offline", state="OFFLINE")
+                    status.update(source="offline", state="OFFLINE", offline_since=cached["offline_since"])
                     return attach_source_provenance(
                         self._non_cacheable_image(self._render_status(status, dimensions)),
                         SourceProvenance.LIVE,
@@ -938,7 +948,8 @@ class BambuMonitor(BasePlugin):
         clock_w = max(self._text_width(draw, time_text, time_font), self._text_width(draw, date_text, date_font))
         identity_right = right - clock_w - 16
         identity_w = identity_right - (title_right + 12)
-        if identity_w >= 60:
+        # A resting page names the printer at the foot of its column, in larger type.
+        if identity_w >= 60 and not self._is_resting(status):
             name_line, endpoint_line = self._machine_info_lines(status)
             self._draw_fit_text_ellipsis(draw, name_line, identity_right, 17, identity_w, 11, True, ink, anchor="ra")
             self._draw_fit_text_ellipsis(draw, endpoint_line, identity_right, 33, identity_w, 10, True, ink, anchor="ra")
@@ -1026,10 +1037,12 @@ class BambuMonitor(BasePlugin):
                 self._draw_fit_text_ellipsis(draw, str(error), left + 16, bottom - 30, right - left - 32, 11, False, cinnabar)
         draw.rounded_rectangle((left, top, right - 1, bottom - 1), radius=CARD_RADIUS, outline=ink, width=2)
 
-        state = self._state_label(status.get("state"))
-        state_box = self._draw_pill(draw, left + 10, top + 10, state,
-                                    self._status_color(status.get("state"), status.get("error")))
-        error_text = self._print_error_text(status.get("error"))
+        # A resting page says its state and error in the column's headline, not over the picture.
+        resting = self._is_resting(status)
+        if not resting:
+            state_box = self._draw_pill(draw, left + 10, top + 10, self._state_label(status.get("state")),
+                                        self._status_color(status.get("state"), status.get("error")))
+        error_text = "" if resting else self._print_error_text(status.get("error"))
         if error_text:
             font = self._font(11, True)
             room = right - 130 - (state_box[2] + 6) - 18
@@ -1043,7 +1056,103 @@ class BambuMonitor(BasePlugin):
             draw.rounded_rectangle(band, radius=8, fill=_active_color("panel", PANEL), outline=cinnabar, width=1)
             self._draw_fit_text_ellipsis(draw, str(warning), band[0] + 10, band[1] + 6, band[2] - band[0] - 20, 12, True, cinnabar)
 
+    @classmethod
+    def _is_resting(cls, status):
+        """True when no job is running: idle, finished, failed, switched off or not set up."""
+        return cls._state_label(status.get("state")) in RESTING_STATES
+
+    @classmethod
+    def _resting_notes(cls, status):
+        """The lines under a resting page's headline: the stage the printer names (else the
+        state in a few words), then its error code and, when switched off, since when."""
+        state = cls._state_label(status.get("state"))
+        lines = [cls._display_stage(status.get("stage")) or RESTING_NOTES.get(state, state.title())]
+        extras = []
+        error_text = cls._print_error_text(status.get("error"))
+        if error_text:
+            extras.append(f"ERR {error_text}")
+        since = cls._num(status.get("offline_since"))
+        if state == "OFFLINE" and since:
+            moment = datetime.fromtimestamp(since)
+            same_day = moment.date() == datetime.now().date()
+            extras.append(f"SINCE {moment.strftime('%H:%M' if same_day else '%m-%d %H:%M')}")
+        if extras:
+            lines.append(" / ".join(extras))
+        return lines
+
+    def _draw_resting_column(self, draw, box, status, canvas=None):
+        """The column of a printer that is not printing: its state as the headline in the
+        state's colour, the last job and how far it got, then the heaters, speed, fan and the
+        printer's identity. The projected finish time of a job that is not running is left out."""
+        x0, top, x1, _bottom = box
+        ink = _active_color("ink", INK)
+        rule = _active_color("rule", RULE)
+        state = self._state_label(status.get("state"))
+        state_color = self._status_color(status.get("state"), status.get("error"))
+
+        icon_w = self._paste_icon(canvas, self._stage_icon(status), x0 - 2, top + 36, RESTING_ICON_SIZE)
+        word_x = x0 + (icon_w + 6 if icon_w else 0)
+        word = RESTING_HEADLINES.get(state, state)
+        draw.text((word_x, top + 36), word, fill=state_color,
+                  font=self._fit_font(draw, word, x1 - word_x, 46, True, 24), anchor="lm")
+        for index, line in enumerate(self._resting_notes(status)[:2]):
+            self._draw_fit_text_ellipsis(draw, line, x0, top + 64 + index * 17, x1 - x0, 13, True, ink)
+        draw.line((x0, top + 101, x1, top + 101), fill=state_color, width=1)
+
+        gold = _active_color("accent_gold", ACCENT_GOLD)
+        file_name = str(status.get("file") or "")
+        if status.get("file_is_message") or not file_name:
+            # A setup or connection card has a message in place of a job, and no progress to show.
+            self._draw_section_label(draw, x0, top + 110, "NOTE" if file_name else "LAST JOB", gold,
+                                     canvas=canvas, icon="job")
+            self._draw_wrapped_text(draw, file_name or "No job reported", x0, top + 128, x1 - x0, 5, 15)
+        else:
+            self._draw_section_label(draw, x0, top + 110, "LAST JOB", gold, canvas=canvas, icon="job")
+            layers = self._layer_text(status)
+            if layers:
+                layer_font = self._font(11, True)
+                draw.text((x1, top + 110), layers, fill=ink, font=layer_font, anchor="ra")
+                self._paste_icon(canvas, "layers", x1 - self._text_width(draw, layers, layer_font) - 4, top + 117,
+                                 LAYER_ICON_SIZE, align="right")
+            self._draw_wrapped_text(draw, file_name, x0, top + 128, x1 - x0, 3, 15)
+            chip_w = (x1 - x0 - 12) // 2
+            progress = int(max(0, min(100, self._num(status.get("progress"), 0) or 0)))
+            self._draw_stat_chip(draw, (x0, top + 190, x0 + chip_w, top + 230),
+                                 RESTING_PROGRESS_LABELS.get(state, "REACHED"), f"{progress}%",
+                                 canvas=canvas, icon="finish")
+            self._draw_stat_chip(draw, (x1 - chip_w, top + 190, x1, top + 230), "UNPRINTED",
+                                 self._remaining_text(status.get("remaining_minutes")), canvas=canvas, icon="remaining")
+        draw.line((x0, top + 238, x1, top + 238), fill=rule, width=1)
+
+        self._draw_heaters_and_fans(draw, x0, x1, top, status, canvas)
+        self._draw_section_label(draw, x0, top + 366, "PRINTER", _active_color("accent_blue", ACCENT_BLUE))
+        self._draw_source_pill(draw, x1, top + 362, status)
+        for index, line in enumerate(self._machine_info_lines(status)):
+            self._draw_fit_text_ellipsis(draw, line, x0, top + 383 + index * 14, x1 - x0, 11, True, ink)
+
+    def _draw_heaters_and_fans(self, draw, x0, x1, top, status, canvas):
+        """Nozzle and bed thermometers over the speed and part-fan chips."""
+        half = (x1 - x0 - 20) // 2
+        chip_w = (x1 - x0 - 12) // 2
+        self._draw_thermo(draw, x0, top + 248, half, "NOZZLE", status.get("nozzle"), status.get("nozzle_target"),
+                          NOZZLE_SCALE_C, _active_color("cinnabar", CINNABAR), canvas=canvas, icon="nozzle")
+        self._draw_thermo(draw, x1 - half, top + 248, half, "BED", status.get("bed"), status.get("bed_target"),
+                          BED_SCALE_C, _active_color("accent_orange", ACCENT_ORANGE), canvas=canvas, icon="bed")
+        self._draw_stat_chip(draw, (x0, top + 312, x0 + chip_w, top + 352), "SPEED", self._speed_text(status.get("speed")),
+                             canvas=canvas, icon="speed")
+        self._draw_stat_chip(draw, (x1 - chip_w, top + 312, x1, top + 352), "PART FAN", self._fan_text(status.get("fan")),
+                             canvas=canvas, icon="fan")
+
+    def _draw_source_pill(self, draw, right, y, status):
+        """Where the reading came from (LIVE, CACHE, STALE, OFFLINE...), right-aligned."""
+        source = str(status.get("source") or "").upper()
+        if source:
+            self._draw_pill(draw, right, y, source, self._source_color(source), size=10, dot=False, align="right")
+
     def _draw_job_column(self, draw, box, status, canvas=None):
+        if self._is_resting(status):
+            self._draw_resting_column(draw, box, status, canvas=canvas)
+            return
         x0, top, x1, bottom = box
         ink = _active_color("ink", INK)
         rule = _active_color("rule", RULE)
@@ -1073,28 +1182,15 @@ class BambuMonitor(BasePlugin):
         self._draw_stat_chip(draw, (x1 - chip_w, top + 104, x1, top + 144), "FINISH", status.get("finish_at") or "--",
                              canvas=canvas, icon="finish")
 
-        # An idle or finished printer still reports the job it last ran.
-        job_label = "LAST JOB" if self._state_label(status.get("state")) in ("IDLE", "DONE") else "JOB"
-        self._draw_section_label(draw, x0, top + 156, job_label, _active_color("accent_gold", ACCENT_GOLD),
+        self._draw_section_label(draw, x0, top + 156, "JOB", _active_color("accent_gold", ACCENT_GOLD),
                                  canvas=canvas, icon="job")
         self._draw_wrapped_text(draw, str(status.get("file") or "No active job"), x0, top + 174, x1 - x0, 3, 15)
         draw.line((x0, top + 238, x1, top + 238), fill=rule, width=1)
 
-        half = (x1 - x0 - 20) // 2
-        self._draw_thermo(draw, x0, top + 248, half, "NOZZLE", status.get("nozzle"), status.get("nozzle_target"),
-                          NOZZLE_SCALE_C, _active_color("cinnabar", CINNABAR), canvas=canvas, icon="nozzle")
-        self._draw_thermo(draw, x1 - half, top + 248, half, "BED", status.get("bed"), status.get("bed_target"),
-                          BED_SCALE_C, _active_color("accent_orange", ACCENT_ORANGE), canvas=canvas, icon="bed")
-        self._draw_stat_chip(draw, (x0, top + 312, x0 + chip_w, top + 352), "SPEED", self._speed_text(status.get("speed")),
-                             canvas=canvas, icon="speed")
-        self._draw_stat_chip(draw, (x1 - chip_w, top + 312, x1, top + 352), "PART FAN", self._fan_text(status.get("fan")),
-                             canvas=canvas, icon="fan")
-
+        self._draw_heaters_and_fans(draw, x0, x1, top, status, canvas)
         self._draw_section_label(draw, x0, top + 366, "STAGE", _active_color("accent_blue", ACCENT_BLUE),
                                  canvas=canvas, icon=self._stage_icon(status))
-        source = str(status.get("source") or "").upper()
-        if source:
-            self._draw_pill(draw, x1, top + 362, source, self._source_color(source), size=10, dot=False, align="right")
+        self._draw_source_pill(draw, x1, top + 362, status)
         stage = self._display_stage(status.get("stage")) or self._state_label(status.get("state")).title()
         self._draw_fit_text_ellipsis(draw, stage, x0, top + 384, x1 - x0, 13, True, ink)
 
@@ -1340,6 +1436,7 @@ class BambuMonitor(BasePlugin):
                     ("access code", has_code),
                 ] if not present
             ),
+            "file_is_message": True,
             "nozzle": None,
             "nozzle_target": None,
             "bed": None,
@@ -1370,7 +1467,7 @@ class BambuMonitor(BasePlugin):
         if cached.get("status"):
             status = dict(cached["status"])
             self._apply_machine_identity(status, settings, host=host, serial=serial)
-            status.update(source="offline", state="OFFLINE")
+            status.update(source="offline", state="OFFLINE", offline_since=cached["offline_since"])
             image = self._render_status(status, dimensions)
         else:
             image = self._render_error(dimensions, "Printer offline", host=host, serial=serial, settings=settings,
@@ -1396,6 +1493,7 @@ class BambuMonitor(BasePlugin):
             "progress": 0,
             "remaining_minutes": None,
             "file": message[:120],
+            "file_is_message": True,
             "nozzle": None,
             "nozzle_target": None,
             "bed": None,

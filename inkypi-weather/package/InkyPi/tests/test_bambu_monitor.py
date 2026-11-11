@@ -200,7 +200,7 @@ def _drawn_text_boxes(monkeypatch):
 def test_full_percentage_never_runs_into_the_layer_count(tmp_path, monkeypatch):
     plugin = _plugin(tmp_path)
     status = plugin._demo_status()
-    status.update({"state": "FINISH", "progress": 100, "layer": 75, "total_layers": 75})
+    status.update({"progress": 100, "layer": 75, "total_layers": 75})
     boxes = _drawn_text_boxes(monkeypatch)
 
     plugin._render_status(status, (800, 480))
@@ -233,8 +233,115 @@ def test_idle_printer_shows_the_last_job_and_names_its_error(tmp_path, monkeypat
     assert "LAST JOB" in texts and "JOB" not in texts
     error = next(box for text, box in boxes if text == "ERR 0500-400B")
     idle = next(box for text, box in boxes if text == "IDLE")
-    assert idle[2] < error[0] and error[3] < 120
+    # The state heads the job column, its error code under it, both clear of the camera picture.
+    assert idle[0] > 540 and idle[3] <= error[1] and error[3] < 160
     assert not any("83902475" in text for text in texts)
+
+
+def _resting_status(plugin, **fields):
+    status = plugin._demo_status()
+    status.update({"stage": "", "progress": 37, "remaining_minutes": 99, "finish_at": "15:08", "error": 0})
+    status.update(fields)
+    return status
+
+
+@pytest.mark.parametrize(
+    ("state", "headline", "note", "progress_label", "color"),
+    [
+        ("FAILED", "ERROR", "Print stopped", "STOPPED", CINNABAR),
+        ("IDLE", "IDLE", "Ready", "REACHED", bambu_module.ACCENT_BLUE),
+        ("FINISH", "FINISHED", "Print complete", "COMPLETED", MALACHITE),
+        ("OFFLINE", "OFFLINE", "Switched off", "REACHED", CINNABAR),
+    ],
+)
+def test_resting_printer_leads_with_its_state_not_a_percentage(
+    tmp_path, monkeypatch, state, headline, note, progress_label, color
+):
+    plugin = _plugin(tmp_path)
+    status = _resting_status(plugin, state=state)
+    drawn = []
+    original = ImageDraw.ImageDraw.text
+
+    def record(self, xy, text, *args, **kwargs):
+        drawn.append((str(text), kwargs.get("fill"), self.textbbox(xy, str(text), font=kwargs.get("font"),
+                                                                   anchor=kwargs.get("anchor"))))
+        return original(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", record)
+
+    plugin._render_status(status, (800, 480))
+
+    texts = [text for text, _fill, _box in drawn]
+    word = next(entry for entry in drawn if entry[0] == headline)
+    # One large word in the state's colour, in the job column; the state is not repeated as a pill.
+    assert word[1] == color and word[2][3] - word[2][1] >= 24 and word[2][0] > 540
+    assert texts.count(headline) == 1
+    assert note in texts
+    # How far the last job got, without the finish time projected for a job that is not running.
+    assert progress_label in texts and "37%" in texts
+    assert "UNPRINTED" in texts and "1h 39m" in texts
+    assert "15:08" not in texts and "FINISH" not in texts and "REMAINING" not in texts
+    assert "LAST JOB" in texts and "STAGE" not in texts
+    percent = next(entry for entry in drawn if entry[0] == "37%")
+    assert percent[2][3] - percent[2][1] < 24
+
+
+def test_resting_printer_is_named_at_the_foot_of_the_column(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    status = _resting_status(plugin, state="IDLE", serial="SERIAL1234567890", host="192.0.2.55", source="live")
+    boxes = _drawn_text_boxes(monkeypatch)
+
+    plugin._render_status(status, (800, 480))
+
+    placed = dict(boxes)
+    for line in plugin._machine_info_lines(status):
+        left, top, right, bottom = placed[line]
+        assert left >= 546 and right <= 778 and HEADER_RULE_Y < top and bottom <= 470
+    assert "PRINTER" in placed and "LIVE" in placed
+    assert not any(status["serial"] in text or status["host"] in text for text in placed)
+
+
+def test_resting_printer_keeps_heaters_speed_fan_and_camera_time(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    status = _resting_status(plugin, state="FAILED", nozzle=21, nozzle_target=0, bed=22, bed_target=0,
+                             camera_updated_at="13:29", camera_stale=True, layer=18, total_layers=48)
+    drawn = _all_drawn_text(monkeypatch)
+
+    plugin._render_status(status, (800, 480))
+
+    for text in ("21°", "22°", "NOZZLE", "BED", "SPEED", "STANDARD", "PART FAN", "70%", "CAM 13:29 STALE",
+                 "LAYER 18/48", "AMS"):
+        assert text in drawn
+
+
+def test_switched_off_printer_says_since_when(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    since = bambu_module.datetime.now().replace(hour=9, minute=15).timestamp()
+    drawn = _all_drawn_text(monkeypatch)
+
+    plugin._render_status(_resting_status(plugin, state="OFFLINE", offline_since=since), (800, 480))
+
+    assert "SINCE 09:15" in drawn
+    earlier = bambu_module.datetime(2026, 1, 2, 21, 5).timestamp()
+    assert BambuMonitor._resting_notes({"state": "OFFLINE", "offline_since": earlier}) == [
+        "Switched off", "SINCE 01-02 21:05"]
+    assert BambuMonitor._resting_notes({"state": "IDLE", "stage": "", "error": 83902475}) == [
+        "Ready", "ERR 0500-400B"]
+
+
+@pytest.mark.parametrize("state", ["RUNNING", "PREPARE", "PAUSE", "SLICING", "UNKNOWN"])
+def test_running_and_unknown_states_keep_the_print_layout(tmp_path, monkeypatch, state):
+    plugin = _plugin(tmp_path)
+    status = plugin._demo_status()
+    status["state"] = state
+    drawn = _all_drawn_text(monkeypatch)
+
+    plugin._render_status(status, (800, 480))
+
+    assert not BambuMonitor._is_resting(status)
+    assert "63%" in drawn and "REMAINING" in drawn and "FINISH" in drawn and "STAGE" in drawn
+    assert BambuMonitor._state_label(state) in drawn
+    assert "PRINTER" not in drawn and "LAST JOB" not in drawn
 
 
 def test_printing_job_keeps_the_job_label(tmp_path, monkeypatch):
@@ -1277,6 +1384,9 @@ def test_bambu_connection_failure_preserves_cached_status(tmp_path, monkeypatch)
     assert rendered["source"] == "offline" and rendered["state"] == "OFFLINE"
     assert rendered["file"] == status["file"] and rendered["progress"] == status["progress"]
     cached = plugin._read_cache(cache_file)
+    # The page is told since when; the saved status stays as the printer last reported it.
+    assert rendered["offline_since"] == cached["offline_since"]
+    assert "offline_since" not in cached["status"]
     assert cached["status"]["source"] == "live"
     assert "warning" not in cached["status"]
 
@@ -1301,6 +1411,7 @@ def test_a_theme_redraw_keeps_a_switched_off_printer_offline(tmp_path, monkeypat
     monkeypatch.setattr(plugin, "_render_status", lambda status, dimensions: rendered.update(status) or Image.new("RGB", dimensions))
     image = plugin.generate_image({**settings, "_theme_render_only": True}, _BambuDeviceConfig())
     assert rendered["source"] == "offline" and rendered["state"] == "OFFLINE"
+    assert rendered["offline_since"] == 1
     assert read_source_provenance(image) is SourceProvenance.LIVE
 
 
