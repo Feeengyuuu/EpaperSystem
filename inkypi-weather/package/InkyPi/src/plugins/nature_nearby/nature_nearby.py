@@ -99,6 +99,16 @@ class NatureNearby(BasePlugin):
                                             lambda ctx: sources.fetch_threatened(home, radius, now, ctx),
                                             fresh_seconds=6 * 3600, usable_seconds=3 * 86400,
                                             validate=sources.valid_threatened, timeout_seconds=10))
+        # California's water, which changes by the day: the big reservoirs and the Sierra's snow.
+        # Extras that never decide whether the page counts as live.
+        payload["water"] = load(Source("water", {"stations": list(sources.RESERVOIRS)},
+                                       lambda ctx: sources.fetch_reservoirs(now, ctx),
+                                       fresh_seconds=12 * 3600, usable_seconds=7 * 86400,
+                                       validate=sources.valid_reservoirs, timeout_seconds=8))
+        payload["snow"] = load(Source("snow", {"stations": list(sources.SNOTEL_STATIONS)},
+                                      lambda ctx: sources.fetch_snow(now, ctx),
+                                      fresh_seconds=12 * 3600, usable_seconds=4 * 86400,
+                                      validate=sources.valid_snow, timeout_seconds=8))
         species = payload["species"]["data"].get("items", [])
         urls = [recent[0]["photo"]] if recent else []
         urls += [item.get("photo") for item in species[:6]] + [item.get("photo") for item in recent[1:6]]

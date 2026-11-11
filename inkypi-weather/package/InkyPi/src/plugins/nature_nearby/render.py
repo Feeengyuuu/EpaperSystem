@@ -55,6 +55,12 @@ SPECIES_CARD = (310, 58, 788, 300)
 GROUP_CARD = (12, 336, 300, 468)
 RECENT_CARD = (310, 306, 788, 468)
 HEADER = 28
+# California's water at the filmstrip's foot, in turn with the line the foot has (even hours the
+# water, odd hours the line): from WATER_TOP down a key, a level gauge a reservoir (filled to its
+# share of capacity, a notch where the date's average stands, its name over its share of that
+# average) and the Sierra's snow: its depth over its water against the median for the date.
+WATER_TOP = 437
+WATER_KEY_W, WATER_CELL_W, WATER_GAUGE = 34, 56, (9, 22)
 # Quiet nature doodles in each card's colour under its content, by the card's icon: leaves,
 # birds and butterflies, or the naturalist's binoculars, notebook and lens.
 DOODLES = {icon: Path(__file__).resolve().parent / "assets" / "doodles" / f"{name}.png"
@@ -497,6 +503,67 @@ def _groups_with_birds(canvas, groups, total, birds, now):
                           width=right - left - meta_w - 6)
 
 
+def water_turn(now):
+    """Whether this hour is the water's at the filmstrip's foot (the even hours)."""
+    return now.hour % 2 == 0
+
+
+def _shown(payload, name):
+    source = payload.get(name) or {}
+    return source.get("data") if source.get("state") not in (None, "unavailable", "disabled") else None
+
+
+def _gauge(canvas, x, top, level, mark=None):
+    """A level gauge at ``x``: a tank filled from its foot to ``level`` (0 to 1) in the page's
+    blue, with a notch at ``mark`` (the level the date's average would stand at)."""
+    width, height = WATER_GAUGE
+    canvas.draw.rectangle((x, top, x + width, top + height), outline=canvas.color("ink"), width=1)
+    filled = round((height - 2) * max(0.0, min(1.0, level)))
+    if filled:
+        canvas.draw.rectangle((x + 1, top + height - filled, x + width - 1, top + height - 1), fill=canvas.color("blue"))
+    if mark is not None and 0 < mark <= 1:
+        y = top + height - 1 - round((height - 2) * mark)
+        canvas.draw.line((x - 2, y, x + width + 2, y), fill=canvas.color("ink"), width=1)
+
+
+def _water(canvas, payload):
+    """California's water along the filmstrip's foot; False (nothing drawn) without the reservoirs."""
+    water, snow = _shown(payload, "water"), _shown(payload, "snow")
+    items = (water or {}).get("items") or []
+    if not items:
+        return False
+    left, top = RECENT_CARD[0] + 8, WATER_TOP + 4
+    upper, lower = top + 5, top + 17
+    canvas.text((left, upper), "水库", 10, anchor="lm")
+    canvas.text((left, lower), "常年%", 10, anchor="lm")
+    x = left + WATER_KEY_W
+    for item in items[:6]:
+        # The date's average as a level: where the water would stand at 100% of it.
+        mark = item["pct_cap"] / item["pct_avg"] if item["pct_avg"] else None
+        _gauge(canvas, x, top, item["pct_cap"] / 100, mark)
+        canvas.text((x + WATER_GAUGE[0] + 5, upper), item["name"], 10, "muted", anchor="lm", bold=False,
+                    width=WATER_CELL_W - WATER_GAUGE[0] - 6)
+        canvas.text((x + WATER_GAUGE[0] + 5, lower), f"{item['pct_avg']}%", 12, anchor="lm")
+        x += WATER_CELL_W
+    if snow and (snow.get("pct_median") is not None or snow.get("swe_in")):
+        # The Sierra's snow water: a peak, white from its top as far as the snow stands to the median.
+        share = min(1.0, (snow.get("pct_median") or 0) / 100)
+        peak = [(x, top + WATER_GAUGE[1]), (x + 7, top), (x + 14, top + WATER_GAUGE[1])]
+        canvas.draw.polygon(peak, fill=canvas.color("blue"))
+        cap = round(WATER_GAUGE[1] * 0.55 * share)
+        if cap >= 3:
+            half = cap * 7 / WATER_GAUGE[1]
+            canvas.draw.polygon([(x + 7, top + 1), (x + 7 - half, top + cap), (x + 7 + half, top + cap)],
+                                fill=canvas.color("paper"))
+        room = RECENT_CARD[2] - 8 - x - 18
+        if snow.get("depth_in") is not None:
+            canvas.text((x + 18, upper), f"雪深 {snow['depth_in'] * 2.54:.0f} cm", 10, "muted", anchor="lm", bold=False,
+                        width=room)
+        canvas.text((x + 18, lower), f"雪水 {snow['pct_median']}%" if snow.get("pct_median") is not None
+                    else f"雪水 {snow['swe_in'] * 25.4:.0f} mm", 12, anchor="lm", width=room)
+    return True
+
+
 def _recent(canvas, payload, images, now):
     items = payload["recent"]["data"].get("items", [])[1:6]
     stats = payload["stats"]["data"]
@@ -520,6 +587,8 @@ def _recent(canvas, payload, images, now):
         meta = " · ".join(part for part in (ago(stamp, now).replace(" ", "") if stamp else "", item.get("place"))
                           if part)
         canvas.text((x, top + 89), meta, 10, "muted", anchor="lm", bold=False, width=width)
+    if water_turn(now) and _water(canvas, payload):
+        return
     threatened = threatened_data(payload)
     if threatened and threatened["items"] and ((payload.get("birds") or {}).get("data") or {}).get("items"):
         # With eBird's birds in the groups card, the week's vulnerable-or-worse species take this line.

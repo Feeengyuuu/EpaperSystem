@@ -33,6 +33,9 @@ def quiet_extras(monkeypatch):
     monkeypatch.setattr(sources, "fetch_threatened", lambda *_args: THREATENED)
     monkeypatch.setattr(sources, "fetch_season", lambda *_args: SEASON)
     monkeypatch.setattr(sources, "fetch_blurb", lambda title, name, _ctx: {"text": "君主斑蝶是一种斑蝶。", "title": title})
+    # California's water (reservoirs, Sierra snow) stays offline: left out unless a test gives it.
+    for name in ("fetch_reservoirs", "fetch_snow"):
+        monkeypatch.setattr(sources, name, lambda *_args: (_ for _ in ()).throw(OSError("offline")))
 
 
 class Device:
@@ -472,3 +475,132 @@ def test_a_week_without_vulnerable_species_says_so_quietly(monkeypatch):
     drawn.clear()
     render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, {})
     assert any(text.startswith("易危及以上 本周 35+ 种") for text in drawn)
+
+
+# cdec.water.ca.gov/resapp/service/res/conditions?date=2026-11-10&stationIds=SHA,ORO,SNL,DNP,HTH,NML
+# as it answered on 2026-11-11 (the fields the page reads, all six reservoirs).
+CDEC = [
+    {"stationId": "SHA", "reservoirName": "Lake Shasta", "actDate": "2026-11-10", "storage": 2248248.25,
+     "avg": 2438175, "cap": 4552000, "pctAvg": 92.21, "pctCap": 49.39},
+    {"stationId": "DNP", "reservoirName": "Don Pedro Reservoir", "actDate": "2026-11-09", "storage": 1471223,
+     "avg": 1334850, "cap": 2030000, "pctAvg": 110.22, "pctCap": 72.47},
+    {"stationId": "ORO", "reservoirName": "Lake Oroville", "actDate": "2026-11-10", "storage": 1439462.75,
+     "avg": 1790158, "cap": 3424753, "pctAvg": 80.41, "pctCap": 42.03},
+    {"stationId": "SNL", "reservoirName": "San Luis Reservoir", "actDate": "2026-11-10", "storage": 1323451,
+     "avg": 960301, "cap": 2041000, "pctAvg": 137.82, "pctCap": 64.84},
+    {"stationId": "NML", "reservoirName": "New Melones Reservoir", "actDate": "2026-11-10", "storage": 1510331.88,
+     "avg": 1289013, "cap": 2400000, "pctAvg": 117.17, "pctCap": 62.93},
+    {"stationId": "HTH", "reservoirName": "Hetch-Hetchy Reservoir", "actDate": "2026-11-09", "storage": 258355,
+     "avg": 256115, "cap": 360000, "pctAvg": 100.87, "pctCap": 71.77}]
+
+
+def _snotel_station(triplet, depths, water):
+    return {"stationTriplet": triplet, "data": [
+        {"stationElement": {"elementCode": "SNWD", "storedUnitCode": "in"},
+         "values": [{"date": day, "value": value} for day, value in depths]},
+        {"stationElement": {"elementCode": "WTEQ", "storedUnitCode": "in"},
+         "values": [{"date": day, "value": value, "median": median} for day, value, median in water]}]}
+
+
+# The AWDB REST answer of 2026-11-11 for the three Sierra stations (values and medians verbatim).
+SNOTEL = [
+    _snotel_station("784:CA:SNTL", [("2026-11-08", 3), ("2026-11-09", 2), ("2026-11-10", 1)],
+                    [("2026-11-08", 1.0, 1.7), ("2026-11-09", 0.7, 1.7), ("2026-11-10", 1.5, 1.4)]),
+    _snotel_station("463:CA:SNTL", [("2026-11-08", 3), ("2026-11-09", 2), ("2026-11-10", 2)],
+                    [("2026-11-08", 0.9, 1.0), ("2026-11-09", 0.7, 1.2), ("2026-11-10", 1.6, 1.1)]),
+    _snotel_station("428:CA:SNTL", [("2026-11-08", 1), ("2026-11-09", 1), ("2026-11-10", 1)],
+                    [("2026-11-08", 0.1, 0.2), ("2026-11-09", 0.1, 0.0), ("2026-11-10", 0.1, 0.0)])]
+
+
+def test_reservoirs_and_sierra_snow_normalize():
+    water = sources.normalize_reservoirs(CDEC)
+    snow = sources.normalize_snow(SNOTEL)
+
+    # North to south, each with its share of capacity and of the date's historical average.
+    assert [(row["id"], row["name"], row["pct_avg"], row["pct_cap"]) for row in water["items"]] == [
+        ("SHA", "沙斯塔", 92, 49), ("ORO", "奥罗维尔", 80, 42), ("NML", "新梅洛", 117, 63),
+        ("DNP", "唐佩德罗", 110, 72), ("HTH", "赫奇赫奇", 101, 72), ("SNL", "圣路易斯", 138, 65)]
+    assert water["date"] == "2026-11-10" and sources.valid_reservoirs(water)
+    # The three stations' latest day together: 3.2 in of water against a median of 2.5 in.
+    assert snow == {"date": "2026-11-10", "stations": 3, "swe_in": 1.07, "median_in": 0.83, "pct_median": 128,
+                    "depth_in": 1.3}
+    assert sources.valid_snow(snow)
+    # Before the snow the median is next to nothing: no percentage is made of it.
+    bare = sources.normalize_snow([_snotel_station("784:CA:SNTL", [("2026-09-01", 0)], [("2026-09-01", 0.0, 0.0)])])
+    assert bare["pct_median"] is None and bare["swe_in"] == 0
+    for broken in ([], {"error": "x"}, [{"stationId": "SHA", "pctAvg": "n/a"}]):
+        with pytest.raises(ValueError):
+            sources.normalize_reservoirs(broken)
+    with pytest.raises(ValueError):
+        sources.normalize_snow([{"stationTriplet": "784:CA:SNTL", "data": []}])
+
+
+def _water_payload():
+    payload = _rich_payload()
+    payload["water"] = {"state": "live", "data": sources.normalize_reservoirs(CDEC)}
+    payload["snow"] = {"state": "live", "data": sources.normalize_snow(SNOTEL)}
+    return payload
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_californias_water_takes_turns_with_the_filmstrips_foot_line(monkeypatch, mode):
+    from plugins.nature_nearby import render
+
+    drawn = _recorded(monkeypatch)
+    settings = {"_inkypi_theme": {"mode": mode}}
+    plain = render_page((800, 480), _rich_payload(), settings, NOW, {})
+    assert any(text.startswith("本周最活跃") for text in drawn)
+    drawn.clear()
+    wet = render_page((800, 480), _water_payload(), settings, NOW, {})
+
+    # An even hour: six level gauges with their share of the average, then the Sierra's snow water.
+    assert {"沙斯塔", "92%", "奥罗维尔", "80%", "圣路易斯", "138%", "常年%", "雪深 3 cm", "雪水 128%"} <= set(drawn)
+    assert not any(text.startswith("本周最活跃") for text in drawn)
+    foot = (render.RECENT_CARD[0] + 2, render.WATER_TOP, render.RECENT_CARD[2] - 2, render.RECENT_CARD[3] - 2)
+    assert render._palette(settings)["blue"] in set(wet.crop(foot).get_flattened_data())
+    # Only the foot changes.
+    for box in ((0, 0, 800, render.WATER_TOP), (0, render.WATER_TOP, render.RECENT_CARD[0], 480)):
+        assert wet.crop(box).tobytes() == plain.crop(box).tobytes()
+    assert wet.crop(foot).tobytes() != plain.crop(foot).tobytes()
+    # An odd hour: the line the foot had.
+    drawn.clear()
+    odd = render_page((800, 480), _water_payload(), settings, NOW.replace(hour=15), {})
+    assert any(text.startswith("本周最活跃") for text in drawn) and "沙斯塔" not in drawn
+    assert odd.size == (800, 480)
+    # A reservoir reading that failed leaves the line as it was (the snow alone does not take it).
+    drawn.clear()
+    render_page((800, 480), {**_water_payload(), "water": {"state": "unavailable", "data": {}}}, settings, NOW, {})
+    assert any(text.startswith("本周最活跃") for text in drawn)
+
+
+def test_the_water_loads_on_its_own_ttl_and_never_decides_provenance(monkeypatch, tmp_path):
+    from datetime import timedelta
+
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path / "cache"))
+    payload = _payload()
+    for name in ("recent", "species", "groups", "stats"):
+        monkeypatch.setattr(sources, f"fetch_{name}", lambda *_args, data=payload[name]["data"]: data)
+    calls = []
+    monkeypatch.setattr(sources, "fetch_reservoirs",
+                        lambda *_args: calls.append("water") or sources.normalize_reservoirs(CDEC))
+    monkeypatch.setattr(sources, "fetch_snow", lambda *_args: calls.append("snow") or sources.normalize_snow(SNOTEL))
+    plugin = NatureNearby({"id": "nature_nearby"})
+    task = TaskContext.never_cancelled(deadline_monotonic=time.monotonic() + 30)
+
+    first, _images = plugin._refresh({}, NOW, allow_network=True, context=task)
+    plugin._refresh({}, NOW + timedelta(hours=11), allow_network=True, context=task)
+    assert calls == ["water", "snow"] and first["water"]["data"]["items"][0]["pct_avg"] == 92
+
+    def offline(*_args):
+        calls.append("failed")
+        raise OSError("offline")
+
+    monkeypatch.setattr(sources, "fetch_reservoirs", offline)
+    monkeypatch.setattr(sources, "fetch_snow", offline)
+    later, _images = plugin._refresh({}, NOW + timedelta(hours=13), allow_network=True, context=task)
+    assert calls[2:] == ["failed", "failed"] and later["water"]["state"] == "stale_cache"
+    assert later["water"]["data"] == first["water"]["data"] and later["provenance"] is SourceProvenance.LIVE
+    cached, _images = plugin._refresh({}, NOW + timedelta(hours=14), allow_network=False, context=task)
+    assert len(calls) == 4 and cached["snow"]["data"]["pct_median"] == 128
+    gone, _images = plugin._refresh({}, NOW + timedelta(days=9), allow_network=True, context=task)
+    assert gone["water"]["state"] == "unavailable" and gone["provenance"] is SourceProvenance.LIVE

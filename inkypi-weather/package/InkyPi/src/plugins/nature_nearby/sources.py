@@ -64,6 +64,18 @@ EBIRD_NOTABLE_URL = "https://api.ebird.org/v2/data/obs/geo/recent/notable"
 EBIRD_DAYS = 7
 EBIRD_MAX_KM = 50  # eBird's largest search radius
 MAX_BIRDS = 6
+# California's water: the six large reservoirs' storage against capacity and the date's historical
+# average (CDEC's daily conditions, 3.5 KB), north to south with their Chinese names; and the
+# Sierra's snow at three SNOTEL stations (Palisades Tahoe, Echo Peak, the Central Sierra Snow Lab)
+# against the median for the date (NRCS's AWDB, 2.7 KB).
+CDEC_URL = "https://cdec.water.ca.gov/resapp/service/res/conditions"
+RESERVOIRS = {"SHA": "沙斯塔", "ORO": "奥罗维尔", "NML": "新梅洛", "DNP": "唐佩德罗", "HTH": "赫奇赫奇",
+              "SNL": "圣路易斯"}
+SNOTEL_URL = "https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1/data"
+SNOTEL_STATIONS = ("784:CA:SNTL", "463:CA:SNTL", "428:CA:SNTL")
+# Under this much median snow water (inches, the stations' mean) a percentage of it means nothing.
+SNOW_MEDIAN_MIN = 0.2
+WATER_BYTES = 64 * 1024
 
 
 def parse_time(value):
@@ -483,3 +495,92 @@ def valid_threatened(data):
     return (isinstance(data, dict) and data.get("level") == "VU" and isinstance(data.get("total"), int)
             and isinstance(items, list)
             and all(isinstance(item, dict) and isinstance(item.get("count"), int) for item in items))
+
+
+def _share(value):
+    number = _finite(value)
+    return int(round(number)) if number is not None and 0 <= number <= 400 else None
+
+
+def normalize_reservoirs(payload):
+    """CDEC's conditions as {date, items: [{id, name, pct_avg, pct_cap, storage_af}]}: the page's
+    reservoirs north to south, each with its storage as a share of the historical average for the
+    date and of its capacity; ``date`` the newest reading's."""
+    rows = {str(row.get("stationId")): row for row in payload if isinstance(row, dict)} if isinstance(payload, list) else {}
+    items = []
+    for station, name in RESERVOIRS.items():
+        row = rows.get(station) or {}
+        average, capacity = _share(row.get("pctAvg")), _share(row.get("pctCap"))
+        if average is None or capacity is None:
+            continue
+        storage = _finite(row.get("storage"))
+        items.append({"id": station, "name": name, "pct_avg": average, "pct_cap": capacity,
+                      "storage_af": int(storage) if storage is not None and storage >= 0 else None,
+                      "date": str(row.get("actDate") or "")[:10]})
+    if not items:
+        raise ValueError("CDEC returned no reservoir conditions")
+    return {"date": max(item.pop("date") for item in items), "items": items}
+
+
+def fetch_reservoirs(now, context):
+    """Yesterday's conditions (today's are not posted until the day is out)."""
+    params = {"date": (local_now(now) - timedelta(days=1)).date().isoformat(), "stationIds": ",".join(RESERVOIRS)}
+    return normalize_reservoirs(_get_json(CDEC_URL, params, context, max_bytes=WATER_BYTES))
+
+
+def valid_reservoirs(data):
+    items = (data or {}).get("items") if isinstance(data, dict) else None
+    return (isinstance(items, list) and 0 < len(items) <= len(RESERVOIRS) and isinstance(data.get("date"), str)
+            and all(isinstance(item, dict) and item.get("id") in RESERVOIRS and item.get("name")
+                    and type(item.get("pct_avg")) is int and type(item.get("pct_cap")) is int for item in items))
+
+
+def _latest(element, key="value"):
+    """The newest day of a SNOTEL element with a number under ``key``: (date, number) or None."""
+    for row in reversed(element.get("values") or []):
+        number = _finite(row.get(key)) if isinstance(row, dict) else None
+        if number is not None and number >= 0:
+            return str(row.get("date") or "")[:10], number
+    return None
+
+
+def normalize_snow(payload):
+    """The stations' newest day together as {date, stations, swe_in, median_in, pct_median,
+    depth_in}: their mean snow water equivalent, the mean median for the date and the one as a
+    percentage of the other (None while the median is next to nothing), and their mean depth."""
+    water, medians, depths, dates = [], [], [], []
+    for station in payload if isinstance(payload, list) else []:
+        entries = station.get("data") if isinstance(station, dict) else None
+        elements = {((entry.get("stationElement") or {}).get("elementCode")): entry
+                    for entry in entries or [] if isinstance(entry, dict)}
+        swe = _latest(elements.get("WTEQ") or {})
+        median = _latest(elements.get("WTEQ") or {}, "median")
+        depth = _latest(elements.get("SNWD") or {})
+        if swe is None or median is None:
+            continue
+        water.append(swe[1])
+        medians.append(median[1])
+        dates.append(swe[0])
+        if depth is not None:
+            depths.append(depth[1])
+    if not water:
+        raise ValueError("SNOTEL returned no snow water")
+    mean_median = sum(medians) / len(medians)
+    return {"date": max(dates), "stations": len(water), "swe_in": round(sum(water) / len(water), 2),
+            "median_in": round(mean_median, 2),
+            "pct_median": int(round(sum(water) / sum(medians) * 100)) if mean_median >= SNOW_MEDIAN_MIN else None,
+            "depth_in": round(sum(depths) / len(depths), 1) if depths else None}
+
+
+def fetch_snow(now, context):
+    today = local_now(now).date()
+    params = {"stationTriplets": ",".join(SNOTEL_STATIONS), "elements": "SNWD,WTEQ", "duration": "DAILY",
+              "beginDate": (today - timedelta(days=3)).isoformat(), "endDate": today.isoformat(),
+              "periodRef": "END", "centralTendencyType": "MEDIAN", "returnFlags": "false"}
+    return normalize_snow(_get_json(SNOTEL_URL, params, context, max_bytes=WATER_BYTES))
+
+
+def valid_snow(data):
+    return (isinstance(data, dict) and _finite(data.get("swe_in")) is not None and isinstance(data.get("date"), str)
+            and (data.get("pct_median") is None or type(data["pct_median"]) is int)
+            and (data.get("depth_in") is None or _finite(data["depth_in"]) is not None))
