@@ -40,9 +40,10 @@ def test_stock_header_names_its_sources_by_logo_between_the_wordmark_and_the_sou
 
     plugin._draw_header(image, ImageDraw.Draw(image), 800, [{"symbol": "NVDA"}], header_brand="robinhood")
 
-    # SEC, Nasdaq and Yahoo Finance stand there by their logos; no bills are flown.
-    assert len(drawn) == 1 and not flown
+    # SEC, Nasdaq and Yahoo Finance stand there by their logos; bills fly in the room on either side.
+    assert len(drawn) == 1 and len(flown) == 2
     left, top, right, bottom = drawn[0]
+    assert flown[0][0] == left and flown[1][2] == right and flown[0][2] < flown[1][0]
     assert 100 < left < right and bottom <= stocktracker.HEADER_RULE_Y
     paper = _active_stock_colors()["paper"]
     marked = [x for x in range(left, right) if any(image.getpixel((x, y)) != paper for y in range(top, bottom))]

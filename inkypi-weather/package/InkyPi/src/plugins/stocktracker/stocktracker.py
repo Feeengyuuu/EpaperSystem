@@ -2410,7 +2410,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 
 	def _draw_header_sources(self, img, box):
 		"""The page's other sources by their official logos, centred in the header's free stretch;
-		whether any was drawn."""
+		the row's (left, right), or None when none was drawn."""
 		left, top, right, bottom = [int(value) for value in box]
 		colors = _active_stock_colors()
 		ink = colors["ink"] if colors["mode"] == "night" else None
@@ -2423,13 +2423,13 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			if logo is not None and width + logo.width <= right - left:
 				logos.append(logo)
 		if not logos:
-			return False
+			return None
 		width = sum(logo.width for logo in logos) + HEADER_SOURCE_GAP * (len(logos) - 1)
-		x = left + (right - left - width) / 2
+		x = start = left + (right - left - width) / 2
 		for logo in logos:
 			img.paste(logo, (round(x), round((top + bottom - logo.height) / 2)), logo)
 			x += logo.width + HEADER_SOURCE_GAP
-		return True
+		return round(start), round(x - HEADER_SOURCE_GAP)
 
 	def _draw_header_money(self, img, box, turn=0):
 		"""Dollar bills on the wind filling the header's free stretch: the art's bills and coins
@@ -2437,7 +2437,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		height and spaced out to reach both its ends."""
 		left, top, right, bottom = [int(value) for value in box]
 		pieces = _header_money_pieces()
-		if right - left < 60 or bottom - top < 12 or not pieces:
+		if right - left < 28 or bottom - top < 12 or not pieces:
 			return
 		bills, coins, art_height = pieces
 		scale = (bottom - top) / art_height
@@ -2506,9 +2506,15 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			font=source_font,
 		)
 		stretch = (title_right + 14, 4, source_left - 14, HEADER_RULE_Y - 5)
-		if not self._draw_header_sources(img, stretch):
-			# No logo at hand: bills on the wind, the flight starting from another bill each hour.
-			self._draw_header_money(img, stretch, turn=(updated_at or datetime.now()).hour)
+		row = self._draw_header_sources(img, stretch)
+		# Bills on the wind in the room the logos leave on either side (the whole stretch without a
+		# logo), the flight starting from another bill each hour.
+		turn = (updated_at or datetime.now()).hour
+		if row is None:
+			self._draw_header_money(img, stretch, turn=turn)
+		else:
+			self._draw_header_money(img, (stretch[0], stretch[1], row[0] - HEADER_SOURCE_GAP, stretch[3]), turn=turn)
+			self._draw_header_money(img, (row[1] + HEADER_SOURCE_GAP, stretch[1], stretch[2], stretch[3]), turn=turn + 2)
 		draw.line((margin, HEADER_RULE_Y, width - margin, HEADER_RULE_Y), fill=colors["accent_gold"], width=3)
 
 	@staticmethod
