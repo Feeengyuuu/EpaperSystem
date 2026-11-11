@@ -44,6 +44,10 @@ MAOYAN_MOVIE_DETAIL_URL = "https://m.maoyan.com/ajax/detailmovie"
 # count, genre, runtime and director, the last three kept with the film should a later read fail.
 MAOYAN_ON_SHOW_URL = "https://m.maoyan.com/ajax/movieOnInfoList"
 MAOYAN_FILM_FACTS = ("maoyan_movie_id", "genres", "runtime", "director")
+# A film Maoyan's list had no usable poster for is not asked about again on the same source day
+# until this long has passed: the list changes when a film opens, not between repair passes.
+MAOYAN_POSTER_RECHECK = timedelta(hours=6)
+MAOYAN_POSTER_MISS = "maoyan_poster_miss"
 MAOYAN_SOURCE_LABEL = "\u732b\u773c\u4e13\u4e1a\u7248"
 ZGDYPW_REALTIME_URL = "https://zgdypf.zgdypw.cn/box"
 ZGDYPW_SOURCE_LABEL = "\u4e2d\u56fd\u7535\u5f71\u7968\u623f"
@@ -560,22 +564,43 @@ class BoxOfficeTopMovies(BasePlugin):
                 if not getattr(movie, name):
                     setattr(movie, name, getattr(old, name))
             for name in ("poster_source", "poster_language", "poster_market", "english_title", "poster_attempt",
-                         *MAOYAN_FILM_FACTS):
+                         MAOYAN_POSTER_MISS, *MAOYAN_FILM_FACTS):
                 if name in old.extra:
                     movie.extra[name] = old.extra[name]
+
+    def _maoyan_listing(self, budget, reserve_seconds=1):
+        """Maoyan's now-showing list by normalised title, read at most once per budget: the poster
+        step and the score step of one refresh share the answer. None when the read failed (the
+        failure is remembered too, so the other step does not spend the budget on it again) or
+        when no more than ``reserve_seconds`` of the budget is left (nothing was asked)."""
+        memo = getattr(self, "_maoyan_listing_memo", None)
+        if memo is not None and memo[0] is budget:
+            return memo[1]
+        if budget.remaining_seconds() <= reserve_seconds:
+            return None
+        # Remembered as failed before asking: whatever the request raises, it is not repeated.
+        self._maoyan_listing_memo = (budget, None)
+        response = budget.get(MAOYAN_ON_SHOW_URL, headers=MAOYAN_MOVIE_HEADERS, timeout=8)
+        response.raise_for_status()
+        listing = {}
+        for row in (response.json() or {}).get("movieList") or []:
+            if isinstance(row, dict) and _clean_text(row.get("nm")):
+                listing.setdefault(_normalize_title(row.get("nm")), row)
+        self._maoyan_listing_memo = (budget, listing)
+        return listing
+
+    def _maoyan_listing_in_hand(self, budget):
+        """Whether this budget's refresh already holds Maoyan's list (using it costs nothing)."""
+        memo = getattr(self, "_maoyan_listing_memo", None)
+        return memo is not None and memo[0] is budget and memo[1] is not None
 
     def _enrich_official_with_maoyan(self, movies, budget):
         """Maoyan's audience score and want-to-see count for each official-chart film it lists, and
         the headliner's genre, runtime and director. Optional: any failure leaves them off."""
         try:
-            if budget.remaining_seconds() <= 1:
+            listing = self._maoyan_listing(budget)
+            if listing is None:
                 return
-            response = budget.get(MAOYAN_ON_SHOW_URL, headers=MAOYAN_MOVIE_HEADERS, timeout=8)
-            response.raise_for_status()
-            listing = {}
-            for row in (response.json() or {}).get("movieList") or []:
-                if isinstance(row, dict) and _clean_text(row.get("nm")):
-                    listing.setdefault(_normalize_title(row.get("nm")), row)
             for movie in movies:
                 row = listing.get(_normalize_title(movie.extra.get("official_chinese_title") or movie.title))
                 if row is not None:
@@ -598,27 +623,46 @@ class BoxOfficeTopMovies(BasePlugin):
         except Exception as exc:  # optional enrichment: the chart stands without it
             logger.info("Maoyan scores unavailable for the official chart: %s", type(exc).__name__)
 
+    def _maoyan_poster_miss_stands(self, movie, now):
+        """Whether Maoyan was already asked about this film on the current source day, had no
+        usable poster for it, and the interval before asking again has not passed."""
+        miss = movie.extra.get(MAOYAN_POSTER_MISS)
+        if not isinstance(miss, dict) or miss.get("day") != now.astimezone(SHANGHAI).date().isoformat():
+            return False
+        retry_at = self._parse_datetime(miss.get("retry_at"))
+        # A record further ahead than one interval (the clock moved back) is not trusted.
+        return bool(retry_at and now < retry_at <= now + MAOYAN_POSTER_RECHECK)
+
     def _maoyan_posters_for_missing(self, movies, budget):
         """Maoyan's own poster for each film the TMDB lookup left without one (a new mainland
         release TMDB does not know yet), from its now-showing list. A film with a poster, or with
-        a poster address still to be fetched, keeps what it has. Optional: any failure leaves
-        the films as they were."""
+        a poster address still to be fetched, keeps what it has. A film the list has no usable
+        poster for is marked in its ``extra`` (saved with the cached chart); the list is not
+        requested for marked films alone until the source day changes or the recheck interval
+        passes. A failed read marks nothing. Optional: any failure leaves the films as they were."""
         missing = [movie for movie in movies if not movie.poster_path and not movie.poster_url]
         try:
-            if not missing or budget.remaining_seconds() <= 2:
+            if not missing:
                 return
-            response = budget.get(MAOYAN_ON_SHOW_URL, headers=MAOYAN_MOVIE_HEADERS, timeout=8)
-            response.raise_for_status()
-            listing = {}
-            for row in (response.json() or {}).get("movieList") or []:
-                if isinstance(row, dict) and _clean_text(row.get("nm")):
-                    listing.setdefault(_normalize_title(row.get("nm")), row)
+            now = self._source_now()
+            if (all(self._maoyan_poster_miss_stands(movie, now) for movie in missing)
+                    and not self._maoyan_listing_in_hand(budget)):
+                return
+            listing = self._maoyan_listing(budget, reserve_seconds=2)
+            if listing is None:
+                return
             for movie in missing:
                 row = listing.get(_normalize_title(movie.extra.get("official_chinese_title") or movie.title)) or {}
                 poster_url = self._maoyan_poster_url(row.get("img"))
                 # Only Maoyan's own picture host, over https.
                 if not re.match(r"^https://[^/]*\.pipi\.cn/", poster_url or ""):
+                    if not self._maoyan_poster_miss_stands(movie, now):
+                        movie.extra[MAOYAN_POSTER_MISS] = {
+                            "day": now.astimezone(SHANGHAI).date().isoformat(),
+                            "retry_at": (now + MAOYAN_POSTER_RECHECK).isoformat(),
+                        }
                     continue
+                movie.extra.pop(MAOYAN_POSTER_MISS, None)
                 movie.poster_url = poster_url
                 movie.extra["poster_source"] = "maoyan"
                 if budget.remaining_seconds() > 1:

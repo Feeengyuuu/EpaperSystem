@@ -384,8 +384,11 @@ def test_a_film_tmdb_left_without_a_poster_takes_maoyans(monkeypatch):
     plain = _official_movies(plugin, ["什么意思夫妇"])
     plugin._maoyan_posters_for_missing(plain, _MaoyanBudget(
         [{"id": 1604748, "nm": "什么意思夫妇", "img": "http://example.com/not-maoyan.jpg"}], {}))
-    plugin._maoyan_posters_for_missing(plain, _MaoyanBudget([], fail=requests.ConnectionError("down")))
     assert not plain[0].poster_url and "poster_source" not in plain[0].extra
+    plain = _official_movies(plugin, ["什么意思夫妇"])
+    down = _MaoyanBudget([], fail=requests.ConnectionError("down"))
+    plugin._maoyan_posters_for_missing(plain, down)
+    assert len(down.calls) == 1 and not plain[0].poster_url and "poster_source" not in plain[0].extra
     with pytest.raises(TaskCancelled):
         plugin._maoyan_posters_for_missing(plain, _MaoyanBudget([], fail=TaskCancelled("stop")))
     # Nothing is asked of Maoyan when every film has its poster.
@@ -408,3 +411,231 @@ def test_the_poster_step_asks_maoyan_for_a_cached_chart_too(monkeypatch):
     plugin._complete_official_posters(movies, {}, None, _MaoyanBudget([], {}))
 
     assert asked == [["无可替代的你"]]
+
+
+# --- one read of Maoyan's list per refresh, and a record of the films it has no poster for -----
+
+MAOYAN_POSTER = "https://p0.pipi.cn/mediaplus/friday_image_fe/e429586e4946e3d8a101e8dac84cb1d3a6591.jpg"
+FULL_LOAD = {"sourceMode": "official_china", "northAmericaColumn": "false", "cacheHours": 12, "forceRefresh": True}
+CACHED_REDRAW = {**FULL_LOAD, "forceRefresh": False}
+REPAIR_PASS = {**CACHED_REDRAW, "_movie_media_only": True}
+
+
+def _listing_requests(budgets):
+    return sum(url.endswith("movieOnInfoList") for budget in budgets for url, _params in budget.calls)
+
+
+def _official_page_plugin(tmp_path, monkeypatch, titles, maoyan):
+    """The mainland page with a stubbed chart, renderer and poster files. Every refresh gets a
+    new fake budget answering from ``maoyan`` (its ``listing`` and ``fail`` may be changed
+    between refreshes). Returns the plugin, the budgets used, the clock and the fetched posters."""
+    import plugins.box_office_top_movies.box_office_top_movies as plugin_module
+
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    budgets, clock, fetched = [], [NOW], []
+
+    class Budget(_MaoyanBudget):
+        def __init__(self):
+            super().__init__(maoyan["listing"], maoyan.get("detail") or {}, maoyan.get("fail"))
+            budgets.append(self)
+
+        def __enter__(self):
+            self.token = plugin_module.ACTIVE_BUDGET.set(self)
+            return self
+
+        def __exit__(self, *_exc):
+            plugin_module.ACTIVE_BUDGET.reset(self.token)
+            return False
+
+    def restore(movie):
+        movie.poster_path = "poster.jpg" if movie.poster_url else ""
+        return bool(movie.poster_url)
+
+    rows = [{"code": f"film-{index}", "name": title, "salesInWanDesc": "10.00", "salesRateDesc": "10.00%",
+             "sumSalesDesc": "1.00亿"} for index, title in enumerate(titles)]
+    monkeypatch.setattr(plugin_module, "ChinaFetchBudget", Budget)
+    monkeypatch.setattr(plugin, "_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(plugin, "_source_now", lambda: clock[0])
+    monkeypatch.setattr(plugin, "_write_box_office_context", lambda *_a: None)
+    monkeypatch.setattr(plugin, "_render_chart", lambda *_a: Image.new("RGB", (32, 16)))
+    monkeypatch.setattr(plugin, "_fetch_text", lambda *_a: official_page(when=clock[0], rows=rows))
+    monkeypatch.setattr(plugin, "_restore_local_poster", restore)
+    monkeypatch.setattr(plugin, "_download_posters", lambda films, session=None: fetched.extend(
+        film.poster_url for film in films))
+    return plugin, budgets, clock, fetched
+
+
+def _saved_movies(plugin):
+    return json.loads(plugin._cache_path().read_text(encoding="utf-8"))["movies"]
+
+
+def test_a_full_load_reads_maoyans_list_once_for_the_poster_and_the_scores(tmp_path, monkeypatch):
+    maoyan = {"listing": [{"id": 1365977, "nm": "无可替代的你", "sc": 9.1, "wish": 34235, "img": MAOYAN_POSTER}],
+              "detail": {"id": 1365977, "nm": "无可替代的你", "dur": 110, "cat": "爱情"}}
+    plugin, budgets, _clock, fetched = _official_page_plugin(tmp_path, monkeypatch, ["无可替代的你"], maoyan)
+
+    image = plugin.generate_image(FULL_LOAD, DummyDeviceConfig())
+
+    assert read_source_provenance(image) is SourceProvenance.LIVE
+    assert len(budgets) == 1
+    assert [url.rsplit("/", 1)[-1] for url, _params in budgets[0].calls] == ["movieOnInfoList", "detailmovie"]
+    saved = _saved_movies(plugin)[0]
+    # The #1 film TMDB has nothing for takes Maoyan's poster on this first refresh, with its score.
+    assert saved["poster_url"] == plugin._maoyan_poster_url(MAOYAN_POSTER) and fetched == [saved["poster_url"]]
+    assert saved["extra"]["poster_source"] == "maoyan" and saved["extra"]["maoyan_score"] == 9.1
+    assert saved["extra"]["runtime"] == 110 and "maoyan_poster_miss" not in saved["extra"]
+    copy = plugin._chart_copy(FULL_LOAD, "中国电影票房", 1)
+    assert plugin._poster_footer(copy, plugin._poster_movies) == "海报: 猫眼电影"
+
+
+def test_films_that_have_their_posters_cost_no_request_on_a_redraw_and_one_on_a_full_load(tmp_path, monkeypatch):
+    maoyan = {"listing": [{"id": 1365977, "nm": "无可替代的你", "sc": 9.1, "img": MAOYAN_POSTER}]}
+    plugin, budgets, _clock, fetched = _official_page_plugin(tmp_path, monkeypatch, ["无可替代的你"], maoyan)
+    plugin.generate_image(FULL_LOAD, DummyDeviceConfig())
+    del budgets[:], fetched[:]
+
+    # Cached redraw and background repair pass: the film has its poster, Maoyan is not asked.
+    plugin.generate_image(CACHED_REDRAW, DummyDeviceConfig())
+    plugin.generate_image(REPAIR_PASS, DummyDeviceConfig())
+    assert len(budgets) == 2 and _listing_requests(budgets) == 0 and fetched == []
+
+    # Next full load: the poster is carried over, so only the score step reads the list, once.
+    del budgets[:]
+    plugin.generate_image(FULL_LOAD, DummyDeviceConfig())
+    assert len(budgets) == 1 and _listing_requests(budgets) == 1 and fetched == []
+    assert _saved_movies(plugin)[0]["extra"]["poster_source"] == "maoyan"
+
+
+def test_a_film_maoyan_does_not_list_is_asked_about_once_until_the_interval_passes(tmp_path, monkeypatch):
+    from plugins.box_office_top_movies.box_office_top_movies import MAOYAN_POSTER_RECHECK
+
+    maoyan = {"listing": [{"id": 1552906, "nm": "别的电影", "sc": 9.6, "img": MAOYAN_POSTER}]}
+    plugin, budgets, clock, fetched = _official_page_plugin(tmp_path, monkeypatch, ["无可替代的你"], maoyan)
+
+    # Full load: one read serves both steps; the unlisted film is marked in the saved chart.
+    plugin.generate_image(FULL_LOAD, DummyDeviceConfig())
+    assert _listing_requests(budgets) == 1
+    miss = _saved_movies(plugin)[0]["extra"]["maoyan_poster_miss"]
+    assert miss == {"day": "2026-09-03", "retry_at": (NOW + MAOYAN_POSTER_RECHECK).isoformat()}
+
+    # Cached redraws and repair passes inside the interval do not ask again.
+    clock[0] = NOW + timedelta(minutes=5)
+    plugin.generate_image(CACHED_REDRAW, DummyDeviceConfig())
+    plugin.generate_image(REPAIR_PASS, DummyDeviceConfig())
+    clock[0] = NOW + MAOYAN_POSTER_RECHECK - timedelta(seconds=1)
+    plugin.generate_image(REPAIR_PASS, DummyDeviceConfig())
+    assert len(budgets) == 4 and _listing_requests(budgets) == 1
+    assert _saved_movies(plugin)[0]["extra"]["maoyan_poster_miss"] == miss
+
+    # A full load inside the interval carries the mark over: only the score step reads the list.
+    plugin.generate_image(FULL_LOAD, DummyDeviceConfig())
+    assert _listing_requests(budgets) == 2 and _listing_requests(budgets[-1:]) == 1
+    assert _saved_movies(plugin)[0]["extra"]["maoyan_poster_miss"] == miss
+
+    # After the interval the repair pass asks again; still unlisted, the mark is renewed.
+    clock[0] = NOW + MAOYAN_POSTER_RECHECK
+    plugin.generate_image(REPAIR_PASS, DummyDeviceConfig())
+    assert _listing_requests(budgets) == 3
+    renewed = _saved_movies(plugin)[0]["extra"]["maoyan_poster_miss"]
+    assert renewed["retry_at"] == (NOW + 2 * MAOYAN_POSTER_RECHECK).isoformat()
+
+    # The film appears on Maoyan: once the next interval has passed it gets its poster and
+    # loses the mark.
+    maoyan["listing"] = [{"id": 1365977, "nm": "无可替代的你", "sc": 0, "img": MAOYAN_POSTER}]
+    clock[0] = NOW + 2 * MAOYAN_POSTER_RECHECK - timedelta(minutes=1)
+    plugin.generate_image(CACHED_REDRAW, DummyDeviceConfig())
+    assert _listing_requests(budgets) == 3 and fetched == []
+    clock[0] = NOW + 2 * MAOYAN_POSTER_RECHECK
+    plugin.generate_image(CACHED_REDRAW, DummyDeviceConfig())
+    saved = _saved_movies(plugin)[0]
+    assert _listing_requests(budgets) == 4 and fetched == [plugin._maoyan_poster_url(MAOYAN_POSTER)]
+    assert saved["extra"]["poster_source"] == "maoyan" and "maoyan_poster_miss" not in saved["extra"]
+
+
+def test_a_new_source_day_asks_maoyan_again_about_a_marked_film(tmp_path, monkeypatch):
+    maoyan = {"listing": []}
+    late = datetime(2026, 9, 3, 15, 30, tzinfo=timezone.utc)  # 23:30 in Shanghai
+    plugin, budgets, clock, fetched = _official_page_plugin(tmp_path, monkeypatch, ["无可替代的你"], maoyan)
+    clock[0] = late
+    plugin.generate_image(FULL_LOAD, DummyDeviceConfig())
+    assert _saved_movies(plugin)[0]["extra"]["maoyan_poster_miss"]["day"] == "2026-09-03"
+    assert _listing_requests(budgets) == 1
+
+    # An hour later it is the next day's chart: yesterday's cache is not fresh, so the page
+    # loads in full and asks again although the interval has not passed, in the one read the
+    # score step shares; the film gets its poster.
+    maoyan["listing"] = [{"id": 1365977, "nm": "无可替代的你", "sc": 0, "img": MAOYAN_POSTER}]
+    clock[0] = late + timedelta(hours=1)
+    del budgets[:]
+    plugin.generate_image(CACHED_REDRAW, DummyDeviceConfig())
+    assert len(budgets) == 1 and _listing_requests(budgets) == 1
+    saved = _saved_movies(plugin)[0]
+    assert fetched == [saved["poster_url"]] and "maoyan_poster_miss" not in saved["extra"]
+
+
+def test_a_failed_read_of_maoyans_list_is_not_repeated_within_the_refresh_and_marks_nothing(tmp_path, monkeypatch):
+    maoyan = {"listing": [], "fail": requests.ConnectionError("down")}
+    plugin, budgets, _clock, fetched = _official_page_plugin(tmp_path, monkeypatch, ["无可替代的你"], maoyan)
+
+    image = plugin.generate_image(FULL_LOAD, DummyDeviceConfig())
+
+    assert read_source_provenance(image) is SourceProvenance.LIVE
+    assert len(budgets) == 1 and len(budgets[0].calls) == 1
+    saved = _saved_movies(plugin)[0]
+    assert not saved["poster_url"] and not any(key.startswith("maoyan") for key in saved["extra"])
+
+    # The failure is forgotten with its refresh: the next poster step asks, and finds the poster.
+    maoyan.update(fail=None, listing=[{"id": 1365977, "nm": "无可替代的你", "sc": 0, "img": MAOYAN_POSTER}])
+    plugin.generate_image(CACHED_REDRAW, DummyDeviceConfig())
+    assert _listing_requests(budgets) == 2 and fetched == [plugin._maoyan_poster_url(MAOYAN_POSTER)]
+
+
+def test_the_two_maoyan_steps_share_one_read_or_one_failure_on_the_same_budget(monkeypatch):
+    from plugins.box_office_top_movies.box_office_top_movies import MAOYAN_POSTER_RECHECK
+
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    monkeypatch.setattr(plugin, "_source_now", lambda: NOW)
+    monkeypatch.setattr(plugin, "_download_posters", lambda films, session=None: None)
+    movies = _official_movies(plugin, ["无可替代的你"])
+    down = _MaoyanBudget([], fail=requests.ConnectionError("down"))
+    plugin._maoyan_posters_for_missing(movies, down)
+    plugin._enrich_official_with_maoyan(movies, down)
+    assert len(down.calls) == 1 and "maoyan_poster_miss" not in movies[0].extra
+
+    # Scores first, posters second: the list in hand also serves a film whose mark still stands.
+    budget = _MaoyanBudget([{"id": 1365977, "nm": "无可替代的你", "sc": 9.1, "img": MAOYAN_POSTER}], {})
+    movies[0].extra["maoyan_poster_miss"] = {"day": "2026-09-03",
+                                             "retry_at": (NOW + MAOYAN_POSTER_RECHECK).isoformat()}
+    plugin._enrich_official_with_maoyan(movies, budget)
+    plugin._maoyan_posters_for_missing(movies, budget)
+    assert _listing_requests([budget]) == 1
+    assert movies[0].extra["poster_source"] == "maoyan" and "maoyan_poster_miss" not in movies[0].extra
+    # A list read under one budget is never reused under another.
+    other = _MaoyanBudget([], {})
+    plugin._enrich_official_with_maoyan(_official_movies(plugin, ["无可替代的你"]), other)
+    assert _listing_requests([other]) == 1
+
+
+def test_the_maoyan_miss_mark_survives_the_cache_and_a_new_chart_and_a_broken_mark_does_not_stand(monkeypatch):
+    from plugins.box_office_top_movies.box_office_top_movies import BoxOfficeMovie, MAOYAN_POSTER_RECHECK
+
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    monkeypatch.setattr(plugin, "_source_now", lambda: NOW)
+    old = _official_movies(plugin, ["无可替代的你"])
+    plugin._maoyan_posters_for_missing(old, _MaoyanBudget(
+        [{"id": 1365977, "nm": "无可替代的你", "img": "http://example.com/not-maoyan.jpg"}], {}))
+    mark = old[0].extra["maoyan_poster_miss"]  # listed, but without a usable poster
+
+    restored = BoxOfficeMovie.from_dict(json.loads(json.dumps(old[0].to_dict())))
+    new = _official_movies(plugin, ["无可替代的你"])
+    plugin._reuse_official_media(new, [restored.to_dict()])
+    assert new[0].extra["maoyan_poster_miss"] == mark and plugin._maoyan_poster_miss_stands(new[0], NOW)
+
+    quiet = _MaoyanBudget([], {})
+    plugin._maoyan_posters_for_missing(new, quiet)
+    assert quiet.calls == []
+    for broken in ("soon", {"day": "2026-09-03"}, {"day": "2026-09-03", "retry_at": "soon"},
+                   {"day": "2026-09-02", "retry_at": mark["retry_at"]},
+                   {"day": "2026-09-03", "retry_at": (NOW + 2 * MAOYAN_POSTER_RECHECK).isoformat()}):
+        new[0].extra["maoyan_poster_miss"] = broken
+        assert not plugin._maoyan_poster_miss_stands(new[0], NOW)
