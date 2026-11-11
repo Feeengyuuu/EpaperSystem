@@ -36,6 +36,7 @@ Note:
 """
 
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.cover_gallery import SOURCE_LOGO_DIR
 from plugins.base_plugin.refresh_on_display_presentation import RefreshOnDisplayPresentationMixin
 from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
 from plugins.context_cache import write_context
@@ -76,7 +77,7 @@ os.environ.setdefault("MPLCONFIGDIR", MPLCONFIGDIR)
 os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageOps
-from utils.local_wordmark import load_source_logo
+from utils.local_wordmark import load_source_logo, paste_header_logo_row
 from utils.doodle_backdrop import paint_doodles
 from utils.fonts import load_font
 from utils.app_utils import get_base_ui_font, get_font
@@ -223,8 +224,9 @@ DASHBOARD_MARGIN = 16
 HEADER_RULE_Y = 38
 # The header names the page's other sources by their official logos between the broker's wordmark
 # and the source line: SEC (filings), Nasdaq (fundamentals, earnings) and Yahoo Finance (quotes
-# and trends), this tall and this far apart; the first that fit are shown.
-HEADER_SOURCE_DIR = os.path.join(os.path.dirname(__file__), "assets", "sources")
+# and trends), this tall and this far apart; the first that fit are shown. The logos are the
+# shared source logos (base_plugin/assets/source_logos), which the money page prints too.
+HEADER_SOURCE_DIR = str(SOURCE_LOGO_DIR)
 HEADER_SOURCES = ("sec", "nasdaq", "yahoo_finance")
 HEADER_SOURCE_HEIGHTS = {"sec": 24, "nasdaq": 15, "yahoo_finance": 22}
 HEADER_SOURCE_GAP = 16
@@ -2422,14 +2424,8 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			width = sum(item.width for item in logos) + HEADER_SOURCE_GAP * len(logos)
 			if logo is not None and width + logo.width <= right - left:
 				logos.append(logo)
-		if not logos:
-			return None
-		width = sum(logo.width for logo in logos) + HEADER_SOURCE_GAP * (len(logos) - 1)
-		x = start = left + (right - left - width) / 2
-		for logo in logos:
-			img.paste(logo, (round(x), round((top + bottom - logo.height) / 2)), logo)
-			x += logo.width + HEADER_SOURCE_GAP
-		return round(start), round(x - HEADER_SOURCE_GAP)
+		row = paste_header_logo_row(img, logos, left, right, (top + bottom) / 2, HEADER_SOURCE_GAP, snap=False)
+		return None if row is None else (round(row[0]), round(row[1]))
 
 	def _draw_header_money(self, img, box, turn=0):
 		"""Dollar bills on the wind filling the header's free stretch: the art's bills and coins

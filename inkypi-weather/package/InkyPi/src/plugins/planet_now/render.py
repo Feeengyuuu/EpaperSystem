@@ -21,7 +21,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageOps
 
 from utils.doodle_backdrop import paint_doodles
-from utils.local_wordmark import load_source_logo, paste_local_wordmark
+from utils.local_wordmark import load_source_logo, paste_header_logo_row, paste_local_wordmark
 from utils.page_canvas import PageCanvas
 from utils.safe_image import ImageLimits, safe_open_image
 from utils.space_typography import SpaceCanvas
@@ -198,19 +198,7 @@ def _header_sources(canvas, left, right):
     a row too wide gives up HEADER_LOGO_SPARE first, then its last logos. Returns the row's
     (left, right), or None when nothing was drawn."""
     row = {name: _header_logo(name, canvas.palette["night"]) for name in HEADER_LOGOS}
-    row = {name: logo for name, logo in row.items() if logo is not None}
-    spare = [name for name in HEADER_LOGO_SPARE if name in row]
-    while row and sum(logo.width for logo in row.values()) + HEADER_LOGO_GAP * (len(row) - 1) > right - left:
-        row.pop(spare.pop(0) if spare else next(reversed(row)))
-    logos = list(row.values())
-    if not logos:
-        return None
-    width = sum(logo.width for logo in logos) + HEADER_LOGO_GAP * (len(logos) - 1)
-    x = start = round((left + right - width) / 2)
-    for logo in logos:
-        _paste(canvas, logo, (x, round(28 - logo.height / 2)))
-        x += logo.width + HEADER_LOGO_GAP
-    return start, x - HEADER_LOGO_GAP
+    return paste_header_logo_row(canvas.image, row, left, right, 28, HEADER_LOGO_GAP, HEADER_LOGO_SPARE)
 
 
 @lru_cache(maxsize=1)

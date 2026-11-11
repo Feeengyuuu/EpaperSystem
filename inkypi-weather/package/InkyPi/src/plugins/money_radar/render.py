@@ -9,9 +9,10 @@ from pathlib import Path
 
 from PIL import Image, ImageOps
 
+from plugins.base_plugin.cover_gallery import SOURCE_LOGO_DIR
 from utils.doodle_backdrop import paint_doodles
 from utils.flat_icons import draw_icon
-from utils.local_wordmark import load_source_logo, paste_local_wordmark, paste_source_logos
+from utils.local_wordmark import load_source_logo, paste_header_logo_row, paste_local_wordmark, source_logo_width
 from utils.page_canvas import PageCanvas
 from utils.safe_image import ImageLimits, safe_open_base64_image, safe_open_image
 from utils.theme_utils import relative_luminance
@@ -49,6 +50,9 @@ SOURCE_LOGO_ROW = ("ecb", "fred", "bls", "sec", "yahoo_finance", "coingecko", "f
 EARNINGS_SOURCE_LOGOS = {"nasdaq": "nasdaq"}
 SOURCE_LOGO_HEIGHTS = range(26, 11, -1)
 SOURCE_LOGO_GAP = 12
+# The SEC's, Yahoo Finance's and Nasdaq's logos are the stock page's too: they live with the
+# shared source logos (base_plugin/assets/source_logos), the rest in this page's assets/logos.
+SHARED_SOURCE_LOGOS = frozenset({"sec", "yahoo_finance", "nasdaq"})
 # Logos whose black lettering takes the night ink (True: every dark part, as Yahoo prints its
 # wordmark white on dark grounds); the seals and emblems keep their printed colours.
 SOURCE_LOGO_INKED = {"fred": False, "coingecko": False, "nasdaq": False, "yahoo_finance": True}
@@ -661,11 +665,6 @@ def _draw_chip(canvas, box, symbol, radius):
     canvas.text(centre, symbol or "—", 10, text, anchor="mm", width=box[2] - box[0] - 4)
 
 
-def _ticker_chip(canvas, x, y, symbol, width=42):
-    _draw_chip(canvas, (x, y - 8, x + width, y + 8), symbol, 3)
-    return width
-
-
 def _news(canvas, items, now, left, right, top, rows):
     from .news_rows import news
     return news(canvas, items, now, left, right, top, rows)
@@ -859,18 +858,19 @@ def _source_logos(canvas, left, right, night, earnings_source=None):
     fits; nothing when even the smallest do not. Returns the row's (left, right), or None."""
     ink = canvas.color("ink") if night else None
     calendar = EARNINGS_SOURCE_LOGOS.get(earnings_source, "finnhub")
-    names = tuple(calendar if name == "finnhub" else name for name in SOURCE_LOGO_ROW)
+    paths = {name: (SOURCE_LOGO_DIR if name in SHARED_SOURCE_LOGOS else ASSETS / "logos") / f"{name}.png"
+             for name in (calendar if name == "finnhub" else name for name in SOURCE_LOGO_ROW)}
+    # The row's width at each height follows from the logos' proportions, so only the height
+    # that fits is drawn.
     for height in SOURCE_LOGO_HEIGHTS:
-        row = [load_source_logo(ASSETS / "logos" / f"{name}.png", height, ink if name in SOURCE_LOGO_INKED else None,
-                                dark_parts=SOURCE_LOGO_INKED.get(name, False)) for name in names]
-        row = [logo for logo in row if logo is not None]
-        width = sum(logo.width for logo in row) + SOURCE_LOGO_GAP * (len(row) - 1)
-        if row and width <= right - left:
+        widths = [width for width in (source_logo_width(path, height) for path in paths.values()) if width is not None]
+        if widths and sum(widths) + SOURCE_LOGO_GAP * (len(widths) - 1) <= right - left:
             break
     else:
         return None
-    start = (left + right - width) / 2
-    return start, paste_source_logos(canvas.image, row, start, 28, SOURCE_LOGO_GAP)
+    row = [load_source_logo(path, height, ink if name in SOURCE_LOGO_INKED else None,
+                            dark_parts=SOURCE_LOGO_INKED.get(name, False)) for name, path in paths.items()]
+    return paste_header_logo_row(canvas.image, row, left, right, 28, SOURCE_LOGO_GAP, snap=False)
 
 
 def render_page(dimensions, payload, settings, now):

@@ -752,13 +752,6 @@ class TicketmasterEvents(WeekPageMixin, BoxOfficeTopMovies):
         draw.text(((w - (bbox[2] - bbox[0])) // 2, (h - (bbox[3] - bbox[1])) // 2), label, fill=label_color, font=font)
         return image
 
-    def _venue_line(self, event):
-        place = event.venue_name or "Venue TBA"
-        city = ", ".join(value for value in [event.city, event.state_code] if value)
-        if city:
-            return f"{place} - {city}"
-        return place
-
     def _event_color(self, event, colors):
         return category_color(event_category(event), colors)
 

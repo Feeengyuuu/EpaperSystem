@@ -5,12 +5,6 @@
     "note": "环球此刻 cobalt lettering with a gold orbit ring and a small Earth",
     "sha256": "d7aee93450257dcb43f17c1d886a95ffceaf6fdecfde7adea6d4d9415fbfe438"
   },
-  "header_art.png": {
-    "generator": "Creative Claw image/gpt-image-2.5-sunburst (1536x512, transparent)",
-    "job_id": "eaecae86-4543-4227-9d80-8e02bbf065aa",
-    "note": "sun, wind turbine, dish, globe, rocket, comet",
-    "sha256": "f09d4ccd36fe2279882fb87d2d49cb965e35ae327bcba8c66d56fd81caab700b"
-  },
   "section-grid.png": {
     "generator": "Creative Claw image/gpt-image-2.5-sunburst (1536x512, transparent)",
     "job_id": "f482305e-4c92-44be-a310-8a478d2d293f",

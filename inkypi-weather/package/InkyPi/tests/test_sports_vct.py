@@ -10,7 +10,7 @@ from urllib.parse import unquote
 from PIL import Image
 
 import plugins.sports_dashboard.sports_dashboard as sports_dashboard_module
-from plugins.sports_dashboard import event_ranking
+from plugins.sports_dashboard import esports_render, event_ranking
 from plugins.sports_dashboard.common import (
     _ACTIVE_COLORS,
     DAY_COLORS,
@@ -258,3 +258,12 @@ def test_the_empty_upcoming_line_names_the_league_by_its_logo_and_fits_the_sideb
     drawn.clear(), pasted.clear()
     line({**worlds, "logo_path": "missing.png"})
     assert drawn == ["No more Worlds schedule"] and not pasted
+    # A sidebar too narrow for a mark that can be read keeps the whole line in type, never a 1 px logo.
+    drawn.clear(), pasted.clear()
+    loaded = []
+    real_load = plugin._load_local_logo
+    monkeypatch.setattr(plugin, "_load_local_logo", lambda path, size, **options: loaded.append(tuple(size)) or real_load(
+        path, size, **options))
+    line(plugin._lol_sidebar_config("LPL"), right=150)
+    assert drawn == ["No more LPL schedule"] and not pasted
+    assert all(width >= esports_render.EMPTY_LINE_LOGO_MIN_ROOM for width, _height in loaded)

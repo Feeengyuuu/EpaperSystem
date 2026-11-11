@@ -364,16 +364,6 @@ class ProRenderMixin:
         logo = logo.convert("RGBA")
         self._wash(image, logo, (box[2] - 16 - logo.width, box[3] - 12 - logo.height), CARD_MARK_ALPHA, box)
 
-    def _champion_wash(self, image, key, box):
-        """The latest game's champion (official loading art) along the card's right, fading leftward."""
-        art = self._image_from_url(CHAMPION_LOADING_URL.format(key=key), key) if key else None
-        if art is None:
-            return
-        art = ImageOps.contain(art.convert("RGBA"), (box[2] - box[0], box[3] - box[1] - 2), method=Image.Resampling.LANCZOS)
-        fade = Image.linear_gradient("L").rotate(90, expand=True)
-        art.putalpha(ImageChops.multiply(art.getchannel("A"), fade.resize(art.size)))
-        self._wash(image, art, (box[2] - 1 - art.width, box[1] + 1), CARD_ART_ALPHA, box)
-
     def _id_font(self, size):
         """The pro's ID in the LoL page's face at its heaviest, else Leaguepedia's Rubik."""
         try:

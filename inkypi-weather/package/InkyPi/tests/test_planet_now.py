@@ -10,6 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from plugins.planet_now import render, sources  # noqa: E402
+from utils.local_wordmark import paste_source_logos  # noqa: E402
 
 HEADER_TOP = render.HEADER + 6
 
@@ -500,14 +501,22 @@ def test_the_header_names_the_sources_by_their_logos_between_the_title_and_the_d
     row = image.crop((left, 8, right + 1, 48))
     assert sum(pixel != paper for pixel in row.get_flattened_data()) > 2000
     # The space sources stay when the row is tight: the spare ones go first.
-    kept = []
-    monkeypatch.setattr(render, "_paste", lambda canvas, logo, xy, mask=None: kept.append(logo.size))
-    canvas = render.PageCanvas(render._palette({"_inkypi_theme": {"mode": mode}}))
-    assert render._header_sources(canvas, 0, 2000) is not None and len(kept) == len(render.HEADER_LOGOS)
-    kept.clear()
-    full = [render._header_logo(name, mode == "night") for name in render.HEADER_LOGOS]
-    spare = render._header_logo(render.HEADER_LOGO_SPARE[0], mode == "night")
-    width = sum(logo.width for logo in full) + render.HEADER_LOGO_GAP * (len(full) - 1)
-    render._header_sources(canvas, 0, width - 1)
-    assert len(kept) == len(full) - 1 and spare.size not in kept[:1] and kept[-1] == full[-1].size
+    def fresh():
+        return render.PageCanvas(render._palette({"_inkypi_theme": {"mode": mode}}))
+
+    def expected(names, left, right):
+        page = fresh()
+        logos = [render._header_logo(name, mode == "night") for name in names]
+        width = sum(logo.width for logo in logos) + render.HEADER_LOGO_GAP * (len(logos) - 1)
+        end = paste_source_logos(page.image, logos, round((left + right - width) / 2), 28, render.HEADER_LOGO_GAP)
+        return page.image.tobytes(), end - width, width
+
+    canvas = fresh()
+    pixels, start, width = expected(render.HEADER_LOGOS, 0, 2000)
+    assert render._header_sources(canvas, 0, 2000) == (start, start + width) and canvas.image.tobytes() == pixels
+    canvas = fresh()
+    kept = [name for name in render.HEADER_LOGOS if name != render.HEADER_LOGO_SPARE[0]]
+    pixels, start, tight = expected(kept, 0, width - 1)
+    assert render._header_sources(canvas, 0, width - 1) == (start, start + tight) and canvas.image.tobytes() == pixels
+    assert tight < width and kept[-1] == render.HEADER_LOGOS[-1]
     assert render._header_sources(canvas, 0, 5) is None

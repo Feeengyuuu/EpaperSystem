@@ -52,7 +52,6 @@ KINDS = {
     "数字": ((5, 150, 105), (52, 211, 153)),
     "游戏": ((124, 58, 237), (172, 140, 255)),
 }
-KIND_ORDER = ("世界", "影音", "天象", "数字", "游戏")
 # NYT Games' own tile colours (Wordle's green), as its icon prints them.
 WORDLE_GREEN = (0x6A, 0xAA, 0x64)
 # Fear & Greed bands: alternative.me's edges and names, a colour each (day, night).

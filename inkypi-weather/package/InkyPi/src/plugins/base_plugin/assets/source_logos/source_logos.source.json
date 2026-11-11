@@ -144,6 +144,39 @@
         64
       ],
       "sha256": "da7496ffa1c76a69ba594358d9ebcf4363849d872ddf5ce70d2d59b4c3aaed67"
+    },
+    "sec": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1c/Seal_of_the_United_States_Securities_and_Exchange_Commission.svg/500px-Seal_of_the_United_States_Securities_and_Exchange_Commission.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_the_United_States_Securities_and_Exchange_Commission.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "1ab6bcc3262299b1f8e1d59ef129eb70f8f7805e19af62dee2e9c74d71a92dc6",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "c6237c67d2b4f3235c335d718f99bbaea2b228295fc241f5374b8df117df28fe"
+    },
+    "yahoo_finance": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8f/Yahoo%21_Finance_logo_2021.png/500px-Yahoo%21_Finance_logo_2021.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Yahoo!_Finance_logo_2021.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "60bb20dad631cb8af7639076031375bbc68d9930608949863ac3b073199eab81",
+      "size": [
+        175,
+        64
+      ],
+      "sha256": "bf59493871292e84a3710cebe20ca701418ec0a6fb6cd1d312238685355631be"
+    },
+    "nasdaq": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/87/NASDAQ_Logo.svg/500px-NASDAQ_Logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:NASDAQ_Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "0788ebd18e5b40099a01147c2236c3191bf0db662a42f3f960cdaaf0fb976967",
+      "size": [
+        224,
+        64
+      ],
+      "sha256": "1aa30f8d0dc7a9ce494efa36b5a373908b2a63d0216b2c86ce8864a6b6d5d252"
     }
   }
 }

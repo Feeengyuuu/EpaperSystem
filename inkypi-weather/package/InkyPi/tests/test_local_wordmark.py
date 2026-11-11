@@ -10,9 +10,12 @@ from utils import local_wordmark
 
 @pytest.fixture(autouse=True)
 def empty_wordmark_cache():
-    local_wordmark._load_fitted_wordmark.cache_clear()
+    caches = (local_wordmark._load_fitted_wordmark, local_wordmark._load_source_logo, local_wordmark._sized_source_logo)
+    for cache in caches:
+        cache.cache_clear()
     yield
-    local_wordmark._load_fitted_wordmark.cache_clear()
+    for cache in caches:
+        cache.cache_clear()
 
 
 @pytest.mark.parametrize("paper", [(250, 248, 239), (9, 16, 13)])
@@ -124,17 +127,6 @@ def test_left_alignment_pins_the_artwork_and_reports_its_box(tmp_path):
     assert ImageChops.difference(canvas, Image.new("RGB", canvas.size, "white")).getbbox() == (10, 10, 40, 30)
 
 
-def test_header_art_centres_in_the_free_span_and_skips_a_narrow_one(tmp_path):
-    path = tmp_path / "header.png"
-    Image.new("RGBA", (300, 60), (200, 40, 40, 255)).save(path)
-    canvas = Image.new("RGB", (800, 60), (255, 255, 255))
-
-    assert local_wordmark.paste_header_art(canvas, path, 500, 590) is False
-    pasted = local_wordmark.paste_header_art(canvas, path, 300.4, 660.6)
-    assert pasted and pasted[0] >= 314 and pasted[2] <= 646 and pasted[1] >= 6 and pasted[3] <= 50
-    assert pasted[0] - 314 in {646 - pasted[2], 646 - pasted[2] - 1}
-
-
 def test_source_logo_is_cropped_scaled_and_inked_only_where_asked(tmp_path):
     path = tmp_path / "logo.png"
     logo = Image.new("RGBA", (60, 30), (0, 0, 0, 0))
@@ -156,18 +148,143 @@ def test_source_logo_is_cropped_scaled_and_inked_only_where_asked(tmp_path):
     assert local_wordmark.load_source_logo(tmp_path / "missing.png", 10) is None
 
 
-def test_money_radar_names_its_sources_by_logo():
-    logos = Path(local_wordmark.__file__).resolve().parents[1] / "plugins" / "money_radar" / "assets" / "logos"
-    record = (logos / "logos.source.json").read_text(encoding="utf-8")
-    for name in ("ecb", "fred", "bls", "sec", "yahoo_finance", "coingecko", "finnhub"):
-        assert (logos / f"{name}.png").is_file() and f'"{name}"' in record
+def _three_part_logo(path):
+    logo = Image.new("RGBA", (60, 30), (0, 0, 0, 0))
+    logo.paste((20, 20, 20, 255), (5, 5, 25, 25))
+    logo.paste((80, 20, 160, 255), (25, 5, 45, 25))
+    logo.paste((230, 30, 30, 255), (45, 5, 55, 25))
+    logo.save(path)
 
 
-@pytest.mark.parametrize("plugin", ["nature_nearby", "tech_play"])
-def test_aggregate_pages_ship_their_header_art(plugin):
+def test_a_source_logo_is_sized_and_inked_once_and_handed_out_as_the_callers_own(tmp_path, monkeypatch):
+    path = tmp_path / "logo.png"
+    _three_part_logo(path)
+    ink = (240, 240, 240)
+
+    first = local_wordmark.load_source_logo(path, 10, ink, dark_parts=True)
+    monkeypatch.setattr(Image.Image, "resize", lambda *args, **kwargs: pytest.fail("the logo was scaled again"))
+    again = local_wordmark.load_source_logo(path, 10, list(ink) + [255], dark_parts=True)
+    monkeypatch.undo()
+
+    # Scaled and inked once for both draws: the same pixels in two images that do not share them.
+    assert local_wordmark._sized_source_logo.cache_info()[:2] == (1, 1)
+    assert again is not first and again.size == first.size and again.tobytes() == first.tobytes()
+    first.paste((1, 2, 3, 255), (0, 0, 25, 10))
+    assert local_wordmark.load_source_logo(path, 10, ink, dark_parts=True).tobytes() == again.tobytes()
+    # Another height, ink or treatment is another picture; without ink, dark_parts changes nothing.
+    assert local_wordmark.load_source_logo(path, 12, ink, dark_parts=True).size == (30, 12)
+    assert local_wordmark.load_source_logo(path, 10, ink).tobytes() != again.tobytes()
+    assert local_wordmark.load_source_logo(path, 10, (9, 9, 9), dark_parts=True).tobytes() != again.tobytes()
+    plain = local_wordmark.load_source_logo(path, 10)
+    assert plain.tobytes() != again.tobytes()
+    assert local_wordmark.load_source_logo(path, 10, dark_parts=True).tobytes() == plain.tobytes()
+    assert local_wordmark._sized_source_logo.cache_info().currsize == 5
+    assert local_wordmark.load_source_logo(path, 0) is None
+
+
+def test_a_changed_source_logo_file_is_read_again(tmp_path):
+    path = tmp_path / "logo.png"
+    Image.new("RGBA", (40, 20), (200, 30, 30, 255)).save(path)
+    before = local_wordmark.load_source_logo(path, 10)
+
+    Image.new("RGBA", (90, 30), (30, 30, 200, 255)).save(path)
+    after = local_wordmark.load_source_logo(path, 10)
+    path.unlink()
+
+    assert before.size == (20, 10) and before.getpixel((5, 5))[:3] == (200, 30, 30)
+    assert after.size == (30, 10) and after.getpixel((5, 5))[:3] == (30, 30, 200)
+    assert local_wordmark.load_source_logo(path, 10) is None
+
+
+def test_the_source_logo_cache_is_bounded(tmp_path):
+    path = tmp_path / "logo.png"
+    Image.new("RGBA", (40, 20), (200, 30, 30, 255)).save(path)
+    slots = local_wordmark._sized_source_logo.cache_info().maxsize
+
+    for height in range(1, slots + 20):
+        assert local_wordmark.load_source_logo(path, height).height == height
+
+    assert 0 < slots <= 256 and local_wordmark._sized_source_logo.cache_info().currsize == slots
+
+
+def test_a_source_logos_width_is_known_without_scaling_it(tmp_path, monkeypatch):
+    path = tmp_path / "logo.png"
+    _three_part_logo(path)
+    widths = {height: local_wordmark.load_source_logo(path, height).width for height in range(1, 40)}
+    monkeypatch.setattr(Image.Image, "resize", lambda *args, **kwargs: pytest.fail("the logo was scaled"))
+
+    assert {height: local_wordmark.source_logo_width(path, height) for height in widths} == widths
+    assert local_wordmark.source_logo_width(path, 0) is None
+    assert local_wordmark.source_logo_width(tmp_path / "missing.png", 10) is None
+
+
+def _block(width, height, colour):
+    return Image.new("RGBA", (width, height), (*colour, 255))
+
+
+def _columns(image, colour):
+    return [x for x in range(image.width) if any(image.getpixel((x, y)) == colour for y in range(image.height))]
+
+
+def test_a_header_logo_row_is_centred_and_gives_up_its_spare_logos_then_its_last():
+    red, green, blue, gold = (200, 30, 30), (30, 160, 60), (30, 60, 200), (220, 170, 20)
+    logos = {"red": _block(30, 20, red), "green": _block(40, 10, green), "missing": None,
+             "blue": _block(20, 16, blue), "gold": _block(10, 20, gold)}
+
+    def row(left, right, **options):
+        image = Image.new("RGB", (300, 40), (255, 255, 255))
+        bounds = local_wordmark.paste_header_logo_row(image, logos, left, right, 20, 10, **options)
+        return image, bounds
+
+    # All four (the missing one left out) centred in the span, each centred on the middle line.
+    image, bounds = row(50, 250)
+    assert bounds == (85, 215)
+    assert (_columns(image, red)[0], _columns(image, green)[0], _columns(image, blue)[0], _columns(image, gold)[0]) == (
+        85, 125, 175, 205)
+    assert image.getpixel((130, 14)) == (255, 255, 255) and image.getpixel((130, 15)) == green
+    assert image.getpixel((130, 24)) == green and image.getpixel((130, 25)) == (255, 255, 255)
+    # Too narrow by a pixel: the spare logos go first, in their order, then the row's last.
+    image, bounds = row(0, 129, spare=("blue", "green"))
+    assert bounds[1] - bounds[0] == 100 and not _columns(image, blue) and _columns(image, green)
+    image, bounds = row(0, 99, spare=("blue", "green"))
+    assert bounds[1] - bounds[0] == 50 and not _columns(image, green) and _columns(image, gold)
+    image, bounds = row(0, 49, spare=("blue", "green"))
+    assert bounds == (10, 40) and _columns(image, red) and not _columns(image, gold)
+    image, bounds = row(0, 29, spare=("blue", "green"))
+    assert bounds is None and image.getcolors() == [(300 * 40, (255, 255, 255))]
+    # A list of images is a row too.
+    image = Image.new("RGB", (300, 40), (255, 255, 255))
+    assert local_wordmark.paste_header_logo_row(image, [logos["red"], None, logos["gold"]], 0, 100, 20, 10) == (25, 75)
+    assert local_wordmark.paste_header_logo_row(image, [], 0, 100, 20, 10) is None
+
+
+def test_a_header_logo_row_starts_on_a_whole_pixel_unless_it_keeps_its_exact_centre():
+    logos = [_block(31, 10, (200, 30, 30)), _block(20, 10, (30, 60, 200))]
+    snapped, exact = (Image.new("RGB", (200, 30), (255, 255, 255)) for _ in range(2))
+
+    # 61 px of logos and gap in a 100 px span: the exact start is 19.5.
+    assert local_wordmark.paste_header_logo_row(snapped, logos, 0, 100, 15, 10) == (20, 81)
+    assert local_wordmark.paste_header_logo_row(exact, logos, 0, 100, 15, 10, snap=False) == (19.5, 80.5)
+    assert _columns(snapped, (30, 60, 200))[0] - _columns(snapped, (200, 30, 30))[-1] == 11
+    assert _columns(exact, (200, 30, 30))[0] == round(19.5) and _columns(exact, (30, 60, 200))[0] == round(60.5)
+
+
+def test_the_pages_name_their_sources_by_logo():
+    plugins = Path(local_wordmark.__file__).resolve().parents[1] / "plugins"
+    money = plugins / "money_radar" / "assets" / "logos"
+    record = (money / "logos.source.json").read_text(encoding="utf-8")
+    for name in ("ecb", "fred", "bls", "coingecko", "finnhub"):
+        assert (money / f"{name}.png").is_file() and f'"{name}"' in record
+    # The logos the money page and the stock page both print are kept once, with the shared ones.
+    shared = plugins / "base_plugin" / "assets" / "source_logos"
+    record = (shared / "source_logos.source.json").read_text(encoding="utf-8")
+    for name in ("sec", "yahoo_finance", "nasdaq"):
+        assert (shared / f"{name}.png").is_file() and f'"{name}"' in record
+        assert not (money / f"{name}.png").exists()
+    assert not list((plugins / "stocktracker" / "assets").glob("sources/*.png"))
+
+
+@pytest.mark.parametrize("plugin", ["nature_nearby", "tech_play", "planet_now"])
+def test_aggregate_pages_do_not_ship_header_art_they_no_longer_draw(plugin):
     assets = Path(local_wordmark.__file__).resolve().parents[1] / "plugins" / plugin / "assets"
-    with Image.open(assets / "header_art.png") as source:
-        art = source.convert("RGBA")
-    assert art.height == 96 and art.width > 3 * art.height
-    assert art.getchannel("A").getextrema() == (0, 255)
-    assert (assets / "header_art.source.json").is_file()
+    assert not list(assets.glob("header_art*"))

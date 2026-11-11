@@ -46,6 +46,9 @@ CS2_TEAM_ALIASES = {"navi": "natusvincere"}
 # Polymarket's logo (assets/logos/polymarket.png) on a LoL card's stage line, this tall.
 STAGE_LOGO_HEIGHT = 10
 ESPORTS_SOURCE_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "sources")
+# The "no more ... schedule" line names its league by logo only with this much room for it; in
+# less the mark would be a smudge, so the line stays in type.
+EMPTY_LINE_LOGO_MIN_ROOM = 24
 
 SportsDashboard = None
 
@@ -2566,7 +2569,8 @@ class EsportsRenderMixin:
         in the line like a word: Worlds by the edition wordmark its header wears, the others by
         their marks. The league's name stays in type when the logo is not at hand, or when the mark
         is too close to the page to be seen on it (a dark mark at night). For a wide logo the
-        words step down a size or two, then the logo is scaled, so the line ends by ``right``."""
+        words step down a size or two, then the logo is scaled, so the line ends by ``right``; with
+        under EMPTY_LINE_LOGO_MIN_ROOM left for it the whole line is set in type."""
         font = self._font(14, True)
         line = config["empty_upcoming"]
         # VCT's one config stands for several leagues, each with a mark of its own: it stays in type.
@@ -2580,8 +2584,11 @@ class EsportsRenderMixin:
                 if logo.width <= room:
                     break
             else:
-                logo = self._load_local_logo(wordmark or config["logo_path"], (max(1, room), EMPTY_LINE_LOGO[1]),
-                                             alpha_threshold=8)
+                if room < EMPTY_LINE_LOGO_MIN_ROOM:
+                    logo, font = None, self._font(14, True)
+                else:
+                    logo = self._load_local_logo(wordmark or config["logo_path"], (room, EMPTY_LINE_LOGO[1]),
+                                                 alpha_threshold=8)
         if logo is not None and not wordmark and config["logo_path"] != LOCAL_WORLDS_LOGO_PATH:
             solid = [pixel[:3] for pixel in logo.get_flattened_data() if pixel[3] >= 128]
             mean = [sum(channel) / len(solid) for channel in zip(*solid)] if solid else COLORS["panel"][:3]

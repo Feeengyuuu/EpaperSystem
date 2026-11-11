@@ -15,7 +15,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageOps
 
 from utils.flat_icons import draw_icon
-from utils.local_wordmark import paste_local_wordmark
+from utils.local_wordmark import paste_header_logo_row, paste_local_wordmark
 from utils.page_canvas import PageCanvas
 from utils.picture_grounds import (
     blend_drawing, cut_flat_ground, drawn_on_white, light_on_dark, readable_on, trim_white, white_share,
@@ -122,26 +122,24 @@ HEADER_LOGO_SPARE = ("steam", "discord", "cloudflare", "github")
 def _header_sources(canvas, left, right):
     """The sources' logos in one centred row between ``left`` and ``right``, a dark mark made
     readable on the night page; the row's (left, right), or None when nothing was drawn."""
-    row = {}
-    for name in HEADER_LOGOS:
-        height = HEADER_LOGO_HEIGHTS.get(name, HEADER_LOGO_HEIGHT)
-        logo = _logo(name, height, max_width=height * 5)
-        if logo is not None:
-            row[name] = readable_on(logo, canvas.color("paper"), canvas.color("ink"))
-    spare = [name for name in HEADER_LOGO_SPARE if name in row]
-    while row and sum(logo.width for logo in row.values()) + HEADER_LOGO_GAP * (len(row) - 1) > right - left:
-        row.pop(spare.pop(0) if spare else next(reversed(row)))
-    if not row:
-        return None
-    width = sum(logo.width for logo in row.values()) + HEADER_LOGO_GAP * (len(row) - 1)
-    x = start = round((left + right - width) / 2)
-    for logo in row.values():
-        canvas.image.paste(logo, (x, round(28 - logo.height / 2)), logo)
-        x += logo.width + HEADER_LOGO_GAP
-    return start, x - HEADER_LOGO_GAP
+    paper, ink = tuple(canvas.color("paper")[:3]), tuple(canvas.color("ink")[:3])
+    row = {name: _header_logo(name, HEADER_LOGO_HEIGHTS.get(name, HEADER_LOGO_HEIGHT), paper, ink)
+           for name in HEADER_LOGOS}
+    return paste_header_logo_row(canvas.image, row, left, right, 28, HEADER_LOGO_GAP, HEADER_LOGO_SPARE)
 
 
+@lru_cache(maxsize=32)
+def _header_logo(name, height, paper, ink):
+    """A source's logo for the header row on a ``paper`` page, its parts too close to the paper
+    in ``ink``; None without the file. Kept per page colours, so a redraw does not walk its pixels."""
+    logo = _logo(name, height, max_width=height * 5)
+    return None if logo is None else readable_on(logo, paper, ink)
+
+
+@lru_cache(maxsize=32)
 def _logo(name, height, max_width=None):
+    """A source's official logo from assets/ within ``height`` (and ``max_width``, three times
+    the height unless given), or None without the file. Shared between draws: copy before changing."""
     path = ASSETS / f"logo-{name}.png"
     if not path.is_file():
         return None

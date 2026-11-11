@@ -29,9 +29,8 @@ LEAD_BOX = (66, 146)
 # The header's wordmark box; the newsroom art stands on the rule beside it.
 WORDMARK_BOX = (18, 5, (172, 48))
 LEAD_ART_WIDTH = 170
-# The brief's outlets as their logos take more of the lead band than the medallion: rows of
-# logos sized by their shapes, at most this tall, the lead's outlet first.
-LEAD_LOGOS_WIDTH = 250
+# The brief's outlets as their logos: rows of logos sized by their shapes, at most this tall,
+# the lead's outlet first.
 SOURCE_LOGO_MAX_HEIGHT = 30
 # In the header the logos stand in rows between the title and the date, at most this tall.
 HEADER_LOGO_MAX_HEIGHT = 22
@@ -92,8 +91,6 @@ TOPIC_ACCENTS = {
 # fact) wraps under it at the first of LEAD_FACT_STEPS (size, line height) that shows all of it.
 LEAD_TITLE_SIZES = (34, 32, 30, 28, 26, 24)
 LEAD_FACT_STEPS = ((15, 19), (14, 17), (13, 16))
-# The width the outlets' logos give up to a fact that still does not fit.
-LEAD_LOGOS_YIELD = 60
 GLOBE_MIN_HEIGHT = 60
 # The most a short column widens each gap between its stories.
 JUSTIFY_GAP_MAX = 16
@@ -281,7 +278,7 @@ class NewsPage:
             self.p._draw_title_background(self.img, (title_right + 12, 1, meta_left - 14, RULE_Y + 1), align="bottom")
         self.d.line((MARGIN, RULE_Y, right, RULE_Y), fill=c["ink"], width=2)
 
-    def lead(self, lead, width, art_left, logos=(), art=True):
+    def lead(self, lead, width, art_left, art=True):
         c = self.c
         top, bottom = LEAD_BOX
         if not lead:
@@ -315,12 +312,6 @@ class NewsPage:
         # for two lines under it takes room from the headline and its own size (see lead_sizes).
         font, size = self.headline_font(lead["title"], brief_w)
         size, fact_size, fact_line, fact_lines, whole = self.lead_sizes(lead.get("why"), size, brief_w, indent)
-        if not whole and logos:
-            # Still too long: the outlets' logos close up to give the fact a wider column.
-            art_left += LEAD_LOGOS_YIELD
-            brief_w += LEAD_LOGOS_YIELD
-            font, size = self.headline_font(lead["title"], brief_w)
-            size, fact_size, fact_line, fact_lines, whole = self.lead_sizes(lead.get("why"), size, brief_w, indent)
         if size != font.size:
             font, size = self.headline_font(lead["title"], brief_w, LEAD_TITLE_SIZES[LEAD_TITLE_SIZES.index(size):])
         headline = self.clip_with(lead["title"], font, brief_w)
@@ -351,9 +342,6 @@ class NewsPage:
             note_y = y + len(fact) * fact_line + 2
             self.d.line((text_x, note_y + 8, text_x + 14, note_y + 8), fill=c["ink"], width=1)
             self.text((text_x + 20, note_y + 8), self.clip(note, 12, brief_w - 20, False), 12, False, c["ink"], "lm")
-        if logos:
-            self.source_wall((art_left, top + 2, width - MARGIN, bottom - 2), logos, lead.get("source_logo"))
-            return
         if not art:
             return
         kind = news_art.topic_kind(lead.get("tag"), lead["title"])

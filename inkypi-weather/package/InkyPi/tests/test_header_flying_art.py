@@ -48,9 +48,11 @@ def test_stock_header_names_its_sources_by_logo_between_the_wordmark_and_the_sou
     paper = _active_stock_colors()["paper"]
     marked = [x for x in range(left, right) if any(image.getpixel((x, y)) != paper for y in range(top, bottom))]
     assert len(marked) > 120 and min(marked) > left and max(marked) < right
+    # The logos are the shared source logos (the money page prints them too), each with its record.
+    assert Path(stocktracker.HEADER_SOURCE_DIR) == cover_gallery.SOURCE_LOGO_DIR
+    records = json.loads((cover_gallery.SOURCE_LOGO_DIR / "source_logos.source.json").read_text(encoding="utf-8"))["logos"]
     for name in stocktracker.HEADER_SOURCES:
-        assert (Path(stocktracker.HEADER_SOURCE_DIR) / f"{name}.png").is_file()
-    assert (Path(stocktracker.HEADER_SOURCE_DIR) / "logos.source.json").is_file()
+        assert (cover_gallery.SOURCE_LOGO_DIR / f"{name}.png").is_file() and records[name]["source"].startswith("https://")
 
 
 def test_stock_header_flies_its_bills_when_no_source_logo_is_at_hand(monkeypatch):

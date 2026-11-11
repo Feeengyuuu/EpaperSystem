@@ -2847,16 +2847,6 @@ def _vehicle_config_text(vehicle, language):
     return "/".join(values)
 
 
-def _tire_warning_level(tires, position):
-    if tires["hard_warnings"][position] is True:
-        return "hard"
-    if tires["soft_warnings"][position] is True:
-        return "soft"
-    if tires["hard_warnings"][position] is None or tires["soft_warnings"][position] is None:
-        return "unknown"
-    return "none"
-
-
 def _tire_abbreviation(position, language):
     return _t(
         language,

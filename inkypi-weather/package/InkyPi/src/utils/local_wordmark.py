@@ -1,5 +1,6 @@
 """Small, bounded local wordmarks with their original colors and transparency."""
 
+from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
 
@@ -69,22 +70,15 @@ def _load_source_logo(path, modified_ns, byte_size):
     return logo.crop(bounds) if bounds else None
 
 
-def load_source_logo(path, height, ink=None, *, dark_parts=False):
-    """A data source's official logo ``height`` px tall (tools/build_source_logos.py), or None
-    without the file. With ``ink`` (a dark page) its near-black lettering takes that colour, and
-    with ``dark_parts`` every dark part of it too (a logo its maker prints light on dark grounds);
-    its coloured parts stay as printed."""
-    try:
-        asset = Path(path)
-        info = asset.stat()
-        logo = _load_source_logo(str(asset), info.st_mtime_ns, info.st_size)
-    except (OSError, ValueError, SyntaxError):
-        return None
-    if logo is None or height < 1:
+@lru_cache(maxsize=128)
+def _sized_source_logo(path, modified_ns, byte_size, height, ink, dark_parts):
+    # One entry per logo as a page draws it (its height and night ink), so a redraw costs neither
+    # the resize nor the pixel walk. The entries are small: a logo is a few dozen pixels tall.
+    logo = _load_source_logo(path, modified_ns, byte_size)
+    if logo is None:
         return None
     logo = logo.resize((max(1, round(logo.width * height / logo.height)), int(height)), Image.Resampling.LANCZOS)
     if ink is not None:
-        ink = tuple(ink)[:3]
         pixels = logo.load()
         for y in range(logo.height):
             for x in range(logo.width):
@@ -97,6 +91,38 @@ def load_source_logo(path, height, ink=None, *, dark_parts=False):
     return logo
 
 
+def load_source_logo(path, height, ink=None, *, dark_parts=False):
+    """A data source's official logo ``height`` px tall (tools/build_source_logos.py), or None
+    without the file. With ``ink`` (a dark page) its near-black lettering takes that colour, and
+    with ``dark_parts`` every dark part of it too (a logo its maker prints light on dark grounds);
+    its coloured parts stay as printed. The image is the caller's own to paste or change."""
+    ink = None if ink is None else tuple(ink)[:3]
+    try:
+        asset = Path(path)
+        info = asset.stat()
+        if height < 1:
+            return None
+        logo = _sized_source_logo(str(asset), info.st_mtime_ns, info.st_size, height, ink,
+                                  bool(dark_parts) and ink is not None)
+    except (OSError, ValueError, SyntaxError):
+        return None
+    return None if logo is None else logo.copy()
+
+
+def source_logo_width(path, height):
+    """How wide load_source_logo makes the logo at ``height``, without scaling it; None without
+    the file. For choosing a row's height before any logo is drawn."""
+    try:
+        asset = Path(path)
+        info = asset.stat()
+        logo = _load_source_logo(str(asset), info.st_mtime_ns, info.st_size)
+    except (OSError, ValueError, SyntaxError):
+        return None
+    if logo is None or height < 1:
+        return None
+    return max(1, round(logo.width * height / logo.height))
+
+
 def paste_source_logos(image, logos, left, middle, gap):
     """``logos`` (images) side by side from ``left``, centred on ``middle``; the row's right end."""
     x = left
@@ -106,10 +132,27 @@ def paste_source_logos(image, logos, left, middle, gap):
     return x - gap if logos else left
 
 
-def paste_header_art(image, path, left, right, *, top=6, bottom=50, gap=14, min_width=80):
-    """Centre decorative artwork in a page header's free span between ``left``
-    (the subtitle's end) and ``right`` (the date's start); False when too narrow."""
-    left, right = int(left) + gap, int(right) - gap
-    if right - left < min_width:
-        return False
-    return paste_local_wordmark(image, path, (left, top, right, bottom))
+def paste_header_logo_row(image, logos, left, right, middle, gap, spare=(), *, snap=True):
+    """A page header's source logos in one row centred between ``left`` and ``right``, each
+    centred on ``middle`` and ``gap`` apart; the row's (left, right), or None when none was drawn.
+
+    ``logos`` is a mapping of name to image in the row's order, or a list of images; a missing
+    logo (None) is left out. A row too wide gives up the ``spare`` names first, in that order,
+    then its last logos. With ``snap`` the row starts on a whole pixel, so its logos stand exactly
+    ``gap`` apart; without it the row keeps its exact centre and each logo is rounded on its own.
+    """
+    row = dict(logos) if isinstance(logos, Mapping) else dict(enumerate(logos))
+    row = {name: logo for name, logo in row.items() if logo is not None}
+    spare = [name for name in spare if name in row]
+
+    def width():
+        return sum(logo.width for logo in row.values()) + gap * (len(row) - 1)
+
+    while row and width() > right - left:
+        row.pop(spare.pop(0) if spare else next(reversed(row)))
+    if not row:
+        return None
+    start = (left + right - width()) / 2
+    if snap:
+        start = round(start)
+    return start, paste_source_logos(image, list(row.values()), start, middle, gap)

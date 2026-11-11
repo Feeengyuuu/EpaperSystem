@@ -24,7 +24,8 @@
   served by Frankfurter), BLS, the SEC seal and Yahoo Finance from Commons (public domain);
   CoinGecko's SVG and Finnhub's mark from their own sites. FRED's logo is the SVG its home page
   shows; the site answers scripts with a bot check, so it was captured in a browser and rasterized
-  once (money_radar/assets/logos/fred.png).
+  once (money_radar/assets/logos/fred.png). The SEC's, Yahoo Finance's and Nasdaq's logos head the
+  stock page too, so they are kept once with the shared source logos (base_plugin/assets/source_logos).
 - Tesla's wordmark from Commons (public domain), for Vehicle Status' footer.
 - 全球票房双城榜: the official China chart's mark (its site's icon, the white ground cleared), The
   Numbers' and Maoyan's logos from their own sites (Maoyan's white lettering, made for its dark
@@ -107,6 +108,8 @@ HEADERS = {"User-Agent": "Mozilla/5.0 InkyPi asset build (https://github.com/Fee
 COMMONS = "https://upload.wikimedia.org/wikipedia/commons/thumb/{path}/500px-{name}.png"
 PUBLIC_DOMAIN = "Public domain (Wikimedia Commons)"
 COVERS = PLUGINS / "base_plugin" / "assets" / "source_logos"
+# The same folder holds the logos more than one page prints (the SEC's, Yahoo Finance's, Nasdaq's).
+SHARED = COVERS
 MONEY = PLUGINS / "money_radar" / "assets" / "logos"
 BOX_OFFICE = PLUGINS / "box_office_top_movies" / "assets" / "logos"
 US_TV = PLUGINS / "us_tv_hot_shows" / "assets" / "logos"
@@ -191,10 +194,10 @@ LOGOS = {
     "sec": ((COMMONS.format(path="1/1c/Seal_of_the_United_States_Securities_and_Exchange_Commission.svg",
                             name="Seal_of_the_United_States_Securities_and_Exchange_Commission.svg"),
              COMMONS_FILE.format(name="Seal_of_the_United_States_Securities_and_Exchange_Commission.svg"), PUBLIC_DOMAIN),
-            [MONEY], 1.0),
+            [SHARED], 1.0),
     "yahoo_finance": (("https://upload.wikimedia.org/wikipedia/commons/thumb/8/8f/Yahoo%21_Finance_logo_2021.png/"
                        "500px-Yahoo%21_Finance_logo_2021.png",
-                       COMMONS_FILE.format(name="Yahoo!_Finance_logo_2021.png"), PUBLIC_DOMAIN), [MONEY], 1.0),
+                       COMMONS_FILE.format(name="Yahoo!_Finance_logo_2021.png"), PUBLIC_DOMAIN), [SHARED], 1.0),
     "coingecko": (("https://static.coingecko.com/s/coingecko-logo-5683263fd3ea8a4f152dd5f7299acfc5f84ee73955428acff22913b8e59e6c54.svg",
                    "https://www.coingecko.com/", "CoinGecko's logo from its own site, shown to name the source"), [MONEY], 1.0),
     "finnhub": (("https://finnhub.io/static/img/webp/finnhub-logo.webp", "https://finnhub.io/",
@@ -416,7 +419,7 @@ LOGOS = {
     "cnn": ((COMMONS.format(path="b/b1/CNN.svg", name="CNN.svg"), COMMONS_FILE.format(name="CNN.svg"), PUBLIC_DOMAIN),
             [MONEY], 1.0),
     "nasdaq": ((COMMONS.format(path="8/87/NASDAQ_Logo.svg", name="NASDAQ_Logo.svg"),
-                COMMONS_FILE.format(name="NASDAQ_Logo.svg"), PUBLIC_DOMAIN), [MONEY], 1.0),
+                COMMONS_FILE.format(name="NASDAQ_Logo.svg"), PUBLIC_DOMAIN), [SHARED], 1.0),
     "douban": ((COMMONS.format(path="a/aa/Douban_logo.svg", name="Douban_logo.svg"),
                 COMMONS_FILE.format(name="Douban_logo.svg"), PUBLIC_DOMAIN), [US_TV], 1.0),
     "justwatch": ((COMMONS.format(path="a/af/JustWatch_Logo.svg", name="JustWatch_Logo.svg"),
