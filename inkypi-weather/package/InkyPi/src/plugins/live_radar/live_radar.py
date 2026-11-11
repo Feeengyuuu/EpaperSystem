@@ -93,7 +93,6 @@ DEFAULT_ROOMS_TEXT = "\n".join(
         "douyu|71415",
         "douyu|48699",
         "douyu|9999",
-        "douyu|7718843",
         "douyu|456302",
         "bilibili|733|fav",
         "bilibili|6",

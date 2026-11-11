@@ -150,6 +150,18 @@ _LIVERADAR_DOUYIN_MACHINE_ROOM = {
     "id": "csgo6657",
     "isFav": False,
 }
+# Then 阳光男孩Aq's Douyu room leaves the list at the owner's request. The machine
+# migration leaves the instance at settings revision 12 (read from the device on 11-11).
+_LIVERADAR_DROP_DOUYU_AQ_MIGRATION = "liveradar_remove_douyu_7718843_v1"
+_LIVERADAR_DROP_DOUYU_AQ_UUID_SHA256_PREFIX = "14c36f0ef259f0b5"
+_LIVERADAR_DROP_DOUYU_AQ_STRUCTURAL_GENERATION = 1
+_LIVERADAR_DROP_DOUYU_AQ_SETTINGS_REVISION = 12
+_LIVERADAR_DROP_DOUYU_AQ_REFRESH_INTERVAL_SECONDS = 5 * 60
+_LIVERADAR_DROP_DOUYU_AQ_ROOM = {
+    "platform": "douyu",
+    "id": "7718843",
+    "isFav": False,
+}
 _NEWSPAPER_REFILL_INTERVAL_SECONDS = 60 * 60
 _VEHICLE_STATUS_LEGACY_REFRESH_INTERVAL_SECONDS = 60 * 60
 _VEHICLE_STATUS_REFRESH_INTERVAL_SECONDS = 3 * 60 * 60
@@ -305,6 +317,7 @@ class Config:
         self._migrate_liveradar_youtube_kai_room()
         self._migrate_liveradar_douyin_quin_room()
         self._migrate_liveradar_douyin_machine_room()
+        self._migrate_liveradar_drop_douyu_aq_room()
         self._migrate_runtime_balance_cadences()
         self._migrate_runtime_balance_soft_threshold(
             cadence_marker_preexisting=cadence_marker_preexisting,
@@ -426,7 +439,7 @@ class Config:
     def _migrate_liveradar_douyu_cake_room(self):
         """Append the requested Douyu room to the exact saved LiveRadar instance."""
 
-        self._append_liveradar_room(
+        self._change_liveradar_room(
             migration=_LIVERADAR_DOUYU_CAKE_MIGRATION,
             uuid_prefix=_LIVERADAR_DOUYU_CAKE_UUID_SHA256_PREFIX,
             structural_generation=_LIVERADAR_DOUYU_CAKE_STRUCTURAL_GENERATION,
@@ -438,7 +451,7 @@ class Config:
     def _migrate_liveradar_kick_quin_room(self):
         """Append Mr.Quin's Kick channel, as a favourite, to the same instance."""
 
-        self._append_liveradar_room(
+        self._change_liveradar_room(
             migration=_LIVERADAR_KICK_QUIN_MIGRATION,
             uuid_prefix=_LIVERADAR_KICK_QUIN_UUID_SHA256_PREFIX,
             structural_generation=_LIVERADAR_KICK_QUIN_STRUCTURAL_GENERATION,
@@ -450,7 +463,7 @@ class Config:
     def _migrate_liveradar_twitch_zack_room(self):
         """Append the Twitch channel zackrawrr to the same instance."""
 
-        self._append_liveradar_room(
+        self._change_liveradar_room(
             migration=_LIVERADAR_TWITCH_ZACK_MIGRATION,
             uuid_prefix=_LIVERADAR_TWITCH_ZACK_UUID_SHA256_PREFIX,
             structural_generation=_LIVERADAR_TWITCH_ZACK_STRUCTURAL_GENERATION,
@@ -462,7 +475,7 @@ class Config:
     def _migrate_liveradar_bilibili_gcores_room(self):
         """Append the Bilibili room 545039 to the same instance."""
 
-        self._append_liveradar_room(
+        self._change_liveradar_room(
             migration=_LIVERADAR_BILIBILI_GCORES_MIGRATION,
             uuid_prefix=_LIVERADAR_BILIBILI_GCORES_UUID_SHA256_PREFIX,
             structural_generation=_LIVERADAR_BILIBILI_GCORES_STRUCTURAL_GENERATION,
@@ -474,7 +487,7 @@ class Config:
     def _migrate_liveradar_douyin_room(self):
         """Append the Douyin room 80596524973 to the same instance."""
 
-        self._append_liveradar_room(
+        self._change_liveradar_room(
             migration=_LIVERADAR_DOUYIN_ROOM_MIGRATION,
             uuid_prefix=_LIVERADAR_DOUYIN_ROOM_UUID_SHA256_PREFIX,
             structural_generation=_LIVERADAR_DOUYIN_ROOM_STRUCTURAL_GENERATION,
@@ -486,7 +499,7 @@ class Config:
     def _migrate_liveradar_bilibili_fengge_room(self):
         """Append the Bilibili room 22230707 to the same instance."""
 
-        self._append_liveradar_room(
+        self._change_liveradar_room(
             migration=_LIVERADAR_BILIBILI_FENGGE_MIGRATION,
             uuid_prefix=_LIVERADAR_BILIBILI_FENGGE_UUID_SHA256_PREFIX,
             structural_generation=_LIVERADAR_BILIBILI_FENGGE_STRUCTURAL_GENERATION,
@@ -498,7 +511,7 @@ class Config:
     def _migrate_liveradar_youtube_speed_room(self):
         """Append IShowSpeed's YouTube channel to the same instance."""
 
-        self._append_liveradar_room(
+        self._change_liveradar_room(
             migration=_LIVERADAR_YOUTUBE_SPEED_MIGRATION,
             uuid_prefix=_LIVERADAR_YOUTUBE_SPEED_UUID_SHA256_PREFIX,
             structural_generation=_LIVERADAR_YOUTUBE_SPEED_STRUCTURAL_GENERATION,
@@ -510,7 +523,7 @@ class Config:
     def _migrate_liveradar_youtube_kai_room(self):
         """Append Kai Cenat's YouTube channel to the same instance."""
 
-        self._append_liveradar_room(
+        self._change_liveradar_room(
             migration=_LIVERADAR_YOUTUBE_KAI_MIGRATION,
             uuid_prefix=_LIVERADAR_YOUTUBE_KAI_UUID_SHA256_PREFIX,
             structural_generation=_LIVERADAR_YOUTUBE_KAI_STRUCTURAL_GENERATION,
@@ -522,7 +535,7 @@ class Config:
     def _migrate_liveradar_douyin_quin_room(self):
         """Append Mr.Quin's Douyin room, as a favourite, to the same instance."""
 
-        self._append_liveradar_room(
+        self._change_liveradar_room(
             migration=_LIVERADAR_DOUYIN_QUIN_MIGRATION,
             uuid_prefix=_LIVERADAR_DOUYIN_QUIN_UUID_SHA256_PREFIX,
             structural_generation=_LIVERADAR_DOUYIN_QUIN_STRUCTURAL_GENERATION,
@@ -534,7 +547,7 @@ class Config:
     def _migrate_liveradar_douyin_machine_room(self):
         """Append 玩机器CSGO's Douyin room to the same instance."""
 
-        self._append_liveradar_room(
+        self._change_liveradar_room(
             migration=_LIVERADAR_DOUYIN_MACHINE_MIGRATION,
             uuid_prefix=_LIVERADAR_DOUYIN_MACHINE_UUID_SHA256_PREFIX,
             structural_generation=_LIVERADAR_DOUYIN_MACHINE_STRUCTURAL_GENERATION,
@@ -543,7 +556,20 @@ class Config:
             room=_LIVERADAR_DOUYIN_MACHINE_ROOM,
         )
 
-    def _append_liveradar_room(
+    def _migrate_liveradar_drop_douyu_aq_room(self):
+        """Take 阳光男孩Aq's Douyu room out of the same instance."""
+
+        self._change_liveradar_room(
+            migration=_LIVERADAR_DROP_DOUYU_AQ_MIGRATION,
+            uuid_prefix=_LIVERADAR_DROP_DOUYU_AQ_UUID_SHA256_PREFIX,
+            structural_generation=_LIVERADAR_DROP_DOUYU_AQ_STRUCTURAL_GENERATION,
+            settings_revision=_LIVERADAR_DROP_DOUYU_AQ_SETTINGS_REVISION,
+            refresh_interval=_LIVERADAR_DROP_DOUYU_AQ_REFRESH_INTERVAL_SECONDS,
+            room=_LIVERADAR_DROP_DOUYU_AQ_ROOM,
+            remove=True,
+        )
+
+    def _change_liveradar_room(
         self,
         *,
         migration,
@@ -552,8 +578,10 @@ class Config:
         settings_revision,
         refresh_interval,
         room,
+        remove=False,
     ):
-        """Append one room to the exact saved LiveRadar instance, once."""
+        """Append one room to the exact saved LiveRadar instance, once; with ``remove``, take
+        that room out of it instead."""
 
         migrations = self.get_config(_RUNTIME_MIGRATIONS_KEY, default={})
         if (
@@ -629,25 +657,44 @@ class Config:
             for room in room_document["rooms"]
             if is_target(room.get("platform"), room.get("id"))
         )
-        text_target_count = 0
-        for line in rooms_text.splitlines():
+        def is_target_line(line):
             fields = [field.strip() for field in line.split("|")]
-            if len(fields) >= 2 and is_target(fields[0], fields[1]):
-                text_target_count += 1
+            return len(fields) >= 2 and is_target(fields[0], fields[1])
+
+        text_target_count = sum(
+            1 for line in rooms_text.splitlines() if is_target_line(line)
+        )
         if (json_target_count, text_target_count) not in {(0, 0), (1, 1)}:
             raise ConfigLoadError("LiveRadar room lists disagree")
 
-        settings_changed = json_target_count == 0
+        settings_changed = (json_target_count == 1) if remove else (json_target_count == 0)
         if settings_changed:
             updated_document = _detach_json(room_document)
-            updated_document["rooms"].append(dict(room))
             updated_settings = dict(settings)
-            separator = "" if not rooms_text or rooms_text.endswith(("\n", "\r")) else "\n"
-            updated_settings["roomsText"] = (
-                rooms_text + separator + "|".join(
-                    [room["platform"], room["id"]] + (["fav"] if room["isFav"] else [])
+            if remove:
+                updated_document["rooms"] = [
+                    kept
+                    for kept in updated_document["rooms"]
+                    if not is_target(kept.get("platform"), kept.get("id"))
+                ]
+                kept_text = "".join(
+                    line
+                    for line in rooms_text.splitlines(keepends=True)
+                    if not is_target_line(line)
                 )
-            )
+                # Taking out the last line must not leave the list ending in a line break
+                # it did not have.
+                if not rooms_text.endswith(("\n", "\r")):
+                    kept_text = kept_text.rstrip("\r\n")
+                updated_settings["roomsText"] = kept_text
+            else:
+                updated_document["rooms"].append(dict(room))
+                separator = "" if not rooms_text or rooms_text.endswith(("\n", "\r")) else "\n"
+                updated_settings["roomsText"] = (
+                    rooms_text + separator + "|".join(
+                        [room["platform"], room["id"]] + (["fav"] if room["isFav"] else [])
+                    )
+                )
             updated_settings["roomsJson"] = json.dumps(
                 updated_document,
                 ensure_ascii=False,
@@ -682,14 +729,15 @@ class Config:
             config_updates={_RUNTIME_MIGRATIONS_KEY: migration_state},
         )
         logger.warning(
-            "Migrated the saved LiveRadar instance to include a room. "
+            "Migrated the saved LiveRadar instance to %s a room. "
             "| room: %s|%s | favourite: %s | settings_changed: %s | room_count: %s "
             "| previous_settings_revision: %s | current_settings_revision: %s",
+            "drop" if remove else "include",
             room["platform"],
             room["id"],
             room["isFav"],
             settings_changed,
-            len(room_document["rooms"]) + int(settings_changed),
+            len(room_document["rooms"]) + (-1 if remove else 1) * int(settings_changed),
             before.settings_revision,
             before.settings_revision + int(settings_changed),
         )

@@ -538,11 +538,11 @@ def test_default_rooms_match_latest_backup_and_favorite_order():
 
     rooms = plugin._parse_rooms({"roomsText": DEFAULT_ROOMS_TEXT})
 
-    assert len(rooms) == 66
+    assert len(rooms) == 65
     assert {
         platform: sum(room["platform"] == platform for room in rooms)
         for platform in ("bilibili", "douyu", "twitch")
-    } == {"bilibili": 31, "douyu": 22, "twitch": 13}
+    } == {"bilibili": 31, "douyu": 21, "twitch": 13}
     assert (rooms[0]["platform"], rooms[0]["id"]) == ("bilibili", "545318")
     assert (rooms[-1]["platform"], rooms[-1]["id"]) == ("douyu", "4067868")
     assert ("bilibili", "173551") in [(room["platform"], room["id"]) for room in rooms]
