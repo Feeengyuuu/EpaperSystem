@@ -1844,6 +1844,61 @@ def test_quins_douyin_room_skips_an_instance_the_owner_edited_since(monkeypatch,
     assert "liveradar_douyin_200525029536_v1" not in saved["runtime_migrations"]
 
 
+def _quin_ready_live_radar_config(revision):
+    original, _rooms = _zack_ready_live_radar_config(
+        rooms_text="kick|quin3614|fav\ndouyin|200525029536|fav",
+        rooms_document={
+            "version": "3.1.1",
+            "rooms": [
+                {"platform": "kick", "id": "quin3614", "isFav": True},
+                {"platform": "douyin", "id": "200525029536", "isFav": True},
+            ],
+        },
+    )
+    original["runtime_migrations"].update({"liveradar_twitch_zackrawrr_v1": True,
+                                           "liveradar_bilibili_545039_v1": True,
+                                           "liveradar_douyin_80596524973_v1": True,
+                                           "liveradar_bilibili_22230707_v1": True,
+                                           "liveradar_youtube_ishowspeed_v1": True,
+                                           "liveradar_youtube_kaicenat_v1": True,
+                                           "liveradar_douyin_200525029536_v1": True})
+    original["playlist_config"]["playlists"][0]["plugins"][0]["settings_revision"] = revision
+    return original
+
+
+def test_the_machine_douyin_room_follows_quins_once(monkeypatch, tmp_path):
+    original = _quin_ready_live_radar_config(11)
+    _patch_live_radar_identity(monkeypatch, "_LIVERADAR_DOUYIN_MACHINE_UUID_SHA256_PREFIX")
+
+    _config, config_path = _device_config(monkeypatch, tmp_path, original)
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    instance = saved["playlist_config"]["playlists"][0]["plugins"][0]
+    # The room's web name is its id; it is not a favourite.
+    assert instance["plugin_settings"]["roomsText"].splitlines()[-2:] == [
+        "douyin|200525029536|fav", "douyin|csgo6657"]
+    assert json.loads(instance["plugin_settings"]["roomsJson"])["rooms"][-1] == {
+        "platform": "douyin", "id": "csgo6657", "isFav": False}
+    assert instance["settings_revision"] == 12
+    assert saved["runtime_migrations"]["liveradar_douyin_csgo6657_v1"] is True
+
+    first_revision = saved["config_revision"]
+    Config()
+    assert json.loads(config_path.read_text(encoding="utf-8"))["config_revision"] == first_revision
+
+
+def test_the_machine_douyin_room_skips_an_instance_the_owner_edited_since(monkeypatch, tmp_path):
+    original = _quin_ready_live_radar_config(12)
+    _patch_live_radar_identity(monkeypatch, "_LIVERADAR_DOUYIN_MACHINE_UUID_SHA256_PREFIX")
+
+    _config, config_path = _device_config(monkeypatch, tmp_path, original)
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    rooms_text = saved["playlist_config"]["playlists"][0]["plugins"][0]["plugin_settings"]["roomsText"]
+    assert "csgo6657" not in rooms_text
+    assert "liveradar_douyin_csgo6657_v1" not in saved["runtime_migrations"]
+
+
 def test_douyin_room_migration_skips_an_instance_the_owner_edited_since(monkeypatch, tmp_path):
     original, _rooms = _zack_ready_live_radar_config()
     original["playlist_config"]["playlists"][0]["plugins"][0]["settings_revision"] = 9
