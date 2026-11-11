@@ -38,6 +38,7 @@ DAY = {"paper": "#ffffff", "ink": "#121a20", "muted": "#3a454d", "rule": "#a6a6a
 NIGHT = {"paper": "#000000", "ink": "#edf1ea", "muted": "#c6d0d5", "rule": "#5a5a5a", "track": "#24282d",
          "lead": "#1c1704", "code": "#7aa2ff", "project": "#34d399"}
 LINKS = (("code", "有代码"), ("project", "项目页"))
+LINK_MARK = 7
 # Hugging Face's yellow and orange (its brand), for the solid marks: rank badges and upvote arrows.
 HF_YELLOW = (0xFF, 0xD2, 0x1E)
 HF_ORANGE = (0xFF, 0x9D, 0x00)
@@ -274,23 +275,34 @@ def _stat(canvas, x, middle, icon, text, size=11):
     return 15 + canvas.text((x + 15, middle), text, size, anchor="lm", bold=False)
 
 
-def _links_width(canvas, paper, size=10, gap=4):
+def _links_width(canvas, paper, size=10, gap=6, solid=False):
     shown = [label for key, label in LINKS if paper.get(key)]
-    return sum(canvas.width(label, size) + 8 for label in shown) + gap * max(0, len(shown) - 1)
+    if solid:
+        return sum(canvas.width(label, size) + 8 for label in shown) + 4 * max(0, len(shown) - 1)
+    return sum(canvas.width(label, size) + LINK_MARK + 3 for label in shown) + gap * max(0, len(shown) - 1)
 
 
-def _links(canvas, paper, right, middle, size=10, gap=4):
-    """The paper's 有代码 and 项目页 chips ending at ``right``; the width they take (0 without either)."""
-    width = _links_width(canvas, paper, size, gap)
-    x, height = right - width, size + 6
+def _links(canvas, paper, right, middle, size=10, gap=6, solid=False):
+    """The paper's 有代码 and 项目页 marks ending at ``right``: a small solid square in the link's
+    colour, then the word in ink (a page of solid chips was too loud); ``solid`` chips with paper
+    lettering where they stand on a picture, which ink would not read on. Returns the width they
+    take (0 without either)."""
+    width = _links_width(canvas, paper, size, gap, solid)
+    x = right - width
     for key, label in LINKS:
         if not paper.get(key):
             continue
-        chip = canvas.width(label, size) + 8
-        canvas.draw.rounded_rectangle((x, middle - height / 2, x + chip, middle + height / 2), radius=height // 2,
+        if solid:
+            chip, height = canvas.width(label, size) + 8, size + 6
+            canvas.draw.rounded_rectangle((x, middle - height / 2, x + chip, middle + height / 2), radius=height // 2,
+                                          fill=canvas.color(key))
+            canvas.text((x + chip / 2, middle), label, size, "paper", anchor="mm")
+            x += chip + 4
+            continue
+        canvas.draw.rounded_rectangle((x, middle - LINK_MARK / 2, x + LINK_MARK, middle + LINK_MARK / 2), radius=2,
                                       fill=canvas.color(key))
-        canvas.text((x + chip / 2, middle), label, size, "paper", anchor="mm")
-        x += chip + gap
+        x += LINK_MARK + 3
+        x += canvas.text((x, middle), label, size, "ink", anchor="lm") + gap
     return width
 
 
@@ -421,7 +433,7 @@ def _card(canvas, box, rank, paper, images, chinese):
     figure = (left + 1, top + 1, left + 1 + CARD_FIGURE_WIDTH, bottom)
     _figure(canvas, art, drawing, figure, canvas.color("paper"), radius=5, kept=CARD_DIAGRAM_KEPT)
     _badge(canvas, left + 4, top + 4, rank, 18)
-    _links(canvas, paper, figure[0] + 4 + _links_width(canvas, paper), bottom - 12)
+    _links(canvas, paper, figure[0] + 4 + _links_width(canvas, paper, solid=True), bottom - 12, solid=True)
     x, text_right = figure[2] + 8, right - 8
     count_w = _upvote(canvas, text_right, top + 13, paper["upvotes"], 11, anchor="rm")
     _org_line(canvas, paper, images, x, top + 13, text_right - count_w - 6, 10)
