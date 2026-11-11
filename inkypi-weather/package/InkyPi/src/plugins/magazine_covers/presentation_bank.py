@@ -30,6 +30,7 @@ from plugins.daily_art.presentation_bank import (
 from utils.atomic_file import atomic_write_bytes, fsync_directory
 from utils.safe_image import ImageLimitError, ImageLimits, safe_open_image
 from plugins.base_plugin import presentation_bank_kit as kit
+from plugins.magazine_covers.text_page import looks_like_text_page
 
 
 SCHEMA_VERSION = 1
@@ -73,6 +74,14 @@ MAGAZINE_CATEGORIES = (
     "general_history",
 )
 _MAGAZINE_CATEGORY_SET = frozenset(MAGAZINE_CATEGORIES)
+# Sources whose scan turned out to be a page of type, kept beside the profiles (the verdict is
+# about the picture, so every instance shares it): {source id: when it was found}. A source
+# listed here is not downloaded again until its entry is this old, the time an archive cover
+# stays in the bank before it is fetched afresh; the oldest entries give way past the limit.
+TEXT_PAGE_SOURCES_KEY = "text_page_sources"
+TEXT_PAGE_SOURCE_LIMIT = 64
+TEXT_PAGE_SOURCE_SECONDS = HISTORICAL_FRESH_SECONDS
+TEXT_PAGE_SOURCE_ID_MAX_CHARS = 1000
 _HEX = frozenset("0123456789abcdef")
 _LEGACY_COVER_ID_PREFIX = "__inkypi_legacy_record_key__:"
 _PROFILE_KEYS = {
@@ -625,6 +634,9 @@ class MagazinePresentationBank(kit.SelectionBookkeeping):
         normalized = self.normalize_cover(source, cover)
         normalized_image = self._normalize_media_image(image)
         normalized["perceptual_hash"] = _perceptual_hash(normalized_image)
+        if isinstance(cover.get("text_page"), bool):
+            # The fetch already judged this picture; the bank need not decode it again to ask.
+            normalized["text_page"] = cover["text_page"]
         output = BytesIO()
         normalized_image.save(output, format="PNG", optimize=True)
         payload = output.getvalue()
@@ -669,6 +681,9 @@ class MagazinePresentationBank(kit.SelectionBookkeeping):
                     "fetched_at": _iso_datetime(fetched_at),
                     "date_key": self.date_key,
                 }
+                if "text_page" not in normalized:
+                    # The verdict was about the picture this one replaces.
+                    refreshed.pop("text_page", None)
                 cover_updated = True
             records[cover_match_index] = refreshed
             profile["records"] = records
@@ -763,11 +778,67 @@ class MagazinePresentationBank(kit.SelectionBookkeeping):
             "height": normalized_image.height,
             "media_recovered_at": _iso_datetime(recovered_at),
         }
+        # A verdict belongs to the picture it was read from; the restored one is judged anew.
+        updated.pop("text_page", None)
         for index, candidate in enumerate(profile["records"]):
             if candidate.get("record_key") == record.get("record_key"):
                 profile["records"][index] = updated
                 return updated
         raise RuntimeError("Magazine protected cover metadata disappeared during recovery")
+
+    def judge_text_pages(self, profile, *, providers, now=None):
+        """Record, for each cover not yet judged, whether it is a page of type; how many were judged.
+
+        Only covers from ``providers`` are judged. The verdict is kept on the record as
+        ``text_page`` (absent: not judged yet, as in a bank written before the check existed),
+        so each stored picture is decoded for this once. A picture that cannot be read stays
+        unjudged.
+        """
+        judged = 0
+        for record in profile["records"]:
+            if isinstance(record.get("text_page"), bool) or record.get("provider") not in providers:
+                continue
+            try:
+                image = self.load_media(record, now=now)
+            except RuntimeError:
+                continue
+            record["text_page"] = looks_like_text_page(image)
+            judged += 1
+        return judged
+
+    def drop_text_pages(self, profile):
+        """Take the pages of type out of the bank; the records removed.
+
+        A page on screen or about to be (the current or pending selection) stays.
+        """
+        protected = self._protected_record_keys(profile)
+        dropped = [
+            record
+            for record in profile["records"]
+            if record.get("text_page") is True and record["record_key"] not in protected
+        ]
+        if dropped:
+            dropped_keys = {record["record_key"] for record in dropped}
+            profile["records"] = [
+                record for record in profile["records"] if record["record_key"] not in dropped_keys
+            ]
+        return dropped
+
+    def text_page_sources(self, document, *, now=None):
+        """The ids of the sources known to give a page of type; entries past their time are forgotten."""
+        entries = _bounded_text_page_sources(document.get(TEXT_PAGE_SOURCES_KEY), now=now)
+        if entries or TEXT_PAGE_SOURCES_KEY in document:
+            document[TEXT_PAGE_SOURCES_KEY] = entries
+        return set(entries)
+
+    def remember_text_page_source(self, document, source_id, *, now=None):
+        """Note that ``source_id`` gave a page of type, so that it is not downloaded again for a while."""
+        if not isinstance(source_id, str) or not 0 < len(source_id) <= TEXT_PAGE_SOURCE_ID_MAX_CHARS:
+            return
+        entries = document.get(TEXT_PAGE_SOURCES_KEY)
+        entries = dict(entries) if isinstance(entries, dict) else {}
+        entries[source_id] = _iso_datetime(now)
+        document[TEXT_PAGE_SOURCES_KEY] = _bounded_text_page_sources(entries, now=now)
 
     def normalize_cover(self, source, cover):
         if not isinstance(source, dict) or not isinstance(cover, dict):
@@ -1557,6 +1628,10 @@ class MagazinePresentationBank(kit.SelectionBookkeeping):
             and document["profiles"][value].get("instance_uuid") == key
         }
         document.setdefault("active_fingerprint", None)
+        if TEXT_PAGE_SOURCES_KEY in document:
+            document[TEXT_PAGE_SOURCES_KEY] = _bounded_text_page_sources(
+                document[TEXT_PAGE_SOURCES_KEY]
+            )
         document["date_buckets"] = _bounded_date_buckets(document.get("date_buckets"))
         return document
 
@@ -1618,6 +1693,8 @@ class MagazinePresentationBank(kit.SelectionBookkeeping):
         for record in profile.get("records") or []:
             if self._valid_record(record):
                 normalized = {**record, **self.normalize_cover(record, record)}
+                if not isinstance(normalized.get("text_page"), bool):
+                    normalized.pop("text_page", None)
                 old_record_key = record["record_key"]
                 if not str(record.get("cover_id") or "").strip():
                     normalized["cover_id"] = (
@@ -2041,6 +2118,35 @@ def validate_state_shape(payload):
         ):
             raise RuntimeError("Magazine instance profile references missing profile")
     _validate_date_buckets(payload.get("date_buckets"))
+    text_page_sources = payload.get(TEXT_PAGE_SOURCES_KEY)
+    if text_page_sources is not None and text_page_sources != _bounded_text_page_sources(
+        text_page_sources
+    ):
+        raise RuntimeError("Magazine text page sources are invalid or exceed the limit")
+
+
+def _bounded_text_page_sources(value, *, now=None):
+    """``value`` as a valid {source id: ISO time} map within its limit, newest entries kept.
+
+    With ``now``, entries older than ``TEXT_PAGE_SOURCE_SECONDS`` are left out as well.
+    """
+    if not isinstance(value, dict):
+        return {}
+    now = _coerce_datetime(now)
+    dated = []
+    for source_id, found_at in value.items():
+        found = _coerce_datetime(found_at) if isinstance(found_at, str) else None
+        if (
+            not isinstance(source_id, str)
+            or not 0 < len(source_id) <= TEXT_PAGE_SOURCE_ID_MAX_CHARS
+            or found is None
+        ):
+            continue
+        if now is not None and (now - found).total_seconds() > TEXT_PAGE_SOURCE_SECONDS:
+            continue
+        dated.append((found, source_id, found_at))
+    dated.sort(key=lambda entry: entry[:2])
+    return {source_id: found_at for _found, source_id, found_at in dated[-TEXT_PAGE_SOURCE_LIMIT:]}
 
 
 def _validate_date_buckets(buckets):

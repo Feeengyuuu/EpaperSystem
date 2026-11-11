@@ -37,6 +37,7 @@ from plugins.magazine_covers.historical_catalog import (
     CATEGORY_TARGET_ITEMS,
     FEATURED_TARGET_ITEMS,
     HISTORICAL_CATEGORIES,
+    SUPPORTED_SOURCES,
     MagazineHistoricalCatalog,
 )
 from plugins.magazine_covers.presentation_bank import (
@@ -556,10 +557,27 @@ class MagazineCovers(BasePlugin):
         if protected_changed:
             bank.save(document)
 
+        # A cover banked before scans were checked for pages of type carries no verdict: it is
+        # judged here from its stored picture, once, and the verdict stays on its record.
+        text_pages_changed = bank.judge_text_pages(profile, providers=SUPPORTED_SOURCES, now=now) > 0
         ready = self._eligible_bank_records(
             settings,
             bank.ready_records(profile, prune=True, now=now),
         )
+        if self._cover_count(ready) >= TRIPTYCH_COVER_COUNT:
+            # The covers fill the page by themselves: the pages of type leave the bank, and
+            # their sources are noted so that the library scan does not fetch them again.
+            for dropped in bank.drop_text_pages(profile):
+                logger.info("Magazine banked scan is a page of text, dropped: %s", dropped.get("title"))
+                bank.remember_text_page_source(document, dropped["source_id"], now=now)
+                text_pages_changed = True
+        if text_pages_changed:
+            bank.save(document)
+        # Sources the scan need not fetch while the covers suffice: those noted as pages of type,
+        # and those whose page of type is still banked (on screen, so not yet dropped).
+        known_text_pages = bank.text_page_sources(document, now=now) | {
+            record["source_id"] for record in profile["records"] if record.get("text_page") is True
+        }
         comprehensive_mode = self._content_mode(settings) == "comprehensive"
         sources = list(latest_sources)
         if comprehensive_mode:
@@ -676,6 +694,12 @@ class MagazineCovers(BasePlugin):
                 if self._remaining_data_time(data_deadline) <= 0:
                     break
                 source = source_by_id[source_id]
+                if source_id in known_text_pages and self._cover_count(ready) >= TRIPTYCH_COVER_COUNT:
+                    # Known to be a page of type and not needed: passed over without a download.
+                    if source_id in scan_queue:
+                        scan_queue.remove(source_id)
+                    profile["hydration_cursor"] = (sources.index(source) + 1) % len(sources)
+                    continue
                 attempts += 1
                 provider_record = None
                 try:
@@ -686,10 +710,12 @@ class MagazineCovers(BasePlugin):
                         deadline=data_deadline,
                     )
                     self._raise_if_data_cancelled()
-                    if cover.get("text_page") and len(ready) >= TRIPTYCH_COVER_COUNT:
+                    if cover.get("text_page") and self._cover_count(ready) >= TRIPTYCH_COVER_COUNT:
                         # A scan that is a page of type stays out of the bank while the bank
-                        # can fill the page without it; the scan moves on to the next source.
+                        # can fill the page without it; the scan moves on to the next source,
+                        # and this one is noted so that later scans do not download it again.
                         logger.info("Magazine scan is a page of text, left out: %s", source["name"])
+                        bank.remember_text_page_source(document, source_id, now=now)
                         record = None
                     else:
                         cover = self._decorate_cover_metadata(source, cover)
@@ -784,6 +810,9 @@ class MagazineCovers(BasePlugin):
         )
         if not ready:
             raise RuntimeError("Magazine cover bank has no fresh prepared cover")
+        if self._current_shows_text_page(profile, ready):
+            # The group being held includes a page of type the covers can now replace.
+            profile["current_selection"] = None
         current = bank.ensure_current(
             document,
             profile,
@@ -1229,7 +1258,28 @@ class MagazineCovers(BasePlugin):
             ):
                 continue
             eligible.append(record)
-        return eligible
+        # A page of type gives way to covers, but is kept rather than leave a place empty.
+        covers = [record for record in eligible if record.get("text_page") is not True]
+        return covers if len(covers) >= TRIPTYCH_COVER_COUNT else eligible
+
+    @staticmethod
+    def _cover_count(records):
+        """How many of ``records`` are covers rather than pages of type."""
+        return sum(1 for record in records if record.get("text_page") is not True)
+
+    @staticmethod
+    def _current_shows_text_page(profile, ready):
+        """Whether the current selection holds a page of type that ``ready`` has set aside."""
+        current = profile.get("current_selection")
+        if not isinstance(current, dict):
+            return False
+        ready_keys = {record["record_key"] for record in ready}
+        return any(
+            record.get("text_page") is True
+            and record["record_key"] in (current.get("record_keys") or [])
+            and record["record_key"] not in ready_keys
+            for record in profile["records"]
+        )
 
     @staticmethod
     def _raise_if_data_cancelled():
