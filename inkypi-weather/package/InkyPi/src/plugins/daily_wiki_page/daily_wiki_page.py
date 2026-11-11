@@ -24,9 +24,10 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from plugins.context_cache import write_context
-from plugins.daily_wiki_page import almanac, day_colours, holiday_places, zh_daily_picture
-from runtime.refresh_contracts import TaskCancelled
+from plugins.daily_wiki_page import almanac, day_colours, did_you_know, holiday_places, zh_daily_picture
+from runtime.refresh_contracts import TaskCancelled, TaskDeadlineExceeded
 from utils.app_utils import DEFAULT_FONT_FAMILY, coerce_bool, get_available_font_names, get_base_ui_font, get_font
+from utils.atomic_file import atomic_write_json
 from utils.cache_manager import CacheBudget, CachePathError
 from utils.http_client import get_http_session
 from utils.image_utils import text_width
@@ -163,6 +164,7 @@ class DailyWikiPage(BasePlugin):
         payload = self._daily_payload(settings, now)
         if not settings.get("_theme_render_only"):
             self._write_context(payload, now)
+        payload = self._with_did_you_know(payload, settings, now, allow_network=not settings.get("_theme_render_only"))
         image = self._render_page(
             self.get_dimensions(device_config),
             payload,
@@ -218,6 +220,7 @@ class DailyWikiPage(BasePlugin):
         now = self._now_for_device(device_config)
         payload, generated_at, fresh = self._cached_display_source(settings, now)
         payload["source_state"] = "cache"
+        payload = self._with_did_you_know(payload, settings, now, allow_network=False)
         image = self._render_page(self.get_dimensions(device_config), payload, settings, now)
         complete = image.info.get("daily_wiki_layout", {}).get("complete", False)
         image.info.update(
@@ -567,6 +570,71 @@ class DailyWikiPage(BasePlugin):
     def _first_query_page(self, data):
         pages = data.get("query", {}).get("pages") if isinstance(data, dict) else None
         return pages[0] if isinstance(pages, list) and pages and isinstance(pages[0], dict) else {}
+
+    def _with_did_you_know(self, payload, settings, now, *, allow_network):
+        """``payload`` for drawing, with 你知道吗 beside it when the page is Chinese and facts are
+        at hand; the day's cached payload itself is left as it is."""
+        if not self._wants_simplified_chinese(payload.get("language")):
+            return payload
+        found = self._did_you_know(settings, now, allow_network=allow_network)
+        return {**payload, "did_you_know": found} if found else payload
+
+    def _did_you_know(self, settings, now, *, allow_network):
+        """Chinese Wikipedia's 你知道吗 for a Chinese page ({"facts", "image_url"}), else {}.
+
+        The facts are kept beside the day's page (did_you_know.CACHE_FILE) and asked for again
+        once they are FRESH_SECONDS old, one request; a refresh that fails keeps the last good
+        ones up to USABLE_SECONDS. Without ``allow_network`` (a redraw from cache) the kept facts
+        are only read. No failure here reaches the page."""
+        if not self._wants_simplified_chinese(self._language(settings)):
+            return {}
+        seconds = now.timestamp()
+        kept = self._read_did_you_know(create=allow_network)
+        if did_you_know.usable(kept, seconds, did_you_know.FRESH_SECONDS):
+            return {"facts": kept["facts"], "image_url": str(kept.get("image_url") or "")}
+        if allow_network:
+            try:
+                data = self._get_json(did_you_know.API_URL, params=dict(did_you_know.API_PARAMS))
+                found = did_you_know.facts_from_html(data.get("parse", {}).get("text"), self._html_text)
+                self._write_did_you_know({"schema": did_you_know.CACHE_SCHEMA, "fetched_at": seconds, **found})
+                return found
+            except (TaskCancelled, TaskDeadlineExceeded):
+                raise
+            except Exception as exc:
+                logger.warning("DailyWikiPage did-you-know refresh failed: %s", self._failure_summary(exc))
+        if did_you_know.usable(kept, seconds, did_you_know.USABLE_SECONDS):
+            return {"facts": kept["facts"], "image_url": str(kept.get("image_url") or "")}
+        return {}
+
+    def _read_did_you_know(self, *, create):
+        try:
+            path = self._cache_dir(create=create) / did_you_know.CACHE_FILE
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > 64 * 1024:
+                return None
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+
+    def _write_did_you_know(self, entry):
+        try:
+            path = self._cache_dir() / did_you_know.CACHE_FILE
+            path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_json(path, entry)
+        except (OSError, ValueError) as exc:
+            # The facts just read are still shown; they are asked for again at the next refresh.
+            logger.warning("DailyWikiPage did-you-know cache not saved: %s", type(exc).__name__)
+
+    def _did_you_know_picture(self, image_url, target_size, settings):
+        """The 你知道吗 block's picture through the media cache, or None; never an error."""
+        if not image_url or did_you_know.safe_picture_url(image_url) != image_url:
+            return None
+        try:
+            return self._download_image(image_url, target_size, settings)
+        except (TaskCancelled, TaskDeadlineExceeded):
+            raise
+        except Exception as exc:
+            logger.warning("DailyWikiPage did-you-know picture unavailable: %s", type(exc).__name__)
+            return None
 
     def _render_page(self, dimensions, payload, settings, now):
         from plugins.daily_wiki_page.swiss_renderer import render_page

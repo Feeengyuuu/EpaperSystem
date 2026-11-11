@@ -2074,3 +2074,80 @@ def test_holiday_flags_come_from_the_plugin_flagcdn_or_commons_through_the_media
     monkeypatch.setattr(wiki_module, "get_http_session", lambda: forbidden)
     assert plugin._holiday_flag("gb", "", {"_theme_render_only": True}).size == flag.size
     assert forbidden.calls == []
+
+
+# --- 你知道吗 beside the day's page ------------------------------------------------------------------
+
+DYK_PAGE = ('<div id="column-dyk"><ul><li><b><a href="/wiki/x" title="诺肯袋">哪种袋子</a></b>为西巴布亚所特有？</li>'
+            '</ul></div>')
+
+
+def seed_did_you_know(root, when):
+    from plugins.daily_wiki_page import did_you_know
+
+    entry = {"schema": did_you_know.CACHE_SCHEMA, "fetched_at": when.timestamp(), "image_url": "",
+             "facts": [{"question": "哪种袋子为西巴布亚所特有？", "answer": "诺肯袋", "pictured": False}]}
+    (root / did_you_know.CACHE_FILE).write_text(json.dumps(entry, ensure_ascii=False), encoding="utf-8")
+
+
+def test_cached_display_draws_the_kept_did_you_know_and_stays_local(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    now = datetime(2026, 10, 6, 10, 0, tzinfo=timezone.utc)
+    seed_cached_daily_display(plugin, now)
+    # Past its six fresh hours: a redraw still shows it, and does not go and ask for a newer one.
+    seed_did_you_know(tmp_path, now - timedelta(hours=30))
+    before = cached_display_snapshot(tmp_path)
+    forbid_cached_daily_writes(plugin, monkeypatch)
+    monkeypatch.setattr(plugin, "_get_json", lambda *_args, **_kwargs: pytest.fail("cached DISPLAY must not fetch"))
+    monkeypatch.setattr(plugin, "_now_for_device", lambda _device: now)
+
+    image = plugin.render_cached_display(
+        CACHED_DISPLAY_SETTINGS, FakeDeviceConfig(), resolved_theme_context=canonical_theme("day"),
+    )
+
+    audit = image.info["daily_wiki_layout"]
+    assert [fact["answer"] for fact in audit["did_you_know"]["facts"]] == ["诺肯袋"]
+    assert audit["complete"] is True and read_source_provenance(image) is SourceProvenance.FRESH_CACHE
+    assert cached_display_snapshot(tmp_path) == before
+
+
+def test_generate_image_shows_did_you_know_and_its_failure_leaves_the_page_and_its_health_alone(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    now = datetime(2026, 6, 25, 10, 0)
+
+    def fake_fetch(current, _language, _fallback_language, settings):
+        payload = media_payload(plugin, current, "en", settings)
+        payload["language"] = "zh-cn"
+        return payload
+
+    asked = []
+
+    def offline(_url, params=None):
+        asked.append((params or {}).get("page"))
+        raise RuntimeError("offline")
+
+    monkeypatch.setattr(plugin, "_now_for_device", lambda _device: now)
+    monkeypatch.setattr(plugin, "_fetch_live_payload", fake_fetch)
+    monkeypatch.setattr(plugin, "_write_context", lambda *_args: None)
+    monkeypatch.setattr(plugin, "_download_image", lambda *_args, **_kwargs: Image.new("RGB", (640, 320), (80, 120, 160)))
+    monkeypatch.setattr(plugin, "_get_json", offline)
+    settings = {"language": "zh-cn", "_inkypi_theme": canonical_theme("day")}
+
+    failed = plugin.generate_image(settings, FakeDeviceConfig())
+
+    # One request, a failure: the page is drawn without the block and stays live.
+    assert asked == ["Template:Dyk"] and "did_you_know" not in failed.info["daily_wiki_layout"]
+    assert read_source_provenance(failed) is SourceProvenance.LIVE
+    assert failed.info["daily_wiki_layout"]["complete"] is True
+    # The next refresh asks again (nothing was kept) and shows it; the day's own cache holds no facts.
+    monkeypatch.setattr(plugin, "_get_json",
+                        lambda _url, params=None: asked.append(params.get("page")) or {"parse": {"text": DYK_PAGE}})
+    shown = plugin.generate_image(settings, FakeDeviceConfig())
+    assert [fact["answer"] for fact in shown.info["daily_wiki_layout"]["did_you_know"]["facts"]] == ["诺肯袋"]
+    assert read_source_provenance(shown) is SourceProvenance.FRESH_CACHE and asked == ["Template:Dyk"] * 2
+    assert "did_you_know" not in plugin._read_cache()["payload"]
+    # A theme redraw reads the kept facts and never asks.
+    monkeypatch.setattr(plugin, "_get_json", lambda *_args, **_kwargs: pytest.fail("a theme redraw must not fetch"))
+    themed = plugin.generate_image({**settings, "_theme_render_only": True, "_inkypi_theme": canonical_theme("night")},
+                                   FakeDeviceConfig())
+    assert [fact["answer"] for fact in themed.info["daily_wiki_layout"]["did_you_know"]["facts"]] == ["诺肯袋"]

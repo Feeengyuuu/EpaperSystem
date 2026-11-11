@@ -64,6 +64,23 @@ ALMANAC_ICON_SUPERSAMPLE = 4
 ALMANAC_FLAG_GAP = 3
 ALMANAC_HOLIDAY_LINES = 2
 FLAG = "flag"
+# 你知道吗 at the foot of the photograph's column, set like the almanac across the divider (a rule,
+# an icon's slot, lines at the minimum size), only in room the photograph leaves unused in its
+# slot: a picture wider than the slot is tall stands as large as ever and moves up with its caption.
+# Up to DID_YOU_KNOW_FACTS of Chinese Wikipedia's front-page questions, the hour choosing which
+# leads, each whole with the article that answers it in bold; a question is cut (where a clause
+# ends, keeping DID_YOU_KNOW_MIN_KEPT characters) only when none fits whole.
+DID_YOU_KNOW_LEAD = "你知道吗？"
+DID_YOU_KNOW_ANSWER = "答："
+DID_YOU_KNOW_FACTS = 2
+DID_YOU_KNOW_MIN_LINES = 2
+DID_YOU_KNOW_MIN_KEPT = 10
+# The gap between the source line and the block's rule, and between two facts.
+DID_YOU_KNOW_GAP, DID_YOU_KNOW_FACT_GAP = 7, 4
+# The block's picture stands at the right of the fact it belongs to, within this box.
+DID_YOU_KNOW_PICTURE_BOX, DID_YOU_KNOW_PICTURE_GAP = (58, 68), 8
+# What the slot's "image unavailable" line keeps at its top when there is no photograph.
+NO_PHOTOGRAPH_HEIGHT = 44
 
 
 class FlagMark(NamedTuple):
@@ -204,6 +221,13 @@ def almanac_icon(kind, height):
         pen.rectangle(box(38, 12, 42, 49), fill=0)
         pen.rounded_rectangle(box(26, 48, 54, 56), radius=round(2 * scale), fill=255)
         pen.polygon([point(35, 56), point(45, 56), point(49, 63.9), point(31, 63.9)], fill=255)
+    elif kind == "bulb":
+        # A light bulb: the glass narrowing to its neck, a gap cut above the screw base, its tip.
+        pen.ellipse(box(20, 0, 60, 40), fill=255)
+        pen.polygon([point(27, 30), point(53, 30), point(49, 47), point(31, 47)], fill=255)
+        pen.rectangle(box(24, 42, 56, 46), fill=0)
+        pen.rounded_rectangle(box(30, 47, 50, 56), radius=round(2 * scale), fill=255)
+        pen.rounded_rectangle(box(35, 58, 45, 63.9), radius=round(2 * scale), fill=255)
     return mask.resize((width, height), RESAMPLE)
 
 
@@ -247,6 +271,7 @@ class _Page:
         self.scale = min(self.width / 800, self.height / 480)
         self.payload = payload
         self.settings = settings
+        self.now = now
         self.date = _source_date(payload, now)
         self.cjk = plugin._language_is_cjk(payload.get("language"))
         self.family = plugin._resolved_font_family(settings)
@@ -607,6 +632,12 @@ class _Page:
                                   font, lambda _: width)
                 caption_y = footer_y - self.px(9) - len(lines) * step
                 photo_bottom = caption_y - self.px(9)
+        # 你知道吗 takes the column's foot from the slot's unused room: the photograph keeps its
+        # size and the caption every word; both move up with the source line.
+        did_you_know = self.did_you_know_block(source, photo_bottom)
+        if did_you_know is not None:
+            lift = did_you_know["height"] + self.px(DID_YOU_KNOW_GAP)
+            caption_y, photo_bottom, footer_y = caption_y - lift, photo_bottom - lift, footer_y - lift
         photo_box = (self.photo_left, self.top, self.photo_right, photo_bottom)
         if source is not None:
             self.photo_glow(source, photo_box)
@@ -630,6 +661,160 @@ class _Page:
                                   source_font, self.palette["muted"])
                           for index, line in enumerate(source_lines)]
         self.audit["source"] = {"source_text": source_label, "lines": source_records, "complete": True}
+        if did_you_know is not None:
+            self.draw_did_you_know(did_you_know)
+
+    def did_you_know_block(self, source, photo_bottom):
+        """The 你知道吗 block for the room the photograph (or its placeholder) leaves in a slot
+        that ends at ``photo_bottom``: {"height", "facts"}, each fact its lines and where it
+        stands in the block; None when the page has no facts or no fact fits."""
+        found = self.payload.get("did_you_know") if self.cjk else None
+        facts = found.get("facts") if isinstance(found, dict) else None
+        facts = [fact for fact in facts if isinstance(fact, dict) and _text(fact.get("question"))] \
+            if isinstance(facts, list) else []
+        if not facts:
+            return None
+        width, slot = self.photo_right - self.photo_left, photo_bottom - self.top
+        if source is None:
+            used = self.px(NO_PHOTOGRAPH_HEIGHT)
+        else:
+            # What ImageOps.contain will draw: a picture wider than its slot is as tall as its width allows.
+            used = min(slot, math.ceil(source.height * width / max(1, source.width)) + 1)
+        head, step = self.px(2) + self.px(ALMANAC_TOP_GAP), self.almanac_line_height()
+        room = slot - used - self.px(DID_YOU_KNOW_GAP) - head
+        if room < DID_YOU_KNOW_MIN_LINES * step:
+            return None
+        start = self.now.hour % len(facts)
+        order = facts[start:] + facts[:start]
+        picture_url = _text(found.get("image_url"))
+        planned, height = [], 0
+        for fact in order:
+            if len(planned) == DID_YOU_KNOW_FACTS:
+                break
+            gap = self.px(DID_YOU_KNOW_FACT_GAP) if planned else 0
+            paragraph = self.did_you_know_paragraph(fact, not planned, room - height - gap, picture_url)
+            if paragraph is not None:
+                paragraph["top"] = height + gap
+                planned.append(paragraph)
+                height += gap + paragraph["height"]
+        if not planned:
+            # No fact fits whole: the first that can be cut where a clause ends is.
+            for fact in order:
+                paragraph = self.did_you_know_paragraph(fact, True, room, "", cut=True)
+                if paragraph is not None:
+                    paragraph["top"] = 0
+                    planned, height = [paragraph], paragraph["height"]
+                    break
+        return {"height": head + height, "facts": planned} if planned else None
+
+    def did_you_know_paragraph(self, fact, leads, room, picture_url, cut=False):
+        """One fact set in at most ``room`` px: the lead-in (when it ``leads`` the block), its
+        question and its answer, beside the block's picture when the fact is the pictured one and
+        still fits; with ``cut`` the question ends at its last clause that fits. None when it does
+        not fit."""
+        question, answer = _text(fact.get("question")), _text(fact.get("answer"))
+        prefix = DID_YOU_KNOW_LEAD if leads else ""
+        tail = f"{DID_YOU_KNOW_ANSWER}{answer}" if answer else ""
+        step = self.almanac_line_height()
+        max_lines = room // step
+        if max_lines < 1:
+            return None
+        if cut:
+            ends = sorted({match.end() for pattern in (SENTENCE_END, CLAUSE_END) for match in pattern.finditer(question)
+                           if DID_YOU_KNOW_MIN_KEPT <= match.end() < len(question)}, reverse=True)
+            questions = [question[:end].rstrip(" ，、,；;：:。！？!?") + ELLIPSIS for end in ends]
+        else:
+            questions = [question]
+        picture = self.did_you_know_picture(picture_url, room) if fact.get("pictured") and picture_url else None
+        for art in ([picture, None] if picture is not None else [None]):
+            for shown in questions:
+                lines = self.did_you_know_lines(prefix + shown, tail, art, max_lines)
+                if lines is None:
+                    continue
+                height = max(len(lines) * step, art.height + self.px(2) if art is not None else 0)
+                if height <= room:
+                    return {"fact": fact, "lines": lines, "bold": (len(prefix), len(prefix + shown) + len(DID_YOU_KNOW_ANSWER)),
+                            "picture": art, "height": height, "shortened": shown != question}
+        return None
+
+    def did_you_know_width(self, index, picture):
+        """The room line ``index`` of a fact has: the column less the icon's slot, less the
+        picture while the line stands beside it."""
+        width = self.photo_right - self.photo_left - self.px(ALMANAC_ICON_SLOT) - self.px(ALMANAC_CHIP_GAP)
+        if picture is not None and index * self.almanac_line_height() < picture.height + self.px(2):
+            width -= picture.width + self.px(DID_YOU_KNOW_PICTURE_GAP)
+        return width
+
+    def did_you_know_lines(self, text, answer, picture, max_lines):
+        """``text`` wrapped (measured in the bold weight, the wider one) with ``answer`` kept in
+        one piece after it: on the last line when it fits there, else on a line of its own. None
+        when that takes more than ``max_lines`` or a line has no room."""
+        bold = self.almanac_fonts()[True]
+        try:
+            lines = self.wrap(text, bold, lambda index: self.did_you_know_width(index, picture), max_lines)
+        except LayoutOverflowError:
+            return None
+        if answer and lines:
+            last = len(lines) - 1
+            if self.width_of(lines[last] + answer, bold) <= self.did_you_know_width(last, picture):
+                lines[last] += answer
+            elif self.width_of(answer, bold) <= self.did_you_know_width(last + 1, picture):
+                lines.append(answer)
+            else:
+                return None
+        return lines if 0 < len(lines) <= max_lines else None
+
+    def did_you_know_picture(self, url, room):
+        """The block's picture fitted to its box (no taller than ``room``), or None."""
+        getter = getattr(self.plugin, "_did_you_know_picture", None)
+        box = (self.px(DID_YOU_KNOW_PICTURE_BOX[0]), min(self.px(DID_YOU_KNOW_PICTURE_BOX[1]), room - self.px(2)))
+        if not callable(getter) or box[1] < 2 * self.almanac_line_height():
+            return None
+        source = getter(url, box, self.settings)
+        return ImageOps.contain(source.convert("RGB"), box, method=RESAMPLE) if source is not None else None
+
+    def draw_did_you_know(self, block):
+        """The block at the column's foot under a rule like the almanac's: each fact's bulb, solid
+        in the day's accent, then its lines in ink, the lead-in and the answer in bold."""
+        top = self.bottom - block["height"]
+        self.draw.line((self.photo_left, top, self.photo_right, top), fill=self.palette["ink"], width=self.px(2))
+        fonts = self.almanac_fonts()
+        slot, line_h = self.px(ALMANAC_ICON_SLOT), self.almanac_line_height()
+        icon_h = line_h + self.px(ALMANAC_ROW_GAP) - self.px(ALMANAC_ICON_SPACING)
+        ascent = fonts[False].getmetrics()[0] if hasattr(fonts[False], "getmetrics") else line_h
+        text_x = self.photo_left + slot + self.px(ALMANAC_CHIP_GAP)
+        body = top + self.px(2) + self.px(ALMANAC_TOP_GAP)
+        records = []
+        for paragraph in block["facts"]:
+            y = body + paragraph["top"]
+            icon = almanac_icon("bulb", icon_h)
+            icon_box = [self.photo_left + (slot - icon.width) // 2, y + (line_h - icon_h) // 2]
+            icon_box += [icon_box[0] + icon.width, icon_box[1] + icon_h]
+            self.image.paste(self.palette["accent"], tuple(icon_box), icon)
+            picture_record = None
+            if paragraph["picture"] is not None:
+                art = paragraph["picture"]
+                left = self.photo_right - art.width
+                self.image.paste(art, (left, y + self.px(1)))
+                picture_record = {"bounds": [left, y + self.px(1), self.photo_right, y + self.px(1) + art.height]}
+            bold_until, bold_from = paragraph["bold"]
+            offset, lines = 0, []
+            for number, line in enumerate(paragraph["lines"]):
+                x, line_y = text_x, y + number * line_h
+                baseline = line_y + (line_h - self.px(2) - ascent) // 2 + ascent
+                cuts = sorted({0, len(line), *(cut - offset for cut in (bold_until, bold_from) if 0 < cut - offset < len(line))})
+                for begin, end in zip(cuts, cuts[1:]):
+                    font = fonts[offset + begin < bold_until or offset + begin >= bold_from]
+                    self.draw.text((x, baseline), line[begin:end], font=font, fill=self.palette["ink"], anchor="ls")
+                    x += self.draw.textlength(line[begin:end], font=font)
+                lines.append({"text": line, "bounds": [text_x, line_y, math.ceil(x), line_y + line_h]})
+                offset += len(line)
+            fact = paragraph["fact"]
+            records.append({"question": _text(fact.get("question")), "answer": _text(fact.get("answer")),
+                            "text": "".join(paragraph["lines"]), "lines": lines, "icon_bounds": icon_box,
+                            "bounds": [self.photo_left, y, self.photo_right, y + paragraph["height"]],
+                            "shortened": paragraph["shortened"], "picture": picture_record})
+        self.audit["did_you_know"] = {"facts": records, "bounds": [self.photo_left, top, self.photo_right, self.bottom]}
 
     def history(self, source):
         enabled = self.plugin._enabled(self.settings.get("showOnThisDay"), default=True)

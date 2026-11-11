@@ -884,3 +884,186 @@ def test_flags_keep_their_proportions_at_one_height_up_to_two_to_one():
     padded = Image.new("RGBA", (100, 100), (0, 0, 0, 0))
     padded.paste((0, 0, 255, 255), (20, 30, 80, 70))
     assert fit(padded, 12).size == (18, 12)
+
+
+# --- 你知道吗 at the foot of the photograph's column ------------------------------------------------
+
+DYK_PICTURE_URL = ("https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b9/Siegfried_Kasche.JPG/"
+                   "250px-Siegfried_Kasche.JPG")
+DYK = {"facts": [
+    {"question": "哪艘潜艇是二战中最后一艘撤离法国圣纳泽尔基地的纳粹U艇？", "answer": "U-267号潜艇", "pictured": False},
+    {"question": "日本女国脚岛田芽依自2026-27赛季起效力于哪支德甲球队？", "answer": "云达不来梅女子足球队", "pictured": False},
+    {"question": "1941年，希特勒选定哪位德国驻克罗地亚公使担任计划中的莫斯科专员辖区总督？", "answer": "齐格弗里德·卡舍",
+     "pictured": True},
+], "image_url": DYK_PICTURE_URL}
+DYK_PICTURE_COLOUR = (200, 30, 30)
+
+
+def photographs(monkeypatch, plugin, daily_size, dyk_picture=(116, 140)):
+    """The daily photograph at ``daily_size`` (its shape decides the room under it), a small
+    history picture, and the 你知道吗 picture (None: it cannot be loaded)."""
+    asked = []
+
+    def download(url, _target, _settings):
+        asked.append(url)
+        if url == DYK_PICTURE_URL:
+            return Image.new("RGB", dyk_picture, DYK_PICTURE_COLOUR) if dyk_picture else None
+        return Image.new("RGB", daily_size if url == DAILY_URL else (320, 240), (80, 120, 160))
+
+    monkeypatch.setattr(plugin, "_download_image", download)
+    return asked
+
+
+def at_hour(hour):
+    return NOW.replace(hour=hour)
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_did_you_know_takes_the_room_a_wide_photograph_leaves_under_its_column(plugin, payload, monkeypatch, mode):
+    photographs(monkeypatch, plugin, (640, 320))
+    base = plugin._render_page((800, 480), dict(payload), settings(mode), at_hour(10)).info["daily_wiki_layout"]
+    image = plugin._render_page((800, 480), {**payload, "did_you_know": DYK}, settings(mode), at_hour(10))
+    audit = image.info["daily_wiki_layout"]
+
+    block = audit["did_you_know"]
+    column = audit["regions"]["daily_image_column"]["bounds"]
+    assert_inside(block["bounds"], column) and block["bounds"][3] == column[3]
+    # The hour picks the fact that leads (10 % 3): whole, its answer after it.
+    lead = block["facts"][0]
+    assert lead["text"] == "你知道吗？日本女国脚岛田芽依自2026-27赛季起效力于哪支德甲球队？答：云达不来梅女子足球队"
+    assert "".join(line["text"] for line in lead["lines"]) == lead["text"] and lead["shortened"] is False
+    for fact in block["facts"]:
+        for line in fact["lines"]:
+            assert_inside(line["bounds"], block["bounds"])
+    # A solid bulb in the day's accent leads it, as the almanac's icons lead theirs.
+    palette = plugin._palette(settings(mode), datetime(2026, 10, 5))
+    left, top, right, bottom = lead["icon_bounds"]
+    assert sum(image.getpixel((x, y)) == palette["accent"] for x in range(left, right) for y in range(top, bottom)) >= 30
+    assert right <= lead["lines"][0]["bounds"][0]
+    # The photograph keeps its size, the caption every word; both and the source line move up.
+    before, after = base["regions"]["daily_image"]["bounds"], audit["regions"]["daily_image"]["bounds"]
+    assert (after[2] - after[0], after[3] - after[1]) == (before[2] - before[0], before[3] - before[1])
+    assert after[1] >= column[1] and after[3] <= audit["caption"]["bounds"][1]
+    assert audit["caption"]["complete"] and audit["caption"]["font_size"] == base["caption"]["font_size"]
+    assert [line["text"] for line in audit["caption"]["lines"]] == [line["text"] for line in base["caption"]["lines"]]
+    assert max(line["bounds"][3] for line in audit["source"]["lines"]) <= block["bounds"][1]
+    # The history column is drawn exactly as without it, and the page still counts as complete.
+    assert audit["events"] == base["events"] and audit["complete"] is True
+
+
+def test_did_you_know_leads_with_a_different_fact_each_hour(plugin, payload, monkeypatch):
+    photographs(monkeypatch, plugin, (640, 320))
+    leads = []
+    for hour in (9, 10, 11, 12):
+        audit = plugin._render_page((800, 480), {**payload, "did_you_know": DYK}, settings(),
+                                    at_hour(hour)).info["daily_wiki_layout"]
+        leads.append(audit["did_you_know"]["facts"][0]["answer"])
+
+    assert leads == ["U-267号潜艇", "云达不来梅女子足球队", "齐格弗里德·卡舍", "U-267号潜艇"]
+
+
+@pytest.mark.parametrize("case", ["portrait photograph", "english page", "no facts", "facts of another shape"])
+def test_without_room_or_facts_the_page_is_drawn_exactly_as_before(plugin, payload, monkeypatch, case):
+    photographs(monkeypatch, plugin, (300, 400) if case == "portrait photograph" else (640, 320))
+    page = dict(payload, language="en") if case == "english page" else dict(payload)
+    extra = {"no facts": {"facts": [], "image_url": ""}, "facts of another shape": {"facts": "soon"}}.get(case, DYK)
+    base = plugin._render_page((800, 480), dict(page), settings(), at_hour(10))
+    image = plugin._render_page((800, 480), {**page, "did_you_know": extra}, settings(), at_hour(10))
+
+    assert "did_you_know" not in image.info["daily_wiki_layout"]
+    assert image.tobytes() == base.tobytes()
+
+
+def test_a_fact_too_long_for_the_room_gives_way_to_one_that_fits_whole(plugin, payload, monkeypatch):
+    # This photograph leaves two lines: the hour's fact needs more, a shorter one is shown whole.
+    photographs(monkeypatch, plugin, (640, 460))
+    short ={"question": "哪种袋子为西巴布亚所特有？", "answer": "诺肯袋", "pictured": False}
+    facts = {"facts": [DYK["facts"][2], short, DYK["facts"][0]], "image_url": ""}
+    audit = plugin._render_page((800, 480), {**payload, "did_you_know": facts}, settings(),
+                                at_hour(9)).info["daily_wiki_layout"]
+
+    shown = audit["did_you_know"]["facts"]
+    assert [fact["text"] for fact in shown] == ["你知道吗？哪种袋子为西巴布亚所特有？答：诺肯袋"]
+    assert shown[0]["shortened"] is False and len(shown[0]["lines"]) == 2
+
+
+def test_when_no_fact_fits_whole_one_is_cut_at_a_clause_and_keeps_its_answer(plugin, payload, monkeypatch):
+    # Room for three lines; the question whole would need four with its answer.
+    photographs(monkeypatch, plugin, (640, 440))
+    question ="哪种料理以将鸡肉印尼炒饭用薄煎蛋或煎蛋卷包裹的方式制成，其中一个称呼得自泰国热门海滩度假胜地芭堤雅？"
+    facts = {"facts": [{"question": question, "answer": "蛋包印尼炒饭", "pictured": False}], "image_url": ""}
+    audit = plugin._render_page((800, 480), {**payload, "did_you_know": facts}, settings(),
+                                at_hour(9)).info["daily_wiki_layout"]
+
+    fact = audit["did_you_know"]["facts"][0]
+    assert fact["shortened"] is True and fact["question"] == question
+    # Cut where a clause ends, marked with an ellipsis; the answer is never cut.
+    assert fact["text"] == "你知道吗？哪种料理以将鸡肉印尼炒饭用薄煎蛋或煎蛋卷包裹的方式制成…答：蛋包印尼炒饭"
+    # A question with no clause to cut at is not cut inside a word: the block stays off instead.
+    unbroken = {"facts": [{"question": "哪" + "很长的问题" * 16 + "？", "answer": "答案", "pictured": False}], "image_url": ""}
+    audit = plugin._render_page((800, 480), {**payload, "did_you_know": unbroken}, settings(),
+                                at_hour(9)).info["daily_wiki_layout"]
+    assert "did_you_know" not in audit
+
+
+def test_a_second_fact_follows_when_the_room_holds_both_whole(plugin, payload, monkeypatch):
+    # A panorama leaves room for two facts; only the first carries the 你知道吗？ lead-in.
+    photographs(monkeypatch, plugin, (900, 300))
+    audit = plugin._render_page((800, 480), {**payload, "did_you_know": DYK}, settings(),
+                                at_hour(9)).info["daily_wiki_layout"]
+
+    shown = audit["did_you_know"]["facts"]
+    assert [fact["answer"] for fact in shown] == ["U-267号潜艇", "云达不来梅女子足球队"]
+    assert shown[0]["text"].startswith("你知道吗？哪艘潜艇") and shown[1]["text"].startswith("日本女国脚")
+    assert shown[0]["bounds"][3] <= shown[1]["bounds"][1]
+    assert len(shown) <= swiss_renderer.DID_YOU_KNOW_FACTS
+
+
+def test_the_pictured_fact_shows_the_blocks_picture_beside_its_lines(plugin, payload, monkeypatch):
+    asked = photographs(monkeypatch, plugin, (900, 300))
+    image = plugin._render_page((800, 480), {**payload, "did_you_know": DYK}, settings(), at_hour(11))
+    audit = image.info["daily_wiki_layout"]
+
+    fact = audit["did_you_know"]["facts"][0]
+    assert fact["answer"] == "齐格弗里德·卡舍" and DYK_PICTURE_URL in asked
+    left, top, right, bottom = fact["picture"]["bounds"]
+    assert_inside((left, top, right, bottom), audit["did_you_know"]["bounds"])
+    assert image.getpixel(((left + right) // 2, (top + bottom) // 2)) == DYK_PICTURE_COLOUR
+    # Its own proportions (116 x 140), never stretched; the lines beside it stop short of it.
+    assert abs((right - left) * 140 - (bottom - top) * 116) <= 140
+    for line in fact["lines"]:
+        if line["bounds"][1] < bottom:
+            assert line["bounds"][2] <= left
+    assert "".join(line["text"] for line in fact["lines"]) == fact["text"]
+    # The other facts carry no picture, and the page's media audit does not count this one.
+    assert audit["did_you_know"]["facts"][-1]["picture"] is None or len(audit["did_you_know"]["facts"]) == 1
+    assert audit["media_requested"] == {"daily_image": True, "history_image": True}
+
+
+def test_a_picture_that_cannot_load_leaves_the_fact_in_words(plugin, payload, monkeypatch):
+    photographs(monkeypatch, plugin, (900, 300), dyk_picture=None)
+    audit = plugin._render_page((800, 480), {**payload, "did_you_know": DYK}, settings(),
+                                at_hour(11)).info["daily_wiki_layout"]
+
+    fact = audit["did_you_know"]["facts"][0]
+    assert fact["answer"] == "齐格弗里德·卡舍" and fact["picture"] is None and fact["shortened"] is False
+
+
+def test_the_bulb_icon_is_a_solid_shape_like_the_almanacs():
+    icon = swiss_renderer.almanac_icon("bulb", 18)
+
+    assert icon.mode == "L" and icon.size == (22, 18)
+    solid = sum(icon.histogram()[201:])
+    assert 60 <= solid <= 0.6 * 22 * 18
+    assert icon.getpixel((0, 0)) == 0 and icon.getpixel((21, 17)) == 0
+
+
+@pytest.mark.parametrize("dimensions", [(640, 384), (480, 288), (1600, 960)])
+def test_did_you_know_scales_with_the_page_and_never_breaks_it(plugin, payload, monkeypatch, dimensions):
+    photographs(monkeypatch, plugin, (900, 300))
+    image = plugin._render_page(dimensions, {**payload, "did_you_know": DYK}, settings(), at_hour(9))
+    audit = image.info["daily_wiki_layout"]
+
+    assert image.size == dimensions and audit["caption"]["complete"]
+    if "did_you_know" in audit:
+        assert_inside(audit["did_you_know"]["bounds"], audit["regions"]["daily_image_column"]["bounds"])
