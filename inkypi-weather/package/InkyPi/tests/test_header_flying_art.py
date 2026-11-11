@@ -1,5 +1,4 @@
-"""The generated header art: comics on the wind (the stand-in for Comic Covers' source logos),
-dollar bills (stock tracker)."""
+"""The generated header art: comics on the wind (Comic Covers), dollar bills (stock tracker)."""
 
 import json
 from pathlib import Path
@@ -8,7 +7,6 @@ from PIL import Image, ImageDraw
 
 from plugins.base_plugin import cover_gallery
 from plugins.gcd_comic_covers import gcd_comic_covers
-from plugins.gcd_comic_covers.gcd_comic_covers import GcdComicCovers
 from plugins.stocktracker import stocktracker
 from plugins.stocktracker.stocktracker import StockTracker, _active_stock_colors
 
@@ -30,46 +28,6 @@ def test_header_art_is_left_out_when_there_is_no_room():
     page = Image.new("RGB", (100, 50), (255, 255, 255))
     cover_gallery._header_art(page, Image.new("RGBA", (40, 10), RED), (10, 2, 50, 40))
     assert page.getpixel((30, 20)) == (255, 255, 255)
-
-
-def _comic_page(monkeypatch, settings, provider="comicvine"):
-    """The comic rack's page, and what it handed the gallery for its header."""
-    handed = {}
-    original = cover_gallery.compose
-
-    def compose(*args, **kwargs):
-        handed.update(kwargs)
-        return original(*args, **kwargs)
-
-    with monkeypatch.context() as patch:
-        patch.setattr(cover_gallery, "compose", compose)
-        covers = [{"provider": provider, "series_name": "One", "issue_number": "1",
-                   "image": Image.new("RGB", (300, 456), (90, 90, 90))}]
-        page = GcdComicCovers({"id": "gcd_comic_covers"})._gallery_page(covers, (800, 480), settings)
-    return page, handed
-
-
-def test_comic_header_names_its_sources_by_logo_and_flies_no_comics(monkeypatch):
-    page, handed = _comic_page(monkeypatch, {"sourceMode": "mixed"})
-
-    # Both databases a mixed page draws on, by their logos; nothing between them and the date.
-    assert handed["sources"] == ["Comic Vine", "GCD"] and handed["header_art"] is None
-    for name in handed["sources"]:
-        assert cover_gallery.source_logo(name, cover_gallery.palette(False), cover_gallery.HEADER_SOURCE_H) is not None
-    assert all(page.getpixel((x, y)) == page.getpixel((x, 2)) for x in range(380, 640)
-               for y in range(4, cover_gallery.HEADER_RULE - 2))
-    # One database alone is named alone, plus any other a shown cover came from.
-    assert _comic_page(monkeypatch, {"sourceMode": "comicvine"})[1]["sources"] == ["Comic Vine"]
-    assert _comic_page(monkeypatch, {"sourceMode": "gcd"})[1]["sources"] == ["GCD", "Comic Vine"]
-    assert _comic_page(monkeypatch, {"sourceMode": "gcd"}, provider="gcd")[1]["sources"] == ["GCD"]
-
-
-def test_comic_header_flies_its_comics_when_no_source_logo_is_at_hand(monkeypatch):
-    monkeypatch.setattr(cover_gallery, "source_logo", lambda *args, **kwargs: None)
-    _page, handed = _comic_page(monkeypatch, {"sourceMode": "mixed"})
-
-    assert handed["header_art"] is not None
-    assert handed["header_art"] is cover_gallery.load_wordmark(gcd_comic_covers.HEADER_ART_PATH)
 
 
 def test_stock_header_names_its_sources_by_logo_between_the_wordmark_and_the_source_line():

@@ -130,8 +130,7 @@ _PROVIDER_CACHE_WRITES_ENABLED = ContextVar(
 )
 # The gallery page's own wordmark (GPT Image 2.5; assets/gallery_wordmark.source.json).
 GALLERY_WORDMARK_PATH = Path(__file__).with_name("assets") / "gallery_wordmark.png"
-# Comics flying on the wind (GPT Image 2.5; tools/build_flying_header_art.py): the header's
-# stand-in when none of the page's sources can be shown by its logo.
+# Comics flying on the wind across the header (GPT Image 2.5; tools/build_flying_header_art.py).
 HEADER_ART_PATH = Path(__file__).with_name("assets") / "header_flying_comics.png"
 
 
@@ -647,28 +646,16 @@ class GcdComicCovers(BasePlugin):
                    for cover in extras if cover.get("image")]
         if not images:
             return self._fallback_image(dimensions, "GCD Comic Covers", "No usable cover image")
-        sources = self._header_sources(covers, settings)
-        dark = _gallery_dark(settings)
-        # The header names its sources by their official logos; only without any does the art fly there.
-        logos = [cover_gallery.source_logo(name, cover_gallery.palette(dark), cover_gallery.HEADER_SOURCE_H)
-                 for name in sources]
-        header_art = None if any(logo is not None for logo in logos) else cover_gallery.load_wordmark(HEADER_ART_PATH)
+        sources = sorted({_comic_source(cover) for cover in covers})
         now = datetime.now()
         return cover_gallery.compose(
             images, [_comic_label(cover) for cover in covers], tuple(dimensions), title="COMIC COVERS",
             subtitle="今日漫画", sources=sources,
             date_text=f"{now.month}月{now.day}日 周{'一二三四五六日'[now.weekday()]}",
-            accent=COMIC_ACCENT, dark=dark,
+            accent=COMIC_ACCENT, dark=_gallery_dark(settings),
             wordmark=cover_gallery.load_wordmark(GALLERY_WORDMARK_PATH), style="comic",
-            header_art=header_art, fillers=fillers, filler_heading="今日更多",
+            header_art=cover_gallery.load_wordmark(HEADER_ART_PATH), fillers=fillers, filler_heading="今日更多",
             fact_rows=LABEL_FACT_ROWS)
-
-    def _header_sources(self, covers, settings):
-        """The databases the page draws on, for the header: those the source setting asks (both
-        when mixed), then any other a shown cover came from."""
-        asked = {"comicvine": ["Comic Vine"], "mixed": ["Comic Vine", "GCD"]}.get(self._source_mode(settings or {}), ["GCD"])
-        shown = sorted({_comic_source(cover) for cover in covers})
-        return asked + [name for name in shown if name not in asked]
 
     def _placeholder_cover(self, cover):
         """A designed stand-in for a cover whose scan the source withholds: the series and issue

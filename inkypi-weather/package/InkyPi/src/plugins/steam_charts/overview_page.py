@@ -20,11 +20,9 @@ from utils.flat_icons import draw_icon
 from utils.theme_utils import contrast_ratio
 
 ICON_DIR = Path(__file__).resolve().parent / "assets" / "icons"
-# SteamCharts' own site icon, SOURCE_ICON_SIZE square before its address, SOURCE_GAP after the
-# wordmark in the header (Steam, the other source, is the title's own logo).
+# SteamCharts' own site icon, SOURCE_ICON_SIZE square before its address in the header.
 SOURCE_ICON_PATH = Path(__file__).resolve().parent / "assets" / "steamcharts_icon.png"
 SOURCE_ICON_SIZE = 16
-SOURCE_GAP = 16
 HEADER_H = 56
 SECTION_TOP = 62
 ROWS_TOP = 90
@@ -46,17 +44,15 @@ RANK_DISC = 20
 FIRST_WEEK_DAYS, NEW_RELEASE_DAYS = 7, 30
 # Metacritic's score on the art's top right corner, in its own bands: green from 75, gold from 50.
 METACRITIC_GREEN, METACRITIC_GOLD = 75, 50
-# The Steam logo (x, y, size), then the wordmark's lettering from WORDMARK_LEFT, drawn larger than
-# its own pixels and standing on the header rule so its underline and the rule are one line.
+# The Steam logo (x, y, size), then the wordmark from WORDMARK_LEFT to WORDMARK_RIGHT: its lettering
+# drawn larger than its own pixels and its skyline grown into what is left, both standing on the
+# header rule so their underline and the rule are one line.
 LOGO_BOX = (10, 4, 48)
-WORDMARK_LEFT, WORDMARK_BASELINE = 64, HEADER_H + 2
+WORDMARK_LEFT, WORDMARK_RIGHT, WORDMARK_BASELINE = 64, 420, HEADER_H + 2
 LETTERING_SCALE = 1.45
-# Where the wordmark's pieces sit in its own 320x72 pixels: the first building of the pixel skyline
-# drawn after the lettering (the header leaves it out), the end of the lettering, the row below
-# "STEAM CHARTS" and the underline's first row.
+# Where the wordmark's pieces sit in its own 320x72 pixels: the skyline's first building,
+# the end of the lettering, the row below "STEAM CHARTS" and the underline's first row.
 SKYLINE_X, LETTERING_END, LETTERING_BOTTOM, UNDERLINE_TOP = 116, 158, 58, 70
-# The 48-hour line of users online is drawn only with at least this much room.
-HEADER_SPARK_MIN_W = 60
 # Refined accents rather than the panel's pure inks; night lifts each tone.
 ACCENTS = {
     "day": {"up": (5, 150, 105), "down": (200, 30, 50), "blue": (27, 111, 168), "gold": (196, 140, 0)},
@@ -84,21 +80,24 @@ def _blend(colour, other, amount):
     return tuple(round(a * amount + b * (1 - amount)) for a, b in zip(colour, other))
 
 
-def _lettering(source):
-    """The title wordmark's lettering in its own pixel grid, without the skyline drawn after it.
+def _split_wordmark(source):
+    """(lettering, skyline) of the title wordmark, in its own pixel grid.
 
-    The skyline is everything right of the lettering plus the low buildings under its end; the
-    underline beneath those buildings stays with the lettering.
+    The skyline is everything right of the lettering plus the low buildings under its end;
+    the underline beneath those buildings stays in both, so the two halves join on it.
     """
     width, height = source.size
     skyline_mask = Image.new("L", source.size, 0)
     mask_draw = ImageDraw.Draw(skyline_mask)
     mask_draw.rectangle((LETTERING_END, 0, width, height), fill=255)
     mask_draw.rectangle((SKYLINE_X, LETTERING_BOTTOM, width, height), fill=255)
-    mask_draw.rectangle((SKYLINE_X, UNDERLINE_TOP, LETTERING_END - 1, height), fill=0)
+    skyline = Image.new("RGBA", source.size, (0, 0, 0, 0))
+    skyline.paste(source, (0, 0), skyline_mask)
+    lettering_mask = skyline_mask.copy()
+    ImageDraw.Draw(lettering_mask).rectangle((SKYLINE_X, UNDERLINE_TOP, LETTERING_END - 1, height), fill=0)
     lettering = source.copy()
-    lettering.paste((0, 0, 0, 0), (0, 0, width, height), skyline_mask)
-    return lettering
+    lettering.paste((0, 0, 0, 0), (0, 0, width, height), lettering_mask)
+    return lettering, skyline
 
 
 def _shown(part):
@@ -169,61 +168,63 @@ class LiveOverviewMixin:
         draw_icon(draw, fallback, xy, size, colour, colors["paper"])
 
     def _overview_wordmark(self, image, colors):
-        """The wordmark's lettering enlarged on the header rule; where it ends (WORDMARK_LEFT without it)."""
+        """The wordmark's lettering enlarged, then its skyline lifted out and grown up to WORDMARK_RIGHT."""
         source = self._theme_title_wordmark(colors)
-        lettering = _shown(_lettering(source)) if source is not None else None
+        if source is None:
+            return
+        lettering, skyline = (_shown(part) for part in _split_wordmark(source))
         if lettering is None:
-            return WORDMARK_LEFT
+            return
         lettering = lettering.resize((round(lettering.width * LETTERING_SCALE), round(lettering.height * LETTERING_SCALE)),
                                      Image.Resampling.LANCZOS)
         image.paste(lettering, (WORDMARK_LEFT, WORDMARK_BASELINE - lettering.height), lettering)
-        return WORDMARK_LEFT + lettering.width
-
-    def _overview_source(self, image, draw, left, colors):
-        """SteamCharts by its own site icon (green bars on a dark tile) and address from ``left``; where it ends."""
-        site, font = "steamcharts.com", self._font(11)
-        middle = HEADER_H // 2
-        source_icon = _steamcharts_icon(SOURCE_ICON_SIZE)
-        if source_icon is not None:
-            image.paste(source_icon, (left, middle - source_icon.height // 2), source_icon)
-            left += source_icon.width + 5
-        draw.text((left, middle), site, font=font, fill=colors["ink"], anchor="lm")
-        return round(left + draw.textlength(site, font=font))
+        if skyline is None:
+            return
+        # It starts where the lettering's underline ends and stands on the same line.
+        left = WORDMARK_LEFT + lettering.width
+        grow = min((WORDMARK_RIGHT - left) / skyline.width, (WORDMARK_BASELINE - 2) / skyline.height)
+        skyline = skyline.resize((round(skyline.width * grow), round(skyline.height * grow)), Image.Resampling.LANCZOS)
+        image.paste(skyline, (left, WORDMARK_BASELINE - skyline.height), skyline)
 
     def _overview_header(self, image, draw, totals, colors, updated_at_text):
-        """Logo and wordmark on the header rule, the source, the 48-hour line with the totals, the refresh time."""
+        """Logo and wordmark standing on the header rule, the 48-hour line, then the totals by the source."""
         self._paste_steam_logo(image, *LOGO_BOX, colors)
-        source_right = self._overview_source(image, draw, self._overview_wordmark(image, colors) + SOURCE_GAP, colors)
-        # The refresh time closes the header: its label over the time, so the line before it has the room.
-        text_left = 788
-        lines = updated_at_text.split(" ", 1) if updated_at_text else []
-        for index, line in enumerate(lines):
-            middle = HEADER_H // 2 + (index * 2 - len(lines) + 1) * 8
-            draw.text((788, middle), line, font=self._font(11), fill=colors["ink"], anchor="rm")
-            text_left = min(text_left, 788 - draw.textlength(line, font=self._font(11)))
+        self._overview_wordmark(image, colors)
+        # The source by its own site icon (green bars on a dark tile) before its address.
+        site = "steamcharts.com"
+        text_left = 788 - draw.textlength(site, font=self._font(9))
+        draw.text((text_left, 12), site, font=self._font(9), fill=colors["muted"])
+        source_icon = _steamcharts_icon(SOURCE_ICON_SIZE)
+        if source_icon is not None:
+            image.paste(source_icon, (round(text_left) - 4 - source_icon.width, 17 - source_icon.height // 2), source_icon)
+            text_left -= 4 + source_icon.width
+        if updated_at_text:
+            width = draw.textlength(updated_at_text, font=self._font(11))
+            draw.text((788 - width, 38), updated_at_text, font=self._font(11), fill=colors["muted"])
+            text_left = min(text_left, 788 - width)
 
         number_font = self._font(19, "bold")
         blocks = [(key, label, icon, fallback, 24 + max(draw.textlength(wan(totals[key]), font=number_font), 70))
                   for key, label, icon, fallback in (("online", "在线", "users", "users"),
                                                      ("ingame", "游戏中", "ingame", "gamepad")) if key in totals]
-        # The totals sit just left of the refresh time; the 48-hour line takes the room from the source to them.
-        x = round(text_left - 18 - sum(block[-1] for block in blocks) - 18 * max(0, len(blocks) - 1))
+        # The totals sit just left of the source and refresh time; the 48-hour line takes the space before them.
+        x = round(text_left - 14 - sum(block[-1] for block in blocks) - 18 * max(0, len(blocks) - 1))
         spark = totals.get("spark") or []
-        left = source_right + SOURCE_GAP
-        if len(spark) > 1 and x - 14 - left > HEADER_SPARK_MIN_W:
-            # The filled line stands on the header rule; a dashed cursor drops from the latest point
-            # as if it were being hovered, and its span is named in the clear corner above its start.
-            end_x, end_y = self._overview_spark(draw, (left, 8, x - 14, HEADER_H - 1), spark, colors["blue"], colors)
+        if len(spark) > 1 and x - 16 - (WORDMARK_RIGHT + 12) > 60:
+            # The filled line stands on the header rule like the skyline; its label lies over it, haloed,
+            # and a dashed cursor drops from the latest point as if it were being hovered.
+            left = WORDMARK_RIGHT + 12
+            end_x, end_y = self._overview_spark(draw, (left, 8, x - 16, HEADER_H - 1), spark, colors["blue"], colors)
             for y in range(round(end_y) + 5, HEADER_H - 1, 4):
                 draw.line((end_x, y, end_x, min(y + 1, HEADER_H - 2)), fill=colors["blue"], width=1)
             draw.text((left + 4, HEADER_H - 18), "48 小时", font=self._font(11, "bold"), fill=colors["ink"],
                       stroke_width=2, stroke_fill=colors["paper"])
         for key, label, icon, fallback, width in blocks:
             self._overview_icon(image, draw, icon, fallback, (x, 10), 18, colors["blue"], colors)
-            draw.text((x + 24, 7), label, font=self._font(11), fill=colors["ink"])
+            draw.text((x + 24, 7), label, font=self._font(11), fill=colors["muted"])
             draw.text((x + 24, 21), wan(totals[key]), font=number_font, fill=colors["ink"])
             peak = f"峰值 {wan(totals.get(key + '_peak'))}"
-            draw.text((x + 24, 42), peak, font=self._font(10), fill=colors["ink"])
+            draw.text((x + 24, 42), peak, font=self._font(10), fill=colors["muted"])
             x += width + 18
         draw.line((12, HEADER_H, 788, HEADER_H), fill=colors["ink"], width=2)
 

@@ -95,43 +95,32 @@ def test_every_overview_icon_is_a_generated_badge_with_its_provenance():
     assert overview_page._icon("no-such-icon", 18) is None
 
 
-def test_the_header_keeps_the_wordmarks_lettering_and_leaves_its_skyline_out():
+def test_the_wordmark_skyline_grows_into_the_header_space():
     plugin = _plugin()
     source = plugin._theme_title_wordmark({"ink": (0, 0, 0), "paper": (255, 255, 255)})
-    lettering = overview_page._lettering(source)
-    # The lettering keeps its own pixels and its underline; nothing right of it or of the low buildings stays.
-    kept = (0, 0, overview_page.SKYLINE_X, source.height)
-    assert lettering.crop(kept).tobytes() == source.crop(kept).tobytes()
-    alpha = lettering.getchannel("A")
-    assert alpha.crop((overview_page.LETTERING_END, 0, *source.size)).getextrema()[1] == 0
-    assert alpha.crop((overview_page.SKYLINE_X, overview_page.LETTERING_BOTTOM,
-                       overview_page.LETTERING_END, overview_page.UNDERLINE_TOP)).getextrema()[1] == 0
+    lettering, skyline = overview_page._split_wordmark(source)
+    # Every shown pixel lands in one half or the other (both keep the underline where they join).
+    for x in range(0, source.width, 3):
+        for y in range(source.height):
+            if source.getpixel((x, y))[3] > 24:
+                assert lettering.getpixel((x, y))[3] or skyline.getpixel((x, y))[3]
 
-    totals = {"online": 35_000_000, "online_peak": 40_000_000, "spark": [3, 5, 4, 6, 2, 5]}
-    image = plugin._render_live_overview((800, 480), [{"games": []}, {"games": []}], totals,
-                                         {"mode": "day"}, "刷新时间 10/23 10:51")
+    image = plugin._render_live_overview((800, 480), [{"games": []}, {"games": []}], {"online": 35_000_000},
+                                         {"mode": "day"}, "")
 
     def inked(x_range, y_range):
         return [(x, y) for x in x_range for y in y_range if sum(image.getpixel((x, y))) < 600]
 
-    def blue(x, y):
-        red, _green, blue_part = image.getpixel((x, y))
-        return blue_part > red + 40
-
     # "STEAM CHARTS" stands about twice its old height on the header rule (its underline and the
-    # rule are one line).
+    # rule are one line), and the skyline reaches on to WORDMARK_RIGHT.
     lettering = inked(range(70, 230), range(2, overview_page.HEADER_H - 3))
     assert min(y for _x, y in lettering) < 30
     assert not inked(range(70, 230), range(overview_page.HEADER_H + 3, overview_page.HEADER_H + 6))
-    # After the wordmark only the source's mark and address stand (mid-height): no buildings rise
-    # over them or sit on the rule below them.
-    after = inked(range(300, 425), range(2, overview_page.HEADER_H - 2))
-    assert after and min(y for _x, y in after) > 16 and max(y for _x, y in after) < 40
-    # The 48-hour line has the room from the source to the users-online badge, which sits by the refresh time.
-    drawn = [x for x in range(425, 760) if any(blue(x, y) for y in range(8, overview_page.HEADER_H - 1))]
-    gap = max(range(len(drawn) - 1), key=lambda index: drawn[index + 1] - drawn[index])
-    line, badge = drawn[:gap + 1], drawn[gap + 1:]
-    assert line[-1] - line[0] > 150 and 0 < len(badge) < 30 and badge[0] > 600
+    assert max(x for x, _y in inked(range(236, overview_page.WORDMARK_RIGHT + 1), range(2, 52))) > 350
+    # The users-online badge sits right of the 48-hour line, by the source and refresh time.
+    badge = [x for x, _y in inked(range(380, 700), range(10, 28))
+             if image.getpixel((x, _y))[2] > 150 and image.getpixel((x, _y))[0] < 80]
+    assert badge and min(badge) > 500
 
 
 def test_overview_draws_both_boards_with_totals_and_store_facts(monkeypatch):
@@ -249,31 +238,10 @@ def test_the_header_names_steamcharts_by_its_site_icon():
 
     image = plugin._render_live_overview((800, 480), [], totals, {"mode": "day"}, "刷新时间 10/23 10:51")
 
-    # The icon's green bars on its dark tile stand right after the wordmark, before "steamcharts.com".
-    spot = [image.getpixel((x, y)) for x in range(290, 340) for y in range(18, 38)]
-    assert any(green > 150 and red < 140 and blue < 110 for red, green, blue in spot)
+    # The icon's green bars on its dark tile stand just left of "steamcharts.com" in the top right corner.
+    corner = [image.getpixel((x, y)) for x in range(690, 760) for y in range(8, 27)]
+    assert any(green > 150 and red < 140 and blue < 110 for red, green, blue in corner)
     assert overview_page.SOURCE_ICON_PATH.is_file()
-
-
-def test_the_header_ends_on_the_refresh_time_with_every_label_in_ink(monkeypatch):
-    plugin = _plugin()
-    drawn = []
-    original = ImageDraw.ImageDraw.text
-
-    def capture(self, xy, text, *args, **kwargs):
-        drawn.append((str(text), xy, kwargs.get("fill")))
-        return original(self, xy, text, *args, **kwargs)
-
-    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture)
-    totals = {"online": 35_630_000, "online_peak": 40_120_000, "spark": [1, 3, 2]}
-    plugin._render_live_overview((800, 480), [], totals, {"mode": "day"}, "刷新时间 10/23 10:51")
-
-    header = {text: (xy, fill) for text, xy, fill in drawn if xy[1] < overview_page.HEADER_H}
-    # Every label and figure is there, each in the page's ink; the refresh time's two lines end
-    # at the right margin.
-    assert {"steamcharts.com", "48 小时", "在线", "3563万", "峰值 4012万", "刷新时间", "10/23 10:51"} <= set(header)
-    assert {fill for _xy, fill in header.values()} == {(0, 0, 0)}
-    assert header["刷新时间"][0][0] == header["10/23 10:51"][0][0] == 788
 
 
 class _Steam:

@@ -38,11 +38,6 @@ TITLE_ASSET_PATH = Path(__file__).resolve().parent / "assets" / "daily_image_wor
 ORNAMENT_ASSET_PATH = Path(__file__).resolve().parent / "assets" / "daily_image_header_ornament.png"
 # Wikimedia's logo, crediting a Wikimedia picture at the head of its source line.
 WIKIMEDIA_LOGO_PATH = Path(__file__).resolve().parent / "assets" / "wikimedia_logo.png"
-# Wikipedia's puzzle globe: with Wikimedia's logo it names the page's sources after the title
-# (the day's feed is Wikipedia's, its picture Wikimedia Commons'), each HEADER_LOGO_HEIGHT tall.
-WIKIPEDIA_LOGO_PATH = Path(__file__).resolve().parent / "assets" / "wikipedia_logo.png"
-HEADER_LOGO_HEIGHT = 34
-HEADER_LOGO_GAP = 12
 # The logo stands this much taller than the source line it heads.
 WIKIMEDIA_LOGO_SCALE = 1.3
 # Quiet doodles in the day's accent under the photograph's column and the history column.
@@ -93,25 +88,16 @@ def _source_date(payload, now):
         return now
 
 
-def _from_wikimedia(payload):
-    return str(payload.get("source") or "Wikimedia").strip().casefold() == "wikimedia"
-
-
-def _logo(path, height):
-    """The logo at ``path`` ``height`` tall in its own colours, or None without the file."""
+def _source_logo(payload, height):
+    """Wikimedia's logo ``height`` tall when the picture comes from Wikimedia, else None."""
+    if str(payload.get("source") or "Wikimedia").strip().casefold() != "wikimedia" or height < 6:
+        return None
     try:
-        with Image.open(path) as source:
+        with Image.open(WIKIMEDIA_LOGO_PATH) as source:
             logo = source.convert("RGBA")
     except (OSError, ValueError):
         return None
     return logo.resize((max(1, round(logo.width * height / logo.height)), height), Image.Resampling.LANCZOS)
-
-
-def _source_logo(payload, height):
-    """Wikimedia's logo ``height`` tall when the picture comes from Wikimedia, else None."""
-    if not _from_wikimedia(payload) or height < 6:
-        return None
-    return _logo(WIKIMEDIA_LOGO_PATH, height)
 
 
 def _history_image_index(events, payload):
@@ -490,27 +476,8 @@ class _Page:
         except (OSError, ValueError):
             return None
 
-    def header_sources(self, left, right, axis):
-        """Wikipedia's and Wikimedia's logos from ``left`` on ``axis``, in their own colours straight
-        on the page; None when the page is not from Wikimedia, a logo is missing or they do not fit."""
-        if not _from_wikimedia(self.payload):
-            return None
-        height = self.px(HEADER_LOGO_HEIGHT)
-        logos = [_logo(path, height) for path in (WIKIPEDIA_LOGO_PATH, WIKIMEDIA_LOGO_PATH)]
-        gap = self.px(HEADER_LOGO_GAP)
-        if any(logo is None for logo in logos) or left + sum(logo.width for logo in logos) + gap > right:
-            return None
-        records, x = [], left
-        for logo, path in zip(logos, (WIKIPEDIA_LOGO_PATH, WIKIMEDIA_LOGO_PATH)):
-            y = axis - logo.height // 2
-            self.image.paste(logo, (x, y), logo)
-            records.append({"asset": path.name, "bounds": [x, y, x + logo.width, y + logo.height]})
-            x += logo.width + gap
-        return records
-
     def header_ornament(self, left, right, axis):
-        """Fill the header gap with the shape strip, ruled out to ``left`` and ``right`` on ``axis``:
-        the stand-in when the sources' logos cannot be shown."""
+        """Fill the header gap with the shape strip, ruled out to ``left`` and ``right`` on ``axis``."""
         gap = self.px(12)
         if right - left < self.px(160):
             return None
@@ -565,10 +532,8 @@ class _Page:
         date_y = self.rule_y - self.px(11) - self.glyph_height(date_text, date_font)
         self.audit["header"]["date"] = self.ink(date_text, date_x, date_y, date_font)
         title_bounds = title_record["bounds"]
-        gap = (title_bounds[2] + self.px(16), date_x - self.px(16), (title_bounds[1] + title_bounds[3]) // 2)
-        # The title, then the sources by their official logos, then the date.
-        self.audit["header"]["sources"] = self.header_sources(*gap)
-        self.audit["header"]["ornament"] = None if self.audit["header"]["sources"] else self.header_ornament(*gap)
+        self.audit["header"]["ornament"] = self.header_ornament(
+            title_bounds[2] + self.px(16), date_x - self.px(16), (title_bounds[1] + title_bounds[3]) // 2)
         self.draw.line((self.margin, self.rule_y, self.right, self.rule_y),
                        fill=self.palette["ink"], width=self.px(2))
         for x in (self.rail_right, self.divider):
