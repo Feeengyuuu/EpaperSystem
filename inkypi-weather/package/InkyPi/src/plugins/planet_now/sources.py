@@ -3,7 +3,10 @@
 Every feed is public and needs no key: CAISO's Today's Outlook CSVs, NOAA's GOES-West
 GeoColor image of the Pacific Southwest, RainViewer's radar, NASA's EPIC Earth images,
 Google Trends' daily RSS, Wikipedia's featured feed, Apple's charts, NASA's Perseverance
-raw images, wheretheiss.at and the people-in-space list. Pictures are cut and shrunk as they arrive and kept in the
+raw images, wheretheiss.at and the people-in-space list; and for the Earth's news, the typhoons of
+China's National Meteorological Centre, the US National Hurricane Center's storms, USGS's
+significant earthquakes, the China Earthquake Networks list and NASA Earth Observatory's image of
+the day. Pictures are cut and shrunk as they arrive and kept in the
 feed's cached data (base64 JPEG), so a theme redraw needs no network. Parsers are plain
 functions over the fetched text, testable offline.
 """
@@ -13,6 +16,7 @@ from __future__ import annotations
 import base64
 import csv
 import io
+import json
 import math
 import re
 from datetime import datetime, timedelta, timezone
@@ -114,12 +118,62 @@ PEOPLE_URL = "https://corquaid.github.io/international-space-station-APIs/JSON/p
 EXOPLANET_URL = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync"
 EXOPLANET_QUERY = "select count(*) from ps where default_flag=1"
 EXOPLANET_FLOOR = 5000
+# The Earth now. China's National Meteorological Centre lists the north-west Pacific's typhoons
+# (plain HTTP only, JSONP) with a track per storm; the US National Hurricane Center covers the
+# Atlantic and the eastern and central Pacific.
+TYPHOON_LIST_URL = "http://typhoon.nmc.cn/weatherservice/typhoon/jsons/list_default"
+TYPHOON_VIEW_URL = "http://typhoon.nmc.cn/weatherservice/typhoon/jsons/view_{id}"
+# Tracks asked for per refresh (one request each) and the points of a track kept for the map.
+TYPHOON_TRACKS, TRACK_POINTS = 2, 24
+TYPHOON_LEVELS = {"TD": "热带低压", "TS": "热带风暴", "STS": "强热带风暴", "TY": "台风", "STY": "强台风",
+                  "SUPERTY": "超强台风"}
+HURRICANE_URL = "https://www.nhc.noaa.gov/CurrentStorms.json"
+HURRICANE_CLASSES = {"TD": "热带低压", "TS": "热带风暴", "HU": "飓风", "STD": "副热带低压", "STS": "副热带风暴",
+                     "PTC": "后热带气旋", "PC": "潜在热带气旋"}
+HURRICANE_BASINS = {"al": "大西洋", "ep": "东太平洋", "cp": "中太平洋"}
+# Saffir-Simpson categories 1 to 5 start at these winds (knots).
+HURRICANE_CATEGORIES = (64, 83, 96, 113, 137)
+KNOT_MS = 0.514444
+# USGS's significant earthquakes of the past week, worldwide, and the China Earthquake Networks
+# Center's reviewed list (China's own quakes and the world's large ones, with Chinese place names)
+# through the wolfx mirror: the Center's own site did not answer with a valid certificate.
+WORLD_QUAKES_URL = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/significant_week.geojson"
+CHINA_QUAKES_URL = "https://api.wolfx.jp/cenc_eqlist.json"
+CHINA_QUAKES_KEPT = 24
+BEIJING = timezone(timedelta(hours=8))
+# A place in the Chinese list is China's own when it starts with a province (or one of its seas).
+CHINA_PLACES = ("北京", "天津", "河北", "山西", "内蒙古", "辽宁", "吉林", "黑龙江", "上海", "江苏", "浙江", "安徽", "福建",
+                "江西", "山东", "河南", "湖北", "湖南", "广东", "广西", "海南", "重庆", "四川", "贵州", "云南", "西藏",
+                "陕西", "甘肃", "青海", "宁夏", "新疆", "台湾", "香港", "澳门", "南海", "东海", "黄海", "渤海")
+# USGS names a quake's place in English, the region last; the regions that shake most, in Chinese.
+QUAKE_REGIONS = {
+    "japan": "日本", "indonesia": "印度尼西亚", "philippines": "菲律宾", "papua new guinea": "巴布亚新几内亚",
+    "solomon islands": "所罗门群岛", "vanuatu": "瓦努阿图", "fiji": "斐济", "tonga": "汤加", "samoa": "萨摩亚",
+    "new zealand": "新西兰", "new caledonia": "新喀里多尼亚", "taiwan": "中国台湾", "china": "中国", "chile": "智利",
+    "peru": "秘鲁", "ecuador": "厄瓜多尔", "colombia": "哥伦比亚", "mexico": "墨西哥", "guatemala": "危地马拉",
+    "el salvador": "萨尔瓦多", "nicaragua": "尼加拉瓜", "costa rica": "哥斯达黎加", "panama": "巴拿马",
+    "argentina": "阿根廷", "bolivia": "玻利维亚", "venezuela": "委内瑞拉", "alaska": "美国阿拉斯加", "hawaii": "美国夏威夷",
+    "california": "美国加州", "ca": "美国加州", "nevada": "美国内华达", "oregon": "美国俄勒冈", "washington": "美国华盛顿州",
+    "puerto rico": "波多黎各", "haiti": "海地", "dominican republic": "多米尼加", "cuba": "古巴", "russia": "俄罗斯",
+    "kuril islands": "千岛群岛", "turkey": "土耳其", "türkiye": "土耳其", "iran": "伊朗", "afghanistan": "阿富汗",
+    "pakistan": "巴基斯坦", "india": "印度", "nepal": "尼泊尔", "myanmar": "缅甸", "burma": "缅甸", "greece": "希腊",
+    "italy": "意大利", "iceland": "冰岛", "tajikistan": "塔吉克斯坦", "kyrgyzstan": "吉尔吉斯斯坦", "morocco": "摩洛哥",
+    "northern mariana islands": "北马里亚纳群岛", "guam": "关岛", "timor leste": "东帝汶", "south sandwich islands": "南桑威奇群岛",
+}
+# NASA Earth Observatory's image of the day, as science.nasa.gov's posts list gives it: the newest
+# post with its picture's sizes (14 KB against the 650 KB feed).
+EARTH_PHOTO_URL = "https://science.nasa.gov/wp-json/wp/v2/posts"
+EARTH_PHOTO_PARAMS = {"science_org": "19791", "per_page": "1", "_embed": "wp:featuredmedia",
+                      "_fields": "date,link,title,excerpt,_links.wp:featuredmedia,_embedded"}
+# The photo slot on the page; a listed size must cover it to be asked for.
+PHOTO_SLOT = (112, 164)
 WIKI_API = {"en": "https://en.wikipedia.org/w/api.php", "zh": "https://zh.wikipedia.org/w/api.php"}
 CREW_ROLES = {"commander": "指令长", "pilot": "驾驶员", "payload specialist": "载荷专家",
               "flight engineer": "飞行工程师", "mission specialist": "任务专家", "spaceflight participant": "太空游客"}
 CHINESE_DIGITS = "零一二三四五六七八九"
 IMAGE_HOSTS = {"encrypted-tbn0.gstatic.com", "encrypted-tbn1.gstatic.com", "encrypted-tbn2.gstatic.com",
                "encrypted-tbn3.gstatic.com", "upload.wikimedia.org", "thumb.wikimedia.org", "mars.nasa.gov",
+               "assets.science.nasa.gov",
                "is1-ssl.mzstatic.com", "is2-ssl.mzstatic.com", "is3-ssl.mzstatic.com", "is4-ssl.mzstatic.com",
                "is5-ssl.mzstatic.com"}
 _LIMITS = ImageLimits(max_bytes=4 * 1024 * 1024, max_width=4096, max_height=4096, max_pixels=4096 * 4096)
@@ -919,3 +973,258 @@ def fetch_people(context):
 
 def valid_people(data):
     return isinstance(data, dict) and bool(data.get("stations"))
+
+
+# --- The Earth now: tropical cyclones, strong earthquakes, the Earth image of the day -----------
+
+def parse_jsonp(text):
+    """The object a JSONP answer wraps, whatever its callback and however many parentheses."""
+    text = str(text or "")
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end < start:
+        raise ValueError("no JSON object in the answer")
+    data = json.loads(text[start:end + 1])
+    if not isinstance(data, dict):
+        raise ValueError("the answer is not an object")
+    return data
+
+
+def parse_typhoon_list(text):
+    """The storms the Centre follows now, newest first: [{id, latin, name, number}]; [] on a quiet
+    ocean. ValueError for an answer without the list."""
+    rows = parse_jsonp(text).get("typhoonList")
+    if not isinstance(rows, list):
+        raise ValueError("no typhoon list")
+    storms = []
+    for row in rows:
+        if not isinstance(row, list) or len(row) < 8 or row[7] != "start":
+            continue
+        try:
+            identity = int(row[0])
+        except (TypeError, ValueError):
+            continue
+        latin = " ".join(str(row[1] or "").split())
+        storms.append({"id": identity, "latin": latin, "name": " ".join(str(row[2] or "").split()) or latin,
+                       "number": " ".join(str(row[3] or "").split())})
+    return storms
+
+
+def storm_area(lat, lon):
+    """The sea a north-west Pacific storm is over, in the Centre's broad names."""
+    if lon < 100:
+        return "北印度洋"
+    if 105 <= lon < 121 and 3 <= lat <= 23:
+        return "南海"
+    if 119 <= lon < 131 and 23 < lat <= 33:
+        return "东海"
+    return "西北太平洋"
+
+
+def _utc_text(moment):
+    return moment.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def parse_typhoon_track(text):
+    """A storm's newest fix: {level, lat, lon, pressure (hPa), wind (m/s), time (UTC), area, track
+    ([lat, lon] oldest first, at most TRACK_POINTS)}; {} without a readable fix."""
+    storm = parse_jsonp(text).get("typhoon")
+    points = storm[8] if isinstance(storm, list) and len(storm) > 8 and isinstance(storm[8], list) else []
+    fixes = []
+    for point in points:
+        try:
+            when = datetime.strptime(str(point[1]), "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
+            lat, lon = float(point[5]), round((float(point[4]) + 180) % 360 - 180, 2)
+        except (IndexError, TypeError, ValueError):
+            continue
+        if -90 <= lat <= 90:
+            fixes.append((when, str(point[3] or ""), lat, lon, _finite(point[6]), _finite(point[7])))
+    if not fixes:
+        return {}
+    when, level, lat, lon, pressure, wind = fixes[-1]
+    kept = min(len(fixes), TRACK_POINTS)
+    picked = sorted({round(index * (len(fixes) - 1) / max(1, kept - 1)) for index in range(kept)})
+    return {"level": TYPHOON_LEVELS.get(level.upper(), level), "lat": lat, "lon": lon,
+            "pressure": round(pressure) if pressure is not None else None,
+            "wind": float(wind) if wind is not None else None, "time": _utc_text(when),
+            "area": storm_area(lat, lon), "track": [[fixes[index][2], fixes[index][3]] for index in picked]}
+
+
+def fetch_typhoons(now, context):
+    """The Centre's active storms with their newest fixes: the list, then one track each for the
+    newest TYPHOON_TRACKS of them (none on a quiet ocean)."""
+    stamp = int(now.timestamp() * 1000)
+    listed = parse_typhoon_list(_text("GET", TYPHOON_LIST_URL, context, max_bytes=64 * 1024,
+                                      params={"callback": "typhoon_jsons_list_default", "t": stamp}))
+    storms = []
+    for storm in listed[:TYPHOON_TRACKS]:
+        fix = parse_typhoon_track(_text("GET", TYPHOON_VIEW_URL.format(id=storm["id"]), context,
+                                        max_bytes=256 * 1024,
+                                        params={"callback": f"typhoon_jsons_view_{storm['id']}", "t": stamp}))
+        if fix:
+            storms.append({**storm, **fix})
+    return {"storms": storms}
+
+
+def valid_storms(data):
+    return isinstance(data, dict) and isinstance(data.get("storms"), list)
+
+
+def hurricane_level(kind, knots):
+    """The Hurricane Center's class in Chinese, a hurricane with its Saffir-Simpson category."""
+    kind = str(kind or "").strip().upper()
+    if kind in ("HU", "MH"):
+        category = sum(knots >= floor for floor in HURRICANE_CATEGORIES) if knots is not None else 0
+        return f"飓风 {category} 级" if category else "飓风"
+    return HURRICANE_CLASSES.get(kind, kind or "热带气旋")
+
+
+def parse_hurricanes(payload):
+    """{storms: [{name, level, wind (m/s), pressure (hPa), lat, lon, area, time (UTC)}]} of the
+    Hurricane Center's active storms; ValueError for an answer without the list."""
+    rows = payload.get("activeStorms") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        raise ValueError("no storm list")
+    storms = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        name = " ".join(str(row.get("name") or "").split())
+        lat, lon = _finite(row.get("latitudeNumeric")), _finite(row.get("longitudeNumeric"))
+        if not name or lat is None or lon is None or not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            continue
+        knots, pressure = _finite(row.get("intensity")), _finite(row.get("pressure"))
+        try:
+            when = _utc_text(datetime.fromisoformat(str(row.get("lastUpdate")).replace("Z", "+00:00")))
+        except ValueError:
+            when = ""
+        storms.append({"name": name[:24], "level": hurricane_level(row.get("classification"), knots),
+                       "wind": round(knots * KNOT_MS, 1) if knots is not None else None,
+                       "pressure": round(pressure) if pressure is not None else None, "lat": lat, "lon": lon,
+                       "area": HURRICANE_BASINS.get(str(row.get("id") or "")[:2].lower(), ""), "time": when})
+    return {"storms": storms}
+
+
+def fetch_hurricanes(context):
+    return parse_hurricanes(_json(HURRICANE_URL, context, max_bytes=128 * 1024))
+
+
+def quake_place(place):
+    """USGS's place as the page names it: '30 km WSW of Lata, Solomon Islands' -> '所罗门群岛'; a
+    region the table does not know stays in English."""
+    text = " ".join(str(place or "").split())
+    region = text.rsplit(",", 1)[-1].strip()
+    if region.lower() in QUAKE_REGIONS:
+        return QUAKE_REGIONS[region.lower()]
+    for key in sorted(QUAKE_REGIONS, key=len, reverse=True):
+        if len(key) > 3 and re.search(rf"\b{re.escape(key)}\b", text.lower()):
+            return QUAKE_REGIONS[key]
+    return (region or text)[:40]
+
+
+def _quake(magnitude, place, when, lat, lon, depth, domestic):
+    return {"mag": round(magnitude, 1), "place": str(place)[:40], "time": _utc_text(when), "lat": round(lat, 3),
+            "lon": round(lon, 3), "depth": round(depth) if depth is not None else None, "domestic": bool(domestic)}
+
+
+def parse_world_quakes(payload):
+    """{quakes: [{mag, place, time (UTC), lat, lon, depth (km), domestic}]} of USGS's significant
+    earthquakes, newest first; ValueError for an answer without the list."""
+    features = payload.get("features") if isinstance(payload, dict) else None
+    if not isinstance(features, list):
+        raise ValueError("no earthquake list")
+    rows = []
+    for feature in features:
+        properties = feature.get("properties") if isinstance(feature, dict) else None
+        point = ((feature.get("geometry") or {}).get("coordinates") if isinstance(feature, dict) else None) or []
+        if not isinstance(properties, dict) or properties.get("type", "earthquake") != "earthquake":
+            continue
+        try:
+            magnitude, lon, lat = float(properties["mag"]), float(point[0]), float(point[1])
+            when = datetime.fromtimestamp(float(properties["time"]) / 1000, tz=timezone.utc)
+        except (KeyError, IndexError, TypeError, ValueError, OverflowError, OSError):
+            continue
+        if -90 <= lat <= 90 and -180 <= lon <= 180:
+            rows.append(_quake(magnitude, quake_place(properties.get("place")), when, lat, lon,
+                               _finite(point[2]) if len(point) > 2 else None, False))
+    rows.sort(key=lambda row: row["time"], reverse=True)
+    return {"quakes": rows[:8]}
+
+
+def fetch_world_quakes(context):
+    return parse_world_quakes(_json(WORLD_QUAKES_URL, context, max_bytes=64 * 1024))
+
+
+def parse_china_quakes(payload):
+    """The same rows from the China Earthquake Networks list (its times are Beijing's): China's own
+    quakes and the large ones abroad, newest first; ValueError when it lists none."""
+    rows = []
+    for key, row in (payload.items() if isinstance(payload, dict) else ()):
+        if not str(key).startswith("No") or not isinstance(row, dict):
+            continue
+        place = " ".join(str(row.get("location") or row.get("placeName") or "").split())
+        try:
+            magnitude, lat, lon = float(row["magnitude"]), float(row["latitude"]), float(row["longitude"])
+            when = datetime.strptime(str(row["time"]), "%Y-%m-%d %H:%M:%S").replace(tzinfo=BEIJING)
+        except (KeyError, TypeError, ValueError):
+            continue
+        domestic = place.startswith(CHINA_PLACES)
+        if place and -90 <= lat <= 90 and -180 <= lon <= 180 and (domestic or magnitude >= 5.5):
+            rows.append(_quake(magnitude, place, when, lat, lon, _finite(row.get("depth")), domestic))
+    if not rows:
+        raise ValueError("no earthquakes listed")
+    rows.sort(key=lambda row: row["time"], reverse=True)
+    return {"quakes": rows[:CHINA_QUAKES_KEPT]}
+
+
+def fetch_china_quakes(context):
+    return parse_china_quakes(_json(CHINA_QUAKES_URL, context, max_bytes=64 * 1024))
+
+
+def valid_quakes(data):
+    return isinstance(data, dict) and isinstance(data.get("quakes"), list)
+
+
+def pick_photo_size(media, slot=PHOTO_SLOT):
+    """The address of the smallest listed size of a post's picture that covers ``slot`` (a size's
+    width and height bound the picture, which keeps its shape), else the largest listed; the
+    original only when no size is listed. '' without an address the page trusts."""
+    details = media.get("media_details") if isinstance(media.get("media_details"), dict) else {}
+    full = _finite(details.get("width")), _finite(details.get("height"))
+    listed = []
+    for size in (details.get("sizes") if isinstance(details.get("sizes"), dict) else {}).values():
+        if not isinstance(size, dict):
+            continue
+        url = safe_image_url(size.get("source_url"))
+        width, height = _finite(size.get("width")), _finite(size.get("height"))
+        if not url or not width or not height:
+            continue
+        if full[0] and full[1]:
+            scale = min(width / full[0], height / full[1], 1.0)
+            width, height = full[0] * scale, full[1] * scale
+        listed.append((width * height, width >= slot[0] and height >= slot[1], url))
+    covering = [size for size in listed if size[1]]
+    if covering:
+        return min(covering)[2]
+    return max(listed)[2] if listed else (safe_image_url(media.get("source_url")) or "")
+
+
+def parse_earth_photo(payload):
+    """{title, date, image} of the newest Earth Observatory post; {} without a title or a picture."""
+    post = payload[0] if isinstance(payload, list) and payload and isinstance(payload[0], dict) else {}
+    title = post.get("title") if isinstance(post.get("title"), dict) else {}
+    title = " ".join(re.sub(r"<[^>]+>", "", unescape(str(title.get("rendered") or ""))).split())
+    embedded = post.get("_embedded") if isinstance(post.get("_embedded"), dict) else {}
+    media = embedded.get("wp:featuredmedia") or []
+    media = media[0] if isinstance(media, list) and media and isinstance(media[0], dict) else {}
+    image = pick_photo_size(media)
+    if not title or not image:
+        return {}
+    return {"title": title[:120], "date": str(post.get("date") or "")[:10], "image": image}
+
+
+def fetch_earth_photo(context):
+    return parse_earth_photo(_json(EARTH_PHOTO_URL, context, max_bytes=128 * 1024, params=EARTH_PHOTO_PARAMS))
+
+
+def valid_earth_photo(data):
+    return isinstance(data, dict) and bool(data.get("image")) and bool(data.get("title"))

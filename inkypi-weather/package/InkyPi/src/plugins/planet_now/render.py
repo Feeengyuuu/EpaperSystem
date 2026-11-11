@@ -5,7 +5,10 @@ verdict for the ring it checks and EPIC's whole Earth. Top right, California's g
 renewable share and today's supply stacked by source under the day-ahead demand. Bottom left,
 what America is searching (Google Trends, with each search's headline) and Wikipedia's
 most-read article. Bottom right, the wider card, space: Perseverance's newest picture, the ISS
-over a world map with its track and everyone in orbit by station.
+over a world map with its track and everyone in orbit by station. Two of its slots take turns: the
+photo slot adds NASA Earth Observatory's image of the day to the Mars photos' rotation, and every
+other turn the crew's column gives way to the Earth's news (active tropical cyclones and the newest
+strong earthquakes, marked on the map too).
 Each card has its own colour, generated icon and band; small text stays in plain ink.
 """
 
@@ -98,6 +101,21 @@ PLACE_MARK_HEIGHT, MAP_TAG_SIZE = 16, 9
 FIREBALL_DAYS, FIREBALL_LOGO_HEIGHT = 45, 8
 FIREBALL_COLOURS = ((0xFF, 0x6A, 0x00), (0xFF, 0xD2, 0x1E))
 OCEAN_EMBLEMS = {"太平洋": "pacific", "大西洋": "atlantic", "印度洋": "indian", "北冰洋": "arctic", "南大洋": "southern"}
+# The crew column takes turns with the Earth's news (active tropical cyclones, strong earthquakes):
+# every other EARTH_TURN_MINUTES slot while there is any, at most EARTH_ROWS rows, at most
+# EARTH_STORM_ROWS of them storms when quakes wait too.
+EARTH_TURN_MINUTES, EARTH_ROWS, EARTH_STORM_ROWS = 17, 5, 3
+# A storm's fix this old is no longer "now"; quakes stay a week. China's own quakes count from
+# CHINA_QUAKE_MAGNITUDE (its strongest of the last CHINA_QUIET_HOURS stands in when none did);
+# quakes abroad known only from the Chinese list count from WORLD_QUAKE_MAGNITUDE.
+STORM_HOURS, QUAKE_DAYS = 36, 7
+CHINA_QUAKE_MAGNITUDE, CHINA_QUIET_HOURS, WORLD_QUAKE_MAGNITUDE = 4.5, 48, 6.0
+# A storm's mark by its wind (m/s; a severe typhoon, a severe tropical storm, weaker) and a
+# quake's by its magnitude: (floor, palette colour), strongest first.
+STORM_COLOURS = ((41.5, "trends"), (24.5, "gold"), (0.0, "earth"))
+QUAKE_COLOURS = ((6.0, "trends"), (5.0, "gold"), (0.0, "muted"))
+# The marks' sizes (px) in the column and on the world map.
+EARTH_MARK, EARTH_MAP_MARK = 13, 9
 # Each station's official mark before its name (assets/logos): China Manned Space's emblem for
 # Tiangong, the ISS programme's emblem; this tall.
 STATION_LOGO_HEIGHT = 14
@@ -728,6 +746,37 @@ def _mars_facts(canvas, mars, now, box, *, shade=True):
                 soft, anchor="la", bold=False, width=x1 - text_x - 5)
 
 
+def _wrap(canvas, text, size, width, max_lines, bold=True):
+    """``text`` broken at its spaces into at most ``max_lines`` lines of ``width``, the last cut short."""
+    words, lines = str(text or "").split(), []
+    while words and len(lines) < max_lines:
+        line = words.pop(0)
+        while words and canvas.width(f"{line} {words[0]}", size, bold) <= width:
+            line += " " + words.pop(0)
+        lines.append(line)
+    if words:
+        lines[-1] = canvas.fit(" ".join([lines[-1], *words]), size, width, bold)
+    return lines
+
+
+def _earth_photo_facts(canvas, photo, box):
+    """The Earth image of the day's lines, laid into the picture like the Mars photo's: whose it is
+    and its date at the top, its title at the bottom beside the Earth card's blue."""
+    x0, y0, x1, y1 = box
+    white, soft = (255, 255, 255), (214, 220, 230)
+    _photo_shade(canvas, (x0, y0, x1, y0 + 40), top=True)
+    _photo_shade(canvas, (x0, y1 - 62, x1, y1), top=False)
+    canvas.text((x0 + 7, y0 + 6), "NASA 地球观测站", 10, white, anchor="la", width=x1 - x0 - 11)
+    day = re.fullmatch(r"\d{4}-(\d\d)-(\d\d)", str(photo.get("date") or ""))
+    canvas.text((x0 + 7, y0 + 21), " · ".join(part for part in ("每日一图", f"{day.group(1)}/{day.group(2)}" if day else "")
+                                             if part), 9, soft, anchor="la", bold=False, width=x1 - x0 - 11)
+    lines = _wrap(canvas, photo.get("title"), 10, x1 - x0 - 20, 3)
+    text_top = y1 - 9 - 14 * len(lines)
+    canvas.draw.rounded_rectangle((x0 + 7, text_top + 1, x0 + 10, y1 - 8), radius=1, fill=canvas.color("earth"))
+    for index, line in enumerate(lines):
+        canvas.text((x0 + 15, text_top + 14 * index), line, 10, white, anchor="la")
+
+
 def _space(canvas, payload, images, now):
     canvas = SpaceCanvas(canvas)
     mars = payload.get("mars", {}).get("data") or {}
@@ -744,7 +793,14 @@ def _space(canvas, payload, images, now):
     photo_box = (left + 8, top + HEADER + 6, left + 120, bottom - 6)
     size = (photo_box[2] - photo_box[0], photo_box[3] - photo_box[1])
     photo = images.get(mars.get("image"))
-    if photo is not None:
+    earth_photo = (payload.get("earth_photo") or {}).get("data") or {}
+    earth_picture = images.get(earth_photo.get("image")) if payload.get("photo_slot") == "earth" else None
+    if earth_picture is not None:
+        # The Earth image of the day on its turn in the photo slot.
+        earth_picture = ImageOps.fit(earth_picture, size, Image.Resampling.LANCZOS)
+        _paste(canvas, earth_picture, photo_box[:2], _rounded(earth_picture, 6))
+        _earth_photo_facts(canvas, earth_photo, photo_box)
+    elif photo is not None:
         photo = ImageOps.fit(photo, size, Image.Resampling.LANCZOS)
         _paste(canvas, photo, photo_box[:2], _rounded(photo, 6))
         _mars_facts(canvas, mars, now, photo_box)
@@ -771,6 +827,8 @@ def _space(canvas, payload, images, now):
     canvas.draw.ellipse((sx - 4, sy - 4, sx + 4, sy + 4), fill=canvas.color("gold"), outline=canvas.color("ink"))
     hx, hy = at(*HOME)
     canvas.draw.ellipse((hx - 2.5, hy - 2.5, hx + 2.5, hy + 2.5), fill=canvas.color("paper"), outline=canvas.color("ink"))
+    # On its turn the Earth's news takes the crew's column, and its storms and quakes the map.
+    events = earth_events(payload, now) if earth_turn(now) else {"rows": []}
     if iss:
         fetched = _local_time(iss.get("time")) or now
         elapsed = max(0.0, (now - fetched).total_seconds() / 60)
@@ -792,6 +850,7 @@ def _space(canvas, payload, images, now):
         # The fireball sits over the orbit's track and under the station itself.
         x, y = at(iss["lat"], iss["lon"])
         _fireball(canvas, payload, now, at, (mx0, my0, mx0 + mw, my0 + mh), (x, y))
+        _earth_marks(canvas, events["rows"], at, mw)
         canvas.draw.ellipse((x - 6, y - 6, x + 6, y + 6), fill=canvas.color("paper"), outline=canvas.color("space"), width=2)
         canvas.draw.line((x - 9, y, x + 9, y), fill=canvas.color("gold"), width=3)
         canvas.draw.rectangle((x - 2, y - 2, x + 2, y + 2), fill=canvas.color("ink"))
@@ -839,7 +898,173 @@ def _space(canvas, payload, images, now):
             ty += heights[index] + gap
     else:
         _fireball(canvas, payload, now, at, (mx0, my0, mx0 + mw, my0 + mh))
-    _crew(canvas, payload.get("people", {}).get("data") or {}, images, now, (crew_left, my0, right - 8, bottom - 6))
+        _earth_marks(canvas, events["rows"], at, mw)
+    if events["rows"]:
+        _earth_column(canvas, events, (crew_left, my0, right - 8, bottom - 6))
+    else:
+        _crew(canvas, payload.get("people", {}).get("data") or {}, images, now, (crew_left, my0, right - 8, bottom - 6))
+
+
+def earth_turn(now):
+    """Whether this render is the Earth news' turn in the crew's column (every other slot)."""
+    return int(now.timestamp() // (EARTH_TURN_MINUTES * 60)) % 2 == 1
+
+
+def _hours_since(iso, now):
+    when = _local_time(iso)
+    return None if when is None else (now - when).total_seconds() / 3600
+
+
+def _graded(value, grades):
+    return next(colour for floor, colour in grades if (value or 0.0) >= floor)
+
+
+def _same_quake(first, second):
+    """Whether two networks' rows are one earthquake: minutes and a couple of degrees apart."""
+    moments = _local_time(first.get("time")), _local_time(second.get("time"))
+    if None in moments or abs((moments[0] - moments[1]).total_seconds()) > 180:
+        return False
+    turn = abs(first["lon"] - second["lon"]) % 360
+    return abs(first["lat"] - second["lat"]) <= 2 and min(turn, 360 - turn) <= 2
+
+
+def earth_events(payload, now):
+    """The Earth column's rows: {"rows": [{kind, title, detail, aside, colour, lat, lon, track}],
+    "storms": how many storms are active}. Storms lead, the strongest first (name and class, then
+    pressure and wind, the sea aside); then the newest quakes (size and place, then time and depth): USGS's
+    significant ones under the Chinese network's place names where it reported them too, China's
+    own notable ones, and large ones abroad that only the Chinese list has."""
+    def feed(name, key):
+        rows = ((payload.get(name) or {}).get("data") or {}).get(key)
+        return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+
+    def placed(row):
+        return all(isinstance(row.get(key), (int, float)) for key in ("lat", "lon"))
+
+    storms = []
+    for storm in feed("typhoons", "storms") + feed("hurricanes", "storms"):
+        age = _hours_since(storm.get("time"), now)
+        if age is None or not -1 <= age <= STORM_HOURS or not placed(storm) or not storm.get("name"):
+            continue
+        wind, pressure = storm.get("wind"), storm.get("pressure")
+        facts = (f"{pressure:.0f} hPa" if isinstance(pressure, (int, float)) else "",
+                 f"{wind:.0f} m/s" if isinstance(wind, (int, float)) else "")
+        storms.append({"kind": "storm", "title": " · ".join(part for part in (str(storm["name"]),
+                                                                              str(storm.get("level") or "")) if part),
+                       "detail": " · ".join(part for part in facts if part), "aside": str(storm.get("area") or ""),
+                       "lat": storm["lat"], "lon": storm["lon"],
+                       "wind": wind if isinstance(wind, (int, float)) else 0.0,
+                       "colour": _graded(wind if isinstance(wind, (int, float)) else 0.0, STORM_COLOURS),
+                       "track": [point for point in storm.get("track") or [] if isinstance(point, list)
+                                 and len(point) == 2]})
+    storms.sort(key=lambda row: -row["wind"])
+
+    def recent(name, hours=QUAKE_DAYS * 24):
+        rows = []
+        for row in feed(name, "quakes"):
+            age = _hours_since(row.get("time"), now)
+            if age is not None and -0.1 <= age <= hours and placed(row) and isinstance(row.get("mag"), (int, float)):
+                rows.append({**row, "age": age})
+        return rows
+
+    world, china = recent("quakes"), recent("china_quakes")
+    quakes, reported = [], []
+    for quake in world:
+        twin = next((row for row in china if _same_quake(quake, row)), None)
+        reported += [twin] if twin else []
+        quakes.append({**quake, "place": twin["place"]} if twin else quake)
+    china = [row for row in china if not any(row is twin for twin in reported)]
+    home = [row for row in china if row.get("domestic")]
+    notable = [row for row in home if row["mag"] >= CHINA_QUAKE_MAGNITUDE]
+    quiet = [row for row in home if row["age"] <= CHINA_QUIET_HOURS]
+    quakes += notable or ([max(quiet, key=lambda row: row["mag"])] if quiet else [])
+    quakes += [row for row in china if not row.get("domestic") and row["mag"] >= WORLD_QUAKE_MAGNITUDE]
+    quakes.sort(key=lambda row: row["age"])
+    rows = storms[:max(EARTH_STORM_ROWS, EARTH_ROWS - len(quakes))]
+    for quake in quakes[:EARTH_ROWS - len(rows)]:
+        when = _local_time(quake["time"])
+        depth = quake.get("depth")
+        rows.append({"kind": "quake", "title": f"M{quake['mag']:.1f} {quake.get('place') or ''}".strip(),
+                     "detail": f"{when:%m/%d %H:%M}" + (f" · 深 {depth:.0f} km" if isinstance(depth, (int, float)) else ""),
+                     "aside": "", "lat": quake["lat"], "lon": quake["lon"],
+                     "colour": _graded(quake["mag"], QUAKE_COLOURS), "track": []})
+    return {"rows": rows, "storms": len(storms)}
+
+
+@lru_cache(maxsize=32)
+def _earth_mark(kind, size, colour):
+    """A storm's or a quake's mark ``size`` px across in ``colour`` (RGBA): a cyclone's disc with its
+    two trailing arms, or a quake's point in its ring."""
+    scale = 8
+    side = size * scale
+    middle, radius = side / 2, side / 2 - 1
+    mark = Image.new("RGBA", (side, side), colour + (0,))
+    draw = ImageDraw.Draw(mark)
+    if kind == "storm":
+        # Two arms spiralling half a turn out of the eye wall, each tapering to its tip, round an
+        # open eye.
+        wall, eye, steps = radius * 0.5, radius * 0.2, 40
+        for start in (0.0, math.pi):
+            outer, inner = [], []
+            for step in range(steps + 1):
+                along = step / steps
+                angle = start - along * math.pi
+                reach = wall * 0.9 + (radius - wall * 0.9) * along
+                half = radius * 0.17 * (1 - along) ** 0.8
+                outer.append((middle + (reach + half) * math.cos(angle), middle - (reach + half) * math.sin(angle)))
+                inner.append((middle + (reach - half) * math.cos(angle), middle - (reach - half) * math.sin(angle)))
+            draw.polygon(outer + inner[::-1], fill=colour + (255,))
+        draw.ellipse((middle - wall, middle - wall, middle + wall, middle + wall), fill=colour + (255,))
+        draw.ellipse((middle - eye, middle - eye, middle + eye, middle + eye), fill=colour + (0,))
+    else:
+        ring, point = radius * 0.2, radius * 0.42
+        draw.ellipse((middle - radius, middle - radius, middle + radius, middle + radius),
+                     outline=colour + (255,), width=round(ring))
+        draw.ellipse((middle - point, middle - point, middle + point, middle + point), fill=colour + (255,))
+    return mark.resize((size, size), Image.Resampling.LANCZOS)
+
+
+def _paste_earth_mark(canvas, row, xy, size):
+    mark = _earth_mark(row["kind"], size, tuple(canvas.color(row["colour"]))[:3])
+    _paste(canvas, mark, (xy[0] - size / 2, xy[1] - size / 2))
+
+
+def _earth_marks(canvas, rows, at, map_width):
+    """The rows' storms and quakes where they are on the world map, a storm with the way it came."""
+    for row in reversed(rows):
+        colour = canvas.color(row["colour"])
+        run = []
+        for lat, lon in row["track"]:
+            point = at(lat, lon)
+            if run and abs(point[0] - run[-1][0]) > map_width / 2:
+                run = []  # the track crossed the date line: keep the side the storm is on
+            run.append(point)
+        if len(run) > 1:
+            canvas.draw.line(run, fill=colour, width=1)
+        _paste_earth_mark(canvas, row, at(row["lat"], row["lon"]), EARTH_MAP_MARK)
+
+
+def _earth_column(canvas, events, box):
+    """The Earth's news in the crew's column: active tropical cyclones (name and class with the sea
+    they are over, then pressure and wind) and the newest strong earthquakes (size and place, then
+    time and depth), each led by its mark in the colour of its strength; every line in plain ink."""
+    x0, y0, x1, y1 = box
+    rows = events["rows"]
+    canvas.draw.line((x0 - 6, y0, x0 - 6, y1), fill=canvas.color("rule"), width=1)
+    label_w = canvas.text((x0, y0 + 10), "地球动态", 11, anchor="lm")
+    note = f"活跃气旋 {events['storms']}" if events["storms"] else "无活跃气旋"
+    canvas.text((x1, y0 + 10), note, 10, anchor="rm", bold=False, width=x1 - x0 - label_w - 6)
+    y = y0 + 22
+    pitch = min(30.0, (y1 - y) / len(rows))
+    text_x = x0 + EARTH_MARK + 5
+    for row in rows:
+        top = round(y)
+        _paste_earth_mark(canvas, row, (x0 + EARTH_MARK / 2, top + 8), EARTH_MARK)
+        title_w = canvas.text((text_x, top), row["title"], 12, anchor="la", width=x1 - text_x)
+        if row["aside"] and text_x + title_w + 8 + canvas.width(row["aside"], 10, False) <= x1:
+            canvas.text((x1, top + 2), row["aside"], 10, anchor="ra", bold=False)
+        canvas.text((text_x, top + 15), row["detail"], 10, anchor="la", bold=False, width=x1 - text_x)
+        y += pitch
 
 
 def latest_fireball(payload, now):

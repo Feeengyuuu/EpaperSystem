@@ -32,6 +32,12 @@ MARS_REFRESH = 2 * HOUR
 # The page counts as live from its three main feeds; the rest (rain, Earth, Wikipedia, Apple,
 # Mars, the ISS, the crews in orbit) only fill in, so one of them lagging does not mark the page stale.
 CORE_FEEDS = ("grid", "goes", "trends")
+# The Earth now: typhoons (China's National Meteorological Centre), hurricanes (US NHC), the
+# week's significant earthquakes (USGS), China's own (the China Earthquake Networks list) and
+# NASA Earth Observatory's image of the day. All optional: they are asked last, each within
+# EARTH_FEED_SECONDS and only while EARTH_FEED_RESERVE seconds of the task remain for the pictures.
+EARTH_FEEDS = ("typhoons", "hurricanes", "quakes", "china_quakes", "earth_photo")
+EARTH_FEED_SECONDS, EARTH_FEED_RESERVE = 8, 12
 
 
 def _checkpoint(context):
@@ -57,9 +63,9 @@ class PlanetNow(BasePlugin):
         force = allow_network and coerce_bool(settings.get("forceRefresh"), default=False)
         book = self._book()
 
-        def load(name, fetch, fresh, usable, validate, timeout=12, *, upgrade=False):
+        def load(name, fetch, fresh, usable, validate, timeout=12, *, upgrade=False, reserve=4.0):
             return book.load(Source(name, {"v": 1}, fetch, fresh_seconds=fresh, usable_seconds=usable,
-                                    validate=validate, timeout_seconds=timeout),
+                                    validate=validate, timeout_seconds=timeout, min_remaining_seconds=reserve),
                              now, allow_network=allow_network, context=context, force=force or upgrade)
 
         payload = {
@@ -79,6 +85,16 @@ class PlanetNow(BasePlugin):
             "fireballs": load("fireballs", sources.fetch_fireballs, 6 * HOUR, 7 * DAY, sources.valid_fireballs),
             "exoplanets": load("exoplanets", sources.fetch_exoplanets, 7 * DAY, 60 * DAY,
                                sources.valid_exoplanets),
+            "typhoons": load("typhoons", lambda ctx: sources.fetch_typhoons(now, ctx), HOUR, 12 * HOUR,
+                             sources.valid_storms, timeout=EARTH_FEED_SECONDS, reserve=EARTH_FEED_RESERVE),
+            "hurricanes": load("hurricanes", sources.fetch_hurricanes, HOUR, 12 * HOUR,
+                               sources.valid_storms, timeout=EARTH_FEED_SECONDS, reserve=EARTH_FEED_RESERVE),
+            "quakes": load("quakes", sources.fetch_world_quakes, HOUR, 2 * DAY,
+                           sources.valid_quakes, timeout=EARTH_FEED_SECONDS, reserve=EARTH_FEED_RESERVE),
+            "china_quakes": load("china_quakes", sources.fetch_china_quakes, HOUR, 2 * DAY,
+                                 sources.valid_quakes, timeout=EARTH_FEED_SECONDS, reserve=EARTH_FEED_RESERVE),
+            "earth_photo": load("earth_photo", sources.fetch_earth_photo, 6 * HOUR, 4 * DAY,
+                                sources.valid_earth_photo, timeout=EARTH_FEED_SECONDS, reserve=EARTH_FEED_RESERVE),
         }
         old_mars = payload["mars"]["data"] or {}
         if allow_network and old_mars.get("image") and not isinstance(old_mars.get("photos"), list):
@@ -96,18 +112,25 @@ class PlanetNow(BasePlugin):
         urls += [photo.get("image") for photo in photos[:3] if isinstance(photo, dict)]
         urls += [person.get("image") for station in (payload["people"]["data"] or {}).get("stations") or []
                  for person in station.get("crew") or []][:12]
+        earth_photo = (payload["earth_photo"]["data"] or {}).get("image")
+        urls += [earth_photo] if earth_photo else []
         images = load_thumbnails(urls, self.cache_dir(env_var="PLANET_NOW_CACHE_DIR", leaf="pictures", create=True,
                                                       strip=True),
                                  http=get_http_client(), context=context, cached_only=not allow_network,
                                  safe_url=sources.safe_image_url, user_agent=sources.USER_AGENT)
         payload["provenance"] = combined_provenance([payload[name] for name in CORE_FEEDS])
         available = [photo for photo in photos[:3] if isinstance(photo, dict) and photo.get("image") in images]
+        # The Earth image of the day shares the photo slot with Mars, one turn in the rotation, once
+        # its picture is at hand.
+        turns = len(available) + (1 if earth_photo in images else 0)
+        turn = int(now.timestamp() // (13 * MINUTE)) % turns if turns else 0
+        payload["photo_slot"] = "earth" if turns and turn == len(available) else "mars"
         if available:
             # A normal refresh can change the photograph without adding panel writes
             # or depending on a new NASA feed response every time.
             # Thirteen minutes avoids an hourly scheduler repeatedly choosing the
             # same member of a three-photo pool (60 / 10 would alias exactly).
-            selected = available[int(now.timestamp() // (13 * MINUTE)) % len(available)]
+            selected = available[turn % len(available)]
             payload["mars"] = {**payload["mars"], "data": {**selected, "photos": available}}
         return payload, images
 
@@ -130,7 +153,8 @@ class PlanetNow(BasePlugin):
         payload, images = self._refresh(settings, now, allow_network=not cache_only, context=context)
         try:
             image = render_page(self.get_dimensions(device_config), payload, settings, now, images)
-            if not cache_only:
+            if not cache_only and payload.get("photo_slot") != "earth":
+                # The web page's Mars slide show is laid over the Mars photo, not over the Earth's.
                 from .mars_motion import publish_motion
 
                 try:
