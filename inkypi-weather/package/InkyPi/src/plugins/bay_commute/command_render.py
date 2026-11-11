@@ -14,6 +14,7 @@ from utils.fonts import load_font
 from .map_view import draw_marker, render_map, source_logo
 from .render import ASSETS, DIRECTIONS, FACILITIES, KINDS, draw_water, paste_sticker, source_label, tide_now
 from .direction_plaques import draw_direction
+from .sierra import RANK as SIERRA_RANK, in_season
 from .sources import (
     BART_LATE_SECONDS, COMPASS, PACIFIC, coming_trains, local_now, next_tides, parse_time, rank_roads, road_state,
     select_roads,
@@ -64,6 +65,15 @@ LEVEL_EVEN_FT = 0.1
 # sign itself, the route's shield and direction at its left, its three lines at its right.
 SIGN_BOX = (250, 7, 512, 58)
 SIGN_SHIELDS = {"I-680", "I-880", "SR-84"}
+# The drive to Tahoe and Yosemite. While chains are required or a pass is closed the header's sign
+# gives its place to the three routes, each with what holds on it (a solid mark in the state's
+# colour, the words in ink) and where; otherwise the Sierra is one line in the footer, between the
+# roads' stamp and the tides', this far clear of both.
+SIERRA_LABELS = {"clear": "无管制", "seasonal": "冬季封闭", "r1": "R1 雪胎可行", "r2": "R2 两驱装链",
+                 "chains": "防滑链管制", "r3": "R3 一律装链", "closed": "封闭"}
+SIERRA_TONES = {"clear": "emerald", "seasonal": "planned", "r1": "orange", "r2": "orange", "chains": "orange",
+                "r3": "crimson", "closed": "crimson"}
+SIERRA_LINE_GAP = 14
 # A destination's leader to its times is drawn only with at least this much room (px); the
 # station's stop ring before its name is this wide.
 BART_LEADER_MIN = 14
@@ -256,6 +266,120 @@ def sign_plate(page, sign, box=SIGN_BOX):
         minutes = f"{line['minutes']} MIN"
         width = page.text((right - 9, y), minutes, 10, "ink", role="road", align="right")
         page.text((strip + 9, y), line["to"], 10, "ink", role="road", width=right - 9 - width - 12 - strip - 9)
+
+
+def _snowflake(page, centre, radius):
+    """A six-armed snowflake in the page's blue, drawn at four times the size for clean arms."""
+    scale = 4
+    size = (radius * 2 + 2) * scale
+    art = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(art)
+    colour, middle, reach = page.palette["blue"], size / 2, radius * scale
+    for arm in range(6):
+        angle = math.radians(90 + 60 * arm)
+        tip = (middle + math.cos(angle) * reach, middle + math.sin(angle) * reach)
+        draw.line((middle, middle, *tip), fill=colour, width=round(1.6 * scale))
+        # A barb each side, pointing out from three fifths along the arm.
+        base = (middle + math.cos(angle) * reach * 0.56, middle + math.sin(angle) * reach * 0.56)
+        for turn in (-1, 1):
+            barb = angle + turn * math.radians(52)
+            draw.line((*base, base[0] + math.cos(barb) * reach * 0.36, base[1] + math.sin(barb) * reach * 0.36),
+                      fill=colour, width=round(1.3 * scale))
+    small = art.resize((size // scale, size // scale), Image.Resampling.LANCZOS)
+    art.close()
+    page.image.paste(small, (round(centre[0] - small.width / 2), round(centre[1] - small.height / 2)), small)
+    small.close()
+
+
+def _sierra_mark(page, x, middle, level):
+    """A route's state as a solid mark 9 px across from ``x``: a no-entry disc for a closed pass
+    (grey-blue for one shut for the winter), a diamond for chains, a dot for an open road."""
+    draw, tone = page.draw, page.palette[SIERRA_TONES[level]]
+    if level in {"closed", "seasonal"}:
+        draw.ellipse((x, middle - 4, x + 8, middle + 4), fill=tone)
+        draw.rectangle((x + 2, middle - 1, x + 6, middle), fill=page.palette["paper"])
+    elif level == "clear":
+        draw.ellipse((x + 1, middle - 3, x + 7, middle + 3), fill=tone)
+    else:
+        draw.polygon([(x + 4, middle - 5), (x + 9, middle), (x + 4, middle + 5), (x - 1, middle)], fill=tone)
+
+
+def sierra_sign(page, sierra, box=SIGN_BOX):
+    """The Sierra's routes in the header's sign while chains are required or a pass is closed:
+    a snowflake, 雪山路况 and Caltrans' report time at the left (where the travel-time sign has
+    its shield), then a row a route in three columns: the route, its state, the stretch."""
+    left, top, right, bottom = box
+    strip = left + 40
+    middle = (left + strip) / 2
+    _snowflake(page, (middle, top + 14), 9)
+    page.text((middle, top + 28), "雪山路况", 9, "ink", align="center", width=40)
+    reported = parse_time(sierra.get("reported_at"))
+    if reported:
+        page.text((middle, top + 41), reported.astimezone(PACIFIC).strftime("%H:%M"), 8, "muted", role="number",
+                  bold=False, align="center", width=40)
+    page.draw.line((strip, top + 6, strip, bottom - 6), fill=page.palette["muted"], width=1)
+    rows = [row for row in sierra.get("routes") or [] if row.get("level") in SIERRA_LABELS][:3]
+    pitch = (bottom - top - 8) / 3
+    mark_x = round(strip + 7 + max(page.draw.textlength(row["route"], font=font(11, "number")) for row in rows) + 6)
+    span_x = round(mark_x + 14 + max(page.draw.textlength(SIERRA_LABELS[row["level"]], font=font(10))
+                                     for row in rows) + 7)
+    for index, row in enumerate(rows):
+        y = round(top + 5 + index * pitch + (pitch - 11) / 2)
+        page.text((strip + 7, y - 1), row["route"], 11, "ink", role="number")
+        _sierra_mark(page, mark_x, y + 5, row["level"])
+        page.text((mark_x + 14, y), SIERRA_LABELS[row["level"]], 10, "ink")
+        stretch = "–".join(part for part in (row.get("from"), row.get("to")) if part)
+        if stretch and right - span_x >= 40:
+            page.text((span_x, y + 1), stretch, 9, "ink", role="number", bold=False, width=right - span_x)
+
+
+def sierra_words(sierra, now):
+    """The footer line's parts: the routes with nothing in force (the sign carries the rest),
+    then the resort (open with its lifts, else the opening day it announces), its base
+    temperature and, with the lifts turning, the base area's new snow."""
+    parts = []
+    if not sierra.get("alert"):
+        for level in ("seasonal", "clear"):
+            routes = [row["route"] for row in sierra.get("routes") or [] if row.get("level") == level]
+            if routes:
+                parts.append(" ".join(routes) + " " + SIERRA_LABELS[level])
+    resort = sierra.get("resort")
+    if resort:
+        name = str(resort["name"]).split()[0]
+        opening = parse_time(resort.get("opening"))
+        lifts = (resort.get("lifts_open"), resort.get("lifts_total"))
+        if resort["open"]:
+            words = [f"{name} 开放"] + ([f"缆车 {lifts[0]}/{lifts[1]}"] if None not in lifts and lifts[1] else [])
+        elif opening:
+            words = [f"{name} {opening.month}/{opening.day} 开放"]
+        else:
+            words = [f"{name} 未开放"] if in_season(now) else []
+        if words and resort.get("base_temp_c") is not None:
+            words.append(f"山脚 {resort['base_temp_c']}°C")
+        if words and resort["open"] and resort.get("new_cm"):
+            words.append(f"新雪 {resort['new_cm']} cm")
+        parts.extend(words)
+    return parts
+
+
+def sierra_line(page, sierra, now, left, right):
+    """The Sierra as one quiet line centred between ``left`` and ``right`` in the footer, led by a
+    dot in the colour of the worst state on its routes; its last parts dropped until it fits,
+    nothing when none does."""
+    if not sierra:
+        return
+    parts = sierra_words(sierra, now)
+    face = font(10, bold=False)
+    while parts and 10 + page.draw.textlength("雪山 " + " · ".join(parts), font=face) > right - left:
+        parts.pop()
+    if not parts:
+        return
+    line = "雪山 " + " · ".join(parts)
+    x = round(left + (right - left - 10 - page.draw.textlength(line, font=face)) / 2)
+    levels = [row["level"] for row in sierra.get("routes") or [] if row.get("level") in SIERRA_RANK]
+    tone = SIERRA_TONES[max(levels, key=SIERRA_RANK.get)] if levels else "muted"
+    page.draw.ellipse((x, 467, x + 6, 473), fill=page.palette[tone])
+    page.text((x + 10, 464), line, 10, "muted", bold=False)
 
 
 def section_titles(page):
@@ -956,7 +1080,7 @@ def footer(page, payload, now):
         label += recorded.astimezone(PACIFIC).strftime("%m/%d %H:%M") + " · 获取 " + fetched.astimezone(PACIFIC).strftime("%H:%M")
     else:
         label = "道路 " + source_label(roads, now)
-    page.text((16, 464), label, 10, "muted", bold=False, width=470)
+    left = page.text((16, 464), label, 10, "muted", bold=False, width=470)
     tides_source = payload["tides"]
     prediction = tides_source.get("data", {}).get("prediction_date", "—").replace("-", "/")[-5:]
     fetched = parse_time(tides_source.get("fetched_at"))
@@ -964,15 +1088,20 @@ def footer(page, payload, now):
     prefix = "NOAA 缓存 " if tides_source["state"] == "stale_cache" else "NOAA 预测 "
     if tides_source["state"] == "unavailable":
         prefix = "潮汐暂不可用 "
-    page.text((784, 464), prefix + prediction + " · 获取 " + stamp + " " + (now.tzname() or ""),
-              10, "muted", align="right", width=280, bold=False)
+    right = page.text((784, 464), prefix + prediction + " · 获取 " + stamp + " " + (now.tzname() or ""),
+                      10, "muted", align="right", width=280, bold=False)
+    sierra_line(page, payload.get("sierra"), now, 16 + left + SIERRA_LINE_GAP, 784 - right - SIERRA_LINE_GAP)
 
 
 def render_page(dimensions, payload, settings, now):
     now = local_now(now)
     page = Page(settings)
     header(page, now)
-    sign_plate(page, payload.get("sign"))
+    sierra = payload.get("sierra") or {}
+    if sierra.get("alert") and sierra.get("routes"):
+        sierra_sign(page, sierra)
+    else:
+        sign_plate(page, payload.get("sign"))
     page.rule((497, 78, 497, 444))
     roads(page, payload, now)
     tides(page, payload, settings, now)

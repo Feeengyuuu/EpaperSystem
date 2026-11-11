@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from plugins.base_plugin.render_provenance import SourceProvenance, read_source_provenance
-from plugins.bay_commute import sources
+from plugins.bay_commute import sierra, sources
 from plugins.bay_commute.bay_commute import BayCommute
 from plugins.bay_commute.command_render import Page as Canvas
 from plugins.bay_commute.render import render_page
@@ -181,6 +181,9 @@ def quiet_extras(monkeypatch):
     monkeypatch.setattr(sources, "fetch_bart_status", status)
     monkeypatch.setattr(sources, "fetch_signs", signs)
     monkeypatch.setattr(sources, "fetch_water_level", water)
+    # The Sierra's three readings stay out of these tests (tests/test_bay_commute_sierra.py has them).
+    for name in ("fetch_road_conditions", "fetch_chain_controls", "fetch_resort"):
+        monkeypatch.setattr(sierra, name, lambda *args: (_ for _ in ()).throw(OSError("offline")))
 
 
 FREMONT = {"name": "Fremont", "abbr": "FRMT", "etd": [

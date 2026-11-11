@@ -17,7 +17,7 @@ from runtime.refresh_contracts import TaskCancelled, TaskContext
 from utils.app_utils import bounded_int, coerce_bool, get_available_font_names
 from utils.cache_manager import CacheBudget
 
-from . import sources
+from . import sierra, sources
 
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,10 @@ CACHE_BUDGET = CacheBudget(7 * 86400, 16, 3 * 1024 * 1024)
 # so ten minutes apart at most), NOAA's observed level every six minutes.
 EXTRA_FRESH = {"bart_status": (600, 2 * 3600), "signs": (600, 45 * 60), "water": (360, 3600),
                # Bay Wheels' docks change rarely (a week), their bikes by the minute.
-               "bike_stations": (7 * 86400, 30 * 86400), "bike_status": (600, 3600)}
+               "bike_stations": (7 * 86400, 30 * 86400), "bike_status": (600, 3600),
+               # The Sierra's three readings: fresh for their shortest rest (the page lets one be
+               # read per refresh, see _sierra), shown for as long as sierra.KEEP allows.
+               **{name: (rests[0], sierra.KEEP[name]) for name, rests in sierra.REST.items()}}
 DEFAULT_FONT = "Microsoft YaHei"
 
 
@@ -89,6 +92,12 @@ class BayCommute(BasePlugin):
             return sources.valid_bike_status(data)
         if name == "water":
             return sources.valid_water_level(data)
+        if name == "sierra_roads":
+            return sierra.valid_roads(data)
+        if name == "sierra_chains":
+            return sierra.valid_chains(data)
+        if name == "sierra_resort":
+            return sierra.valid_resort(data)
         if name == "roads":
             rows = data.get("items")
             return (isinstance(rows, list) and len(rows) <= sources.MAX_CACHED_ROADS
@@ -186,6 +195,25 @@ class BayCommute(BasePlugin):
             return {**cached, "state": "stale_cache", "error": error}
         return {"data": {}, "fetched_at": None, "state": "unavailable", "error": error or "no_cache"}
 
+    def _sierra(self, now, *, allow_network, context):
+        """The drive to Tahoe and Yosemite (road conditions, chain controls, the resort): extras
+        like the buoy, and of the three at most one is read per refresh, the one furthest past
+        its rest."""
+        readers = {"sierra_roads": ({"routes": list(sierra.ROUTES)}, lambda: sierra.fetch_road_conditions(context)),
+                   "sierra_chains": ({"feed": "cc"}, lambda: sierra.fetch_chain_controls(context)),
+                   "sierra_resort": ({"resort": sierra.RESORT_ID}, lambda: sierra.fetch_resort(now, context))}
+        turn = None
+        if allow_network:
+            kept = {name: self._read_cache(name, identity) for name, (identity, _fetch) in readers.items()}
+            ages = {name: (now - sources.parse_time(cache["fetched_at"])).total_seconds() if cache else None
+                    for name, cache in kept.items()}
+            turn = sierra.due_source(ages, now, sierra.watching(
+                *((kept[name] or {}).get("data") for name in ("sierra_roads", "sierra_chains"))))
+        read = {name: self._source(name, identity, now, allow_network=name == turn, force=False, context=context,
+                                   fetcher=fetch)
+                for name, (identity, fetch) in readers.items()}
+        return sierra.summary(read["sierra_roads"], read["sierra_chains"], read["sierra_resort"], now)
+
     def _payload(self, settings, now, *, allow_network, context):
         routes = sources.routes_setting(settings.get("routes"))
         station = sources.station_setting(settings.get("tideStation"))
@@ -241,6 +269,7 @@ class BayCommute(BasePlugin):
                 "sign": sources.pick_sign(signs.get("data"), now), "signs_state": signs["state"],
                 "water": sources.water_versus_prediction(water.get("data"), tides.get("data"), now),
                 "bikes": bikes, "routes": list(routes), "station": station, "window_days": window_days,
+                "sierra": self._sierra(now, allow_network=allow_network, context=context),
                 "provenance": provenance}
 
     def render_cached_display(self, settings, device_config, *, resolved_theme_context):
