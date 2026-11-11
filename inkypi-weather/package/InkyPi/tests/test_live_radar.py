@@ -3646,7 +3646,8 @@ def test_live_queue_tile_puts_the_streamer_avatar_before_the_name():
     texts, avatars = [], []
     plugin._load_cover_source = lambda url, seconds: Image.new("RGB", (160, 90), (24, 180, 240))
 
-    def draw_avatar(_image, _draw, avatar_box, card, _platform, _fill, _ink, _line, cache_seconds, show_fav_badge=True):
+    def draw_avatar(_image, _draw, avatar_box, card, _platform, _fill, _ink, _line, cache_seconds, show_fav_badge=True,
+                    ring=None):
         avatars.append((avatar_box, card["id"], cache_seconds, show_fav_badge))
 
     plugin._draw_avatar = draw_avatar
@@ -4301,6 +4302,119 @@ def test_other_streamers_keep_a_thin_ink_avatar_edge():
     assert live_radar_module.TOP_FAVORITE_RING_GOLD not in colours
     assert image.getpixel((10, 26)) == (0, 0, 0)
     assert image.getpixel((11, 26)) == (40, 120, 200)
+
+
+AVATAR_PHOTO = (40, 120, 200)
+COVER_PHOTO = (24, 180, 240)
+
+
+def _draw_marked(large, **overrides):
+    """Draw one LIVE NOW card or LIVE TOO tile with a cover and a photo, recording the avatar box,
+    every platform icon box and every text."""
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig(mode="day"))
+    seen = {"avatars": [], "icons": [], "texts": []}
+    plugin._load_cover_source = lambda *_args, **_kwargs: Image.new("RGB", (160, 90), COVER_PHOTO)
+    plugin._load_avatar_source = lambda *_args, **_kwargs: Image.new("RGB", (64, 64), AVATAR_PHOTO)
+    draw_avatar, draw_icon = plugin._draw_avatar, plugin._draw_platform_badge
+
+    def record_avatar(image, draw, avatar_box, *args, **kwargs):
+        seen["avatars"].append(avatar_box)
+        return draw_avatar(image, draw, avatar_box, *args, **kwargs)
+
+    def record_icon(image, draw, box, platform_key, **kwargs):
+        seen["icons"].append((tuple(box), platform_key))
+        return draw_icon(image, draw, box, platform_key, **kwargs)
+
+    plugin._draw_avatar = record_avatar
+    plugin._draw_platform_badge = record_icon
+    if overrides.pop("without_icon_asset", False):
+        plugin._load_platform_icon_asset = lambda _platform: None
+    card = _queue_row_card(owner="HasanAbi", avatar="https://img.test/a.png", **overrides)
+    image = Image.new("RGB", (300, 220), theme["bg"])
+    draw = _TextSpy(ImageDraw.Draw(image), seen["texts"])
+    if large:
+        plugin._draw_card(image, draw, (20, 20, 250, 170), card, theme, large=True, show_snapshot=True)
+    else:
+        plugin._draw_live_queue_tile(image, draw, (20, 20, 150, 62), card, theme)
+    (avatar_x, avatar_y, size), = seen["avatars"]
+    name_x = next(xy[0] for xy, text, _fill, _font in seen["texts"] if text == "HasanAbi")
+    return {
+        "image": image,
+        "theme": theme,
+        "avatar": (avatar_x, avatar_y, size),
+        "edge": image.getpixel((avatar_x, avatar_y + size // 2)),
+        "inside": image.getpixel((avatar_x + 1, avatar_y + size // 2)),
+        "icons": seen["icons"],
+        "name_gap": name_x - (avatar_x + size),
+    }
+
+
+PICTURE_CORNER_ICON = {True: (34, 30, 62, 53), False: (23, 23, 37, 37)}
+AVATAR_MARK_SIZE = {
+    True: live_radar_module.CARD_AVATAR_PLATFORM_MARK_SIZE,
+    False: live_radar_module.LIVE_QUEUE_AVATAR_PLATFORM_MARK_SIZE,
+}
+PLAIN_NAME_GAP = {True: 9, False: 4}
+
+
+@pytest.mark.parametrize("large", [True, False])
+@pytest.mark.parametrize("platform", ["twitch", "douyu", "bilibili"])
+def test_a_live_avatar_wears_its_platform_as_a_brand_ring_and_a_corner_icon(platform, large):
+    drawn = _draw_marked(large, platform=platform)
+    avatar_x, avatar_y, size = drawn["avatar"]
+
+    # The 1 px edge is the platform's brand colour, the photo starts right inside it.
+    assert drawn["edge"] == live_radar_module.PLATFORM_BRAND_COLORS[platform]
+    assert drawn["inside"] == AVATAR_PHOTO
+    # The logo on the picture's top-left corner is still drawn, and drawn first.
+    assert drawn["icons"][0] == (PICTURE_CORNER_ICON[large], platform)
+    # The official icon rides the avatar's lower right corner, hanging a little over it.
+    ((left, top, right, bottom), key), = drawn["icons"][1:]
+    assert key == platform
+    assert right - left == bottom - top == AVATAR_MARK_SIZE[large]
+    assert (left + right) / 2 > avatar_x + size * 0.75 and (top + bottom) / 2 > avatar_y + size * 0.7
+    assert avatar_x + size < right <= avatar_x + size + 6
+    assert avatar_y + size <= bottom <= avatar_y + size + 2
+    # The name starts clear of the icon.
+    assert drawn["name_gap"] >= right - (avatar_x + size) + 3
+    assert drawn["name_gap"] > PLAIN_NAME_GAP[large]
+
+
+def test_the_avatar_mark_sizes_are_sixteen_on_a_card_and_eleven_on_a_tile():
+    assert AVATAR_MARK_SIZE == {True: 16, False: 11}
+
+
+@pytest.mark.parametrize("large", [True, False])
+@pytest.mark.parametrize("platform, room_id", QUIN_ROOMS)
+def test_mr_quins_gold_edge_wins_over_the_platform_colour(platform, room_id, large):
+    drawn = _draw_marked(large, platform=platform, id=room_id)
+
+    assert drawn["edge"] == live_radar_module.TOP_FAVORITE_RING_GOLD
+    assert drawn["inside"] == AVATAR_PHOTO
+    assert [key for _box, key in drawn["icons"]] == [platform, platform]  # he still wears the platform icon
+
+
+@pytest.mark.parametrize("large", [True, False])
+@pytest.mark.parametrize("overrides", [
+    {"platform": "huya"},  # no brand colour
+    {"platform": "twitch", "without_icon_asset": True},  # no official icon
+])
+def test_a_platform_without_brand_colour_or_icon_keeps_the_plain_avatar(overrides, large):
+    drawn = _draw_marked(large, **overrides)
+
+    ink = drawn["theme"]["live_ink"] if large else drawn["theme"]["ink"]
+    assert drawn["edge"] == ink
+    assert drawn["icons"] == [(PICTURE_CORNER_ICON[large], overrides["platform"])]
+    assert drawn["name_gap"] == PLAIN_NAME_GAP[large]
+
+
+def test_a_replay_tile_keeps_the_plain_avatar():
+    drawn = _draw_marked(False, platform="twitch", status="replay")
+
+    assert drawn["edge"] == drawn["theme"]["ink"]
+    assert drawn["icons"] == [(PICTURE_CORNER_ICON[False], "twitch")]
+    assert drawn["name_gap"] == PLAIN_NAME_GAP[False]
 
 
 KICK_SRCSET = (

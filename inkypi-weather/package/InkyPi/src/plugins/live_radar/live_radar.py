@@ -321,6 +321,11 @@ STATUS_RANK = {
 
 # The favourite star at the right of a live card's text panel.
 CARD_BODY_FAV_SIZE = 26
+# A live streamer's avatar wears its platform, as the apps mark a profile picture: the 1 px edge
+# takes the brand colour and the official icon rides the lower right corner, this large on a
+# LIVE NOW card and on a LIVE TOO tile.
+CARD_AVATAR_PLATFORM_MARK_SIZE = 16
+LIVE_QUEUE_AVATAR_PLATFORM_MARK_SIZE = 11
 # Mr.Quin is the favourite of favourites. Each of his rooms counts as a favourite whatever the
 # saved list marks, and whichever of them is live opens LIVE NOW ahead of every other stream,
 # favourites included (several at once keep this order).
@@ -2116,6 +2121,7 @@ class LiveRadar(BasePlugin):
             avatar_size = max(28, min(36, int(text_bottom - text_top - 2)))
             avatar_x = x + pad
             avatar_y = text_bottom - avatar_size
+            brand = self._avatar_platform_colour(card)
             self._draw_avatar(
                 image,
                 draw,
@@ -2127,8 +2133,24 @@ class LiveRadar(BasePlugin):
                 ink,
                 avatar_cache_seconds,
                 show_fav_badge=False,
+                ring=brand,
             )
             text_x = avatar_x + avatar_size + 9
+            if brand:
+                # The platform icon hangs a little over the avatar's lower right corner, so the
+                # text starts further right.
+                mark = CARD_AVATAR_PLATFORM_MARK_SIZE
+                mark_x, mark_y = avatar_x + avatar_size - mark + 5, avatar_y + avatar_size - mark + 2
+                self._draw_platform_badge(
+                    image,
+                    draw,
+                    (mark_x, mark_y, mark_x + mark, mark_y + mark),
+                    card["platform"],
+                    fill=ink,
+                    ink=fill,
+                    outline=ink,
+                )
+                text_x += 4
             text_w = max(20, x + w - pad - text_x)
         if fav_in_body:
             star = CARD_BODY_FAV_SIZE
@@ -2827,7 +2849,9 @@ class LiveRadar(BasePlugin):
             right -= star + 2
         avatar = LIVE_QUEUE_AVATAR_SIZE
         avatar_x, avatar_y = x + 3, y + h - 2 - avatar
-        name_left = avatar_x + avatar + 4
+        brand = self._avatar_platform_colour(card)
+        # The name starts clear of the platform icon on the avatar's corner.
+        name_left = avatar_x + avatar + (9 if brand else 4)
         name_w = max(8, right - name_left)
         name = self._card_display_name(card)
         font = self._fit_font(draw, name, name_w, 10, 8, "bold")
@@ -2857,7 +2881,12 @@ class LiveRadar(BasePlugin):
         draw.ellipse((avatar_x - 1, avatar_y - 1, avatar_x + avatar, avatar_y + avatar), fill=theme["panel"])
         platform = PLATFORMS.get(card["platform"], {"short": card["platform"][:2].upper()})
         self._draw_avatar(image, draw, (avatar_x, avatar_y, avatar), card, platform, theme["panel"], theme["ink"],
-                          theme["line"], avatar_cache_seconds, show_fav_badge=False)
+                          theme["line"], avatar_cache_seconds, show_fav_badge=False, ring=brand)
+        if brand:
+            mark = LIVE_QUEUE_AVATAR_PLATFORM_MARK_SIZE
+            mark_x, mark_y = avatar_x + avatar - mark + 6, y + h - 1 - mark
+            self._draw_platform_badge(image, draw, (mark_x, mark_y, mark_x + mark, mark_y + mark),
+                                      card["platform"], fill=theme["panel"], ink=theme["ink"], outline=theme["panel"])
 
     def _draw_uptime_chip(self, draw, right, bottom, card):
         text = self._format_uptime(card.get("start_time")).replace(" ", "")
@@ -2983,7 +3012,8 @@ class LiveRadar(BasePlugin):
         layer = placeholder_art.render_offline_doodle((w, h), theme, placeholder_art.doodle_kind(card))
         image.paste(layer.convert("RGB"), (x, y), layer.getchannel("A"))
 
-    def _draw_avatar(self, image, draw, avatar_box, card, platform, fill, ink, line, cache_seconds, show_fav_badge=True):
+    def _draw_avatar(self, image, draw, avatar_box, card, platform, fill, ink, line, cache_seconds, show_fav_badge=True,
+                     ring=None):
         avatar_x, avatar_y, avatar_size = avatar_box
         bounds = (avatar_x, avatar_y, avatar_x + avatar_size, avatar_y + avatar_size)
         avatar = self._load_avatar_source(card.get("avatar"), cache_seconds)
@@ -3011,7 +3041,8 @@ class LiveRadar(BasePlugin):
                 font=label_font,
             )
 
-        edge = TOP_FAVORITE_RING_GOLD if self._is_top_favorite(card.get("platform"), card.get("id")) else ink
+        # The 1 px edge: Mr.Quin's gold first, then the colour the caller asks for, else ink.
+        edge = TOP_FAVORITE_RING_GOLD if self._is_top_favorite(card.get("platform"), card.get("id")) else ring or ink
         draw.ellipse(bounds, outline=edge, width=1)
         if show_fav_badge and card.get("is_fav"):
             badge_size = max(10, int(avatar_size * 0.38))
@@ -3520,6 +3551,14 @@ class LiveRadar(BasePlugin):
     def _brand_line(card, default):
         """Card border colour: the platform's main brand colour, else the theme line."""
         return PLATFORM_BRAND_COLORS.get(card.get("platform"), default)
+
+    def _avatar_platform_colour(self, card):
+        """The brand colour a live streamer's avatar wears with its platform icon; none for a card
+        that is not live or a platform without a brand colour or an official icon."""
+        platform = card.get("platform")
+        if card.get("status") != "live" or self._load_platform_icon_asset(platform) is None:
+            return None
+        return PLATFORM_BRAND_COLORS.get(platform)
 
     def _card_palette(self, status, theme):
         if status == "live":
