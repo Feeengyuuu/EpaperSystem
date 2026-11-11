@@ -2,10 +2,12 @@ import re
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 
+from runtime.refresh_contracts import TaskCancelled, TaskDeadlineExceeded
+
 from .common import *
 from .common import _normalize_country_alias, _safe_exception_text
 from .football_espn import fetch_scoreboard
-from . import event_ranking
+from . import club_table, event_ranking
 from .club_football_localization import (
     CLUB_FOOTBALL_TEAM_LOCALIZATIONS,
     contains_chinese,
@@ -1261,6 +1263,71 @@ class ClubFootballMixin:
     def _club_football_standings_last_good_path(self, league_code):
         return self._club_football_last_good_cache_path("standings", league_code)
 
+    def _load_club_table(self, league_code, settings, now):
+        """{ESPN team id: {"rank", "points", "played", "name"}} from the league's table: the kept
+        one while it is fresh (an hour after a good answer, a quarter of an hour after a failed
+        request), else ESPN's. {} for a league without one, and once the kept one is three days old."""
+        league = CLUB_FOOTBALL_LEAGUES.get(league_code) or {}
+        if not league.get("espn_slug") or league.get("espn_base_url"):
+            return {}
+        now_utc = now.astimezone(timezone.utc)
+        path = self._club_football_cache_path("espn_table", league_code)
+        cache = self._read_json_file(path)
+        if cache.get("version") != club_table.CACHE_VERSION:
+            cache = {}
+        fetched = self._parse_cached_utc(cache.get("fetched_at"))
+        checked = self._parse_cached_utc(cache.get("checked_at")) or fetched
+        wait = club_table.CACHE_SECONDS if checked == fetched else club_table.RETRY_SECONDS
+        due = checked is None or not timedelta(0) <= now_utc - checked < timedelta(seconds=wait)
+        if (
+            due
+            and not self._bool_setting(settings, "_inkypi_ewc_cache_only", False)
+            and self._club_espn_calls_left(settings, now_utc) > 0
+        ):
+            stamp = now_utc.isoformat()
+            try:
+                try:
+                    payload = club_table.fetch_table(
+                        get_http_session(), club_table.table_url(ESPN_SITE_API_HOST, league["espn_slug"])
+                    )
+                finally:
+                    self._record_club_espn_call(now_utc)
+                cache = {"version": club_table.CACHE_VERSION, "league_code": league_code, "fetched_at": stamp,
+                         "checked_at": stamp, "table": club_table.parse_table(payload)}
+                fetched = now_utc
+            except (TaskCancelled, TaskDeadlineExceeded):
+                raise
+            except Exception as exc:
+                logger.warning("Club football table %s failed: %s", league_code, _safe_exception_text(exc))
+                cache = {**cache, "version": club_table.CACHE_VERSION, "league_code": league_code, "checked_at": stamp}
+            self._write_json_file(path, cache)
+        table = cache.get("table")
+        if (
+            not isinstance(table, Mapping)
+            or fetched is None
+            or now_utc - fetched > timedelta(seconds=club_table.MAX_AGE_SECONDS)
+        ):
+            return {}
+        return {str(team_id): dict(row) for team_id, row in table.items() if isinstance(row, Mapping)}
+
+    def _attach_club_table(self, by_league, selected, settings, now):
+        """Give the matches of the league on the page each club's row of its league table
+        ("home_table" / "away_table"). Only that league's table is asked for."""
+        focus = selected.get("focus") if isinstance(selected, Mapping) else None
+        league_code = str(focus.get("league_code") or "").upper() if isinstance(focus, Mapping) else ""
+        if league_code not in CLUB_FOOTBALL_LEAGUES:
+            return
+        table = self._load_club_table(league_code, settings, now)
+        if not table:
+            return
+        for event in [focus, *((by_league or {}).get(league_code) or [])]:
+            if not isinstance(event, dict):
+                continue
+            for side in ("home", "away"):
+                row = club_table.team_row(table, event.get(f"{side}_team_id"), event.get(f"{side}_name"))
+                if row:
+                    event[f"{side}_table"] = row
+
     def _club_espn_state_path(self):
         return self._sports_dashboard_cache_dir() / "club_football_espn_requests.json"
 
@@ -2434,6 +2501,9 @@ class ClubFootballMixin:
             elif key in ("goals", "cards") and isinstance(values, list) and show_score:
                 adapted[key] = [{**item, "side": "a" if item.get("side") == "home" else "b"}
                                 for item in values if isinstance(item, Mapping) and item.get("side") in ("home", "away")]
+        for side, target in (("home", "a"), ("away", "b")):
+            if isinstance(event.get(f"{side}_table"), Mapping):
+                adapted[f"table_{target}"] = dict(event[f"{side}_table"])
         if SportsDashboard._club_event_has_complete_odds(event):
             adapted["odds"] = {
                 "team_a": f"{float(event['odds_home_decimal']):.2f}",

@@ -2945,6 +2945,7 @@ class SportsDashboardCommonMixin:
                 timezone_info,
                 now,
             )
+            self._attach_club_table(by_league, selected, settings, now)
         except Exception as exc:
             logger.warning("Club football top-left panel failed: %s", _safe_exception_text(exc))
             source_state = "CLUB UNAVAILABLE"

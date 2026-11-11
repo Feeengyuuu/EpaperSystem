@@ -20,6 +20,10 @@ CLUB_FORM_CELL, CLUB_FORM_GAP = 7, 2
 CLUB_FORM_NAME_GAP = 6
 # The last-five cells end this far above the card's foot (its 2 px border and a clear gap).
 CLUB_FORM_FOOT = 5
+# A club's place and points from its league table: on the card round the last-five cells
+# ("#7 ▪▪▪▪▪ 14分"), in a row at the ends of the line under the names, the odds between them.
+CLUB_TABLE_TEXT_SIZE, CLUB_TABLE_FORM_GAP = 9, 4
+CLUB_TABLE_ROW_TEXT_SIZE, CLUB_TABLE_ROW_GAP = 8, 4
 CLUB_EVENT_ICON, CLUB_EVENT_GAP = 8, 6
 CLUB_YELLOW_CARD = (240, 192, 32)
 
@@ -1073,9 +1077,11 @@ class WorldCupRenderMixin:
             for (name, font), box, (left, right) in zip(names, ink, (left_area, right_area)):
                 draw.text(((left + right) / 2 - (box[0] + box[2]) / 2, name_bottom - box[3]), name, font=font,
                           fill=COLORS["text"])
-            for form, (left, right) in zip(forms, (left_area, right_area)):
+            for side, form, (left, right) in zip(("a", "b"), forms, (left_area, right_area)):
+                centre = ((left + right) / 2, form_top + CLUB_FORM_CELL / 2)
                 if form:
-                    self._draw_club_form(draw, ((left + right) / 2, form_top + CLUB_FORM_CELL / 2), form)
+                    self._draw_club_form(draw, centre, form)
+                self._draw_club_table_round_form(draw, centre, len(form), event.get(f"table_{side}"))
             label_top, bar_bottom = form_top + CLUB_FORM_CELL + 3, y2 - 5
         else:
             for (name, font), (left, right) in zip(names, (left_area, right_area)):
@@ -1117,6 +1123,50 @@ class WorldCupRenderMixin:
             x = left + index * (CLUB_FORM_CELL + CLUB_FORM_GAP)
             fill = _kit_result_ink("win") if result == "W" else _kit_result_ink("loss") if result == "L" else COLORS["muted"]
             draw.rounded_rectangle((x, top, x + CLUB_FORM_CELL - 1, top + CLUB_FORM_CELL - 1), radius=2, fill=fill)
+
+    def _draw_club_table_round_form(self, draw, centre, cells, row):
+        """A club's place in its league before its last-five cells and its points after them, on
+        the cells' row: "#7 ▪▪▪▪▪ 14分". A league in several tables has no single place, so there
+        the points stand alone."""
+        if not isinstance(row, Mapping) or row.get("points") is None:
+            return
+        cx, cy = centre
+        half = max(0, cells * (CLUB_FORM_CELL + CLUB_FORM_GAP) - CLUB_FORM_GAP) / 2
+        top, bottom = round(cy - CLUB_FORM_CELL / 2) - 2, round(cy + CLUB_FORM_CELL / 2) + 2
+        font = self._font(CLUB_TABLE_TEXT_SIZE, bold=True)
+        if row.get("rank"):
+            place = f"#{row['rank']}"
+            right = cx - half - CLUB_TABLE_FORM_GAP
+            self._draw_text_in_box(draw, (right - self._text_width(draw, place, font), top, right, bottom), place, font,
+                                   COLORS["text"], align="right")
+        points = f"{row['points']}分"
+        left = cx + half + CLUB_TABLE_FORM_GAP
+        self._draw_text_in_box(draw, (left, top, left + self._text_width(draw, points, font), bottom), points, font,
+                               COLORS["text"])
+
+    @staticmethod
+    def _club_points_label(event, side):
+        """A club's league points as the page says them ("14分"); "" for a side without a table row."""
+        row = event.get(f"table_{side}") if isinstance(event, Mapping) else None
+        points = row.get("points") if isinstance(row, Mapping) else None
+        return f"{points}分" if points is not None else ""
+
+    def _draw_club_row_points(self, draw, event, edges, top, bottom):
+        """Each club's league points at its own end of a row's second line (``edges``: the home
+        side's left edge, the away side's right edge). Returns those edges moved in past what was
+        drawn, so the odds between them keep clear."""
+        font = self._font(CLUB_TABLE_ROW_TEXT_SIZE, bold=True)
+        left, right = edges
+        home, away = (self._club_points_label(event, side) for side in ("a", "b"))
+        if home:
+            width = self._text_width(draw, home, font)
+            self._draw_text_in_box(draw, (left, top, left + width, bottom), home, font, COLORS["text"])
+            left += width + CLUB_TABLE_ROW_GAP
+        if away:
+            width = self._text_width(draw, away, font)
+            self._draw_text_in_box(draw, (right - width, top, right, bottom), away, font, COLORS["text"], align="right")
+            right -= width + CLUB_TABLE_ROW_GAP
+        return left, right
 
     def _draw_club_match_events(self, draw, box, center_x, event):
         """Under a live or finished match's names: each side's scorers with their minutes and its
@@ -1423,6 +1473,8 @@ class WorldCupRenderMixin:
                                       max_size=7)
         self._draw_worldcup_odds_text(draw, (right_area[0], points_y, right_area[1] - badge, y + row_h - 1), right_meta,
                                       max_size=7)
+        # A league club's points sit under its name, where a group's points line would.
+        self._draw_club_row_points(draw, event, (left_area[0] + badge, right_area[1] - badge), points_y, y + row_h - 1)
 
     def _draw_worldcup_score_detail_chip(self, draw, box, text, align="left", *, league=None):
         text = str(text or "").strip()
@@ -1607,7 +1659,10 @@ class WorldCupRenderMixin:
         right_meta = self._worldcup_team_points_meta(event, "b", include_odds=has_odds)
         # Without a line of odds or points under them, the names sit level with the badges' middle,
         # clear of the date and kick-off line above.
-        name_top = y - 1 if left_meta or right_meta or has_odds else y + 2
+        # League points stand right under a name's first letters: the names then sit a pixel
+        # higher and the line under them (points and odds alike) two lower, so clear rows part them.
+        has_points = any(self._club_points_label(event, side) for side in ("a", "b"))
+        name_top = y - 2 if has_points else (y - 1 if left_meta or right_meta or has_odds else y + 2)
         team_bottom = name_top + 12
         team_a, font_a = self._fit_text(draw, event.get("team_a"), max(20, center_x - left_text_x - 4), 10, bold=True, min_size=7)
         self._draw_text_in_box(draw, (left_text_x, name_top, center_x - 28, team_bottom), team_a, font_a, COLORS["text"])
@@ -1637,9 +1692,12 @@ class WorldCupRenderMixin:
         # The odds run under the names, mirrored on the wider badge so both sides read alike, in a
         # band that ends a couple of pixels above the row's foot rather than on its border.
         meta_margin = max(left_w, right_w) + 5
-        odds_top, odds_bottom = y + 9, y + 18
-        self._draw_worldcup_odds_text(draw, (x1 + meta_margin, odds_top, center_x - 28, odds_bottom), left_meta, max_size=7)
-        self._draw_worldcup_odds_text(draw, (center_x + 28, odds_top, x2 - meta_margin, odds_bottom), right_meta, max_size=7)
+        odds_top, odds_bottom = (y + 11, y + 20) if has_points else (y + 9, y + 18)
+        # A league club's points open the band at its own end; the odds keep the room between.
+        odds_left, odds_right = self._draw_club_row_points(
+            draw, event, (x1 + meta_margin, x2 - meta_margin), odds_top, odds_bottom)
+        self._draw_worldcup_odds_text(draw, (odds_left, odds_top, center_x - 28, odds_bottom), left_meta, max_size=7)
+        self._draw_worldcup_odds_text(draw, (center_x + 28, odds_top, odds_right, odds_bottom), right_meta, max_size=7)
         if has_odds:
             odds = event.get("odds") or {}
             if odds.get("draw"):
