@@ -33,6 +33,8 @@ from utils.http_client import HttpStatusError, get_http_client
 from utils.local_wordmark import load_source_logo
 from utils.safe_image import ImageLimits, safe_open_image
 
+from . import superchargers
+
 
 logger = logging.getLogger(__name__)
 
@@ -909,6 +911,10 @@ class VehicleStatus(BasePlugin):
         if _bool_setting(settings, "_theme_render_only", False):
             return self._theme_only_image(settings, dimensions, theme)
 
+        # California's Supercharger news: an extra on its own twelve-hour cache, read on a refresh
+        # only (never on a theme redraw) and never deciding what the page says of the car.
+        superchargers.refresh(self.cache_dir(leaf="cache", create=False), time.time())
+
         cache_seconds = _int_setting(settings, "cacheSeconds", 900, 0, 86_400)
         force_refresh = any(_bool_setting(settings, key, False) for key in ("forceRefresh", "force_refresh"))
 
@@ -1175,12 +1181,15 @@ class VehicleStatus(BasePlugin):
             SourceProvenance.LOCAL_FALLBACK: "stale_cache",
         }[provenance]
         display_summary["snapshot"] = display_snapshot
+        # The Supercharger news from its kept copy, on its turn only (a file read, never a request).
+        news = superchargers.for_display(self.cache_dir(leaf="cache", create=False), time.time())
         image = self._render_summary(
             display_summary,
             dimensions,
             theme,
             settings,
             location_presentation=location_presentation,
+            **({"supercharger_news": news} if news else {}),
         )
         if provenance in {SourceProvenance.STALE_CACHE, SourceProvenance.LOCAL_FALLBACK}:
             image.info[SKIP_CACHE_IMAGE_INFO_KEY] = True
@@ -1543,12 +1552,14 @@ class VehicleStatus(BasePlugin):
         theme,
         settings,
         location_presentation=None,
+        supercharger_news=None,
     ):
         colors = _render_colors(theme)
         language = _language(settings)
         canvas = Image.new("RGB", (800, 480), colors["background"])
         draw = ImageDraw.Draw(canvas)
-        _draw_dashboard(canvas, draw, summary, theme, settings, colors, language, location_presentation)
+        _draw_dashboard(canvas, draw, summary, theme, settings, colors, language, location_presentation,
+                        supercharger_news)
 
         if dimensions != (800, 480):
             canvas = canvas.resize(dimensions, Image.Resampling.LANCZOS)
@@ -3457,7 +3468,8 @@ CHARGE_PORT_SPOT = (0.27, 0.9)
 ROOF_SPOT = 0.5
 
 
-def _draw_dashboard(canvas, draw, summary, theme, settings, colors, language, location_presentation):
+def _draw_dashboard(canvas, draw, summary, theme, settings, colors, language, location_presentation,
+                    supercharger_news=None):
     vehicle = summary["vehicle"]
     snapshot = summary["snapshot"]
     extended = summary["schema_version"] in {2, 3}
@@ -3485,7 +3497,13 @@ def _draw_dashboard(canvas, draw, summary, theme, settings, colors, language, lo
                       colors, language)
     _draw_climate_column(canvas, draw, summary["climate"], extended, settings, preferences, colors, language)
     _draw_location_column(canvas, draw, location_presentation, colors, language)
-    _draw_vehicle_strip(canvas, draw, vehicle, software_update, extended, settings, preferences, colors, language)
+    # On its turn California's Supercharger news takes the vehicle strip; an update waiting to
+    # download or install keeps the strip, where its progress is.
+    news = superchargers.cells(supercharger_news, language) if supercharger_news else []
+    if news and not (software_update or {}).get("version"):
+        _draw_supercharger_strip(canvas, draw, news, colors, language)
+    else:
+        _draw_vehicle_strip(canvas, draw, vehicle, software_update, extended, settings, preferences, colors, language)
     _draw_dashboard_footer(canvas, draw, snapshot, colors, language)
 
 
@@ -4003,6 +4021,25 @@ def _draw_vehicle_strip(canvas, draw, vehicle, software_update, extended, settin
             draw.text((x, STRIP_RULE_Y + 32), _ellipsize_text(draw, progress, label_font, PAGE_RIGHT - x),
                       font=label_font, fill=colors["ink"])
         x = cell_right
+
+
+def _draw_supercharger_strip(canvas, draw, cells, colors, language):
+    """The vehicle strip's grid with the Supercharger news in it: each site's name under what is
+    new about it (opened on a date, or days under construction and how far from San Francisco)."""
+    draw.line((PAGE_LEFT, STRIP_RULE_Y, PAGE_RIGHT, STRIP_RULE_Y), fill=colors["rule"], width=1)
+    title = (superchargers.TEXT.get(language) or superchargers.TEXT["en"])["title"]
+    heading_right = _section_label(canvas, draw, PAGE_LEFT, STRIP_RULE_Y + 11, title, colors, "charging")
+    label_font, value_font = _font(LABEL_SIZE), _font(VALUE_SIZE, True)
+    left = max(heading_right + 22, STRIP_GRID_LEFT)
+    width = (PAGE_RIGHT - left) / len(cells)
+    for index, (label, value) in enumerate(cells):
+        x = round(left + index * width)
+        room = width - (12 if index < len(cells) - 1 else 0)
+        draw.line((x - 8, STRIP_RULE_Y + 7, x - 8, STRIP_RULE_Y + 30), fill=colors["rule"], width=1)
+        draw.text((x, STRIP_RULE_Y + 5), _ellipsize_text(draw, label, label_font, room), font=label_font,
+                  fill=colors["ink"])
+        draw.text((x, STRIP_RULE_Y + 16), _ellipsize_text(draw, value, value_font, room), font=value_font,
+                  fill=colors["ink"])
 
 
 def _draw_dashboard_footer(canvas, draw, snapshot, colors, language):

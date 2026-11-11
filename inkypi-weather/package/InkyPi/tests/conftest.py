@@ -102,6 +102,18 @@ def _extra_sports_feeds_offline(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _supercharger_news_offline(monkeypatch):
+    """The vehicle page's Supercharger news never reaches the network in tests: its loader finds
+    no client (and the page keeps its vehicle strip) unless a test gives it one."""
+    from plugins.vehicle_status import superchargers
+
+    def offline():
+        raise RuntimeError("Supercharger news is offline in tests")
+
+    monkeypatch.setattr(superchargers, "get_http_client", offline)
+
+
+@pytest.fixture(autouse=True)
 def _collect_new_scratch_entries(request):
     """Queue whatever a test adds under the known scratch roots for teardown cleanup."""
 
