@@ -549,10 +549,58 @@ def test_two_tone_wordmark_alpha_is_preserved_and_day_night_shapes_match(plugin,
     assert hashlib.sha256(asset_path.read_bytes()).hexdigest() == before
 
 
-def test_header_ornament_fills_the_gap_between_title_and_date(plugin, payload):
+def test_header_names_wikipedia_and_wikimedia_by_their_logos_after_the_title(plugin, payload):
     day = plugin._render_page((800, 480), payload, settings("day"), NOW)
     night = plugin._render_page((800, 480), payload, settings("night"), NOW)
     header = day.info["daily_wiki_layout"]["header"]
+    sources = header["sources"]
+    assert sources == night.info["daily_wiki_layout"]["header"]["sources"] and header["ornament"] is None
+    assert [record["asset"] for record in sources] == ["wikipedia_logo.png", "wikimedia_logo.png"]
+    # Title, Wikipedia's globe, Wikimedia's logo, then clear page up to the date; all above the rule.
+    edges = [header["title"]["bounds"][2]] + [edge for record in sources for edge in record["bounds"][0:3:2]]
+    assert edges == sorted(set(edges)) and edges[-1] < header["date"]["bounds"][0]
+    assert all(0 <= record["bounds"][1] and record["bounds"][3] < 70 for record in sources)
+    left, top, right, bottom = sources[1]["bounds"]
+    for page, paper in ((day, (255, 255, 255)), (night, (0, 0, 0))):
+        # Each logo sits straight on the page in its own colours (Wikimedia's red dot, green arc
+        # and blue ring, by day and by night): no plate, the page shows in its corners.
+        colours = set(page.crop((left, top, right, bottom)).get_flattened_data())
+        for tone in ((153, 0, 0), (51, 153, 102), (0, 102, 153)):
+            assert any(sum(abs(a - b) for a, b in zip(colour, tone)) < 60 for colour in colours), tone
+        assert page.getpixel((left, top)) == paper and page.getpixel((right - 1, bottom - 1)) == paper
+        date_left, date_top = header["date"]["bounds"][:2]
+        assert set(page.crop((right + 2, 4, date_left - 2, date_top - 2)).get_flattened_data()) == {paper}
+    for path in (swiss_renderer.WIKIPEDIA_LOGO_PATH, swiss_renderer.WIKIMEDIA_LOGO_PATH):
+        record = json.loads(path.with_suffix(".source.json").read_text(encoding="utf-8"))
+        assert record["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+        assert record["page"].startswith("https://commons.wikimedia.org/wiki/File:")
+
+
+def test_header_logos_scale_with_the_smallest_page(plugin, payload):
+    header = plugin._render_page((480, 280), payload, settings(), NOW).info["daily_wiki_layout"]["header"]
+    sources = header["sources"]
+    assert header["title"]["bounds"][2] < sources[0]["bounds"][0]
+    assert sources[-1]["bounds"][2] < header["date"]["bounds"][0]
+    assert all(record["bounds"][3] < 41 for record in sources)  # the header rule sits at px(70) = 41 on this page
+
+
+def test_a_page_not_from_wikimedia_wears_no_wikimedia_logos(plugin, payload):
+    payload["source"] = "Local Encyclopedia"
+    header = plugin._render_page((800, 480), payload, settings(), NOW).info["daily_wiki_layout"]["header"]
+    assert header["sources"] is None and header["ornament"] is not None
+
+
+@pytest.fixture
+def no_source_logos(monkeypatch, tmp_path):
+    """A page whose sources cannot be shown by logo: the shape strip stands in its header."""
+    monkeypatch.setattr(swiss_renderer, "WIKIPEDIA_LOGO_PATH", tmp_path / "missing-logo.png")
+
+
+def test_header_ornament_fills_the_gap_between_title_and_date(plugin, payload, no_source_logos):
+    day = plugin._render_page((800, 480), payload, settings("day"), NOW)
+    night = plugin._render_page((800, 480), payload, settings("night"), NOW)
+    header = day.info["daily_wiki_layout"]["header"]
+    assert header["sources"] is None
     ornament = header["ornament"]
     assert ornament == night.info["daily_wiki_layout"]["header"]["ornament"]
     left_rule, right_rule = ornament["rules"]
@@ -564,7 +612,7 @@ def test_header_ornament_fills_the_gap_between_title_and_date(plugin, payload):
                               list(night.crop(bounds).get_flattened_data()), accent="accent2")
 
 
-def test_header_ornament_stays_clear_on_the_smallest_page(plugin, payload):
+def test_header_ornament_stays_clear_on_the_smallest_page(plugin, payload, no_source_logos):
     header = plugin._render_page((480, 280), payload, settings(), NOW).info["daily_wiki_layout"]["header"]
     ornament = header["ornament"]
     assert header["title"]["bounds"][2] < ornament["rules"][0][0]
@@ -572,7 +620,7 @@ def test_header_ornament_stays_clear_on_the_smallest_page(plugin, payload):
     assert ornament["bounds"][3] < 41  # the header rule sits at px(70) = 41 on this page
 
 
-def test_missing_header_ornament_leaves_a_complete_page(plugin, payload, monkeypatch, tmp_path):
+def test_missing_header_ornament_leaves_a_complete_page(plugin, payload, monkeypatch, tmp_path, no_source_logos):
     monkeypatch.setattr(swiss_renderer, "ORNAMENT_ASSET_PATH", tmp_path / "missing-ornament.png")
     audit = plugin._render_page((800, 480), payload, settings(), NOW).info["daily_wiki_layout"]
     assert audit["header"]["ornament"] is None

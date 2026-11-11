@@ -1,0 +1,13 @@
+{
+  "image": "wikipedia_logo.png",
+  "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/80/Wikipedia-logo-v2.svg/960px-Wikipedia-logo-v2.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+  "page": "https://commons.wikimedia.org/wiki/File:Wikipedia-logo-v2.svg",
+  "licence": "CC BY-SA 3.0 (Wikimedia Foundation); a Wikimedia Foundation trademark, shown to name the page's source",
+  "source_sha256": "5bf2c814ac914240d3146ef8dd6c9e129f6c0d67bf629a11941c2202cccd6ae6",
+  "processing": "cropped to its visible pixels, scaled to 64 px tall",
+  "size": [
+    71,
+    64
+  ],
+  "sha256": "f2e7ec16f8f48348b4a900064edb34ba2fe2c6666dcd6ef1e8060fcb9e4fac99"
+}
