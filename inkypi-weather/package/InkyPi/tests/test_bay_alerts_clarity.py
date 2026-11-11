@@ -71,6 +71,21 @@ def test_an_alerts_hours_sit_on_a_three_day_track():
     assert canvas.image.getpixel((105, 100)) == blue and canvas.image.getpixel((100 + render.ALERT_SPAN_WIDTH - 3, 100)) != blue
 
 
+def test_an_alert_that_starts_in_the_tracks_last_pixels_and_runs_on_still_draws():
+    # A watch issued 66 h ahead for a storm lasting past the track: it starts 36.7 px along the
+    # 40 px track, closer to the end than the pointed tip is long. The bar was then drawn right
+    # edge first, which failed the whole page until the start came within 63 h.
+    canvas = PageCanvas(render._palette({"_inkypi_theme": {"mode": "day"}}))
+    watch = {"onset": (NOW + timedelta(hours=66)).isoformat(), "ends": (NOW + timedelta(hours=120)).isoformat()}
+
+    render._alert_span(canvas, (100, 100), render.alert_span(watch, NOW), "minor", NOW)
+
+    blue = canvas.color("minor")
+    assert canvas.image.getpixel((138, 100)) == blue
+    # Nothing of it is drawn before its own start.
+    assert blue not in {canvas.image.getpixel((x, y)) for x in range(100, 136) for y in range(94, 107)}
+
+
 def test_the_end_day_is_named_by_weekday_within_the_week():
     assert render.until(NOW + timedelta(hours=3), NOW) == "至 今天 16:00"
     assert render.until(NOW + timedelta(days=1), NOW) == "至 明天 13:00"

@@ -507,8 +507,12 @@ def _alert_span(canvas, origin, span, tone, now):
         midnight += timedelta(days=1)
     left, right = x + width * start, max(x + width * start + 3, x + width * end)
     if beyond:
-        canvas.draw.rectangle((left, y - 2, right - 5, y + 2), fill=colour)
-        canvas.draw.polygon([(right - 5, y - 5), (right, y), (right - 5, y + 5)], fill=colour)
+        # The tip is 5 px long; an alert starting nearer the end than that is the tip alone, from
+        # its own start.
+        tip = max(left, right - 5)
+        if tip > left:
+            canvas.draw.rectangle((left, y - 2, tip, y + 2), fill=colour)
+        canvas.draw.polygon([(tip, y - 5), (right, y), (tip, y + 5)], fill=colour)
     else:
         canvas.draw.rectangle((left, y - 2, right, y + 2), fill=colour)
 
