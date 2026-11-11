@@ -302,22 +302,31 @@ def test_focus_chats_weigh_in_take_one_more_row_and_leave_two_rows_to_others():
     assert len(ranked) == 15
 
 
-def test_the_fallback_picture_chat_is_a_focus_chat_and_marks_its_stories():
-    fallback_chat = {"chat_id": "1271802723", "chat_title": "某个群"}
+def test_a_picture_chat_is_a_focus_chat_and_its_pictures_score_a_step_more():
+    picture_chat = {"chat_id": "1271802723", "chat_title": "某个群"}
     rules = Rules({})
-    assert rules.focus_weight(message("a", "x", kind="group", **fallback_chat)) == 2
-    assert rules.fallback_picture(message("b", "x", kind="group", **fallback_chat))
-    assert not rules.fallback_picture(message("c", "x", chat="吃瓜群众"))
-    # A title term works too; an emptied field means no fallback chat.
-    assert Rules({"pictureFallbackChats": "某个"}).fallback_picture(message("d", "x", chat="某个群"))
-    assert not Rules({"pictureFallbackChats": ""}).fallback_picture(message("e", "x", kind="group", **fallback_chat))
+    assert rules.focus_weight(message("a", "x", kind="group", **picture_chat)) == 2
+    assert rules.feature_picture(message("b", "x", kind="group", **picture_chat))
+    # By default also any chat that calls itself NSFW, whatever its id.
+    assert rules.feature_picture(message("b2", "x", kind="group", chat="『NSFW』某群"))
+    assert not rules.feature_picture(message("c", "x", chat="吃瓜群众"))
+    # A title term works too; an emptied field means no picture chat.
+    assert Rules({"pictureFeatureChats": "某个"}).feature_picture(message("d", "x", chat="某个群"))
+    assert not Rules({"pictureFeatureChats": ""}).feature_picture(message("e", "x", kind="group", **picture_chat))
 
-    ranked = curator({"curationMode": "rules"}).curate([
-        message("photo", "", kind="group", media_kind="photo", **fallback_chat),
-        message("news", "普通资讯 " * 12),
+    ai = FakeAI({"色图": {"score": 30}, "别群的图": {"score": 30}, "群里的话": {"score": 30}})
+    ranked = curator(ai=ai).curate([
+        message("photo", "色图", kind="group", media_kind="photo", **picture_chat),
+        message("video", "色图", kind="group", media_kind="video", **picture_chat),
+        message("words", "群里的话", kind="group", **picture_chat),
+        message("other", "别群的图", kind="group", chat="别的群", media_kind="photo"),
     ])
-    marks = {item["key"]: item["curation"]["fallback_picture"] for item in ranked}
-    assert marks == {"photo": True, "news": False}
+    fields = {item["key"]: item["curation"] for item in ranked}
+    assert {key: value["feature_picture"] for key, value in fields.items()} == {
+        "photo": True, "video": True, "words": True, "other": False}
+    # 30 from the AI; the focus chat adds 20, a picture 20 and the picture chat's picture 15 more.
+    assert {key: value["score"] for key, value in fields.items()} == {
+        "photo": 85, "video": 85, "words": 50, "other": 50}
 
 
 def test_a_story_with_a_picture_ranks_above_words_alone_whoever_scored_it():

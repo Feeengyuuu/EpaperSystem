@@ -50,9 +50,12 @@ PER_CHAT_VISIBLE = 2
 # Focus dialogs (the owner's must-read chats) score higher by weight and get one more row,
 # while the others keep at least two rows of the page.
 DEFAULT_FOCUS_CHATS = "吃瓜大佬*2, 吃瓜群众*2, 1271802723*2"
-# Fallback picture chats (the owner's, 2026-11-09, matched by chat id): their photos take the
-# lead's and the second picture's spots only when no other story has a picture for them.
-DEFAULT_PICTURE_FALLBACK_CHATS = "1271802723"
+# Picture chats (the owner's group by its chat id, and any chat that calls itself NSFW): the
+# owner wants their pictures big (2026-11-11; two days earlier the same group's pictures were
+# held back from the big spots). Their photos and videos score a step more, and the best one on
+# disk takes the big picture under the lead's text before any other.
+DEFAULT_PICTURE_FEATURE_CHATS = "1271802723, nsfw"
+FEATURE_PICTURE_STEP = 15
 FOCUS_DEFAULT_WEIGHT = 2
 FOCUS_MAX_WEIGHT = 3
 FOCUS_SCORE_STEP = 10
@@ -161,8 +164,8 @@ class Rules:
         self.pin_chats = set(split_terms(settings.get("pinChats")))
         focus = settings.get("focusChats")
         self.focus_chats = focus_terms(DEFAULT_FOCUS_CHATS if focus is None else focus)
-        fallback = settings.get("pictureFallbackChats")
-        self.fallback_picture_chats = split_terms(DEFAULT_PICTURE_FALLBACK_CHATS if fallback is None else fallback)
+        feature = settings.get("pictureFeatureChats")
+        self.feature_picture_chats = split_terms(DEFAULT_PICTURE_FEATURE_CHATS if feature is None else feature)
 
     @staticmethod
     def chat_names(item):
@@ -188,10 +191,10 @@ class Rules:
         return max((weight for term, weight in self.focus_chats if any(term in name for name in names)),
                    default=0)
 
-    def fallback_picture(self, item):
-        """Whether the chat's title, username or id holds a fallback picture chat's term."""
+    def feature_picture(self, item):
+        """Whether the chat's title, username or id holds a picture chat's term."""
         names = self.chat_names(item)
-        return any(term in name for term in self.fallback_picture_chats for name in names)
+        return any(term in name for term in self.feature_picture_chats for name in names)
 
     def ad_reason(self, item):
         """Why ``item`` is dropped before ranking, or "" when it stays."""
@@ -363,11 +366,12 @@ class Curator:
         focus = self.rules.focus_weight(item)
         if focus and source == "ai":
             score = min(100, score + FOCUS_SCORE_STEP * focus)
+        feature = self.rules.feature_picture(item)
         if str(item.get("media_kind") or "") in {"photo", "video"}:
-            score = min(100, score + PICTURE_SCORE_STEP)
+            score = min(100, score + PICTURE_SCORE_STEP + (FEATURE_PICTURE_STEP if feature else 0))
         return {"score": score, "tag": tag, "headline": headline, "summary": summary,
                 "source": source, "pinned": self.rules.pinned(item), "focus": focus,
-                "fallback_picture": self.rules.fallback_picture(item)}
+                "feature_picture": feature}
 
     def _apply_ai(self, items):
         pending = [item for item in items if str(item.get("key")) not in self.ai_cache][:AI_MAX_ITEMS]
@@ -536,32 +540,22 @@ def order_for_page(items):
     return visible + overflow
 
 
-def fallback_picture(item):
-    """Whether ``item`` comes from a fallback picture chat (see DEFAULT_PICTURE_FALLBACK_CHATS)."""
-    return bool(((item or {}).get("curation") or {}).get("fallback_picture"))
+def feature_picture(item):
+    """Whether ``item`` comes from a picture chat (see DEFAULT_PICTURE_FEATURE_CHATS)."""
+    return bool(((item or {}).get("curation") or {}).get("feature_picture"))
 
 
 def split_lead(items, has_media):
-    """The lead story and the rest in page order: a picture leads when it is nearly the best.
-
-    While any other story has a picture, a fallback chat's picture story neither leads by its
-    picture nor takes the lead's photo spot as the best story; without one it leads like any.
-    """
+    """The lead story and the rest in page order: a picture leads when it is nearly the best."""
     items = list(items or [])
     if not items:
         return {}, []
-    held = any(has_media(item) and not fallback_picture(item) for item in items)
-
-    def held_back(item):
-        return held and fallback_picture(item) and has_media(item)
-
     best = int((items[0].get("curation") or {}).get("score") or 0)
     for index, item in enumerate(items[:3]):
         score = int((item.get("curation") or {}).get("score") or 0)
-        if has_media(item) and not held_back(item) and score >= best - MEDIA_LEAD_MARGIN:
+        if has_media(item) and score >= best - MEDIA_LEAD_MARGIN:
             return item, items[:index] + items[index + 1:]
-    index = next((index for index, item in enumerate(items) if not held_back(item)), 0)
-    return items[index], items[:index] + items[index + 1:]
+    return items[0], items[1:]
 
 
 def display_headline(item):

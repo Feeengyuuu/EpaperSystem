@@ -21,7 +21,7 @@ from plugins.base_plugin.refresh_on_display_presentation import RefreshOnDisplay
 from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
 from plugins.telegram_digest import account_worker
 from plugins.telegram_digest.briefing_page import DAY_TAG_COLOURS, NIGHT_TAG_COLOURS, BriefingPageMixin
-from plugins.telegram_digest.curation import VISIBLE_COUNT, Curator, fallback_picture, split_lead
+from plugins.telegram_digest.curation import VISIBLE_COUNT, Curator, feature_picture, split_lead
 from runtime.long_task_executor import current_task_context
 from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import bounded_int, coerce_bool, get_base_ui_font
@@ -654,8 +654,10 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
         downloaded = 0
         lead, _rest = self._split_page_lead(messages)
         lead_key = str((lead or {}).get("key") or "")
-        # The lead's album photo may fill the half its text leaves, so it is fetched as sharp.
-        large_keys = {lead_key} | {str(item.get("key") or "") for item in self._album_siblings(lead, messages)[:1]}
+        # The lead's album photo or a picture chat's best picture may fill the half the lead's
+        # text leaves, so they are fetched as sharp.
+        large_keys = {lead_key} | {str(item.get("key") or "") for item in
+                                   self._album_siblings(lead, messages)[:1] + self._feature_pictures(messages)}
         # Only "Telegram Digest ..." lines leave the account worker for the journal, so each
         # failure and the round's count are said that way.
         saved, failed = 0, []
@@ -764,15 +766,19 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
         photo = getattr(getattr(dialog, "entity", None), "photo", None)
         return str(getattr(photo, "photo_id", "") or "")
 
+    def _feature_pictures(self, messages):
+        """A picture chat's best picture story (at most one), wherever it ranks: the page's big
+        spot under the lead goes to it."""
+        return [item for item in messages or [] if isinstance(item, dict) and feature_picture(item)
+                and self._has_page_media(item)][:1]
+
     def _account_media_download_queue(self, messages):
         queue = []
         seen = set()
 
         lead, _rest = self._split_page_lead(messages)
-        # A fallback chat's best picture comes next, so it is ready when the others' fail.
-        fallback = [item for item in messages or [] if isinstance(item, dict) and fallback_picture(item)
-                    and self._has_page_media(item)][:1]
-        for item in self._visible_message_items(messages) + self._album_siblings(lead, messages)[:1] + fallback:
+        for item in (self._visible_message_items(messages) + self._album_siblings(lead, messages)[:1]
+                     + self._feature_pictures(messages)):
             if not isinstance(item, dict) or not item:
                 continue
             key = str(item.get("key") or "")

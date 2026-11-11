@@ -611,7 +611,7 @@ def test_plugin_info_and_settings_defaults_are_declared():
     assert 'max="7" step="1" name="mediaDownloadLimit"' in settings
     assert 'id="mediaDownloadLimit" value="7"' in settings
     for name in ("includeText", "curationMode", "aiDailyLimit", "blockKeywords", "boostKeywords",
-                 "blockChats", "pinChats", "focusChats", "pictureFallbackChats"):
+                 "blockChats", "pinChats", "focusChats", "pictureFeatureChats"):
         assert f'name="{name}"' in settings
     assert "private chats included" in settings
     assert "key === 'mediaDownloadLimit'" in settings
@@ -1572,40 +1572,52 @@ def test_far_lower_photo_does_not_displace_the_best_story(tmp_path):
     assert [item["key"] for item in rest] == ["photo-mid"]
 
 
-def test_a_fallback_chats_picture_leads_only_when_no_other_story_has_one(tmp_path):
-    plugin = _plugin(tmp_path)
-    held = {"key": "held-photo", "media_kind": "photo", "date": 400, "curation": {"score": 90, "fallback_picture": True}}
-    text = {"key": "text", "media_kind": "text", "date": 300, "curation": {"score": 85}}
-    photo = {"key": "photo", "media_kind": "photo", "date": 200, "curation": {"score": 50}}
-
-    # Another story has a picture: the fallback photo neither leads by its picture nor as the best story.
-    lead, rest = plugin._split_page_lead([held, text, photo])
-    assert lead["key"] == "text" and [item["key"] for item in rest] == ["held-photo", "photo"]
-    lead, rest = plugin._split_page_lead([held, dict(photo, curation={"score": 85})])
-    assert lead["key"] == "photo" and [item["key"] for item in rest] == ["held-photo"]
-    # No other picture anywhere: the fallback photo leads like any picture.
-    lead, rest = plugin._split_page_lead([text, held])
-    assert lead["key"] == "held-photo" and [item["key"] for item in rest] == ["text"]
-
-
-def test_the_lower_picture_falls_back_to_the_fallback_chat_and_its_photo_is_fetched(tmp_path):
+def test_a_picture_chats_photo_takes_the_big_spot_under_the_lead_first(tmp_path):
     plugin = _plugin(tmp_path)
     picture = tmp_path / "picture.png"
     Image.new("RGB", (320, 180), (23, 139, 81)).save(picture)
-    lead = {"key": "lead", "chat_id": "c1", "raw_text": "lead", "media_path": ""}
-    held = {"key": "held", "chat_id": "c9", "raw_text": "has words", "media_path": str(picture),
-            "curation": {"fallback_picture": True}}
-    bare = {"key": "bare", "chat_id": "c2", "raw_text": "", "media_path": str(picture)}
+    lead = {"key": "lead", "chat_id": "c1", "grouped_id": "g1", "raw_text": "lead", "media_path": ""}
+    album = {"key": "album", "chat_id": "c1", "grouped_id": "g1", "raw_text": "", "media_path": str(picture)}
+    news = {"key": "news", "chat_id": "c2", "raw_text": "has words", "media_path": str(picture)}
+    spicy = {"key": "spicy", "chat_id": "c9", "raw_text": "", "media_path": str(picture),
+             "curation": {"feature_picture": True}}
 
-    # Even a wordless picture of another chat comes before the fallback chat's.
-    assert plugin._second_picture(lead, [held, bare]) == (bare, False)
-    assert plugin._second_picture(lead, [held, dict(bare, media_path="")]) == (held, False)
+    # Ahead of the lead's own album photo and of another chat's picture with words.
+    assert plugin._second_picture(lead, [album, news, spicy]) == (spicy, False)
+    # While its picture is not on disk the spot goes as before: the album, then the worded picture.
+    waiting = dict(spicy, media_path="")
+    assert plugin._second_picture(lead, [album, news, waiting]) == (album, True)
+    assert plugin._second_picture(lead, [news, waiting]) == (news, False)
+    # A lead from the picture chat with an album: its own second photo is the same story.
+    own_lead = dict(lead, chat_id="c9", grouped_id="g7", curation={"feature_picture": True})
+    sibling = dict(spicy, key="sibling", grouped_id="g7")
+    assert plugin._second_picture(own_lead, [news, sibling]) == (sibling, True)
 
+
+def test_the_picture_chats_best_photo_is_fetched_sharp_even_from_below_the_page(tmp_path):
+    import asyncio
+
+    from plugins.telegram_digest import telegram_digest as module
+
+    plugin = _plugin(tmp_path)
     stories = [{"key": f"row-{index}", "media_kind": "text", "date": 100 - index, "curation": {"score": 80 - index}}
                for index in range(9)]
-    held_photo = {"key": "held-photo", "media_kind": "photo", "date": 1, "curation": {"score": 5, "fallback_picture": True}}
-    queue = [item["key"] for item in plugin._account_media_download_queue(stories + [held_photo])]
-    assert queue == ["held-photo"]
+    spicy = {"key": "spicy", "media_kind": "photo", "date": 1, "curation": {"score": 5, "feature_picture": True}}
+    thumb = {"key": "thumb", "media_kind": "photo", "date": 2, "curation": {"score": 60}}
+    assert [item["key"] for item in plugin._account_media_download_queue(stories + [spicy])] == ["spicy"]
+
+    sizes = {}
+
+    async def download(_client, message, _media, min_side):
+        sizes[message] = min_side
+        return ""
+
+    plugin._download_account_media = download
+    page = stories[:2] + [thumb] + stories[2:] + [spicy]
+    asyncio.run(plugin._hydrate_account_media(None, page, {"thumb": "thumb", "spicy": "spicy"}, {}, 7))
+
+    # A list row's picture is a thumbnail; the picture chat's fills a big spot.
+    assert sizes == {"thumb": module.THUMB_PHOTO_MIN_SIDE, "spicy": module.LEAD_PHOTO_MIN_SIDE}
 
 
 def test_lead_is_the_best_story_when_no_picture_is_close(tmp_path):
