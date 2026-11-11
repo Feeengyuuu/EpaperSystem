@@ -163,8 +163,9 @@ class CnHotSearch(BasePlugin):
                                   fresh_seconds=BOARDS_FRESH_SECONDS, usable_seconds=BOARDS_USABLE_SECONDS,
                                   validate=sources.valid_boards, timeout_seconds=15),
                            now, allow_network=allow_network, context=context, force=force)
-        # The turn cards' lists (澎湃's hot list, the overseas talk) are extras too: never matched
-        # across the platforms' lists, never in the page's provenance.
+        # The turn cards' lists (澎湃's hot list, the overseas talk, Wikipedia's most read, Tieba's
+        # 热议榜) are extras too: never matched across the platforms' lists, never in the page's
+        # provenance.
         extras = {}
         for name, fetch in sources.EXTRA_FETCHERS.items():
             result = book.load(Source(name, {"board": "hot"}, fetch, fresh_seconds=EXTRA_FRESH_SECONDS,

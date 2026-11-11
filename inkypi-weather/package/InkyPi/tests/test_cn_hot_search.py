@@ -480,3 +480,134 @@ def test_a_platforms_own_label_is_a_smaller_chip_than_the_shared_one():
     assert sum(pixel != paper for pixel in column) == 12
     outline = [canvas.image.getpixel((80 + shared // 2, y)) for y in range(15, 45)]
     assert outline.index(next(p for p in outline if p != paper)) == 30 - 7 - 15
+
+
+# Taken from tieba.baidu.com/hottopic/browse/topicList on 2026-11-11 (two topics of its thirty).
+TIEBA = {"errno": 0, "errmsg": "success", "data": {"bang_topic": {"module_title": "", "topic_list": [
+    {"topic_id": 28369747, "topic_name": "吧友连续14年盖楼支持诺基亚",
+     "topic_desc": "诺记吧老哥自2012年起盖楼打卡支持诺基亚，每天一句“我觉得，对吧，我还是支持诺基亚”，帖子历经14年仍在更新。",
+     "topic_pic": "https://tiebapic.baidu.com/forum/pic/item/c8177f3e6709c93d77a64affd93df8dcd1005465.jpg"
+                  "?tbpicau=2026-11-23-05_c6378c7d8e6a8e7362bdb2fb972d2931",
+     "tag": 2, "discuss_num": 2754030, "idx_num": 1, "create_time": 1794363945, "content_num": 0,
+     "topic_avatar": "https://tiebapic.baidu.com/forum/whfpf%3D84%2C88%2C40%3Bq%3D90/sign=538e47e9692eb938ec3829b2b35fbd01"
+                     "/c8177f3e6709c93d77a64affd93df8dcd1005465.jpg?tbpicau=2026-11-23-05_17a9e87131842c8189109d281b78f628",
+     "is_video_topic": "0",
+     "topic_url": "https://tieba.baidu.com/hottopic/browse/hottopic?topic_id=28369747&amp;topic_name=%E5%90%A7",
+     "topic_default_avatar": "https://tb1.bdstatic.com/tb/%E8%AF%9D%E9%A2%98%E6%89%93%E5%BA%95%E5%9B%BE.PNG"},
+    {"topic_id": 28369762, "topic_name": "樊振东祝贺LPL进决赛", "topic_desc": "樊振东发文祝贺LPL闯入纽约决赛，一起为LPL加油吧！",
+     "topic_pic": "https://example.com/elsewhere.jpg", "tag": 0, "discuss_num": 822302, "idx_num": 5,
+     "create_time": 1794379809, "topic_avatar": "https://example.com/elsewhere-small.jpg"},
+    {"topic_id": 1, "topic_name": " ", "discuss_num": 5}]}, "timestamp": 1794430190759}}
+
+
+def test_tiebas_hot_topics_read_their_discussions_their_sentence_and_their_small_picture():
+    rows = sources.normalize_tieba(TIEBA)["rows"]
+
+    assert [(row["rank"], row["title"]) for row in rows] == [(1, "吧友连续14年盖楼支持诺基亚"), (2, "樊振东祝贺LPL进决赛")]
+    assert (rows[0]["heat"], rows[0]["since"], rows[0]["tag"]) == (2754030, 1794363945, None)
+    assert rows[0]["summary"].startswith("诺记吧老哥自2012年起盖楼打卡支持诺基亚")
+    # The 84 x 88 cover the hot list itself shows (4 KB), not the full picture; only from Tieba's host.
+    assert rows[0]["image"].startswith("https://tiebapic.baidu.com/forum/whfpf%3D84%2C88%2C40")
+    assert rows[0]["image"].endswith("tbpicau=2026-11-23-05_17a9e87131842c8189109d281b78f628")
+    assert rows[1]["image"] is None
+    assert sources.valid_rows({"rows": rows})
+    for broken in ({}, {"data": []}, {"data": {"bang_topic": {"topic_list": "busy"}}}, {"errno": 110, "data": None}):
+        with pytest.raises(ValueError):
+            sources.normalize_tieba(broken)
+
+
+def test_tiebas_entities_are_read_as_text():
+    payload = {"data": {"bang_topic": {"topic_list": [
+        {"topic_name": "A&amp;B 联名", "topic_desc": "吧友说&quot;真香&quot;", "discuss_num": "12,345"}]}}}
+    row = sources.normalize_tieba(payload)["rows"][0]
+
+    assert (row["title"], row["summary"], row["heat"]) == ("A&B 联名", "吧友说\"真香\"", 12345)
+
+
+def test_tieba_takes_its_turn_in_the_spare_card_under_its_own_logo(monkeypatch):
+    from plugins.cn_hot_search import render
+
+    lists = {platform: [] for platform in ("weibo",) + sources.PLATFORMS}
+    extras = {"thepaper": sources.normalize_thepaper(THEPAPER)["rows"],
+              "overseas": sources.normalize_overseas(BLUESKY, MASTODON)["rows"],
+              "zhwiki": sources.normalize_zhwiki(ZHWIKI)["rows"], "tieba": sources.normalize_tieba(TIEBA)["rows"]}
+    # One hour in five with every turn card at hand; the others keep their order.
+    turns = [render._slots({"lists": lists, "extras": extras}, NOW.replace(hour=hour))[-1] for hour in range(5)]
+    assert turns == ["shared", "thepaper", "overseas", "zhwiki", "tieba"]
+    # Without Tieba's list the page turns exactly as before.
+    without = {key: value for key, value in extras.items() if key != "tieba"}
+    assert [render._slots({"lists": lists, "extras": without}, NOW.replace(hour=hour))[-1] for hour in range(4)] == [
+        "shared", "thepaper", "overseas", "zhwiki"]
+
+    drawn, logos = [], []
+    original = render.PageCanvas.text
+    monkeypatch.setattr(render.PageCanvas, "text", lambda self, xy, text, *args, **kwargs: drawn.append(text) or original(
+        self, xy, text, *args, **kwargs))
+    original_logo = render._paste_logo
+    monkeypatch.setattr(render, "_paste_logo", lambda canvas, platform, *args, **kwargs: logos.append(platform) or
+                        original_logo(canvas, platform, *args, **kwargs))
+    filled = {platform: [{"rank": 1, "title": f"{platform}的话题", "heat": 100, "image": None}]
+              for platform in ("weibo",) + sources.PLATFORMS}
+    for mode in ("day", "night"):
+        image = render_page((800, 480), {"lists": filled, "topics": [], "history": {}, "extras": {"tieba": extras["tieba"]}},
+                            {"_inkypi_theme": {"mode": mode}}, NOW.replace(hour=1), {})
+        assert image.size == (800, 480)
+
+    assert "tieba" in logos and render._logo_art("tieba", render.LOGO_HEIGHTS["tieba"], False) is not None
+    assert {"热议榜", "吧友连续14年盖楼支持诺基亚", "275万讨论", "樊振东祝贺LPL进决赛", "82.2万讨论"} <= set(drawn)
+    # Each topic's sentence follows its discussion count on the row's second line.
+    assert any(str(text).startswith("诺记吧老哥自2012年起") for text in drawn)
+    # Tieba is a turn card: it never joins the header's key or the lead's grid of lists.
+    assert "tieba" not in sources.ORDER and logos.count("tieba") == 2
+
+
+def test_tiebas_list_is_kept_an_hour_survives_a_failed_refresh_and_never_fails_the_page(monkeypatch, tmp_path):
+    from datetime import timedelta
+
+    from plugins.cn_hot_search import cn_hot_search as module
+    from runtime.refresh_contracts import TaskContext
+    import time
+
+    monkeypatch.setenv("CN_HOT_SEARCH_CACHE_DIR", str(tmp_path))
+    rows = {"rows": [{"rank": 1, "title": "话题", "heat": 1, "image": None}]}
+    monkeypatch.setattr(sources, "FETCHERS", {platform: (lambda ctx: rows) for platform in sources.PLATFORMS})
+    monkeypatch.setattr(sources, "fetch_baidu_boards", lambda ctx: {"boards": {}})
+    asked = []
+    state = {"fail": False}
+
+    def fetch_tieba(context):
+        asked.append(1)
+        if state["fail"]:
+            raise RuntimeError("tieba is down")
+        return sources.normalize_tieba(TIEBA)
+
+    monkeypatch.setattr(sources, "EXTRA_FETCHERS", {"tieba": fetch_tieba})
+    plugin = module.CnHotSearch({"id": "cn_hot_search"})
+
+    def payload(now, allow_network=True):
+        return plugin._payload({}, now, allow_network=allow_network,
+                               context=TaskContext.never_cancelled(deadline_monotonic=time.monotonic() + 30))
+
+    first = payload(NOW)
+    assert first["extras"]["tieba"][0]["title"] == "吧友连续14年盖楼支持诺基亚" and len(asked) == 1
+    # Within the hour the kept list is read; a redraw from cache never asks, however old the list.
+    assert payload(NOW + timedelta(minutes=40))["extras"]["tieba"] and len(asked) == 1
+    assert payload(NOW + timedelta(hours=5), allow_network=False)["extras"]["tieba"] and len(asked) == 1
+    # After the hour it is asked once more; a failure keeps the last good list and the page's health.
+    state["fail"] = True
+    later = payload(NOW + timedelta(hours=2))
+    assert len(asked) == 2 and later["extras"]["tieba"][0]["heat"] == 2754030
+    assert later["provenance"] == first["provenance"] == "live" and "tieba" not in later["lists"]
+    # With nothing kept (a first failure) the card is simply not there.
+    monkeypatch.setenv("CN_HOT_SEARCH_CACHE_DIR", str(tmp_path / "empty"))
+    assert payload(NOW)["extras"]["tieba"] == []
+
+
+def test_tieba_asks_its_hot_list_once(monkeypatch):
+    asked = []
+    monkeypatch.setattr(sources, "_get", lambda url, context, **kwargs: asked.append((url, kwargs)) or TIEBA)
+
+    assert sources.fetch_tieba(None)["rows"][0]["heat"] == 2754030
+    assert [url for url, _kwargs in asked] == ["https://tieba.baidu.com/hottopic/browse/topicList"]
+    assert asked[0][1]["max_bytes"] <= 300 * 1024
+    assert sources.EXTRA_FETCHERS["tieba"] is sources.fetch_tieba

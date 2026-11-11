@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime, timedelta
+from html import unescape
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
@@ -42,7 +43,7 @@ ORDER = ("weibo",) + PLATFORMS
 MAX_ROWS = 20
 # The platforms' picture hosts (each serves from numbered mirrors): a picture is fetched only from these.
 IMAGE_HOST_SUFFIXES = (".cdn.bcebos.com", ".toutiaoimg.com", ".zhimg.com", ".douyinpic.com", ".thepaper.cn",
-                       ".mastodon.social", ".wikimedia.org")
+                       ".mastodon.social", ".wikimedia.org", "tiebapic.baidu.com")
 # A Zhihu picture's path names its size after the hash (v2-<hash>_1440w.png); "_xl" is a small one.
 ZHIHU_SIZED = re.compile(r"(/v2-[0-9a-f]+)(?:_[0-9a-z]+)?\.(?:png|jpe?g|webp)$")
 # Each platform's labels, as the page names them (anything else is left unmarked).
@@ -329,7 +330,7 @@ def fetch_weibo(cookie, context):
 FETCHERS = {"baidu": fetch_baidu, "toutiao": fetch_toutiao, "zhihu": fetch_zhihu, "douyin": fetch_douyin}
 
 
-# --- the turn cards: 澎湃's hot list and the overseas talk ---------------------------------------
+# --- the turn cards: 澎湃's hot list, the overseas talk, Wikipedia's most read and Tieba's topics ---
 
 THEPAPER_URL = "https://cache.thepaper.cn/contentapi/wwwIndex/rightSidebar"
 BLUESKY_TRENDS_URL = "https://public.api.bsky.app/xrpc/app.bsky.unspecced.getTrends"
@@ -443,7 +444,32 @@ def fetch_zhwiki(context, now=None):
     raise ValueError("Chinese Wikipedia listed no most-read articles")
 
 
-EXTRA_FETCHERS = {"thepaper": fetch_thepaper, "overseas": fetch_overseas, "zhwiki": fetch_zhwiki}
+TIEBA_URL = "https://tieba.baidu.com/hottopic/browse/topicList"
+
+
+def normalize_tieba(payload):
+    """百度贴吧's 话题热议榜: each topic with its running discussion count, the sentence Tieba writes
+    for it, when it began and the small cover the list itself shows (the full picture is left)."""
+    data = (payload or {}).get("data") if isinstance(payload, dict) else None
+    board = data.get("bang_topic") if isinstance(data, dict) else None
+    topics = board.get("topic_list") if isinstance(board, dict) else None
+    rows = []
+    for topic in topics if isinstance(topics, list) else []:
+        title = _clean(unescape(str(topic.get("topic_name") or "")), 40) if isinstance(topic, dict) else ""
+        if title:
+            rows.append({"title": title, "heat": _count(topic.get("discuss_num")),
+                         "summary": _clean(unescape(str(topic.get("topic_desc") or "")), 120),
+                         "image": safe_image_url(topic.get("topic_avatar")), "since": _count(topic.get("create_time")),
+                         "tag": None})
+    return _rows(rows, "Tieba")
+
+
+def fetch_tieba(context):
+    return normalize_tieba(_get(TIEBA_URL, context, max_bytes=256 * 1024))
+
+
+EXTRA_FETCHERS = {"thepaper": fetch_thepaper, "overseas": fetch_overseas, "zhwiki": fetch_zhwiki,
+                  "tieba": fetch_tieba}
 
 
 def valid_rows(data):

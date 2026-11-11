@@ -34,7 +34,8 @@
   chineseposters.net's masthead (the site has no logo: its name in capitals, Montserrat SemiBold
   in white on its red header), redrawn with the site's own web font.
 - 全网热搜 (cn_hot_search): Baidu's logo from its own home page and Weibo's from its site
-  navigation; Toutiao's, Zhihu's and Douyin's from Commons (public domain).
+  navigation; Toutiao's, Zhihu's and Douyin's from Commons (public domain); Baidu Tieba's from its
+  own site header, for its 热议榜 card.
 - 世界赔率榜 (world_odds): Kalshi's and Polymarket's logos from Commons (public domain).
 - NASA Pics × Space Weather: JPL's logo from Commons (public domain), for the near-Earth objects.
 - AI 论文日报 (ai_papers): Hugging Face's logo, with and without its name, and arXiv's, from Commons.
@@ -232,6 +233,8 @@ LOGOS = {
     "mastodon": ((COMMONS.format(path="d/d5/Mastodon_logotype_(simple)_new_hue.svg",
                                  name="Mastodon_logotype_(simple)_new_hue.svg"),
                   COMMONS_FILE.format(name="Mastodon_logotype_(simple)_new_hue.svg"), PUBLIC_DOMAIN), [HOT_SEARCH], 1.0),
+    "tieba": (("https://tb2.bdstatic.com/tb/static-common/img/search_logo_big_v2_d84d082.png", "https://tieba.baidu.com/",
+               "Baidu Tieba's logo from its own site header, shown to name the source"), [HOT_SEARCH], 1.0),
     "twitch": ((COMMONS.format(path="c/ce/Twitch_logo_2019.svg", name="Twitch_logo_2019.svg"),
                 COMMONS_FILE.format(name="Twitch_logo_2019.svg"), PUBLIC_DOMAIN), [PLATFORM_LOGOS], 1.0),
     "kick": ((COMMONS.format(path="d/dd/Kick_logo.svg", name="Kick_logo.svg"),

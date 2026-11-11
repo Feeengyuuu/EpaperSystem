@@ -108,6 +108,17 @@
         64
       ],
       "sha256": "bf554f65107389d3d064f152d52f40fb9c71c19dc57c15182f1bd0fd52bb6734"
+    },
+    "tieba": {
+      "source": "https://tb2.bdstatic.com/tb/static-common/img/search_logo_big_v2_d84d082.png",
+      "page": "https://tieba.baidu.com/",
+      "licence": "Baidu Tieba's logo from its own site header, shown to name the source",
+      "source_sha256": "b74eb1bb443d9c36abd49a1e94d80db5d2784cbd95e13929b4d343e5cab72d5e",
+      "size": [
+        203,
+        64
+      ],
+      "sha256": "960ccf9bb4bfe760ea0a665e6894553a69a6d7ac4994db2d96b81c53e027054f"
     }
   }
 }

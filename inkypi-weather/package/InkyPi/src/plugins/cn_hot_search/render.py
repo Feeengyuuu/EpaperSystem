@@ -8,8 +8,9 @@ its heat, the platform's own label (新 / 热 / 辟谣 …), whether it is on ot
 what the platform says about it, and its move since the previous refresh. Baidu, Toutiao, Zhihu
 and Douyin fill a 2 x 2 grid; with the owner's Weibo login it leads a 3 x 2 grid whose last card
 takes turns by the hour between the other stories that are on several lists, 澎湃's hot list and
-the overseas talk (Bluesky's trends and Mastodon's most shared links, in Chinese once translated) and
-Chinese Wikipedia's most-read articles.
+the overseas talk (Bluesky's trends and Mastodon's most shared links, in Chinese once translated),
+Chinese Wikipedia's most-read articles and 百度贴吧's 热议榜 (each topic's discussion count and the
+sentence Tieba writes for it).
 """
 
 from __future__ import annotations
@@ -39,14 +40,16 @@ BRANDS = {"weibo": (0xE6, 0x16, 0x2D), "baidu": (0x29, 0x32, 0xE1), "toutiao": (
 NAMES = {"weibo": "微博", "baidu": "百度", "toutiao": "头条", "zhihu": "知乎", "douyin": "抖音"}
 NOTES = {"weibo": "微博热搜", "baidu": "实时热搜", "toutiao": "头条热榜", "zhihu": "知乎热榜", "douyin": "抖音热榜"}
 LOGO_HEIGHTS = {"weibo": 19, "baidu": 20, "toutiao": 15, "zhihu": 17, "douyin": 17, "thepaper": 18, "bluesky": 15,
-                "mastodon": 16, "wikipedia_zh": 18}
+                "mastodon": 16, "wikipedia_zh": 18, "tieba": 20}
 # The cards that take turns in the grid's spare places, hour by hour: the stories on several lists,
-# 澎湃's hot list and the overseas talk (Bluesky's trends and Mastodon's most shared links). Each
-# turn card wears its source's colour: 澎湃's ink-black mark, Bluesky's butterfly blue.
-TURN_CARDS = ("shared", "thepaper", "overseas", "zhwiki")
-EXTRA_TINTS = {"overseas": (0x00, 0x85, 0xFF)}
-EXTRA_TITLES = {"thepaper": "澎湃热榜", "overseas": "海外热议", "zhwiki": "维基热读"}
-EXTRA_NOTES = {"thepaper": "澎湃新闻", "overseas": "Bluesky · Mastodon", "zhwiki": "昨日浏览最多"}
+# 澎湃's hot list, the overseas talk (Bluesky's trends and Mastodon's most shared links), Chinese
+# Wikipedia's most read and 百度贴吧's 热议榜. Each turn card wears its source's colour: 澎湃's
+# ink-black mark, Bluesky's butterfly blue, the Baidu blue of Tieba's paw.
+TURN_CARDS = ("shared", "thepaper", "overseas", "zhwiki", "tieba")
+EXTRA_TINTS = {"overseas": (0x00, 0x85, 0xFF), "tieba": BRANDS["baidu"]}
+# Tieba's logo already reads 贴吧: its card's title is only the list's name.
+EXTRA_TITLES = {"thepaper": "澎湃热榜", "overseas": "海外热议", "zhwiki": "维基热读", "tieba": "热议榜"}
+EXTRA_NOTES = {"thepaper": "澎湃新闻", "overseas": "Bluesky · Mastodon", "zhwiki": "昨日浏览最多", "tieba": "吧友实时讨论"}
 EXTRA_LOGOS = {"overseas": ("bluesky", "mastodon"), "zhwiki": ("wikipedia_zh",)}
 # The header's row of logos: Baidu's paw stands above its letters, so it is set taller.
 KEY_LOGO_HEIGHTS = {"weibo": 22, "baidu": 24, "toutiao": 18, "zhihu": 20, "douyin": 20}
@@ -600,8 +603,15 @@ def row_title(row):
 
 def _extra_meta(canvas, name, row, now):
     """A turn card row's second line: 澎湃's column, likes, comments and age; the overseas talk's
-    network mark, Bluesky's category or the outlet, its posts or shares and its trend's state."""
+    network mark, Bluesky's category or the outlet, its posts or shares and its trend's state;
+    Tieba's running discussion count, then the sentence it writes for the topic."""
     def meta(x, middle, end):
+        if name == "tieba":
+            if row.get("heat"):
+                x += canvas.text((x, middle), f"{heat_text(row['heat'])}讨论", 10, "ink", anchor="lm") + 6
+            if row.get("summary") and end - x > NOTE_MIN_WIDTH:
+                canvas.text((x, middle), row["summary"], 10, "muted", anchor="lm", bold=False, width=end - x)
+            return
         if name == "overseas":
             x += _paste_logo(canvas, row["source"], x, middle, 11) + 5
         parts = []
@@ -623,7 +633,8 @@ def _extra_meta(canvas, name, row, now):
 
 
 def _extra_card(canvas, box, name, payload, images, now):
-    """A turn card: 澎湃's hot list or the overseas talk, under its sources' official logos."""
+    """A turn card: 澎湃's hot list, the overseas talk, Wikipedia's most read or Tieba's topics,
+    under its sources' official logos."""
     left, top, right, bottom = box
     rows = ((payload.get("extras") or {}).get(name) or [])[:ROWS_SHOWN]
     tint = EXTRA_TINTS.get(name) or canvas.color("ink")
