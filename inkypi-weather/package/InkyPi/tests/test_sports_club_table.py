@@ -118,6 +118,30 @@ def test_the_league_on_the_page_gets_its_table_and_its_matches_carry_both_clubs(
     assert len(asked) == 1 and "home_table" not in other
 
 
+def test_a_fixture_from_the_schedule_provider_is_matched_through_its_espn_twin(monkeypatch, tmp_path):
+    # On the device fixtures come from football-data.org, merged with ESPN's: their team ids are
+    # that provider's own (they can even equal another club's ESPN id) and their names differ.
+    plugin, _asked = plugin_with_table(monkeypatch, tmp_path, [BUNDESLIGA])
+    espn = SportsDashboard._parse_club_espn_events("BL1", club_payload("pre"), LA)[0]
+    schedule = {key: value for key, value in espn.items() if not key.endswith("_espn_team_id")}
+    schedule.update(home_team_id="127", away_team_id="7", provider="football-data.org")
+
+    merged = SportsDashboard._merge_club_football_events([schedule], [espn])[0]
+    assert (merged["home_team_id"], merged["home_espn_team_id"], merged["away_espn_team_id"]) == ("127", "125", "127")
+    swapped = {**schedule, "home_name": schedule["away_name"], "away_name": schedule["home_name"]}
+    reverse = SportsDashboard._merge_club_football_events([swapped], [espn])[0]
+    assert (reverse["home_espn_team_id"], reverse["away_espn_team_id"]) == ("127", "125")
+
+    merged["league_code"] = "BL1"
+    lone = {**schedule, "league_code": "BL1", "home_name": "Somebody Else"}
+    plugin._attach_club_table({"BL1": [merged, lone]}, {"focus": merged}, {}, NOW)
+
+    assert (merged["home_table"]["points"], merged["away_table"]["points"]) == (14, 9)
+    # A fixture without an ESPN twin is never matched by the other provider's id: Hamburg's
+    # ESPN id is 127 too, and this home side is somebody else.
+    assert "home_table" not in lone and lone["away_table"]["points"] == 9
+
+
 def recording_boxes(plugin, monkeypatch):
     """Every text drawn through the box helpers, with its box: [(text, (left, top, right, bottom))]."""
     drawn = []

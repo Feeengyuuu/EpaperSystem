@@ -676,6 +676,10 @@ class ClubFootballMixin:
                     "provider_event_id": str(raw_event.get("id") or ""),
                     "home_team_id": str(home_team.get("id") or ""),
                     "away_team_id": str(away_team.get("id") or ""),
+                    # ESPN's own ids under their own name: a fixture merged from the schedule
+                    # provider keeps that provider's ids above, and the league table is ESPN's.
+                    "home_espn_team_id": str(home_team.get("id") or ""),
+                    "away_espn_team_id": str(away_team.get("id") or ""),
                     "home_name_zh": SportsDashboard._club_team_zh_name(
                         league_code, home_name, team_id=home_team.get("id")
                     ),
@@ -1041,6 +1045,8 @@ class ClubFootballMixin:
                     "league_logo_url": score.get("league_logo_url") or schedule.get("league_logo_url") or "",
                     "home_logo_url": home_logo or schedule.get("home_logo_url") or "",
                     "away_logo_url": away_logo or schedule.get("away_logo_url") or "",
+                    "home_espn_team_id": score.get("away_espn_team_id" if reverse_order else "home_espn_team_id") or "",
+                    "away_espn_team_id": score.get("home_espn_team_id" if reverse_order else "away_espn_team_id") or "",
                     "provider": "football-data.org+ESPN",
                     "source_state": "football-data.org+ESPN",
                     "fetched_at": fetched_at,
@@ -1324,7 +1330,10 @@ class ClubFootballMixin:
             if not isinstance(event, dict):
                 continue
             for side in ("home", "away"):
-                row = club_table.team_row(table, event.get(f"{side}_team_id"), event.get(f"{side}_name"))
+                # Only ESPN's own id: a fixture from the schedule provider carries that
+                # provider's id, which can be another club's ESPN id; without an ESPN twin
+                # the name decides.
+                row = club_table.team_row(table, event.get(f"{side}_espn_team_id"), event.get(f"{side}_name"))
                 if row:
                     event[f"{side}_table"] = row
 
