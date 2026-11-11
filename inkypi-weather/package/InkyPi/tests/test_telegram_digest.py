@@ -608,8 +608,8 @@ def test_plugin_info_and_settings_defaults_are_declared():
     assert 'name="unreadOnly"' in settings
     assert 'name="markDisplayedRead"' in settings
     assert 'name="mediaDownloadLimit"' in settings
-    assert 'max="7" step="1" name="mediaDownloadLimit"' in settings
-    assert 'id="mediaDownloadLimit" value="7"' in settings
+    assert 'max="11" step="1" name="mediaDownloadLimit"' in settings
+    assert 'id="mediaDownloadLimit" value="11"' in settings
     for name in ("includeText", "curationMode", "aiDailyLimit", "blockKeywords", "boostKeywords",
                  "blockChats", "pinChats", "focusChats", "pictureFeatureChats"):
         assert f'name="{name}"' in settings
@@ -1266,6 +1266,8 @@ def test_account_mode_downloads_every_visible_picture_with_hard_cap(tmp_path, mo
             out=False,
             media_bytes=image_chunks(color=(40 + offset * 20, 120, 90))[0],
         ))
+    # (The real cap is above this test's nine pictures: held lower here so it bites.)
+    monkeypatch.setattr(telegram_mod, "MAX_ACCOUNT_MEDIA_DOWNLOAD_LIMIT", 8)
     FakeTelegramClient.dialogs = [dialog]
     FakeTelegramClient.messages_by_entity = {id(entity): messages}
     FakeTelegramClient.download_calls = []
@@ -1292,10 +1294,12 @@ def test_account_mode_downloads_every_visible_picture_with_hard_cap(tmp_path, mo
     cached_keys = [item["key"] for item in payload["messages"] if item["media_path"]]
 
     assert visible_keys == [f"-100123:{60 - offset}" for offset in range(7)]
-    assert cached_keys == visible_keys
-    assert len(FakeTelegramClient.download_calls) == 7
-    assert payload["stats"]["media_cached_count"] == 7
-    assert payload["stats"]["media_missing_count"] == 2
+    # The seven visible pictures, then the next ones (they move up into the list when a row of
+    # pictures under the lead takes some of its rows) until the cap: a setting above it is held to it.
+    assert cached_keys == [f"-100123:{60 - offset}" for offset in range(8)]
+    assert len(FakeTelegramClient.download_calls) == 8
+    assert payload["stats"]["media_cached_count"] == 8
+    assert payload["stats"]["media_missing_count"] == 1
     assert payload["status"]["media_cache"] == "partial"
 
 
@@ -1822,6 +1826,74 @@ def test_a_short_portrait_lead_promotes_the_next_picture_story_under_its_text(tm
     assert keys[:2] == ("lead", "second") and keys[2:] == tuple(f"row-{i}" for i in range(1, 7))
     lower_lead = {image.getpixel((x, y)) for x in range(210, 460, 6) for y in range(300, 420, 6)}
     assert (23, 139, 81) in lower_lead
+
+
+def _landscape_lead_page(tmp_path, lead_text=""):
+    """A page whose lead has a landscape photo, followed by three wordless picture stories and
+    eight text rows; returns (plugin, rendered image)."""
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 9, 4, 2, 40, tzinfo=timezone.utc)
+    colours = {"lead": (40, 60, 90), "pic-1": (171, 32, 47), "pic-2": (23, 139, 81), "pic-3": (37, 79, 183)}
+    for key, colour in colours.items():
+        Image.new("RGB", (640, 360), colour).save(tmp_path / f"{key}.png")
+
+    def story(key, score, text):
+        pictured = key in colours
+        return {"key": key, "message_id": score, "date": int(now.timestamp()) - (100 - score), "chat_id": key,
+                "chat_title": key, "title": key, "raw_text": text, "media_kind": "photo" if pictured else "text",
+                "media_path": str(tmp_path / f"{key}.png") if pictured else "",
+                "curation": {"score": score, "tag": "群聊", "headline": text[:18], "summary": text[18:]}}
+
+    messages = ([story("lead", 95, lead_text)] + [story(f"pic-{i}", 90 - i, "") for i in range(1, 4)]
+                + [story(f"row-{i}", 80 - i, f"row-{i} 的消息正文") for i in range(1, 9)])
+    state = {"schema": STATE_VERSION, "messages": messages, "stats": {"message_count": len(messages)},
+             "status": {"source_state": "live", "generated_at": now.isoformat(), "account_api": True}}
+    (tmp_path / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    image = plugin.generate_image(
+        {"_theme_render_only": True, "_inkypi_theme": _theme_context("day", requested_mode="day")}, DummyDeviceConfig())
+    return plugin, image
+
+
+def test_a_short_landscape_lead_fills_the_room_under_its_text_with_more_pictures(tmp_path):
+    _plugin_unused, image = _landscape_lead_page(tmp_path)
+
+    keys = image.info[RENDERED_VISIBLE_KEYS_IMAGE_INFO_KEY]
+    # The wordless pictures stand in a row under the lead's one line of text, in page order,
+    # and leave the list, which still shows six rows.
+    assert keys[:4] == ("lead", "pic-1", "pic-2", "pic-3") and keys[4:] == tuple(f"row-{i}" for i in range(1, 7))
+    row = [image.getpixel((x, 400)) for x in (88, 242, 396)]
+    assert row == [(171, 32, 47), (23, 139, 81), (37, 79, 183)]
+    # The row runs the lead's whole width, down to its foot.
+    assert image.getpixel((20, 438)) == (171, 32, 47) and image.getpixel((464, 438)) == (37, 79, 183)
+
+
+def test_a_landscape_lead_with_a_full_text_keeps_its_pictures_in_the_list(tmp_path):
+    long_text = "福建石狮八卦街发生持刀伤人事件现场多人受伤" + "警方已到场处置，伤者被送往医院救治，事件原因仍在调查之中。" * 4
+    _plugin_unused, image = _landscape_lead_page(tmp_path, long_text)
+
+    keys = image.info[RENDERED_VISIBLE_KEYS_IMAGE_INFO_KEY]
+    assert keys == ("lead", "pic-1", "pic-2", "pic-3", "row-1", "row-2", "row-3")
+
+
+def test_the_picture_row_takes_wordless_pictures_first_and_a_picture_chats_before_others(tmp_path):
+    plugin = _plugin(tmp_path)
+    picture = tmp_path / "picture.png"
+    Image.new("RGB", (320, 180), (23, 139, 81)).save(picture)
+
+    def story(key, text="", **curation):
+        return {"key": key, "chat_id": key, "raw_text": text, "media_path": str(picture), "curation": curation}
+
+    worded, bare, spicy = story("worded", "has words"), story("bare"), story("spicy", feature_picture=True)
+    unloaded = dict(story("unloaded"), media_path="")
+    lead = {"key": "lead", "chat_id": "c1", "raw_text": "", "media_path": str(picture)}
+
+    rows = [dict(story(f"row-{index}", "words"), media_path="") for index in range(6)]
+
+    # A worded picture joins only while the list still fills its six rows without it.
+    assert plugin._strip_pictures(lead, [worded, bare, unloaded, spicy] + rows, 4) == [spicy, bare, worded]
+    assert plugin._strip_pictures(lead, [worded, bare, unloaded, spicy], 4) == [spicy, bare]
+    assert plugin._strip_pictures(lead, [worded, bare, spicy] + rows, 2) == [spicy, bare]
+    assert plugin._strip_pictures(lead, [unloaded], 3) == []
 
 
 def test_without_a_second_picture_a_short_portrait_leads_photo_widens_into_the_room(tmp_path):

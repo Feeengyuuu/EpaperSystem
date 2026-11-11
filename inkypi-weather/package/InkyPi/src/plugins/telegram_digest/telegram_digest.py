@@ -46,11 +46,12 @@ ACCOUNT_MEDIA_DOWNLOAD_TIMEOUT_SECONDS = 7
 # A time-limited account fetch stops opening more chats once less than this is left, so
 # curation (with an AI call) and the media still fit.
 ACCOUNT_SCAN_RESERVE_SECONDS = 70
-# Every visible picture: the lead and the list thumbnails. Thumbnails download a
-# small Telegram photo size, so seven cost less than four full photos did.
-DEFAULT_ACCOUNT_MEDIA_DOWNLOAD_LIMIT = 7
-MAX_ACCOUNT_MEDIA_DOWNLOAD_LIMIT = 7
-ACCOUNT_MEDIA_PREFETCH_LIMIT = 1
+# Every visible picture: the lead, the list thumbnails, and the next few picture stories,
+# which move up into the list when a row of pictures under the lead takes some of its rows.
+# Thumbnails download a small Telegram photo size, so they cost little beside a full photo.
+DEFAULT_ACCOUNT_MEDIA_DOWNLOAD_LIMIT = 11
+MAX_ACCOUNT_MEDIA_DOWNLOAD_LIMIT = 11
+ACCOUNT_MEDIA_PREFETCH_LIMIT = 4
 LEAD_PHOTO_MIN_SIDE = 800
 THUMB_PHOTO_MIN_SIDE = 320
 # A group's or channel's own picture (its small 160 px chat photo) leads its stories' source line:

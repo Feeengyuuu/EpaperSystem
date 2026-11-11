@@ -118,8 +118,8 @@
 </div>
 
 <div class="form-group">
-  <label class="form-label" for="mediaDownloadLimit">Media downloads per refresh (max 7)</label>
-  <input class="form-control" type="number" min="1" max="7" step="1" name="mediaDownloadLimit" id="mediaDownloadLimit" value="7">
+  <label class="form-label" for="mediaDownloadLimit">Media downloads per refresh (max 11)</label>
+  <input class="form-control" type="number" min="1" max="11" step="1" name="mediaDownloadLimit" id="mediaDownloadLimit" value="11">
 </div>
 
 <div class="form-group">
@@ -155,7 +155,7 @@
         } else if ((key !== 'botToken' && key !== 'telegramApiHash') || value) {
           if (key === 'mediaDownloadLimit') {
             const parsed = Number.parseInt(value, 10);
-            el.value = Number.isFinite(parsed) ? Math.min(7, Math.max(1, parsed)) : 7;
+            el.value = Number.isFinite(parsed) ? Math.min(11, Math.max(1, parsed)) : 11;
           } else {
             el.value = value;
           }

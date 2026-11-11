@@ -28,6 +28,10 @@ PORTRAIT_RATIO = 1.05
 # A second story fills the room the lead's text leaves when there is this much of it (page px);
 # the lead's summary then keeps to this many lines.
 SECOND_MIN_H, SECOND_LEAD_SUMMARY_LINES = 120, 4
+# A landscape lead whose text is short leaves room under it too: more pictures stand there in a
+# row (the owner, 2026-11-11: "尽量填满空白区域") when there is this much room; two to four
+# tiles, each about STRIP_TILE_ASPECT wide for its height, this far apart.
+STRIP_MIN_H, STRIP_GAP, STRIP_TILE_ASPECT, STRIP_MAX = 56, 6, 1.4, 4
 # A portrait lead's photo is this wide beside its text; with no second picture to fill the room
 # its text leaves, the photo widens (the text column narrowing to as little as TEXT_MIN_W) until
 # the text runs down the column to within PORTRAIT_FILL_SLACK of its foot. Text too short for
@@ -220,8 +224,15 @@ class BriefingPageMixin:
             box = (x0, y0, x1, y0 + self._y(214))
             self._paste_media(image, picture, box, p, featured=True)
             self._draw_media_badges(draw, item, box, p, colour)
-            self._draw_lead_text(image, draw, item, p, (x0, box[3] + self._y(10), x1, y1), 24, 2, 3, show_tag=False)
-            return []
+            text_box = (x0, box[3] + self._y(10), x1, y1)
+            strip, strip_top = self._fitting_strip(item, p, text_box, rest)
+            if not strip:
+                self._draw_lead_text(image, draw, item, p, text_box, 24, 2, 3, show_tag=False)
+                return []
+            # Short text: its source line closes it and more pictures fill the room below.
+            self._draw_lead_text(image, draw, item, p, text_box, 24, 2, 3, show_tag=False, meta_after=True)
+            self._draw_picture_strip(image, draw, strip, (x0, strip_top, x1, y1), p)
+            return strip
         sizes = (30, 3, 9)
         return self._draw_lead_and_second(image, draw, item, p, (x0, y0, x1, y1),
                                           self._fitting_second(item, p, (x0, y0, x1, y1), rest, sizes), sizes)
@@ -235,10 +246,78 @@ class BriefingPageMixin:
         end = self._lead_text_end(item, p, box, sizes[0], sizes[1], SECOND_LEAD_SUMMARY_LINES)
         return (second, same_story) if box[3] - end >= self._y(SECOND_MIN_H) else None
 
-    def _lead_text_end(self, item, p, box, headline_size, headline_lines, summary_lines):
+    def _lead_text_end(self, item, p, box, headline_size, headline_lines, summary_lines, show_tag=True):
         scratch = Image.new("RGB", (self._x(800), self._y(480)))
         return self._draw_lead_text(scratch, ImageDraw.Draw(scratch), item, p, box, headline_size, headline_lines,
-                                    summary_lines, meta_after=True)
+                                    summary_lines, show_tag=show_tag, meta_after=True)
+
+    def _fitting_strip(self, item, p, box, rest):
+        """(the picture stories for a row under a landscape lead's text in ``box``, the row's top)
+        when that text leaves STRIP_MIN_H of room and a picture is on disk for it, else ([], 0)."""
+        top = self._lead_text_end(item, p, box, 24, 2, 3, show_tag=False) + self._y(8)
+        room = box[3] - top
+        if room < self._y(STRIP_MIN_H):
+            return [], 0
+        count = max(2, min(STRIP_MAX, round((box[2] - box[0]) / (room * STRIP_TILE_ASPECT))))
+        return self._strip_pictures(item, rest, count), top
+
+    def _strip_pictures(self, lead, rest, count):
+        """Up to ``count`` picture stories for the row under a landscape lead, with their picture
+        on disk: those with no words of their own first (a list row would say nothing more than
+        the picture does), a picture chat's before the others, page order within each. A story
+        with words joins only while the list still fills its rows without it, so its text is
+        traded for another story's, never for an empty row."""
+        def worded(story):
+            return bool(str(story.get("raw_text") or "").strip())
+
+        rest = [story for story in rest if story is not lead]
+        chosen = []
+        for story in sorted((story for story in rest if not worded(story)), key=lambda story: not feature_picture(story)):
+            if len(chosen) < count and self._open_page_media(story) is not None:
+                chosen.append(story)
+        spare = len(rest) - len(chosen) - LIST_ROWS
+        for story in sorted((story for story in rest if worded(story)), key=lambda story: not feature_picture(story)):
+            if len(chosen) < count and spare > 0 and self._open_page_media(story) is not None:
+                chosen.append(story)
+                spare -= 1
+        return chosen
+
+    def _draw_picture_strip(self, image, draw, stories, box, p):
+        """The row of pictures under a landscape lead: equal tiles across the lead's width, each
+        cropped to its cell. A story with words keeps its headline along its tile's foot."""
+        x0, y0, x1, y1 = [int(value) for value in box]
+        gap, count = self._x(STRIP_GAP), len(stories)
+        width = (x1 - x0 - gap * (count - 1)) / count
+        if count == 1:
+            # A lone picture is not stretched into a ribbon.
+            width = min(width, (y1 - y0) * 2.2)
+        for index, story in enumerate(stories):
+            picture = self._open_page_media(story)
+            if picture is None:
+                continue
+            left = round(x0 + index * (width + gap))
+            right = x1 if count > 1 and index == count - 1 else round(left + width)
+            centering = (0.5, 0.2) if picture.height > picture.width * PORTRAIT_RATIO else (0.5, 0.45)
+            self._paste_media(image, picture, (left, y0, right, y1), p, centering=centering, radius=6)
+            if str(story.get("raw_text") or "").strip():
+                self._draw_strip_caption(image, draw, story, (left, y0, right, y1))
+
+    def _draw_strip_caption(self, image, draw, story, cell):
+        """A worded story's headline on one line along the foot of its tile, white on a dark fade."""
+        x0, y0, x1, y1 = cell
+        band = min(y1 - y0, self._y(24))
+        shade = Image.new("L", (1, band), 0)
+        for row in range(band):
+            shade.putpixel((0, row), round(215 * min(1.0, row / max(1, band * 0.5))))
+        shade = shade.resize((x1 - x0, band))
+        corner = Image.new("L", (x1 - x0, y1 - y0), 0)
+        ImageDraw.Draw(corner).rounded_rectangle((0, 0, x1 - x0 - 1, y1 - y0 - 1), radius=self._x(6), fill=255)
+        image.paste((10, 14, 20), (x0, y1 - band, x1, y1),
+                    ImageChops.multiply(shade, corner.crop((0, y1 - y0 - band, x1 - x0, y1 - y0))))
+        font = self._f(11, "bold")
+        draw.text((x0 + self._x(6), y1 - self._y(18)),
+                  self._fit_text(draw, display_headline(story), font, x1 - x0 - self._x(12)), font=font,
+                  fill=(255, 255, 255))
 
     def _portrait_split(self, item, p, box, sizes):
         """Where a portrait lead's photo ends when nothing fills the room under its text: the
