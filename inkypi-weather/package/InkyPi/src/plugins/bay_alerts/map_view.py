@@ -640,6 +640,136 @@ def _draw_summary(draw, palette, fonts, lines, occupied, frame):
     return box
 
 
+# A power outage's bolt on the map: (width, height) from this many customers up, largest first;
+# from OUTAGE_LABEL_CUSTOMERS it carries its size beside it (at most OUTAGE_LABELS of them).
+OUTAGE_BOLTS = ((1000, (13, 21)), (100, (9, 15)), (0, (7, 11)))
+OUTAGE_LABEL_CUSTOMERS = 1000
+OUTAGE_LABELS = 4
+# The live notes stacked in the ocean under the near-home box (the surf, then the outages from
+# the scale bar up): a 20 px title row, then rows 13 px apart.
+NOTE_HEAD, NOTE_ROW, NOTE_GAP = 20, 13, 4
+# San Pablo Bay's open water, where the Bay forecast's advisory stands.
+BAY_NOTICE_SPOT = (38.062, -122.395)
+
+
+def _bolt(draw, centre, size, fill, halo):
+    """A solid lightning bolt ``size`` (width, height) about ``centre``, edged in ``halo``."""
+    (x, y), (width, height) = centre, size
+    points = [(x + (u - 0.5) * width, y + (v - 0.5) * height) for u, v in (
+        (0.64, 0.0), (0.06, 0.57), (0.45, 0.57), (0.32, 1.0), (0.94, 0.4), (0.55, 0.4))]
+    draw.polygon(points, fill=halo, outline=halo, width=3)
+    draw.polygon(points, fill=fill)
+
+
+def outage_bolt_size(customers):
+    return next(size for floor, size in OUTAGE_BOLTS if customers >= floor)
+
+
+def _draw_outages(draw, palette, manifest, size, points, occupied, small_dots):
+    """Each power outage inside the map as an ink bolt, larger with more customers (the small
+    ones first, so a large one is never hidden). Returns the (point, customers, reach) of the
+    drawn ones, largest first."""
+    drawn = []
+    for outage in sorted(points, key=lambda item: item.get("customers", 0)):
+        point = project(outage.get("lat"), outage.get("lon"), manifest, size)
+        if point is None or point[1] > size[1] - 24:
+            continue
+        customers = int(outage.get("customers", 0))
+        width, height = outage_bolt_size(customers)
+        _bolt(draw, point, (width, height), palette["ink"], palette["paper"])
+        box = (point[0] - width / 2 - 1, point[1] - height / 2 - 1, point[0] + width / 2 + 1, point[1] + height / 2 + 1)
+        (occupied if customers >= 100 else small_dots).append(box)
+        drawn.append((point, customers, height / 2))
+    return drawn[::-1]
+
+
+def _note_size(draw, fonts, note, rows=None, pill=True, when=True):
+    """(width, height) of a live note's box: its title, ``rows`` of its rows (all by default; a
+    row is a text, or a (name, figure) pair set at the two edges), then its alert pill and the
+    pill's hours where it has them and they are wanted."""
+    rows = note["lines"][1:] if rows is None else note["lines"][1:1 + rows]
+    alert = note.get("alert") if pill else None
+    widths = [draw.textlength(note["lines"][0], font=fonts(11)) + 15]
+    widths += [draw.textlength(row, font=fonts(10, False)) if isinstance(row, str) else
+               draw.textlength(row[0], font=fonts(10, False)) + 8 + draw.textlength(row[1], font=fonts(10, False))
+               for row in rows]
+    height = NOTE_HEAD + NOTE_ROW * len(rows)
+    if alert:
+        widths.append(draw.textlength(alert["name"], font=fonts(10)) + 10)
+        height += 17
+        if when and alert.get("when"):
+            widths.append(draw.textlength(alert["when"], font=fonts(10, False)))
+            height += NOTE_ROW
+    return round(max(widths) + 14), height
+
+
+def _draw_note(draw, palette, fonts, note, box, icon, rows=None, pill=True, when=True):
+    """A live note in the near-home box's style: ``icon`` (a drawer taking the icon's centre) and
+    the title, the rows, then the alert as a solid pill in its severity colour with its hours."""
+    rows = note["lines"][1:] if rows is None else note["lines"][1:1 + rows]
+    draw.rounded_rectangle(box, radius=5, fill=palette["paper"], outline=palette["rule"], width=1)
+    x, y = box[0] + 7, box[1]
+    icon((x + 5, y + 10))
+    draw.text((x + 15, y + 10), note["lines"][0], font=fonts(11), fill=palette["ink"], anchor="lm")
+    y += NOTE_HEAD
+    for row in rows:
+        name, figure = (row, "") if isinstance(row, str) else row
+        draw.text((x, y + 5), name, font=fonts(10, False), fill=palette["ink"], anchor="lm")
+        draw.text((box[2] - 7, y + 5), figure, font=fonts(10, False), fill=palette["ink"], anchor="rm")
+        y += NOTE_ROW
+    alert = note.get("alert") if pill else None
+    if alert:
+        width = draw.textlength(alert["name"], font=fonts(10)) + 10
+        draw.rounded_rectangle((x, y, x + width, y + 14), radius=7, fill=palette[alert["tone"]])
+        draw.text((x + width / 2, y + 7), alert["name"], font=fonts(10), fill=tone_ink(alert["tone"], palette), anchor="mm")
+        if when and alert.get("when"):
+            draw.text((x, y + 17 + 5), alert["when"], font=fonts(10, False), fill=palette["ink"], anchor="lm")
+
+
+def _place_note(draw, palette, fonts, note, icon, tops, occupied, frame, min_width=0):
+    """Draw a live note at the first of ``tops`` (down the ocean's left edge) where it is clear of
+    ``occupied``: whole, else without its alert's hours, then with fewer rows, then without the
+    alert. Returns its box, or None when not even its title row fits."""
+    count = len(note["lines"]) - 1
+    shapes = [(rows, False, False) for rows in range(count, -1, -1)]
+    if note.get("alert"):
+        # The alert outlasts the later rows: it goes only when not even one row fits beside it.
+        shapes = [(count, True, True)] + [(rows, True, False) for rows in range(count, 0, -1)] + shapes
+    for rows, pill, when in shapes:
+        width, height = _note_size(draw, fonts, note, rows, pill, when)
+        box = _free_box(max(width, min_width), height, [(4, top) for top in tops(height)], occupied, frame)
+        if box:
+            _draw_note(draw, palette, fonts, note, box, icon, rows, pill, when)
+            return box
+    return None
+
+
+def _draw_bay_notice(draw, palette, fonts, manifest, size, notice, occupied, frame):
+    """The Bay forecast's advisory on San Pablo Bay: a wind tag in its severity colour and its
+    name, its hours beneath. Returns its box, or None when the water there is taken."""
+    spot = project(*BAY_NOTICE_SPOT, manifest, size)
+    if spot is None:
+        return None
+    name_font, when_font = fonts(11), fonts(10, False)
+    when = notice.get("when") or ""
+    width = round(max(22 + draw.textlength(notice["name"], font=name_font), draw.textlength(when, font=when_font)))
+    height = 32 if when else 18
+    corners = [(spot[0] - width / 2 + dx, spot[1] - height / 2 + dy) for dy in (0, -8, 8, -16) for dx in (0, -10, 10)]
+    box = _free_box(width, height, corners, occupied, frame)
+    if box is None:
+        return None
+    x, y = box[0], box[1]
+    fill = palette[notice["tone"]]
+    draw.rounded_rectangle((x, y, x + 18, y + 18), radius=5, fill=fill)
+    draw_icon(draw, "wind", (x + 3, y + 3), 12, tone_ink(notice["tone"], palette), fill)
+    draw.text((x + 22, y + 9), notice["name"], font=name_font, fill=palette["ink"], anchor="lm",
+              stroke_width=2, stroke_fill=palette["paper"])
+    if when:
+        draw.text((x, y + 25), when, font=when_font, fill=palette["ink"], anchor="lm",
+                  stroke_width=2, stroke_fill=palette["paper"])
+    return box
+
+
 def _dashed(draw, start, end, colour, dash=5, gap=3, width=2):
     length = math.dist(start, end)
     if not length:
@@ -677,7 +807,7 @@ def _draw_fires(draw, palette, manifest, size, fires, hotspots, occupied):
 
 
 def render_bay_map(size, palette, fonts, *, quakes, alerts, home, home_label, now, listed=(), focus=None,
-                   summary=None, fires=(), hotspots=()):
+                   summary=None, fires=(), hotspots=(), outages=None, surf=None, marine=None):
     """The Bay map with the page's live data drawn on it.
 
     `alerts` carry the card's "number" and "tone"; numbered ones get the card's tag on their area.
@@ -685,6 +815,9 @@ def render_bay_map(size, palette, fonts, *, quakes, alerts, home, home_label, no
     `focus` ({"id", "title", "detail", "tone"}) is the quake the callout explains.
     `summary` is the near-home box's lines (title first).
     `fires` (CAL FIRE incidents) and `hotspots` (FIRMS detections) mark the map where they fall.
+    `outages` ({"lines", "points"}) are the power outages: a bolt at each point and their note in
+    the ocean above the scale bar; `surf` ({"lines", "alert"}) is the breakers' note under the
+    near-home box; `marine` ({"name", "tone", "when"}) the Bay advisory on San Pablo Bay.
     """
     manifest = read_manifest(BAY_MAP)
     if tuple(size) != tuple(manifest["image_size"]):
@@ -753,6 +886,8 @@ def render_bay_map(size, palette, fonts, *, quakes, alerts, home, home_label, no
         point = project(lat, lon, manifest, size)
         if point is not None:
             small_dots.append((point[0] - 3, point[1] - 3, point[0] + 3, point[1] + 3))
+    outage_marks = _draw_outages(draw, palette, manifest, size, (outages or {}).get("points") or [], occupied,
+                                 small_dots)
     order = sorted(quakes, key=lambda quake: (quake_age_class(quake, now) != "old",
                                                quake_age_class(quake, now) == "day", float(quake.get("mag", 0)),
                                                quake.get("time") or ""))
@@ -804,6 +939,30 @@ def render_bay_map(size, palette, fonts, *, quakes, alerts, home, home_label, no
     summary_box = _draw_summary(draw, palette, fonts, summary, occupied + small_dots, frame) if summary else None
     if summary_box:
         occupied.append(summary_box)
+    # The power and the sea share the ocean with it: the outages' note stands on the scale bar,
+    # the surf's hangs under the near-home box, both as wide as that box.
+    note_width = round(summary_box[2] - summary_box[0]) if summary_box else 0
+    outage_box = surf_box = bay_box = None
+    if outages and outages.get("lines"):
+        floor = size[1] - 46 - NOTE_GAP
+        outage_box = _place_note(
+            draw, palette, fonts, outages, lambda centre: _bolt(draw, centre, (7, 11), palette["ink"], palette["paper"]),
+            lambda height: range(floor - height, SUMMARY_CORNERS[0][1] - 1, -2), occupied + small_dots, frame, note_width)
+        if outage_box:
+            occupied.append(outage_box)
+    if surf and surf.get("lines"):
+        ceiling = summary_box[3] + NOTE_GAP if summary_box else SUMMARY_CORNERS[0][1]
+        surf_box = _place_note(
+            draw, palette, fonts, surf,
+            lambda centre: draw_icon(draw, "flood", (centre[0] - 6, centre[1] - 6), 12, palette["water_line"],
+                                     palette["paper"]),
+            lambda height: range(round(ceiling), size[1] - 46 - height, 2), occupied + small_dots, frame, note_width)
+        if surf_box:
+            occupied.append(surf_box)
+    if marine:
+        bay_box = _draw_bay_notice(draw, palette, fonts, manifest, size, marine, occupied + small_dots, frame)
+        if bay_box:
+            occupied.append(bay_box)
     tag_font = fonts(12)
     tag_width, tag_height = alert_tag_size(tag_font)
     tags = []
@@ -873,6 +1032,16 @@ def render_bay_map(size, palette, fonts, *, quakes, alerts, home, home_label, no
         occupied.append(_draw_chip(draw, palette, chip_font, box[:2], quake, now))
         chips.add(id(quake))
 
+    # A large outage carries its customers beside its bolt.
+    for (x, y), customers, reach in [mark for mark in outage_marks if mark[1] >= OUTAGE_LABEL_CUSTOMERS][:OUTAGE_LABELS]:
+        text = f"{customers:,} 户"
+        width = draw.textlength(text, font=chip_font) + 4
+        box = _free_box(width, 13, _around(x, y, width, 13, (reach + 3, reach + 10)), occupied + small_dots, frame)
+        if box:
+            draw.text((box[0] + 2, box[1] + 6.5), text, font=chip_font, fill=palette["ink"], anchor="lm",
+                      stroke_width=2, stroke_fill=palette["paper"])
+            occupied.append(box)
+
     occupied += _label_rings(draw, palette, fonts, rings, occupied + small_dots, frame)
     for quake, marker in markers:
         marker["edge"] = id(quake) in edge_ids
@@ -930,6 +1099,8 @@ def render_bay_map(size, palette, fonts, *, quakes, alerts, home, home_label, no
     image.info["map_summary"] = summary_box
     image.info["home_rings"] = [km for km, _centre, _radius in rings]
     image.info["fire_marks"] = fire_marks
+    image.info["outage_marks"] = len(outage_marks)
+    image.info["outage_box"], image.info["surf_box"], image.info["marine_tag"] = outage_box, surf_box, bay_box
     return image
 
 

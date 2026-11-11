@@ -1,6 +1,8 @@
 """Bay Area alerts page: USGS quakes, NWS warnings, NASA EONET events and CAL FIRE incidents on
 one hazard map, with NASA FIRMS fire hotspots when a FIRMS_MAP_KEY is configured; the NWS
-forecasters' key messages and the Air District's Spare the Air status beside them."""
+forecasters' key messages and the Air District's Spare the Air status beside them. The map also
+carries the power outages (Cal OES by county, PG&E's outage points), the ocean beaches' breaker
+heights (NWS surf zone forecast) and the Bay waters' advisory (NWS coastal waters forecast)."""
 
 from __future__ import annotations
 
@@ -106,6 +108,26 @@ class BayAlerts(BasePlugin):
                                     fresh_seconds=12 * 3600, usable_seconds=14 * 86400, validate=sources.valid_flu,
                                     timeout_seconds=8),
                              now, allow_network=allow_network, context=context, force=force),
+            # Power outages (Cal OES by county, PG&E's points for the map): news for a few hours.
+            "outages": book.load(Source("outages", {"counties": list(counties)},
+                                        lambda context: sources.fetch_outages(counties, context),
+                                        fresh_seconds=900, usable_seconds=3 * 3600, validate=sources.valid_outages,
+                                        timeout_seconds=8),
+                                 now, allow_network=allow_network, context=context, force=force),
+            "outage_points": book.load(Source("outage_points", {"bbox": sources.OUTAGE_MAP_BBOX, "home": list(home)},
+                                              lambda context: sources.fetch_outage_points(home, context),
+                                              fresh_seconds=900, usable_seconds=3 * 3600,
+                                              validate=sources.valid_outage_points, timeout_seconds=8),
+                                       now, allow_network=allow_network, context=context, force=force),
+            # The sea: NWS's surf zone forecast and its Bay waters forecast, each issued a few times a day.
+            "surf": book.load(Source("surf", {"office": "MTR"}, sources.fetch_surf,
+                                     fresh_seconds=2 * 3600, usable_seconds=18 * 3600, validate=sources.valid_surf,
+                                     timeout_seconds=8),
+                              now, allow_network=allow_network, context=context, force=force),
+            "marine": book.load(Source("marine", {"zone": sources.MARINE_ZONE}, sources.fetch_marine,
+                                       fresh_seconds=2 * 3600, usable_seconds=12 * 3600,
+                                       validate=sources.valid_marine, timeout_seconds=8),
+                                now, allow_network=allow_network, context=context, force=force),
         }
         label = " ".join(str(settings.get("homeLabel") or "家").split())[:8]
         return {**results, **extras, "hotspots": hotspots, "home": list(home), "home_label": label,

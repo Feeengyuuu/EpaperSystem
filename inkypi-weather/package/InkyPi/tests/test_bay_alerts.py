@@ -70,6 +70,13 @@ def quiet_extras(monkeypatch):
                         lambda _ctx: sources.parse_spare_the_air(AIR_RSS.format(today="No Alert", tomorrow="No Alert")))
     monkeypatch.setattr(sources, "fetch_flu", lambda now, _ctx: sources.normalize_flu(FLU))
 
+    def offline(*_args):
+        raise OSError("offline in tests")
+
+    # The outages and the sea are left out here (tests/test_bay_alerts_outages_surf.py has them).
+    for name in ("fetch_outages", "fetch_outage_points", "fetch_surf", "fetch_marine"):
+        monkeypatch.setattr(sources, name, offline)
+
 
 class Device:
     def get_resolution(self):

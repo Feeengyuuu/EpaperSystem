@@ -1,6 +1,7 @@
 """Bounded public feeds for the Bay Alerts page: USGS quakes (with how they were felt), NWS alerts
 and the forecasters' key messages, NASA EONET events, CAL FIRE's active incidents, the Air
-District's Spare the Air status and, with a FIRMS map key, NASA's satellite fire hotspots."""
+District's Spare the Air status and, with a FIRMS map key, NASA's satellite fire hotspots; power
+outages (Cal OES, PG&E) and the sea (NWS's surf zone and Bay coastal waters forecasts)."""
 
 from __future__ import annotations
 
@@ -618,3 +619,346 @@ def fetch_flu(now, context):
 
 def valid_flu(data):
     return isinstance(data, dict) and isinstance(data.get("ili"), float) and isinstance(data.get("series"), list)
+
+
+# --- Power outages: Cal OES's statewide layer by county, PG&E's outage points for the map -------
+
+# Every California utility's outages (ArcGIS FeatureServer, refreshed about every 15 minutes),
+# asked as statistics for the page's counties: about 3 KB.
+OUTAGE_URL = ("https://services.arcgis.com/BLN4oKB0N1YSgvY8/arcgis/rest/services/Power_Outages_(View)/"
+              "FeatureServer/0/query")
+OUTAGE_STATISTICS = ('[{"statisticType":"sum","onStatisticField":"ImpactedCustomers","outStatisticFieldName":"customers"},'
+                     '{"statisticType":"count","onStatisticField":"OBJECTID","outStatisticFieldName":"outages"}]')
+# The outage map PG&E publishes (ArcGIS MapServer; layer 4 is its outage points).
+PGE_OUTAGE_URL = "https://ags.pge.esriemcs.com/arcgis/rest/services/43/outages/MapServer/4/query"
+OUTAGE_MAP_BBOX = "-122.743,37.28,-121.557,38.15"  # the Bay map's extent, west,south,east,north
+# An outage this small is not marked on the map; the largest MAX_OUTAGE_POINTS are asked for.
+MIN_POINT_CUSTOMERS = 10
+MAX_OUTAGE_POINTS = 40
+UTILITY_NAMES = {"PGE": "PG&E", "SDGE": "SDG&E"}
+
+
+def normalize_outages(payload, counties):
+    """Cal OES's statistics rows as the page's counties, most customers first: each with its
+    customers, outages, the customers of planned work among them and its utilities."""
+    features = payload.get("features") if isinstance(payload, dict) else None
+    if not isinstance(features, list):
+        raise ValueError("Cal OES returned no outage statistics")
+    wanted = {BAY_COUNTIES[code].upper(): BAY_COUNTIES[code] for code in counties if code in BAY_COUNTIES}
+    rows = {}
+    for feature in features:
+        row = feature.get("attributes") if isinstance(feature, dict) else None
+        if not isinstance(row, dict) or str(row.get("County") or "").strip().upper() not in wanted:
+            continue
+        customers, outages = _finite(row.get("customers")), _finite(row.get("outages"))
+        if customers is None or outages is None or customers < 0 or outages < 0:
+            continue
+        county = rows.setdefault(wanted[str(row["County"]).strip().upper()],
+                                 {"customers": 0, "outages": 0, "planned": 0, "utilities": []})
+        county["customers"] += int(customers)
+        county["outages"] += int(outages)
+        if str(row.get("OutageType") or "").strip().lower() == "planned":
+            county["planned"] += int(customers)
+        utility = str(row.get("UtilityCompany") or "").strip()[:20]
+        utility = UTILITY_NAMES.get(utility, utility)
+        if utility and utility not in county["utilities"]:
+            county["utilities"].append(utility)
+    listed = sorted(({"county": name, **row} for name, row in rows.items()),
+                    key=lambda row: (-row["customers"], row["county"]))
+    return {"counties": listed, "customers": sum(row["customers"] for row in listed),
+            "outages": sum(row["outages"] for row in listed), "planned": sum(row["planned"] for row in listed)}
+
+
+def fetch_outages(counties, context):
+    names = ",".join(f"'{BAY_COUNTIES[code].upper()}'" for code in counties if code in BAY_COUNTIES)
+    params = {"where": f"County IN ({names})", "groupByFieldsForStatistics": "County,UtilityCompany,OutageType",
+              "outStatistics": OUTAGE_STATISTICS, "orderByFields": "customers DESC", "f": "json"}
+    return normalize_outages(_get_json(OUTAGE_URL, params, context, 48 * 1024), counties)
+
+
+def valid_outages(data):
+    counties = data.get("counties") if isinstance(data, dict) else None
+    return (isinstance(counties, list) and len(counties) <= len(BAY_COUNTIES)
+            and all(isinstance(data.get(key), int) and data[key] >= 0 for key in ("customers", "outages", "planned"))
+            and all(isinstance(row, dict) and isinstance(row.get("county"), str)
+                    and isinstance(row.get("customers"), int) and row["customers"] >= 0 for row in counties))
+
+
+def normalize_outage_points(payload, home):
+    """PG&E's outage points as [{lat, lon, customers, planned, restore, distance_km}], the largest
+    first; one below MIN_POINT_CUSTOMERS or without a place is left out."""
+    features = payload.get("features") if isinstance(payload, dict) else None
+    if not isinstance(features, list):
+        raise ValueError("PG&E returned no outage points")
+    items = []
+    for feature in features:
+        row = feature.get("attributes") if isinstance(feature, dict) else None
+        point = feature.get("geometry") if isinstance(feature, dict) else None
+        if not isinstance(row, dict) or not isinstance(point, dict):
+            continue
+        lat, lon, customers = _finite(point.get("y")), _finite(point.get("x")), _finite(row.get("EST_CUSTOMERS"))
+        if customers is None or customers < MIN_POINT_CUSTOMERS or not valid_coordinates(lat, lon):
+            continue
+        restore = parse_time(row.get("CURRENT_ETOR_TEXT")) if row.get("CURRENT_ETOR_TEXT") else None
+        items.append({"lat": round(lat, 4), "lon": round(lon, 4), "customers": int(customers),
+                      "planned": "PLNND" in str(row.get("OUTAGE_CAUSE") or "").upper(),
+                      "restore": restore.isoformat() if restore else None,
+                      "distance_km": round(distance_km(home[0], home[1], lat, lon), 1)})
+    items.sort(key=lambda item: -item["customers"])
+    return {"items": items[:MAX_OUTAGE_POINTS]}
+
+
+def fetch_outage_points(home, context):
+    params = {"where": f"EST_CUSTOMERS>={MIN_POINT_CUSTOMERS}", "geometry": OUTAGE_MAP_BBOX,
+              "geometryType": "esriGeometryEnvelope", "inSR": "4326", "spatialRel": "esriSpatialRelIntersects",
+              "outFields": "EST_CUSTOMERS,OUTAGE_CAUSE,CURRENT_ETOR_TEXT", "outSR": "4326",
+              "orderByFields": "EST_CUSTOMERS DESC", "resultRecordCount": MAX_OUTAGE_POINTS, "f": "json"}
+    return normalize_outage_points(_get_json(PGE_OUTAGE_URL, params, context, 48 * 1024), home)
+
+
+def valid_outage_points(data):
+    items = data.get("items") if isinstance(data, dict) else None
+    return isinstance(items, list) and len(items) <= MAX_OUTAGE_POINTS and all(
+        isinstance(item, dict) and valid_coordinates(item.get("lat"), item.get("lon"))
+        and isinstance(item.get("customers"), int) and item["customers"] > 0 for item in items)
+
+
+# --- The sea: NWS's surf zone forecast and its coastal waters forecast for the Bay --------------
+
+# The San Francisco Bay Area office's surf zone forecast (about 6 KB, issued a few times a day):
+# breaker heights by coast zone for today and tomorrow, under each zone's hazard headlines.
+SURF_URL = "https://tgftp.nws.noaa.gov/data/raw/fz/fzus56.kmtr.srf.mtr.txt"
+# The coast the map shows, nearest the Bay first: San Francisco and San Mateo's, then Sonoma and
+# Marin's.
+SURF_ZONES = ("CAZ509", "CAZ505")
+HIGH_SURF = {"High Surf Warning": "alert", "High Surf Advisory": "moderate"}
+# The coastal waters forecast for San Pablo Bay, Suisun Bay and the Bay north of the Bay Bridge
+# (about 1.3 KB): its advisory headline, when it has one.
+MARINE_URL = "https://tgftp.nws.noaa.gov/data/forecasts/marine/coastal/pz/pzz530.txt"
+MARINE_ZONE = "PZZ530"
+MARINE_NAMES = {
+    "Small Craft Advisory": ("小船提示", "moderate"), "Gale Warning": ("烈风警告", "alert"),
+    "Gale Watch": ("烈风监视", "moderate"), "Storm Warning": ("风暴警告", "alert"),
+    "Storm Watch": ("风暴监视", "moderate"), "Hazardous Seas Warning": ("险恶海况警告", "alert"),
+    "Hazardous Seas Watch": ("险恶海况监视", "moderate"), "Special Marine Warning": ("特别海事警告", "alert"),
+    "Dense Fog Advisory": ("浓雾提示", "moderate"),
+}
+FEET = 0.3048
+_MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
+_WEEKDAYS = ("MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY")
+_STAMP = re.compile(r"^(\d{1,2})(\d{2}) ([AP])M [A-Z]{3,4} \w{3} (\w{3}) (\d{1,2}) (\d{4})\s*$", re.MULTILINE)
+_ZONE_HEAD = re.compile(r"^([A-Z]{2}Z)(\d{3}(?:[->]\d{3})*)-\d{6}-\s*$", re.MULTILINE)
+_HEADLINE = re.compile(r"^\.\.\.(?!\.)(.+?)\.\.\.\s*$", re.MULTILINE | re.DOTALL)
+_HEADLINE_SPLIT = re.compile(r"\s+(?=(?:REMAINS |NOW )?IN EFFECT\b|FROM\b|THROUGH\b|UNTIL\b|FOR\b)")
+_PERIOD = re.compile(r"^\.([A-Z][A-Z ]*?)\.\.\.", re.MULTILINE)
+_SURF_FIELD = re.compile(r"^Surf Height\.+(.*(?:\n[ \t]+\S.*)*)", re.MULTILINE)
+_BREAKERS = re.compile(r"(?:([A-Za-z]+) Facing Beaches\s*-\s*)?(?:Around |Up to )?(\d{1,2})(?: to (\d{1,2}))? (?:feet|foot)")
+_CLOCK = re.compile(r"(\d{1,2}?)(?::?(\d{2}))? ([AP])M(?: P[SD]T)?(?: (.+))?")
+_DAY_PARTS = {"MORNING": "晨", "AFTERNOON": "午后", "EVENING": "晚", "NIGHT": "夜"}
+_WEEKDAY_ZH = "一二三四五六日"
+
+
+def product_time(text):
+    """When an NWS text product says it was issued ("1206 PM PST Wed Nov 11 2026"), Pacific; None
+    without the line."""
+    match = _STAMP.search(str(text or ""))
+    if not match or match.group(4).upper() not in _MONTHS:
+        return None
+    hour = int(match.group(1)) % 12 + (12 if match.group(3) == "P" else 0)
+    try:
+        return datetime(int(match.group(6)), _MONTHS.index(match.group(4).upper()) + 1, int(match.group(5)),
+                        hour, int(match.group(2)), tzinfo=PACIFIC)
+    except ValueError:
+        return None
+
+
+def _headlines(block):
+    """A zone block's "...NAME WHEN..." headlines as [{event, when}] (the event in title case)."""
+    found = []
+    for raw in _HEADLINE.findall(block):
+        parts = _HEADLINE_SPLIT.split(" ".join(raw.split()), maxsplit=1)
+        if parts[0] and not parts[0].startswith(("FROM ", "THROUGH ", "UNTIL ")):
+            found.append({"event": parts[0].title()[:60], "when": (parts[1] if len(parts) > 1 else "")[:120]})
+    return found[:6]
+
+
+def _period_date(name, issued):
+    """The day a forecast period is about: a weekday is the next such day from the issue date,
+    anything else (today, tonight, this afternoon) the issue date itself."""
+    for index, weekday in enumerate(_WEEKDAYS):
+        if weekday in name:
+            return issued.date() + timedelta(days=(index - issued.weekday()) % 7)
+    return issued.date()
+
+
+def _zone_days(block, issued):
+    """A surf zone's days as [{date, low, high, facing}] in feet: each day's most exposed beaches."""
+    parts = _PERIOD.split(block)
+    days = {}
+    for name, body in zip(parts[1::2], parts[2::2]):
+        field = _SURF_FIELD.search(body)
+        entries = [(int(high or low), int(low), facing) for facing, low, high in
+                   _BREAKERS.findall(field.group(1))] if field else []
+        if not entries:
+            continue
+        high, low, facing = max(entries)
+        date = _period_date(name, issued).isoformat()
+        if date not in days or high > days[date]["high"]:
+            days[date] = {"date": date, "low": min(low, high), "high": high, "facing": facing[:12]}
+    return [days[date] for date in sorted(days)][:4]
+
+
+def parse_surf(text):
+    """The surf zone forecast as {issued, zones: {code: {days, headlines}}}; ValueError when no
+    zone gives a breaker height."""
+    text = str(text or "")
+    issued = product_time(text)
+    if issued is None:
+        raise ValueError("The surf forecast has no issue time")
+    zones = {}
+    for block in re.split(r"^\$\$\s*$", text, flags=re.MULTILINE):
+        head = _ZONE_HEAD.search(block)
+        if not head:
+            continue
+        body = block[head.end():]
+        zone = {"days": _zone_days(body, issued), "headlines": _headlines(body)}
+        if zone["days"]:
+            for number in re.findall(r"\d{3}", head.group(2)):
+                zones[head.group(1) + number] = zone
+    if not zones:
+        raise ValueError("The surf forecast has no breaker heights")
+    return {"issued": issued.isoformat(), "zones": dict(list(zones.items())[:12])}
+
+
+def _get_text(url, context, max_bytes):
+    context.raise_if_cancelled()
+    response = get_http_client().request_text("GET", url, context=context, timeout=REQUEST_TIMEOUT,
+                                              max_bytes=max_bytes, headers={"User-Agent": USER_AGENT})
+    context.raise_if_cancelled()
+    return response.data
+
+
+def fetch_surf(context):
+    return parse_surf(_get_text(SURF_URL, context, 64 * 1024))
+
+
+def valid_surf(data):
+    zones = data.get("zones") if isinstance(data, dict) else None
+    return isinstance(zones, dict) and 0 < len(zones) <= 12 and parse_time(data.get("issued")) is not None and all(
+        isinstance(zone, dict) and isinstance(zone.get("days"), list) and isinstance(zone.get("headlines"), list)
+        and all(isinstance(day, dict) and isinstance(day.get("low"), int) and isinstance(day.get("high"), int)
+                and isinstance(day.get("date"), str) for day in zone["days"])
+        and all(isinstance(line, dict) and isinstance(line.get("event"), str) and isinstance(line.get("when"), str)
+                for line in zone["headlines"])
+        for zone in zones.values())
+
+
+def _moment(words):
+    """A headline's moment in Chinese: "6 PM FRIDAY" -> "周五 18:00", "THURSDAY EVENING" -> "周四晚",
+    "LATE TONIGHT" -> "今晚深夜"; "" for any other wording."""
+    words = " ".join(str(words or "").split())
+    clock = _CLOCK.fullmatch(words)
+    if clock:
+        hour = int(clock.group(1)) % 12 + (12 if clock.group(3) == "P" else 0)
+        day = _moment(clock.group(4)) if clock.group(4) else ""
+        if clock.group(4) and not day:
+            return ""
+        day = {"今晨": "今天", "今天午后": "今天"}.get(day, day)
+        return f"{day} {hour:02d}:{clock.group(2) or '00'}".strip()
+    tokens = words.split()
+    late = bool(tokens) and tokens[0] in ("LATE", "EARLY") and tokens.pop(0) == "LATE"
+    if tokens == ["TONIGHT"]:
+        return "今晚深夜" if late else "今晚"
+    if tokens == ["TODAY"]:
+        return "今天"
+    if len(tokens) == 2 and tokens[0] == "THIS" and tokens[1] in _DAY_PARTS:
+        return {"MORNING": "今晨", "AFTERNOON": "今天午后", "EVENING": "今晚", "NIGHT": "今晚"}[tokens[1]]
+    if tokens and tokens[0] in _WEEKDAYS and len(tokens) <= 2:
+        day = "周" + _WEEKDAY_ZH[_WEEKDAYS.index(tokens[0])]
+        if len(tokens) == 1:
+            return day
+        if tokens[1] in _DAY_PARTS:
+            return day + ("深夜" if late and tokens[1] == "NIGHT" else _DAY_PARTS[tokens[1]])
+    return ""
+
+
+def headline_span(when):
+    """(start, end) of a headline's "FROM ... THROUGH ..." wording in Chinese, either "" when the
+    headline does not say it or says it another way."""
+    text = re.sub(r"\b(?:REMAINS |NOW )?IN EFFECT\b", "", str(when or "").upper())
+    text = " ".join(text.split())
+    both = re.search(r"\bFROM (.+?) (?:THROUGH|UNTIL|TO) (.+)$", text)
+    if both:
+        return _moment(both.group(1)), _moment(both.group(2))
+    end = re.search(r"\b(?:THROUGH|UNTIL) (.+)$", text)
+    if end:
+        return "", _moment(end.group(1))
+    start = re.search(r"\bFROM (.+)$", text)
+    return (_moment(start.group(1)) if start else ""), ""
+
+
+def surf_outlook(data, now):
+    """The nearest coast's breakers from today on (at most two days, in metres) and its high-surf
+    headline, from the surf forecast; None once the forecast has no day left."""
+    zones = data.get("zones") if isinstance(data, dict) else None
+    today = now.date()
+    labels = {today.isoformat(): "今天", (today + timedelta(days=1)).isoformat(): "明天"}
+    for code in SURF_ZONES:
+        zone = zones.get(code) if isinstance(zones, dict) else None
+        days = [day for day in (zone or {}).get("days") or [] if str(day.get("date")) >= today.isoformat()][:2]
+        if not days:
+            continue
+        listed = [{"label": labels.get(day["date"]) or "周" + _WEEKDAY_ZH[datetime.fromisoformat(day["date"]).weekday()],
+                   "low_m": round(day["low"] * FEET, 1), "high_m": round(day["high"] * FEET, 1)} for day in days]
+        alert = next((line for line in zone.get("headlines") or [] if line.get("event") in HIGH_SURF), None)
+        if alert:
+            start, end = headline_span(alert.get("when"))
+            alert = {"event": alert["event"], "name": event_name(alert["event"]), "tone": HIGH_SURF[alert["event"]],
+                     "start": start, "end": end}
+        return {"zone": code, "days": listed, "alert": alert}
+    return None
+
+
+def parse_marine(text):
+    """The Bay's coastal waters forecast as {issued, expires, zone, headlines}; ValueError without
+    the zone."""
+    text = str(text or "")
+    head = re.search(rf"^{MARINE_ZONE}-\d{{6}}-\s*$", text, re.MULTILINE)
+    issued = product_time(text)
+    if not head or issued is None:
+        raise ValueError("The marine forecast has no Bay zone")
+    block = re.split(r"^\$\$\s*$", text[head.end():], maxsplit=1, flags=re.MULTILINE)[0]
+    expires = re.search(r"^Expires:(\d{12})", text, re.MULTILINE)
+    try:
+        expiry = datetime.strptime(expires.group(1), "%Y%m%d%H%M").replace(tzinfo=timezone.utc) if expires else None
+    except ValueError:
+        expiry = None
+    return {"issued": issued.isoformat(), "expires": expiry.isoformat() if expiry else None, "zone": MARINE_ZONE,
+            "headlines": _headlines(block)}
+
+
+def fetch_marine(context):
+    return parse_marine(_get_text(MARINE_URL, context, 32 * 1024))
+
+
+def valid_marine(data):
+    headlines = data.get("headlines") if isinstance(data, dict) else None
+    return isinstance(headlines, list) and parse_time(data.get("issued")) is not None and all(
+        isinstance(line, dict) and isinstance(line.get("event"), str) and isinstance(line.get("when"), str)
+        for line in headlines)
+
+
+def marine_notice(data, now):
+    """The Bay forecast's advisory as {event, name, tone, start, end}; None without one, or once
+    the forecast has expired (a day after its issue when it names no expiry)."""
+    if not isinstance(data, dict):
+        return None
+    expires = parse_time(data.get("expires")) or (parse_time(data.get("issued")) or now) + timedelta(days=1)
+    if expires <= now:
+        return None
+    for line in data.get("headlines") or []:
+        if line.get("event") in MARINE_NAMES:
+            name, tone = MARINE_NAMES[line["event"]]
+            start, end = headline_span(line.get("when"))
+            return {"event": line["event"], "name": name, "tone": tone, "start": start, "end": end}
+    return None

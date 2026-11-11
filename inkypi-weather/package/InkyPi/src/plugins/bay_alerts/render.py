@@ -2,7 +2,9 @@
 
 The state events are NASA EONET's with CAL FIRE's active incidents in place of EONET's copies of
 the same fires, so a fire carries its acres and containment; FIRMS hotspots, when configured,
-mark the Bay map."""
+mark the Bay map. The map also carries the power outages (a bolt at each, their note in the
+ocean), the ocean beaches' breaker heights and the Bay waters' advisory; none of them takes room
+from the cards."""
 
 from __future__ import annotations
 
@@ -23,7 +25,8 @@ from .map_view import (
     quake_chip_colors, render_bay_map, render_california_map, rgb, source_logo, tone_ink,
 )
 from .sources import (
-    PACIFIC, PAGER_LEVELS, air_today, compact_message, distance_km, intensity_roman, local_now, parse_time,
+    PACIFIC, PAGER_LEVELS, air_today, compact_message, distance_km, intensity_roman, local_now, marine_notice,
+    parse_time, surf_outlook, valid_marine, valid_outage_points, valid_outages, valid_surf,
 )
 
 
@@ -68,6 +71,17 @@ WINTER_SEASON = (11, 12, 1, 2)
 # The cards' source logos, this tall before each header's detail.
 CARD_LOGO_HEIGHT = 18
 SAME_FIRE_KM = 15
+# Power outages: a line of the map's notes on a quiet day. From this many customers without power
+# (planned work apart) the note names the counties and the header counts it; an outage this near
+# home gets a line of its own.
+OUTAGE_SIGNIFICANT = 2000
+OUTAGE_COUNTY_ROWS = 3
+NEAR_OUTAGE_KM = 10
+# The counties in Chinese for the map's note, like the map's own place names.
+COUNTY_NAMES = {
+    "Alameda": "阿拉米达", "Contra Costa": "康特拉科斯塔", "Marin": "马林", "Napa": "纳帕", "San Francisco": "旧金山",
+    "San Mateo": "圣马特奥", "Santa Clara": "圣克拉拉", "Santa Cruz": "圣克鲁斯", "Solano": "索拉诺", "Sonoma": "索诺马",
+}
 
 
 def _palette(settings):
@@ -127,7 +141,83 @@ def attention_items(payload, now):
     nearby_fires = [event for event in events if event.get("kind") == "fire"
                     and distance_km(home[0], home[1], event["lat"], event["lon"]) <= NEARBY_EVENT_KM]
     air = spare_the_air(payload, now)
-    return len(alerts) + len(strong) + len(nearby_fires) + (1 if air and air["alert"] else 0)
+    outages = outage_summary(payload, now)
+    return (len(alerts) + len(strong) + len(nearby_fires) + (1 if air and air["alert"] else 0)
+            + (1 if outages and outages["significant"] else 0))
+
+
+def _extra(payload, name, valid):
+    """An optional feed's data, or None when it is missing, unavailable or not what its validator
+    expects."""
+    source = payload.get(name) or {}
+    if source.get("state") in (None, "unavailable", "disabled"):
+        return None
+    try:
+        return source.get("data") if valid(source.get("data")) else None
+    except (TypeError, ValueError, KeyError, AttributeError):
+        return None
+
+
+def outage_summary(payload, now):
+    """The power outages for the map: {"lines", "points", "significant"}. One line says how many
+    customers are without power in the page's counties (Cal OES); a significant outage adds the
+    counties with the most (each a (county, customers) pair), and outages within NEAR_OUTAGE_KM
+    of home a line of their own. ``points`` are PG&E's outage points. None without either feed."""
+    stats = _extra(payload, "outages", valid_outages)
+    points = (_extra(payload, "outage_points", valid_outage_points) or {}).get("items") or []
+    if stats is None and not points:
+        return None
+    significant = False
+    if stats is None:
+        lines = [f"停电 {len(points)} 处"]
+    elif not stats["customers"]:
+        lines = ["暂无停电"]
+    else:
+        total = stats["customers"]
+        lines = [f"停电 {total / 10000:.1f} 万户" if total >= 10000 else f"停电 {total:,} 户"]
+        significant = total - stats["planned"] >= OUTAGE_SIGNIFICANT
+        if significant:
+            lines += [(COUNTY_NAMES.get(row["county"], row["county"]), f"{row['customers']:,}")
+                      for row in stats["counties"][:OUTAGE_COUNTY_ROWS] if row["customers"]]
+    near = [point for point in points if point.get("distance_km", NEAR_OUTAGE_KM + 1) <= NEAR_OUTAGE_KM]
+    if near:
+        lines.append(("家附近", f"{sum(point['customers'] for point in near):,} 户"))
+    return {"lines": lines, "points": points, "significant": significant}
+
+
+def _hours(start, end, joined=False):
+    """A headline's hours in a few characters: both ends when ``joined``, else when it starts
+    (one still ahead) or when it ends."""
+    if joined and start and end:
+        return f"{start}–{end}"
+    return f"{start} 起" if start else f"至 {end}" if end else ""
+
+
+def surf_summary(payload, now, shown=()):
+    """The breakers for the map: {"lines", "alert"}. The lines give the nearest ocean beaches'
+    breaker height today and tomorrow in metres (NWS's surf zone forecast); ``alert`` is the
+    coast's high-surf warning or advisory unless the alert card already lists it (``shown``, the
+    events of its rows). None without the forecast."""
+    data = _extra(payload, "surf", valid_surf)
+    outlook = surf_outlook(data, now) if data else None
+    if outlook is None:
+        return None
+    lines = ["浪高 · 米"]
+    for day in outlook["days"]:
+        low, high = day["low_m"], day["high_m"]
+        lines.append(f"{day['label']} {low:.1f}–{high:.1f}" if high > low else f"{day['label']} {high:.1f}")
+    alert = outlook["alert"]
+    if alert and alert["event"] in shown:
+        alert = None
+    return {"lines": lines, "alert": alert and {**alert, "when": _hours(alert["start"], alert["end"])}}
+
+
+def bay_notice(payload, now):
+    """The Bay waters' advisory for the map ({"name", "tone", "when"}), from NWS's coastal waters
+    forecast; None without one."""
+    data = _extra(payload, "marine", valid_marine)
+    notice = marine_notice(data, now) if data else None
+    return notice and {**notice, "when": _hours(notice["start"], notice["end"], joined=True)}
 
 
 def spare_the_air(payload, now):
@@ -830,6 +920,7 @@ def render_page(dimensions, payload, settings, now):
     for index, alert in enumerate(payload["alerts"]["data"].get("items", [])):
         tone = SEVERITY.get(alert.get("severity"), ("提示", "minor"))[1]
         alerts.append({**alert, "tone": tone, "number": index + 1 if index < rows["alerts"] else None})
+    listed_events = [alert.get("event") for alert in alerts if alert["number"]]
     map_image = render_bay_map(
         (440, 408), canvas.palette, canvas.font, quakes=quakes, alerts=alerts,
         home=payload["home"], home_label=payload["home_label"], now=now,
@@ -837,9 +928,12 @@ def render_page(dimensions, payload, settings, now):
         focus=focus_quake(quakes, now), summary=near_home_summary(quakes, now),
         fires=[event for event in payload["events"]["data"].get("items", []) if event.get("kind") == "fire"],
         hotspots=((payload.get("hotspots") or {}).get("data") or {}).get("items", []),
+        outages=outage_summary(payload, now), surf=surf_summary(payload, now, listed_events),
+        marine=bay_notice(payload, now),
     )
     canvas.image.paste(map_image, (12, 60))
-    for key in ("map_markers", "alert_tags", "map_callout", "map_summary", "home_rings", "fire_marks"):
+    for key in ("map_markers", "alert_tags", "map_callout", "map_summary", "home_rings", "fire_marks",
+                "outage_marks", "outage_box", "surf_box", "marine_tag"):
         canvas.image.info[key] = map_image.info.get(key)
     canvas.draw.rectangle((12, 60, 451, 467), outline=canvas.color("ink"), width=1)
     _alerts_card(canvas, payload, now, boxes["alerts"], rows["alerts"], rows["key_lines"])
