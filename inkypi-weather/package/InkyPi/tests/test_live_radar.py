@@ -2183,7 +2183,7 @@ def test_section_title_wordmark_offsets_count_pill(monkeypatch):
     assert seen["text"] == "5"
     assert seen["box"][0] == 10 + size[0] + 8
 
-def test_comic_section_title_sits_on_an_ink_tab_with_a_coloured_count():
+def test_comic_section_title_is_printed_twice_straight_on_the_page():
     plugin = _plugin()
     theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig(mode="day"))
     image = Image.new("RGB", (220, 60), theme["bg"])
@@ -2192,10 +2192,41 @@ def test_comic_section_title_sits_on_an_ink_tab_with_a_coloured_count():
     plugin._draw_section_title(image, draw, 10, 20, "OFFLINE", 51, theme, plugin._font(13, "bold"))
 
     title_w = SECTION_TITLE_WORDMARK_SIZES["OFFLINE"][0]
-    assert image.getpixel((7, 37)) == comic_art.INK  # the tab, left of the white lettering
-    assert any(pixel == (255, 255, 255) for pixel in image.crop((10, 18, 10 + title_w, 40)).get_flattened_data())
-    badge = set(image.crop((10 + title_w + 5, 14, 10 + title_w + 40, 40)).get_flattened_data())
-    assert comic_art.SECTION_COUNT_FILLS["OFFLINE"] in badge and comic_art.INK in badge
+    blue = (0, 174, 236)
+    # No tab behind the lettering: the page shows beside it and between its letters.
+    assert image.getpixel((7, 37)) == theme["bg"]
+    lettering = set(image.crop((10, 18, 12 + title_w, 42)).get_flattened_data())
+    assert {comic_art.INK, blue, theme["bg"]} <= lettering and (255, 255, 255) not in lettering
+    # The section's colour lies two pixels down and right of the ink, never up or left of it.
+    pixels = list(image.get_flattened_data())
+
+    def box_of(colour):
+        mask = Image.new("L", image.size, 0)
+        mask.putdata([255 if pixel == colour else 0 for pixel in pixels])
+        return mask.getbbox()
+
+    ink_box, blue_box = box_of(comic_art.INK), box_of(blue)
+    assert blue_box[0] >= ink_box[0] and blue_box[1] >= ink_box[1]
+    assert ink_box[2] < blue_box[2] <= ink_box[2] + 2 and ink_box[3] < blue_box[3] <= ink_box[3] + 2
+    # The count is printed the same way, with no disc: where the disc was is page again.
+    centre_x, centre_y = 10 + title_w + 5 + 13, 20 + 8
+    count = set(image.crop((centre_x - 13, 14, centre_x + 15, 42)).get_flattened_data())
+    assert {comic_art.INK, blue} <= count
+    assert image.getpixel((centre_x - 11, centre_y)) == theme["bg"]
+
+
+def test_comic_section_title_by_night_takes_the_pages_ink_and_a_dimmed_colour():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig(mode="night"))
+    image = Image.new("RGB", (220, 60), theme["bg"])
+    draw = ImageDraw.Draw(image)
+
+    plugin._draw_section_title(image, draw, 10, 20, "LIVE NOW", 13, theme, plugin._font(13, "bold"))
+
+    pixels = set(image.crop((10, 18, 12 + SECTION_TITLE_WORDMARK_SIZES["LIVE NOW"][0], 42)).get_flattened_data())
+    orange = comic_art.mix((255, 119, 0), theme["bg"], 0.25)
+    assert {tuple(theme["ink"]), orange, tuple(theme["bg"])} <= pixels
+    assert image.getpixel((7, 37)) == tuple(theme["bg"])
 
 
 def test_comic_ink_shadow_lies_only_below_and_right_of_its_box():

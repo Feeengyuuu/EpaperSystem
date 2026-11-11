@@ -1,9 +1,9 @@
 """Printed-comic touches for LiveRadar's pages.
 
 Kept quiet on purpose: a halftone band behind the LIVE NOW cards in their
-platform colours, hard shadows under cards and walls, tabs for the section
-titles, ticket-stub counters, one speech bubble and a highlighter stroke under
-the footer. By day the page is cream paper and the lines are ink; by night the
+platform colours, hard shadows under cards and walls, section titles printed
+twice (their colour a step off under the ink), ticket-stub counters, one speech
+bubble and a highlighter stroke under the footer. By day the page is cream paper and the lines are ink; by night the
 same pieces sit on the dark page in its own ink, with shadows dimmed to glow.
 """
 
@@ -26,7 +26,11 @@ HIGHLIGHTER = (255, 214, 0)
 NIGHT_SHADOW_PAGE_SHARE = 0.55
 NIGHT_CARD_SHADOW_PAGE_SHARE = 0.35
 NIGHT_HIGHLIGHTER_PAGE_SHARE = 0.55
-SECTION_COUNT_FILLS = {
+# A section title and its count are printed twice, with no plate behind them (the owner's
+# choice, 2026-11-11): the section's colour this many pixels down and right under the ink.
+PRINT_OFFSET = 2
+NIGHT_SECTION_COLOUR_PAGE_SHARE = 0.25
+SECTION_COLOURS = {
     "LIVE NOW": (255, 119, 0),
     "LIVE TOO": (255, 119, 0),
     "OFFLINE": (0, 174, 236),
@@ -41,17 +45,16 @@ def mix(colour, other, share):
 
 
 def roles(theme):
-    """The page's comic colours: line and tab ink, what sits on a tab, shadow, bubble, marker."""
+    """The page's comic colours: line and lettering ink, shadow, bubble, marker."""
     if theme.get("mode") == "dark":
         page = theme["bg"]
         return {
             "ink": theme["ink"],
-            "on_ink": page,
             "shadow": mix(theme["muted"], page, NIGHT_SHADOW_PAGE_SHARE),
             "bubble": theme["panel"],
             "marker": mix(HIGHLIGHTER, page, NIGHT_HIGHLIGHTER_PAGE_SHARE),
         }
-    return {"ink": INK, "on_ink": WHITE, "shadow": INK, "bubble": WHITE, "marker": HIGHLIGHTER}
+    return {"ink": INK, "shadow": INK, "bubble": WHITE, "marker": HIGHLIGHTER}
 
 
 def card_shadow(theme, brand):
@@ -102,19 +105,20 @@ def ink_shadow(image, box, radius, colour=INK, offset=SHADOW_OFFSET):
     image.paste(Image.new("RGB", mask.size, colour), (left, top), mask)
 
 
-def ink_tab(draw, box, fill=INK, radius=5):
-    draw.rounded_rectangle(box, radius=radius, fill=fill)
+def section_colour(theme, title, default):
+    """A section's colour for the copy printed under its title: its own by day, dimmed a
+    little into the page by night."""
+    colour = SECTION_COLOURS.get(title, default)
+    if theme.get("mode") == "dark":
+        return mix(colour, theme["bg"], NIGHT_SECTION_COLOUR_PAGE_SHARE)
+    return colour
 
 
-def count_badge(draw, centre, text, font, fill, outline=INK):
-    """The section count in a coloured circle with a rim; the number stays black on the colour."""
+def count_figure(draw, centre, text, font, ink):
+    """The section count's figures centred on ``centre``, with nothing behind them."""
     cx, cy = centre
-    text_w = draw.textlength(text, font=font)
-    radius = max(10, int(text_w / 2) + 5)
-    draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=fill, outline=outline, width=2)
     bbox = draw.textbbox((0, 0), text, font=font)
-    draw.text((cx - (bbox[0] + bbox[2]) / 2, cy - (bbox[1] + bbox[3]) / 2), text, fill=INK, font=font)
-    return cx + radius
+    draw.text((cx - (bbox[0] + bbox[2]) / 2, cy - (bbox[1] + bbox[3]) / 2), text, fill=ink, font=font)
 
 
 def speech_bubble(draw, right, top, text, font, tail_x, ink=INK, fill=WHITE, shadow=INK):

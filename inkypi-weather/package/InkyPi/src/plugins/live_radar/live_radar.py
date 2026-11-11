@@ -3081,19 +3081,21 @@ class LiveRadar(BasePlugin):
         )
 
     def _draw_comic_section_title(self, image, draw, x, y, title, count, theme, font):
-        """The title on a tab in the page's ink and its count in a coloured circle."""
+        """The title and its count printed twice straight on the page, comic fashion: the
+        section's colour a step down and right under the page's ink, nothing behind them."""
         normalized = str(title or "").upper()
-        comic = comic_art.roles(theme)
         target_w, _target_h = SECTION_TITLE_WORDMARK_SIZES.get(normalized, SECTION_TITLE_WORDMARK_SIZE)
         has_wordmark = self._load_section_title_wordmark(normalized) is not None
         title_w = target_w if has_wordmark else draw.textlength(title, font=font)
-        comic_art.ink_tab(draw, (x - 4, y - 3, x + title_w + 5, y + 19), comic["ink"])
-        if self._paste_section_title_wordmark(image, x, y, title, {"mode": "dark", "ink": comic["on_ink"]}) is None:
-            draw.text((x, y), title, fill=comic["on_ink"], font=font)
-        fill = comic_art.SECTION_COUNT_FILLS.get(normalized, STATUS_TOTAL_FILLS["live"])
         count_text = str(count)
+        # The count keeps the room and the centre its disc had, so what follows it stays put.
         radius = max(10, int(draw.textlength(count_text, font=font) / 2) + 5)
-        comic_art.count_badge(draw, (x + title_w + 5 + radius, y + 8), count_text, font, fill, comic["ink"])
+        centre_x, centre_y = x + title_w + 5 + radius, y + 8
+        colour = comic_art.section_colour(theme, normalized, STATUS_TOTAL_FILLS["live"])
+        for step, ink in ((comic_art.PRINT_OFFSET, colour), (0, comic_art.roles(theme)["ink"])):
+            if self._paste_section_title_wordmark(image, x + step, y + step, title, {"mode": "dark", "ink": ink}) is None:
+                draw.text((x + step, y + step), title, fill=ink, font=font)
+            comic_art.count_figure(draw, (centre_x + step, centre_y + step), count_text, font, ink)
 
     def _paste_section_title_wordmark(self, image, x, y, title, theme):
         normalized = str(title or "").upper()
