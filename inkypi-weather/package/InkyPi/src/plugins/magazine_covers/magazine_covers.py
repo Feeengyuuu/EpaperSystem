@@ -31,6 +31,7 @@ from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
 from plugins.base_plugin.parallel_image_stage import prepare_local_bank_images
 from plugins.context_cache import write_context
 from plugins.magazine_covers import cover_info
+from plugins.magazine_covers.text_page import looks_like_text_page
 from plugins.magazine_covers.historical_catalog import (
     CATALOG_TARGET_ITEMS,
     CATEGORY_TARGET_ITEMS,
@@ -448,9 +449,14 @@ class MagazineCovers(BasePlugin):
         errors = []
         if self._fit_mode(settings) in {"triptych", "three_covers", "gallery"}:
             source_covers = []
+            # Scans that are a page of type wait here: used only when the covers run short.
+            text_pages = []
             for source in ordered_sources:
                 try:
                     cover = self._load_cover(source, dimensions)
+                    if cover.get("text_page"):
+                        text_pages.append((source, cover))
+                        continue
                     source_covers.append((source, cover))
                     if len(source_covers) >= TRIPTYCH_COVER_COUNT:
                         break
@@ -459,6 +465,7 @@ class MagazineCovers(BasePlugin):
                     errors.append(f"{source['name']}: {exc}")
                     if rotation_mode == "random":
                         self._remember_failure(source)
+            source_covers += text_pages[:max(0, TRIPTYCH_COVER_COUNT - len(source_covers))]
 
             if len(source_covers) >= TRIPTYCH_COVER_COUNT:
                 image = self._fit_cover_triptych(source_covers, dimensions, settings)
@@ -679,15 +686,21 @@ class MagazineCovers(BasePlugin):
                         deadline=data_deadline,
                     )
                     self._raise_if_data_cancelled()
-                    cover = self._decorate_cover_metadata(source, cover)
-                    record = bank.ingest(
-                        profile,
-                        source,
-                        cover,
-                        cover["image"],
-                        fetched_at=now,
-                    )
-                    provider_record = record
+                    if cover.get("text_page") and len(ready) >= TRIPTYCH_COVER_COUNT:
+                        # A scan that is a page of type stays out of the bank while the bank
+                        # can fill the page without it; the scan moves on to the next source.
+                        logger.info("Magazine scan is a page of text, left out: %s", source["name"])
+                        record = None
+                    else:
+                        cover = self._decorate_cover_metadata(source, cover)
+                        record = bank.ingest(
+                            profile,
+                            source,
+                            cover,
+                            cover["image"],
+                            fetched_at=now,
+                        )
+                        provider_record = record
                     provider_successes += 1
                 except TaskCancelled:
                     raise
@@ -1804,6 +1817,8 @@ class MagazineCovers(BasePlugin):
                     "image": image,
                     "image_url": image_url,
                     "page_url": candidate.get("record_url") or source["url"],
+                    # An archive's first page is now and then a typed bulletin, not a cover.
+                    "text_page": looks_like_text_page(image),
                     "title": candidate.get("issue_title") or candidate.get("publication") or source["name"],
                     "cover_id": candidate.get("cover_id"),
                     "provider": candidate.get("provider"),
