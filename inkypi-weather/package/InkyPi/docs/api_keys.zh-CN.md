@@ -42,6 +42,7 @@ sudo systemctl restart inkypi
 | 变量名 | 服务 | 用于 | 获取地址 |
 | --- | --- | --- | --- |
 | `OPENAI_API_KEY` | OpenAI | AI 图片、AI 文本、AI每日新闻（整点新闻）、E-Paper Pet、AI Image Multiverse | <https://platform.openai.com/api-keys> |
+| `ANTHROPIC_API_KEY` | Anthropic（Claude） | AI每日新闻（整点新闻）、Telegram Digest | <https://console.anthropic.com/settings/keys> |
 | `GROQ_API_KEY` | Groq | AI每日新闻（整点新闻）、E-Paper Pet、AI Image Multiverse | <https://console.groq.com/keys> |
 | `NANO_BANANA_KEY` | Google AI Studio / Gemini | AI Image Multiverse | <https://aistudio.google.com/app/apikey> |
 | `AI_HORDE_KEY` | AI Horde | AI Image Multiverse | <https://aihorde.net/register> |

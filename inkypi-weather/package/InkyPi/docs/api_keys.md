@@ -56,6 +56,7 @@ These are all the keys the installer and the web UI know about, matching
 | Variable | Service | Used by | Get it |
 | --- | --- | --- | --- |
 | `OPENAI_API_KEY` | OpenAI | AI Image, AI Text, Daily AI News, E-Paper Pet, AI Image Multiverse | <https://platform.openai.com/api-keys> |
+| `ANTHROPIC_API_KEY` | Anthropic (Claude) | Daily AI News, Telegram Digest | <https://console.anthropic.com/settings/keys> |
 | `GROQ_API_KEY` | Groq | Daily AI News, E-Paper Pet, AI Image Multiverse | <https://console.groq.com/keys> |
 | `NANO_BANANA_KEY` | Google AI Studio / Gemini | AI Image Multiverse | <https://aistudio.google.com/app/apikey> |
 | `AI_HORDE_KEY` | AI Horde | AI Image Multiverse | <https://aihorde.net/register> |
