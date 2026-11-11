@@ -76,6 +76,7 @@ os.environ.setdefault("MPLCONFIGDIR", MPLCONFIGDIR)
 os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageOps
+from utils.local_wordmark import load_source_logo
 from utils.doodle_backdrop import paint_doodles
 from utils.fonts import load_font
 from utils.app_utils import get_base_ui_font, get_font
@@ -220,7 +221,17 @@ WINDOW_SHORT_LABELS = {
 # Dashboard geometry for the 800x480 panel; cards keep a 16px gutter.
 DASHBOARD_MARGIN = 16
 HEADER_RULE_Y = 38
-# Dollar bills on the wind across the header (GPT Image 2.5; tools/build_flying_header_art.py).
+# The header names the page's other sources by their official logos between the broker's wordmark
+# and the source line: SEC (filings), Nasdaq (fundamentals, earnings) and Yahoo Finance (quotes
+# and trends), this tall and this far apart; the first that fit are shown.
+HEADER_SOURCE_DIR = os.path.join(os.path.dirname(__file__), "assets", "sources")
+HEADER_SOURCES = ("sec", "nasdaq", "yahoo_finance")
+HEADER_SOURCE_HEIGHTS = {"sec": 24, "nasdaq": 15, "yahoo_finance": 22}
+HEADER_SOURCE_GAP = 16
+# Yahoo prints its wordmark white on dark grounds: its dark parts take the night ink.
+HEADER_SOURCE_INKED = {"yahoo_finance": True, "nasdaq": False}
+# Dollar bills on the wind across the header, flown only when no source logo is at hand
+# (GPT Image 2.5; tools/build_flying_header_art.py).
 HEADER_MONEY_PATH = os.path.join(os.path.dirname(__file__), "assets", "header_flying_bills.png")
 # Bills and coins drifting down, quietly, behind the holdings table.
 HOLDINGS_DOODLES_PATH = os.path.join(os.path.dirname(__file__), "assets", "doodles", "money.png")
@@ -2397,6 +2408,29 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		self._header_logo_cache[cache_key] = logo
 		return logo
 
+	def _draw_header_sources(self, img, box):
+		"""The page's other sources by their official logos, centred in the header's free stretch;
+		whether any was drawn."""
+		left, top, right, bottom = [int(value) for value in box]
+		colors = _active_stock_colors()
+		ink = colors["ink"] if colors["mode"] == "night" else None
+		logos = []
+		for name in HEADER_SOURCES:
+			logo = load_source_logo(
+				os.path.join(HEADER_SOURCE_DIR, f"{name}.png"), HEADER_SOURCE_HEIGHTS[name],
+				ink if name in HEADER_SOURCE_INKED else None, dark_parts=HEADER_SOURCE_INKED.get(name, False))
+			width = sum(item.width for item in logos) + HEADER_SOURCE_GAP * len(logos)
+			if logo is not None and width + logo.width <= right - left:
+				logos.append(logo)
+		if not logos:
+			return False
+		width = sum(logo.width for logo in logos) + HEADER_SOURCE_GAP * (len(logos) - 1)
+		x = left + (right - left - width) / 2
+		for logo in logos:
+			img.paste(logo, (round(x), round((top + bottom - logo.height) / 2)), logo)
+			x += logo.width + HEADER_SOURCE_GAP
+		return True
+
 	def _draw_header_money(self, img, box, turn=0):
 		"""Dollar bills on the wind filling the header's free stretch: the art's bills and coins
 		taken apart and flown again, bill and coin by turns from ``turn`` on, at the stretch's
@@ -2471,9 +2505,10 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			fill=colors["ink"],
 			font=source_font,
 		)
-		# The flight starts from another bill each hour.
-		self._draw_header_money(img, (title_right + 14, 4, source_left - 14, HEADER_RULE_Y - 5),
-								turn=(updated_at or datetime.now()).hour)
+		stretch = (title_right + 14, 4, source_left - 14, HEADER_RULE_Y - 5)
+		if not self._draw_header_sources(img, stretch):
+			# No logo at hand: bills on the wind, the flight starting from another bill each hour.
+			self._draw_header_money(img, stretch, turn=(updated_at or datetime.now()).hour)
 		draw.line((margin, HEADER_RULE_Y, width - margin, HEADER_RULE_Y), fill=colors["accent_gold"], width=3)
 
 	@staticmethod

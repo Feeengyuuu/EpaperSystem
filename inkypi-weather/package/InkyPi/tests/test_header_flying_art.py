@@ -30,7 +30,30 @@ def test_header_art_is_left_out_when_there_is_no_room():
     assert page.getpixel((30, 20)) == (255, 255, 255)
 
 
-def test_stock_header_flies_its_bills_between_the_logo_and_the_source():
+def test_stock_header_names_its_sources_by_logo_between_the_wordmark_and_the_source_line():
+    plugin = StockTracker({"id": "stocktracker"})
+    image = Image.new("RGB", (800, 60), _active_stock_colors()["paper"])
+    flown, drawn = [], []
+    original = plugin._draw_header_sources
+    plugin._draw_header_money = lambda img, box, **kwargs: flown.append(box)
+    plugin._draw_header_sources = lambda img, box: drawn.append(box) or original(img, box)
+
+    plugin._draw_header(image, ImageDraw.Draw(image), 800, [{"symbol": "NVDA"}], header_brand="robinhood")
+
+    # SEC, Nasdaq and Yahoo Finance stand there by their logos; no bills are flown.
+    assert len(drawn) == 1 and not flown
+    left, top, right, bottom = drawn[0]
+    assert 100 < left < right and bottom <= stocktracker.HEADER_RULE_Y
+    paper = _active_stock_colors()["paper"]
+    marked = [x for x in range(left, right) if any(image.getpixel((x, y)) != paper for y in range(top, bottom))]
+    assert len(marked) > 120 and min(marked) > left and max(marked) < right
+    for name in stocktracker.HEADER_SOURCES:
+        assert (Path(stocktracker.HEADER_SOURCE_DIR) / f"{name}.png").is_file()
+    assert (Path(stocktracker.HEADER_SOURCE_DIR) / "logos.source.json").is_file()
+
+
+def test_stock_header_flies_its_bills_when_no_source_logo_is_at_hand(monkeypatch):
+    monkeypatch.setattr(stocktracker, "HEADER_SOURCE_DIR", "missing-folder")
     plugin = StockTracker({"id": "stocktracker"})
     image = Image.new("RGB", (800, 60), _active_stock_colors()["paper"])
     pasted = []
