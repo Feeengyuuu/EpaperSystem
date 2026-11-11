@@ -26,7 +26,7 @@ from plugins.box_office_top_movies.box_office_top_movies import (
 from plugins.context_cache import write_context
 from plugins.box_office_top_movies.china_source import ChinaFetchBudget
 from .north_america_media import (
-    complete_posters, matches_tmdb, movie_identity, reuse_posters,
+    complete_posters, localized_title_followup, matches_tmdb, movie_identity, reuse_posters,
 )
 from utils.http_client import get_http_session
 
@@ -110,6 +110,13 @@ class ChinaBoxOfficeTopMovies(BoxOfficeTopMovies):
 
     def _complete_movie_posters(self, movies, settings, device_config, budget):
         complete_posters(self, movies, settings, device_config, budget)
+
+    def _media_followup_at(self, movies, settings, device_config):
+        # A film still without its Chinese title brings the media pass back when its next
+        # question to TMDB is due, so the title appears without waiting for a new chart.
+        if not self._supports_movie_media_repair(settings):
+            return None
+        return localized_title_followup(self, movies, settings, device_config)
 
     def _load_and_enrich_movies(self, settings, items_count, device_config):
         if not self._supports_movie_media_repair(settings):

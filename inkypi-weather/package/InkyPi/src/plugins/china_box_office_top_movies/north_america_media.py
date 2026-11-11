@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import closing
+from datetime import timedelta
 from html.parser import HTMLParser
 import logging
 import re
@@ -9,7 +10,7 @@ import unicodedata
 from urllib.parse import unquote, urljoin, urlsplit
 
 from plugins.box_office_top_movies.box_office_top_movies import (
-    BoxOfficeMovie, IMAGE_HEADERS, REQUEST_HEADERS,
+    BoxOfficeMovie, IMAGE_HEADERS, REQUEST_HEADERS, TMDB_MOVIE_URL, TMDB_SEARCH_URL,
 )
 from runtime.refresh_contracts import TaskCancelled, TaskDeadlineExceeded
 from utils.safe_image import ImageLimits, safe_open_image_response
@@ -22,6 +23,18 @@ POSTER_LIMITS = ImageLimits(max_bytes=4 * 1024 * 1024, max_width=1600,
 _SLUG_IDENTITY = re.compile(r"(.+)-\(((?:19|20)\d{2})(?:-[A-Za-z][A-Za-z-]*)?\)")
 # Its heading and poster alt text add the original-language title in parentheses.
 _ORIGINAL_TITLE = re.compile(r"\s*\([^()]*[^\x00-\x7f][^()]*\)")
+# A film on the chart without a Simplified Chinese title is asked about again at TMDB, because
+# TMDB's translators often add the title days after the film opens. The time of the next
+# question is kept in the film's ``extra`` (saved with the cached chart and carried to the next
+# chart): three hours after an answer without a title, so a new title reaches the page within
+# hours while a film that never gets one costs at most eight small lookups a day; half an hour
+# after a request that failed or that the poster lookup has just made.
+LOCALIZED_TITLE_CHECK = "localized_title_check"
+LOCALIZED_TITLE_RECHECK = timedelta(hours=3)
+LOCALIZED_TITLE_RETRY = timedelta(minutes=30)
+# At most this many films are asked about in one pass (two or three requests each); the others
+# stay due and are taken by the next passes.
+LOCALIZED_TITLES_PER_PASS = 2
 
 
 def canonical_movie_url(value):
@@ -178,7 +191,7 @@ def reuse_posters(plugin, movies, previous):
                      "localized_title", "localized_language"):
             setattr(movie, name, getattr(old, name))
         movie.extra = dict(movie.extra or {})
-        for name in ("poster_source", "poster_market", "poster_language"):
+        for name in ("poster_source", "poster_market", "poster_language", LOCALIZED_TITLE_CHECK):
             if name in (old.extra or {}):
                 movie.extra[name] = old.extra[name]
 
@@ -230,6 +243,7 @@ def complete_posters(plugin, movies, settings, device_config, budget):
         return value if type(value) is int and value >= 0 else 0
 
     sequence = max((attempt(movie) for movie in movies), default=0)
+    searched = []
     for movie in sorted(missing, key=lambda item: (attempt(item), item.rank)):
         if budget.remaining_seconds() <= 0:
             break
@@ -243,6 +257,7 @@ def complete_posters(plugin, movies, settings, device_config, budget):
                 plugin._download_posters([movie], session=budget)
             elif not movie.tmdb_id:
                 # Prefer a correctly identified TMDb poster, then the chart publisher.
+                searched.append(movie)
                 plugin._enrich_with_tmdb([movie], settings, device_config, session=budget)
                 plugin._download_posters([movie], session=budget)
             if not movie.poster_path and budget.remaining_seconds() > 0:
@@ -253,3 +268,103 @@ def complete_posters(plugin, movies, settings, device_config, budget):
             raise
         except Exception as error:
             logger.warning("North America poster repair deferred. | rank=%s error=%s", movie.rank, type(error).__name__)
+    refresh_localized_titles(plugin, movies, settings, device_config, budget, just_searched=searched)
+
+
+def _awaiting_localized_title(plugin, movies, settings, device_config):
+    """The chart films that would show a Chinese title and have none; none without a TMDB key."""
+    if (not plugin._truthy(settings.get("showLocalizedTitles"), True)
+            or not plugin._tmdb_auth(settings, device_config)):
+        return []
+    return [movie for movie in movies
+            if movie_identity(movie.chart_url)
+            and not plugin._usable_localized_title(movie.localized_title, movie.title)]
+
+
+def _title_check_time(movie):
+    """The recorded time of the film's next title question as text, "" when there is none."""
+    mark = (movie.extra or {}).get(LOCALIZED_TITLE_CHECK)
+    return str(mark.get("retry_at") or "") if isinstance(mark, dict) else ""
+
+
+def _next_title_check(plugin, movie, now):
+    """When this film may be asked about again, or None when it is due now."""
+    retry_at = plugin._parse_datetime(_title_check_time(movie))
+    # A time further ahead than one interval (the clock moved back) is not trusted.
+    return retry_at if retry_at and now < retry_at <= now + LOCALIZED_TITLE_RECHECK else None
+
+
+def localized_title_followup(plugin, movies, settings, device_config):
+    """The earliest time a film without a Chinese title is due to be asked about again (now for a
+    film that is already due), or None when no film waits for one."""
+    now = plugin._source_now()
+    return min((_next_title_check(plugin, movie, now) or now
+                for movie in _awaiting_localized_title(plugin, movies, settings, device_config)), default=None)
+
+
+def _lookup_localized_title(plugin, movie, budget, auth, language):
+    """TMDB's title for the film in ``language``, "" when it has none. A film TMDB has not
+    identified yet (its poster came from the chart publisher) is first searched for and matched
+    by the same year-and-title rule as the poster lookup."""
+    if not movie.tmdb_id:
+        results = plugin._tmdb_get_json(budget, TMDB_SEARCH_URL, auth, {
+            "query": movie.title, "include_adult": "false", "language": "en-US", "region": "US",
+        }).get("results") or []
+        item = plugin._select_tmdb_search_result(movie, results)
+        if not item or not item.get("id"):
+            return ""
+        movie.tmdb_id = item["id"]
+    detail = plugin._tmdb_get_json(budget, TMDB_MOVIE_URL.format(movie_id=movie.tmdb_id), auth,
+                                   {"language": language})
+    return (plugin._usable_localized_title(detail.get("title"), movie.title)
+            or plugin._localized_title_from_alternatives(movie, budget, auth, language))
+
+
+def refresh_localized_titles(plugin, movies, settings, device_config, budget, *, just_searched=()):
+    """Ask TMDB again for the Chinese title of films that still have none, after the posters and
+    within what is left of the caller's budget. Each film is asked about at most once per
+    interval and at most ``LOCALIZED_TITLES_PER_PASS`` films per pass, the longest-waiting first;
+    a film with a title costs nothing. ``just_searched`` are the films the poster lookup asked
+    TMDB about in this pass: their title was part of that lookup, so they wait for a later pass.
+    Optional: a failed request leaves the film as it was, to be asked about again later."""
+    waiting = _awaiting_localized_title(plugin, movies, settings, device_config)
+    if not waiting:
+        return
+    auth = plugin._tmdb_auth(settings, device_config)
+    language = str(settings.get("localizedLanguage") or "zh-CN").strip() or "zh-CN"
+    now = plugin._source_now()
+
+    def wait(movie, interval):
+        movie.extra = {**(movie.extra or {}), LOCALIZED_TITLE_CHECK: {"retry_at": (now + interval).isoformat()}}
+
+    due = []
+    for movie in waiting:
+        if any(movie is other for other in just_searched):
+            if movie.tmdb_id:
+                wait(movie, LOCALIZED_TITLE_RETRY)
+        elif _next_title_check(plugin, movie, now) is None:
+            due.append(movie)
+    # A film never asked about comes first, then the one whose last question is oldest.
+    due.sort(key=lambda movie: (_title_check_time(movie), movie.rank))
+    for movie in due[:LOCALIZED_TITLES_PER_PASS]:
+        if budget.remaining_seconds() <= 0:
+            break
+        # Recorded before asking: whatever the request does, the film is not asked about again
+        # until the short retry interval has passed.
+        wait(movie, LOCALIZED_TITLE_RETRY)
+        try:
+            title = _lookup_localized_title(plugin, movie, budget, auth, language)
+        except TaskDeadlineExceeded:
+            break
+        except TaskCancelled:
+            raise
+        except Exception as error:
+            logger.warning("North America Chinese title lookup deferred. | rank=%s error=%s",
+                           movie.rank, type(error).__name__)
+            continue
+        if title:
+            movie.localized_title, movie.localized_language = title, language
+            movie.extra.pop(LOCALIZED_TITLE_CHECK, None)
+            logger.info("North America Chinese title found. | rank=%s", movie.rank)
+        else:
+            wait(movie, LOCALIZED_TITLE_RECHECK)

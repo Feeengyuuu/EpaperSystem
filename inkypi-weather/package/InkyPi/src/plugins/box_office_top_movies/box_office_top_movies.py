@@ -216,6 +216,13 @@ class BoxOfficeTopMovies(BasePlugin):
     def _poster_repair_possible(self, movies, settings, device_config):
         return bool(self._tmdb_auth(settings, device_config) or any(movie.poster_url for movie in movies))
 
+    def _media_followup_at(self, movies, settings, device_config):
+        """When a chart with every poster in place wants its next media pass, or None for never.
+
+        This chart's media is complete once its posters are.
+        """
+        return None
+
     def get_live_refresh_state(self, settings, current_dt):
         """Offer a bounded media repair only while matching source data is fresh.
 
@@ -279,11 +286,15 @@ class BoxOfficeTopMovies(BasePlugin):
         previous = cache.get("poster_status")
         previous = previous if isinstance(previous, dict) else {}
         attempts = min(self._bounded_int(previous.get("attempts"), 0, 0, 4) + 1, 4) if ready < len(movies) else 0
-        retry = self._source_now() + timedelta(seconds=min(1800, 300 * 2 ** max(0, attempts - 1)))
+        if attempts:
+            retry = self._source_now() + timedelta(seconds=min(1800, 300 * 2 ** max(0, attempts - 1)))
+        else:
+            # Every poster is in place: the next media pass, if any, is for other media details.
+            retry = self._media_followup_at(movies, settings, device_config)
         status = {"ready": ready, "total": len(movies), "attempts": attempts,
                   "settings_key": self._poster_repair_key(settings),
                   "repair_possible": self._poster_repair_possible(movies, settings, device_config),
-                  "retry_at": retry.isoformat() if attempts else None}
+                  "retry_at": retry.isoformat() if retry else None}
         if cache.get("movies"):
             self._write_cache({**cache, "movies": [movie.to_dict() for movie in movies], "poster_status": status})
         try:
