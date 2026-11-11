@@ -930,6 +930,28 @@ def test_package_uses_tracked_files_and_the_release_archive_policy(tmp_path):
         release_build.package(repo, commit, target)
 
 
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
+def test_a_moved_file_is_declared_under_both_its_old_and_its_new_path(tmp_path):
+    repo = tmp_path / "repo"
+    package = repo / release_build.PACKAGE
+    (package / "src/a").mkdir(parents=True)
+    (package / "src/a/logo.png").write_bytes(b"the same bytes, long enough for git to call it a rename" * 4)
+    (package / "src/kept.py").write_bytes(b"x = 1")
+    git(tmp_path, "init", "-q", str(repo))
+    git(repo, "add", "--", release_build.PACKAGE)
+    git(repo, "commit", "-q", "-m", "base")
+    base = git(repo, "rev-parse", "HEAD")
+    (package / "src/b").mkdir()
+    git(repo, "mv", f"{release_build.PACKAGE}/src/a/logo.png", f"{release_build.PACKAGE}/src/b/logo.png")
+    (package / "src/kept.py").write_bytes(b"x = 2")
+    git(repo, "add", "--", release_build.PACKAGE)
+    git(repo, "commit", "-q", "-m", "move")
+
+    # The package loses the old member and gains the new one: both are changes to declare.
+    assert release_build.declared_changes(repo, base, git(repo, "rev-parse", "HEAD")) == {
+        "src/a/logo.png", "src/b/logo.png", "src/kept.py"}
+
+
 # --- acceptance checks --------------------------------------------------------------------------------------------
 
 

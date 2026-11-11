@@ -238,6 +238,17 @@ def baseline(ctx: TaskContext, device: Device, base_manifest: Path | None = None
     return record
 
 
+def declared_changes(repo, base_commit: str, commit: str) -> set[str]:
+    """The package members git says differ between two commits: added, changed and removed.
+
+    Without rename detection: a moved file is a removal and an addition in the package, and git
+    would otherwise name only its new path.
+    """
+    return {name.removeprefix(PACKAGE + "/")
+            for name in git(repo, "diff", "--no-renames", "--name-only", base_commit, commit, "--",
+                            PACKAGE).splitlines()}
+
+
 def build(ctx: TaskContext, expect_changes: set[str] | None = None,
           expect_dependency_changes: dict | None = None) -> dict:
     """Package committed HEAD and prove its change set against the base manifest.
@@ -263,8 +274,7 @@ def build(ctx: TaskContext, expect_changes: set[str] | None = None,
     require(release_delta.MANIFEST_MEMBER not in hashes,
             f"The package must not contain {release_delta.MANIFEST_MEMBER}: the device would read it as a delta")
     changed = changed_members(before["hashes"], hashes)
-    declared = {name.removeprefix(PACKAGE + "/")
-                for name in git(repo, "diff", "--name-only", base_commit, commit, "--", PACKAGE).splitlines()}
+    declared = declared_changes(repo, base_commit, commit)
     require(changed == declared, f"Packaged changes differ from git: {sorted(changed ^ declared)}")
     if expect_changes is not None:
         require(changed == expect_changes,
