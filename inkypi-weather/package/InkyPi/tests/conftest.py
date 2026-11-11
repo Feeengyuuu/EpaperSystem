@@ -114,6 +114,19 @@ def _supercharger_news_offline(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _money_radar_rotating_feeds_offline(monkeypatch):
+    """Money Radar's rotating feeds (calendar, CBOE, China, IPOs, chatter, wire) never reach the
+    network in tests: their one request fails, which leaves the page as it was, unless a test
+    stands in for it."""
+    from plugins.money_radar import extras
+
+    def offline(*_args, **_kwargs):
+        raise RuntimeError("Money Radar's rotating feeds are offline in tests")
+
+    monkeypatch.setattr(extras, "_get", offline)
+
+
+@pytest.fixture(autouse=True)
 def _collect_new_scratch_entries(request):
     """Queue whatever a test adds under the known scratch roots for teardown cleanup."""
 

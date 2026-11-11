@@ -17,6 +17,7 @@ from utils.page_canvas import PageCanvas
 from utils.safe_image import ImageLimits, safe_open_base64_image, safe_open_image
 from utils.theme_utils import relative_luminance
 
+from . import extras
 from .sources import (
     CURVE_POINTS, EARNINGS_HOURS, FORM_NAMES, ITEM_NAMES, days_until, fear_greed_band, local_now, parse_time,
     upcoming_earnings,
@@ -306,7 +307,16 @@ def _fx_tile(canvas, payload, box):
     _number(canvas, (left + 10, 114), f"¥{latest:.4f}", 28, right - left - 20, _direction(change)[1])
     _change_line(canvas, (left + 10, 138), change, f"{change:+.2f}%" if change is not None else "—",
                  f"{len(series)} 个交易日")
-    sparkline(canvas, (left + 12, 150, right - 12, 176), [value for _day, value in series])
+    # The central bank's parity for the day stands at the end of the market rate's line, as the
+    # coins' 7-day change does on theirs; without it the line keeps the card's width.
+    parity = extras.parity_reading(extras.feed_data(payload.get("extras"), "parity"))
+    line_right = right - 12
+    if parity is not None:
+        figure = f"{parity[0]:.4f}"
+        line_right = right - 19 - max(canvas.width("中间价", 10), canvas.width(figure, 12))
+        canvas.text((right - 10, 156), "中间价", 10, "muted", anchor="rm", bold=False)
+        canvas.text((right - 10, 171), figure, 12, anchor="rm")
+    sparkline(canvas, (left + 12, 150, line_right, 176), [value for _day, value in series])
     # A dollar in the other currencies: each one's flag, its sign and the rate, spread across the
     # foot; when they run long the yen loses its decimal first, then the type steps down.
     rates = []
@@ -670,6 +680,16 @@ def _news(canvas, items, now, left, right, top, rows):
     return news(canvas, items, now, left, right, top, rows)
 
 
+def _rotating_list(canvas, panel, payload, now, left, right, top):
+    from .extra_panels import draw_list
+    draw_list(canvas, panel, payload.get("extras"), now, left, right, top)
+
+
+def _rotating_card(canvas, panel, payload, now):
+    from .extra_panels import draw_card
+    draw_card(canvas, panel, payload.get("extras"), now)
+
+
 def _weekday_date(day):
     value = date.fromisoformat(day)
     return f"{value:%m/%d} 周{WEEKDAYS[value.weekday()]}"
@@ -823,9 +843,15 @@ def _holdings(canvas, payload, now):
     body, rows = top + 42, 5
     news = payload["news"]["data"].get("items", [])
     middle = (left + right) // 2
+    # Where the right half only carries the news on, it takes turns with the rotating lists (the
+    # wire, the week's releases, retail chatter, IPO pricings); "news" is the holdings' own turn.
+    turn = extras.shown_panels(payload.get("extras"), now)[1]
     if not earnings_on and not filings_on:
         _news(canvas, news, now, left + 10, middle - 10, body, rows)
-        _news(canvas, news[rows:], now, middle + 10, right - 10, body, rows)
+        if turn == "news":
+            _news(canvas, news[rows:], now, middle + 10, right - 10, body, rows)
+        else:
+            _rotating_list(canvas, turn, payload, now, middle + 10, right - 10, body)
         canvas.rule((middle, body - 8, middle, bottom - 8))
         return
     if not filings_on:
@@ -838,7 +864,9 @@ def _holdings(canvas, payload, now):
         canvas.rule((middle, body - 8, middle, bottom - 8))
         below = rows - earnings_rows
         _news(canvas, news, now, left + 10, middle - 10, split + 10, below)
-        if len(news) > below:
+        if turn != "news":
+            _rotating_list(canvas, turn, payload, now, middle + 10, right - 10, body)
+        elif len(news) > below:
             _news(canvas, news[below:], now, middle + 10, right - 10, body, rows)
         return
     left_rows = rows
@@ -892,7 +920,13 @@ def render_page(dimensions, payload, settings, now):
     _fx_tile(canvas, payload, TILES[0])
     _crypto_tiles(canvas, payload)
     _yield_tile(canvas, payload, TILES[3])
-    _curve(canvas, payload)
+    # The yield curve's card takes turns with the VIX futures curve and China's markets (the
+    # 10-year card above keeps the curve's other points whichever is up).
+    card = extras.shown_panels(payload.get("extras"), now)[0]
+    if card == "curve":
+        _curve(canvas, payload)
+    else:
+        _rotating_card(canvas, card, payload, now)
     _fear_greed(canvas, payload)
     _macro_tiles(canvas, payload)
     _holdings(canvas, payload, now)

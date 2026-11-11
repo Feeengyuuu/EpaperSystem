@@ -1,4 +1,5 @@
-"""Money Radar: FX, crypto, Treasury yields and macro, plus news, earnings and filings for holdings."""
+"""Money Radar: FX, crypto, Treasury yields and macro, plus news, earnings and filings for holdings;
+two places on the page take turns with the rotating feeds of extras.py."""
 
 from __future__ import annotations
 
@@ -19,14 +20,15 @@ from runtime.refresh_contracts import TaskCancelled, TaskContext
 from utils.app_utils import coerce_bool, get_available_font_names
 from utils.cache_manager import CacheBudget
 
-from . import sources
+from . import extras, sources
 
 
 logger = logging.getLogger(__name__)
 PLUGIN_ID = "money_radar"
 CACHE_SCHEMA = 1
-# Room for the feeds plus a week of Nasdaq calendar days (each kept to the holdings' rows).
-CACHE_BUDGET = CacheBudget(30 * 86400, 24, 4 * 1024 * 1024)
+# Room for the feeds, a week of Nasdaq calendar days (each kept to the holdings' rows) and the
+# rotating feeds with their note of failed tries.
+CACHE_BUDGET = CacheBudget(30 * 86400, 40, 4 * 1024 * 1024)
 DEFAULT_FONT = "Microsoft YaHei"
 TASK_SECONDS = 45
 PORTFOLIO_CONTEXT_MAX_AGE = 30 * 86400
@@ -148,8 +150,12 @@ class MoneyRadar(BasePlugin):
         trending = load(Source("trending", {"skip": list(coins)}, lambda ctx: sources.fetch_trending(coins, ctx),
                                fresh_seconds=2 * 3600, usable_seconds=2 * 86400, validate=sources.valid_trending,
                                timeout_seconds=12))
-        return {**results, "trending": trending, "symbols": list(symbols), "symbols_from_portfolio": from_portfolio,
-                "provenance": combined_provenance(results.values())}
+        # The rotating feeds (extras.py): the week's releases, CBOE positioning, China's markets,
+        # IPO pricings, retail chatter and the Chinese wire. At most one is fetched a refresh, and
+        # like the trending coins they stay outside the page's provenance.
+        rotating = extras.load(book, now, allow_network=allow_network, context=context, force=force)
+        return {**results, "trending": trending, "extras": rotating, "symbols": list(symbols),
+                "symbols_from_portfolio": from_portfolio, "provenance": combined_provenance(results.values())}
 
     @staticmethod
     def _week_earnings(load, symbols, now):
