@@ -1063,7 +1063,8 @@ def test_the_page_renders_the_week_band_and_the_sales_opening_soon(monkeypatch, 
     # The week's sales and counts fill the featured column's foot, which the plain page leaves empty.
     foot = (HERO[0], HERO[3] - 60, HERO[2], HERO[3])
     assert image.crop(foot).tobytes() != plain.crop(foot).tobytes()
-    assert plain.crop(foot).getcolors() == [((HERO[2] - HERO[0]) * 60, colors["paper"])]
+    assert colors["ink"] in set(image.crop(foot).get_flattened_data())
+    assert colors["ink"] not in set(plain.crop(foot).get_flattened_data())
     # Today's cell in the week band lies under a short rule of the accent colour; the others do not.
     x0, y0, x1, _y1 = WEEK_BAND
     cell = (x1 - x0) // 7
@@ -1072,8 +1073,9 @@ def test_the_page_renders_the_week_band_and_the_sales_opening_soon(monkeypatch, 
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])
-def test_the_page_stands_on_plain_paper_without_a_frame_or_tinted_panels(mode, tmp_path):
-    from plugins.ticketmaster_events.week_page import COLUMN_RULE, HEADER_H, HERO, LIST, MARGIN
+def test_the_page_stands_on_pure_paper_under_quiet_doodles_without_a_frame_or_panels(mode, tmp_path):
+    from plugins.ticketmaster_events.week_page import COLUMN_RULE, HEADER_H, HERO, LIST, MARGIN, WEEK_BAND
+    from utils.theme_utils import contrast_ratio
 
     plugin = TicketmasterEvents({"id": "ticketmaster_events"})
     poster = tmp_path / "poster.jpg"
@@ -1085,14 +1087,43 @@ def test_the_page_stands_on_plain_paper_without_a_frame_or_tinted_panels(mode, t
                                   datetime(2026, 10, 25, 9, 30, tzinfo=timezone.utc))
 
     assert colors["paper"] == ((255, 255, 255) if mode == "day" else (0, 0, 0))
-    # The margins around the page and the gutters beside the column rule are the bare paper.
-    for box in ((0, 0, MARGIN, 480), (800 - MARGIN + 1, 0, 800, 480), (0, 476, 800, 480), (0, 0, 800, 4),
-                (HERO[2] + 1, HERO[1], COLUMN_RULE, HERO[3]), (COLUMN_RULE + 1, LIST[1], LIST[0], HERO[3]),
-                (0, HEADER_H + 1, 800, HERO[1])):
-        assert image.crop(box).getcolors() == [((box[2] - box[0]) * (box[3] - box[1]), colors["paper"])]
+
+    def marks(box):
+        """(share of the box that is not the bare paper, the strongest mark's contrast against it)."""
+        pixels = list(image.crop(box).get_flattened_data())
+        drawn = [pixel for pixel in pixels if pixel != colors["paper"]]
+        return len(drawn) / len(pixels), max((contrast_ratio(pixel, colors["paper"]) for pixel in drawn), default=1.0)
+
+    # The margins and gutters hold nothing but the paper and sparse, faint doodle strokes: no frame,
+    # no band, no tinted panel.
+    open_boxes = ((0, 0, MARGIN, 480), (0, 476, COLUMN_RULE, 480), (0, 0, 800, 4),
+                  (HERO[2] + 1, HERO[1], COLUMN_RULE, HERO[3]), (0, HEADER_H + 1, COLUMN_RULE, HERO[1]),
+                  (WEEK_BAND[0], 476, 800, 480))
+    list_boxes = ((COLUMN_RULE + 1, LIST[1], LIST[0], WEEK_BAND[1]), (800 - MARGIN + 1, HEADER_H + 1, 800, WEEK_BAND[1]))
+    for box in (*open_boxes, *list_boxes):
+        share, strongest = marks(box)
+        assert share < 0.25 and strongest < 1.4
+    # The doodles are there in the open areas, and fainter still beside the list's rows.
+    open_strength = max(marks(box)[1] for box in open_boxes)
+    list_strength = max(marks(box)[1] for box in list_boxes)
+    assert 1.1 < open_strength and 1.0 < list_strength < 1.0 + (open_strength - 1.0) * 0.6
     # Hairlines in the neutral rule colour part the header and the two columns.
     assert {image.getpixel((x, HEADER_H)) for x in range(MARGIN, 800 - MARGIN)} == {colors["rule"]}
     assert {image.getpixel((COLUMN_RULE, y)) for y in range(HERO[1], HERO[3])} == {colors["rule"]}
+
+
+def test_a_hairline_chip_clears_the_doodles_under_its_text():
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    colors = plugin._palette({})
+    image = Image.new("RGB", (120, 40), colors["paper"])
+    plugin._draw_backdrop(image, None, colors)
+    assert len(image.getcolors(maxcolors=4096)) > 1
+    draw = ImageDraw.Draw(image)
+
+    plugin._draw_chip(draw, (10, 8, 110, 32), "", plugin._font(12, bold=True), colors)
+
+    inside = image.crop((12, 10, 109, 31))
+    assert inside.getcolors() == [(inside.width * inside.height, colors["paper"])]
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])

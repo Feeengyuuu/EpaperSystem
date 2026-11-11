@@ -1,6 +1,7 @@
 """The Local Events page: the featured event first, what is next beside it, the week below.
 
-800 x 480 on plain paper, the parts kept apart by hairlines. The header names the page, then
+800 x 480 on plain paper under quiet show doodles (faintest behind the list), the parts kept
+apart by hairlines. The header names the page, then
 Ticketmaster by its own wordmark, with the week's count, the area and the update time at the
 right. The left column is the featured event (the biggest tour starting soon): its poster, when
 it starts and its sale state, the headliner over the rest of the bill, its place and distance,
@@ -19,6 +20,8 @@ from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageOps
+
+from utils.doodle_backdrop import paint_doodles
 
 from .team_logos import read_title, team_logo
 from .venue_logos import paste_venue_logo
@@ -86,6 +89,11 @@ ICON_MIN_CONTRAST, ICON_OUTLINE_LUMINANCE = 2.0, 0.18
 # A tour with at least this many dates is called out as one.
 TOUR_CALLOUT_DATES = 10
 MARGIN, HEADER_H = 16, 54
+# Quiet show doodles in the featured event's kind colour lie on the paper under everything: sparse
+# strokes at DOODLE_OPEN of their density in the open areas (the header, the featured column, the
+# week), and at DOODLE_LIST behind the list, whose rows of small type they must not disturb.
+DOODLE_PATH = Path(__file__).with_name("assets") / "doodles" / "events.png"
+DOODLE_OPEN, DOODLE_LIST = 0.15, 0.07
 # Two columns under the header's rule, a hairline at COLUMN_RULE between them: the featured event
 # (HERO) and, beside it, the list (LIST) over the week (WEEK_BAND).
 COLUMN_TOP, COLUMN_BOTTOM, COLUMN_RULE = 64, 474, 324
@@ -318,6 +326,7 @@ class WeekPageMixin:
         width, height = 800, 480
         colors = self._palette(settings)
         image = Image.new("RGB", (width, height), colors["paper"])
+        self._draw_backdrop(image, events[0] if events else None, colors)
         draw = ImageDraw.Draw(image)
         today = generated_at.date() if isinstance(generated_at, datetime) else date.today()
         days = (week or {}).get("days") or []
@@ -335,6 +344,22 @@ class WeekPageMixin:
         if tuple(dimensions) != (width, height):
             image = image.resize(tuple(dimensions), Image.Resampling.LANCZOS)
         return image
+
+    # -- the page under the content ---------------------------------------------------------
+    def _draw_backdrop(self, image, featured, colors):
+        """The doodle tile over the bare paper, one continuous pattern in the featured event's
+        kind colour (the accent with no event): DOODLE_LIST strong behind the list's rows,
+        DOODLE_OPEN everywhere else. The paper itself keeps its colour between the strokes."""
+        tint = self._event_color(featured, colors) if featured is not None else colors["accent"]
+        width, height = image.size
+        list_box = (COLUMN_RULE + 1, HEADER_H + 1, width - 1, WEEK_BAND[1] - 1)
+        zones = [((0, 0, width - 1, HEADER_H), DOODLE_OPEN),
+                 ((0, HEADER_H + 1, COLUMN_RULE, height - 1), DOODLE_OPEN),
+                 ((COLUMN_RULE + 1, WEEK_BAND[1], width - 1, height - 1), DOODLE_OPEN),
+                 (list_box, DOODLE_LIST)]
+        for box, strength in zones:
+            # Every zone tiles from the page's corner, so the strokes run on across their borders.
+            paint_doodles(image, box, DOODLE_PATH, tint, strength=strength, offset=box[:2])
 
     # -- header -----------------------------------------------------------------------------
     def _draw_page_header(self, image, draw, settings, generated_at, stale, days, colors):
@@ -464,10 +489,12 @@ class WeekPageMixin:
 
     def _draw_chip(self, draw, box, text, font, colors, fill=None, radius=3, drop=2):
         """A chip with its text centred, ``drop`` under its top: solid in ``fill`` with the ink
-        that reads on it, or, with no fill, edged by a hairline around the page's ink."""
+        that reads on it, or, with no fill, the bare paper (clear of the backdrop's doodles) edged
+        by a hairline around the page's ink."""
         x0, y0, x1, y1 = box
         if fill is None:
-            draw.rounded_rectangle(box, radius=radius, outline=colors.get("rule", colors["line"]), width=1)
+            draw.rounded_rectangle(box, radius=radius, fill=colors["paper"],
+                                   outline=colors.get("rule", colors["line"]), width=1)
             ink = colors["ink"]
         else:
             draw.rounded_rectangle(box, radius=radius, fill=fill)
