@@ -1,6 +1,8 @@
 """What Money Radar's rotating feeds draw (extras.py says whose turn it is), in the yield-curve
 card's place: the VIX futures curve under the day's put/call ratios, or China's five indices over
-the yuan's central parity. Every figure is ink; colour is on the bars, dots and lines.
+the yuan's central parity, each index led by its exchange's mark. And in the holdings card's right
+half, in turn with the holdings news: r/wallstreetbets' most mentioned tickers, each led by its
+company's logo. Every figure is ink; colour is on the bars, dots, lines and logos.
 """
 
 from utils.flat_icons import draw_icon
@@ -15,6 +17,21 @@ CHINA_COLOUR = render.KIND_COLOURS["宏观"]
 PUT_CALL_LABELS = (("total", "总"), ("equity", "股票"), ("index", "指数"))
 # An index's change as a bar from the middle of its lane, full at this many percent.
 CHINA_BAR_FULL = 3.0
+# Each index by the mark of the exchange (or index company) that publishes it (assets/logos), in
+# a slot this wide before its name.
+INDEX_MARKS = {"上证": "logos/index-sse", "深成": "logos/index-szse", "创业板": "logos/index-szse",
+               "恒生": "logos/index-hsi", "恒生科技": "logos/index-hsi"}
+INDEX_MARK_SIZE, INDEX_MARK_SLOT = 13, 17
+# The chatter list: a title line, then LIST_ROWS rows a column at LIST_PITCH, in CHATTER_COLUMNS
+# columns; each ticker's logo in a slot this wide, its mentions as a bar at most CHATTER_BAR long.
+LIST_ROWS, LIST_PITCH = 4, 19
+CHATTER_TITLE = ("散户热议", "r/wallstreetbets · 24 小时提及", render.KIND_COLOURS["加密"])
+CHATTER_COLUMNS, CHATTER_BAR = 2, 24
+CHATTER_LOGO_SIZE, CHATTER_LOGO_SLOT = 14, 20
+# A logo part this close to the paper in lightness would vanish on it: it is drawn in the ink.
+LOGO_MIN_CONTRAST = 1.6
+# A logo this opaque over its whole box is a tile with its own ground, and is left as it is.
+LOGO_TILE_COVER = 0.9
 
 
 def _colour(canvas, value):
@@ -93,12 +110,15 @@ def _china(canvas, loaded, _now):
             x -= flag.width
             render._paste(canvas, flag, (x, top + 12))
             x -= 4
-    lane = (left + 138, left + 182)
+    lane = (left + 142, left + 180)
     middle = (lane[0] + lane[1]) / 2
     for index, row in enumerate(extras.feed_data(loaded, "cn_indices")["indices"][:5]):
         y = top + 38 + index * 15
-        canvas.text((left + 10, y), row["name"], 12, anchor="lm")
-        canvas.text((left + 130, y), f"{row['last']:,.2f}", 12, anchor="rm")
+        mark = render._asset(INDEX_MARKS[row["name"]], INDEX_MARK_SIZE) if row["name"] in INDEX_MARKS else None
+        if mark is not None:
+            render._paste(canvas, mark, (round(left + 9 + (INDEX_MARK_SLOT - 3 - mark.width) / 2), y - mark.height // 2))
+        canvas.text((left + 9 + INDEX_MARK_SLOT, y), row["name"], 12, anchor="lm")
+        canvas.text((left + 136, y), f"{row['last']:,.2f}", 12, anchor="rm")
         pct = row["pct"]
         reach = (lane[1] - middle) * min(abs(pct), CHINA_BAR_FULL) / CHINA_BAR_FULL
         canvas.draw.line((middle, y - 6, middle, y + 6), fill=canvas.color("rule"), width=1)
@@ -121,6 +141,85 @@ def _china(canvas, loaded, _now):
     x += 12 + canvas.text((x + 12, y), f"{abs(pips):.0f}点", 10, anchor="lm", bold=False) + 8
     if right - 12 - x >= 30:
         render.sparkline(canvas, (x, y - 7, right - 14, y + 6), rates)
+
+
+def _visible(logo, paper, ink):
+    """``logo`` with the parts that would vanish on ``paper`` (a white mark by day, a black one by
+    night) in ``ink``."""
+    if sum(logo.getchannel("A").point(lambda value: 1 if value >= 128 else 0).getdata())             >= LOGO_TILE_COVER * logo.width * logo.height:
+        return logo
+    ground = render.relative_luminance(paper)
+    pixels = logo.load()
+    for y in range(logo.height):
+        for x in range(logo.width):
+            red, green, blue, alpha = pixels[x, y]
+            if alpha < 8:
+                continue
+            lighter, darker = sorted((render.relative_luminance((red, green, blue)), ground), reverse=True)
+            if (lighter + 0.05) / (darker + 0.05) < LOGO_MIN_CONTRAST:
+                pixels[x, y] = (*ink[:3], alpha)
+    return logo
+
+
+def ticker_logo(canvas, row):
+    """The ticker's logo CHATTER_LOGO_SIZE tall: the holdings' own mark where the page has one,
+    else the one kept with the reading; None without either."""
+    logo = render._holding_logo(canvas, row["ticker"], CHATTER_LOGO_SIZE, CHATTER_LOGO_SLOT - 2)
+    if logo is not None:
+        return logo
+    kept = render._coin_logo(row.get("logo"))
+    if kept is None:
+        return None
+    kept.thumbnail((CHATTER_LOGO_SLOT - 2, CHATTER_LOGO_SIZE), render.Image.Resampling.LANCZOS)
+    return _visible(kept, tuple(canvas.color("paper")), tuple(canvas.color("ink")))
+
+
+def _chatter(canvas, loaded, left, right, top):
+    """The most mentioned tickers in two columns: rank, the company's logo, the ticker, a bar and
+    the count of the day's mentions, then the places climbed or lost since yesterday (新 for a
+    newcomer)."""
+    tickers = extras.feed_data(loaded, "chatter")["tickers"][:LIST_ROWS * CHATTER_COLUMNS]
+    gap = 12
+    width = (right - left - gap * (CHATTER_COLUMNS - 1)) / CHATTER_COLUMNS
+    most = max(row["mentions"] for row in tickers) or 1
+    colour = _colour(canvas, CHATTER_TITLE[2])
+    for index, row in enumerate(tickers):
+        column, line = divmod(index, LIST_ROWS)
+        x0 = left + column * (width + gap)
+        x1, y = x0 + width, top + line * LIST_PITCH
+        if column and not line:
+            canvas.rule((x0 - gap / 2, y - 8, x0 - gap / 2, top + (LIST_ROWS - 1) * LIST_PITCH + 8))
+        if line:
+            canvas.draw.line((x0, y - 10, x1, y - 10), fill=canvas.color("rule"), width=1)
+        news_rows.text(canvas, (x0 + 10, y), str(row["rank"]), "time", 11, "ink", "right")
+        logo = ticker_logo(canvas, row)
+        if logo is not None:
+            canvas.image.paste(logo, (round(x0 + 15 + (CHATTER_LOGO_SLOT - logo.width) / 2), round(y - logo.height / 2)),
+                               logo)
+        news_rows.text(canvas, (x0 + 18 + CHATTER_LOGO_SLOT, y), row["ticker"], "ticker", 12, width=44)
+        bar = max(2, CHATTER_BAR * row["mentions"] / most)
+        canvas.draw.rectangle((x0 + 86, y - 3, x0 + 86 + bar, y + 3), fill=colour)
+        move = extras.rank_move(row)
+        if move is None:
+            news_rows.text(canvas, (x1, y), "新", "time", 11, "ink", "right")
+        elif move:
+            reach = news_rows.text(canvas, (x1, y), str(abs(move)), "time", 11, "ink", "right")
+            tone = "up" if move > 0 else "down"
+            draw_icon(canvas.draw, tone, (x1 - reach - 11, y - 5), 9, canvas.color(tone), canvas.color("paper"))
+        else:
+            canvas.draw.line((x1 - 9, y, x1 - 1, y), fill=canvas.color("muted"), width=2)
+        news_rows.text(canvas, (x1 - 30, y), f"{row['mentions']:,}", "time", 11, "ink", "right")
+
+
+def draw_list(canvas, loaded, left, right, top):
+    """The chatter list from ``top`` (its title line's middle) in the holdings card's right half:
+    a bar in its colour, its name and where it comes from, then its rows."""
+    title, note, colour = CHATTER_TITLE
+    canvas.draw.rectangle((left, top - 6, left + 3, top + 6), fill=_colour(canvas, colour))
+    news_rows.text(canvas, (left + 9, top), title, "title", 13)
+    news_rows.text(canvas, (right, top), note, "time", 10, "muted", "right")
+    canvas.draw.line((left, top + 9, right, top + 9), fill=canvas.color("rule"), width=1)
+    _chatter(canvas, loaded, left, right, top + LIST_PITCH)
 
 
 CARDS = {"volatility": _volatility, "china": _china}

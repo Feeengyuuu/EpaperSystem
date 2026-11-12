@@ -1,4 +1,5 @@
-"""Money Radar's rotating feeds: CBOE positioning, China's indices and the central parity."""
+"""Money Radar's rotating feeds: CBOE positioning, China's indices, the central parity and the
+retail chatter list."""
 
 import sys
 from datetime import datetime, timedelta
@@ -63,6 +64,19 @@ PARITY = {"head": {"rep_code": "200"}, "data": {"currency": "USD/CNY", "total": 
     {"date": "2026-11-05", "values": ["6.7156"]}, {"date": "bad", "values": ["6.7"]},
     {"date": "2026-11-04", "values": ["---"]}]}
 # api.nasdaq.com/api/ipo/calendar?date=2026-11 (its upcoming table, one priced row).
+# apewisdom.io/api/v1.0/filter/wallstreetbets/page/1, cut down.
+CHATTER = {"count": 600, "pages": 6, "current_page": 1, "results": [
+    {"rank": 1, "ticker": "NVDA", "name": "NVIDIA", "mentions": "2430", "upvotes": "9000", "rank_24h_ago": "1",
+     "mentions_24h_ago": "1800"},
+    {"rank": 2, "ticker": "AMD", "name": "AMD", "mentions": 535, "upvotes": 800, "rank_24h_ago": 4, "mentions_24h_ago": 300},
+    {"rank": 3, "ticker": "NBIS", "name": "Nebius", "mentions": 476, "upvotes": 500, "rank_24h_ago": None,
+     "mentions_24h_ago": None},
+    {"rank": 4, "ticker": "SPY", "name": "SPDR S&P 500", "mentions": 281, "upvotes": 300, "rank_24h_ago": 3,
+     "mentions_24h_ago": 400},
+    {"rank": 5, "ticker": "not a ticker", "mentions": 100},
+    {"rank": 6, "ticker": "MU", "name": "Micron", "mentions": 198, "upvotes": 100, "rank_24h_ago": 7, "mentions_24h_ago": 90}]}
+
+
 def _context():
     return money_module.TaskContext.never_cancelled(deadline_monotonic=1e12)
 
@@ -78,6 +92,7 @@ def _all_extras():
         "vix_curve": _result(extras.normalize_vix_curve(VIX_CSV, "2026-11-10")),
         "cn_indices": _result(extras.normalize_cn_indices(CN_INDICES)),
         "parity": _result(extras.normalize_parity(PARITY)),
+        "chatter": _result(extras.normalize_chatter(CHATTER)),
     }
 
 
@@ -203,9 +218,75 @@ def test_the_yield_curve_card_takes_turns_every_three_hours():
     first = extras.SLOT_A.index(scheduled[0])
     assert scheduled == [extras.SLOT_A[(first + step) % 3] for step in range(6)]
     assert extras.slot_panel(moments[0] + timedelta(minutes=30)) in (scheduled[0], scheduled[1])
-    # The lists that shared the holdings card for a day are gone with their feeds.
-    assert extras.FEEDS == ("put_call", "vix_curve", "cn_indices", "parity")
-    assert not hasattr(extras, "SLOT_B") and not hasattr(extras, "fetch_wire")
+    # Of the lists that shared the holdings card for a day, only the retail chatter is kept: it
+    # takes turns with the holdings news.
+    assert extras.FEEDS == ("put_call", "vix_curve", "cn_indices", "parity", "chatter")
+    assert extras.SLOT_B == ("chatter", "news") and not hasattr(extras, "fetch_wire")
+    assert [extras.list_panel(moment) for moment in moments[:4]] in (["chatter", "news"] * 2, ["news", "chatter"] * 2)
+
+
+def test_the_chatter_list_gives_its_turn_to_the_news_without_its_ranking(monkeypatch):
+    full = _all_extras()
+    monkeypatch.setattr(extras, "slot_index", lambda _now: 0)
+    assert extras.shown_list(full, NOW) == "chatter"
+    assert extras.shown_list({**full, "chatter": _result({}, "unavailable")}, NOW) == "news"
+    assert extras.shown_list(None, NOW) == "news"
+    short = {"tickers": full["chatter"]["data"]["tickers"][:extras.CHATTER_MIN - 1]}
+    assert extras.shown_list({**full, "chatter": _result(short)}, NOW) == "news"
+    monkeypatch.setattr(extras, "slot_index", lambda _now: 1)
+    assert extras.shown_list(full, NOW) == "news"
+
+
+def test_the_chatter_ranking_normalizes_and_keeps_the_logos_it_already_has(monkeypatch):
+    chatter = extras.normalize_chatter(CHATTER)
+    assert [row["ticker"] for row in chatter["tickers"]] == ["NVDA", "AMD", "NBIS", "SPY", "MU"]
+    assert chatter["tickers"][0] == {"ticker": "NVDA", "mentions": 2430, "rank": 1, "rank_before": 1,
+                                     "mentions_before": 1800}
+    assert [extras.rank_move(row) for row in chatter["tickers"]] == [0, 2, None, -1, 1]
+    assert extras.valid_chatter(chatter) and not extras.valid_chatter({"tickers": []})
+    with pytest.raises(ValueError):
+        extras.normalize_chatter({"results": [{"ticker": "??", "mentions": 1, "rank": 1}]})
+
+    asked = []
+    monkeypatch.setattr(extras, "_get", lambda *_args, **_kwargs: CHATTER)
+    monkeypatch.setattr(extras, "_ticker_logo", lambda ticker, _context: asked.append(ticker) or f"logo-{ticker}")
+    monkeypatch.setattr(extras, "TICKER_LOGOS", 4)
+    first = extras.fetch_chatter(None)
+    # The list's first four have their logos; the fifth is not asked for.
+    assert asked == ["NVDA", "AMD", "NBIS", "SPY"] and "logo" not in first["tickers"][4]
+    assert first["tickers"][1]["logo"] == "logo-AMD" and extras.valid_chatter(first)
+    # The next reading asks only for the tickers it has no logo for ("" counts: there is none).
+    first["tickers"][2]["logo"] = ""
+    asked.clear()
+    again = extras.fetch_chatter(None, {"tickers": first["tickers"][1:]})
+    assert asked == ["NVDA"] and again["tickers"][2]["logo"] == ""
+
+
+def test_a_ticker_logo_is_read_from_the_image_host_and_kept_small(monkeypatch):
+    import base64
+    import io
+
+    from PIL import Image
+
+    art = Image.new("RGBA", (250, 250), (0, 0, 0, 0))
+    art.paste((118, 185, 0, 255), (25, 75, 225, 175))
+    out = io.BytesIO()
+    art.save(out, format="PNG")
+    asked = []
+
+    class Client:
+        def request_bytes(self, method, url, **_options):
+            asked.append(url)
+            if "MISSING" in url:
+                raise HttpStatusError("GET", url, 404)
+            return type("Reply", (), {"data": out.getvalue()})()
+
+    monkeypatch.setattr(extras, "get_http_client", lambda: Client())
+    logo = Image.open(io.BytesIO(base64.b64decode(extras._ticker_logo("NVDA", None))))
+    # Its transparent margin is cut and the mark kept at most TICKER_LOGO_PIXELS a side.
+    assert logo.size == (extras.TICKER_LOGO_PIXELS, extras.TICKER_LOGO_PIXELS // 2)
+    assert asked == ["https://images.financialmodelingprep.com/symbol/NVDA.png"]
+    assert extras._ticker_logo("MISSING", None) == ""
 
 
 def test_a_panel_without_its_data_gives_its_turn_to_the_next(monkeypatch):
@@ -278,7 +359,9 @@ def test_a_refresh_fetches_at_most_one_rotating_feed_and_those_on_show_first(mon
 
     # Each refresh brought one feed: first the ones this slot shows (the parity always shows).
     assert sorted(order) == sorted(extras.FEEDS)
-    assert set(order[:3]) == {"vix_curve", "put_call", "parity"} and order[3] == "cn_indices"
+    shown = extras.shown_feeds(moment)
+    assert {"vix_curve", "put_call", "parity"} <= shown and "cn_indices" not in shown
+    assert set(order[:len(shown)]) == shown
     assert all(result["state"] in ("live", "fresh_cache") for result in loaded.values())
     # Everything is fresh now: the next refresh asks nobody, and a hidden feed (the indices, an
     # hour's life) waits three hours however short its own life.
@@ -300,6 +383,8 @@ def test_a_redraw_from_cache_fetches_nothing(monkeypatch, tmp_path):
 def test_a_failing_feed_keeps_its_last_reading_and_waits_before_its_next_try(monkeypatch, tmp_path):
     calls = []
     _fetchers(monkeypatch, calls)
+    # The chatter list stays out of this: it is fresh for the whole test.
+    monkeypatch.setitem(extras.FRESH_SECONDS, "chatter", 86400)
     book = _book(tmp_path)
     moment = _slot_time("china")
     for step in range(len(extras.FEEDS)):
@@ -448,14 +533,78 @@ def test_the_china_card_lists_five_indices_and_the_parity(monkeypatch, mode):
     assert set(canvas.tones) <= {"ink", "muted"}
 
 
-def test_the_holdings_right_half_carries_the_holdings_news_in_every_slot(monkeypatch):
+def test_the_holdings_right_half_takes_turns_between_the_news_and_the_chatter_list(monkeypatch):
     payload = {**_core_payload(), "extras": _all_extras()}
-    for panel in extras.SLOT_A:
-        canvas, drawn = _recording_canvas(monkeypatch)
-        _schedule(monkeypatch, panel)
-        money_render._holdings(canvas, payload, NOW)
-        assert any(text.startswith("Story") for x, _y, text in drawn if x >= 400)
-        assert not any(text in ("财经快讯", "本周美国数据", "散户热议", "新股定价") for *_xy, text in drawn)
+    payload["extras"]["chatter"]["data"]["tickers"][1]["logo"] = _logo_base64((0, 150, 110, 255))
+    pasted = []
+    canvas, drawn = _recording_canvas(monkeypatch)
+    paste = canvas.image.paste
+    monkeypatch.setattr(canvas.image, "paste", lambda image, *args: pasted.append(args[0]) or paste(image, *args))
+    monkeypatch.setattr(extras, "slot_index", lambda _now: 1)
+    money_render._holdings(canvas, payload, NOW)
+    # The news' turn: the holdings news reads on down the right half.
+    assert any(text.startswith("Story") for x, _y, text in drawn if x >= 400)
+    assert not any(text in ("财经快讯", "本周美国数据", "散户热议", "新股定价") for *_xy, text in drawn)
+
+    drawn.clear()
+    pasted.clear()
+    monkeypatch.setattr(extras, "slot_index", lambda _now: 0)
+    money_render._holdings(canvas, payload, NOW)
+    right = [(x, y, text) for x, y, text in drawn if x >= 400]
+    texts = [text for *_xy, text in right]
+    assert "散户热议" in texts and not any(text.startswith("Story") for text in texts)
+    assert ["NVDA", "AMD", "NBIS", "SPY", "MU"] == [text for text in texts if text in ("NVDA", "AMD", "NBIS", "SPY", "MU")]
+    assert {"2,430", "535", "新"} <= set(texts) and all(y <= 468 for _x, y, _text in right)
+    # NVDA and SPY are holdings with their own marks, AMD has the logo kept with the ranking: three
+    # logos in the list's columns, each before its ticker.
+    logos = [xy for xy in pasted if isinstance(xy, tuple) and xy[0] >= 400 and xy[1] >= 380]
+    assert len(logos) == 3
+    # The other lists stay gone.
+    assert not any(text in ("财经快讯", "本周美国数据", "新股定价") for *_xy, text in drawn)
+
+
+def _logo_base64(colour):
+    import base64
+    import io
+
+    from PIL import Image
+
+    out = io.BytesIO()
+    art = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
+    art.paste(colour, (4, 4, 28, 28))
+    art.save(out, format="PNG")
+    return base64.b64encode(out.getvalue()).decode("ascii")
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_a_logo_that_would_vanish_on_the_paper_takes_the_ink_and_a_tile_keeps_its_ground(mode):
+    from PIL import Image
+
+    palette = money_render._palette({"_inkypi_theme": {"mode": mode}})
+    paper, ink = tuple(palette["paper"]), tuple(palette["ink"])
+    mark = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
+    mark.paste((*paper, 255), (4, 4, 12, 12))
+    assert extra_panels._visible(mark, paper, ink).getpixel((8, 8)) == (*ink, 255)
+    tile = Image.new("RGBA", (16, 16), (*paper, 255))
+    assert extra_panels._visible(tile, paper, ink).getpixel((8, 8)) == (*paper, 255)
+
+
+def test_each_index_on_the_china_card_is_led_by_its_exchanges_mark(monkeypatch):
+    canvas, _drawn = _recording_canvas(monkeypatch)
+    asked = []
+    asset = money_render._asset
+    monkeypatch.setattr(money_render, "_asset", lambda name, height: asked.append(name) or asset(name, height))
+
+    extra_panels.draw_card(canvas, "china", _all_extras(), NOW)
+
+    marks = [name for name in asked if name.startswith("logos/index-")]
+    assert marks == ["logos/index-sse", "logos/index-szse", "logos/index-szse", "logos/index-hsi", "logos/index-hsi"]
+    for name in set(marks):
+        assert money_render._asset(name, extra_panels.INDEX_MARK_SIZE) is not None
+    # Shanghai's red emblem stands before the first index's name.
+    left, top, _right, _bottom = money_render.CURVE_CARD
+    lead = canvas.image.crop((left + 8, top + 30, left + 9 + extra_panels.INDEX_MARK_SLOT, top + 46)).convert("RGB")
+    assert any(red > 150 and green < 80 and blue < 80 for red, green, blue in lead.get_flattened_data())
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])

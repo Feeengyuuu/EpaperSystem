@@ -66,6 +66,39 @@
         64
       ],
       "sha256": "45bcf06fd41e7cbe21f612b832c14aa3e87bcdd22bea8afcc1cf310114cf45d4"
+    },
+    "index-sse": {
+      "source": "https://www.sse.com.cn/xhtml/images/webappicon/apple-touch-icon-180x180.png",
+      "page": "https://www.sse.com.cn/",
+      "licence": "Shanghai Stock Exchange (trademark), from its own site",
+      "source_sha256": "8df34dcb21beb8ddf0cc58d26900cd8f45de31b04095cf158f5baf707f8424c8",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "108bea4df0aaea67840918c7e91ebc8b42f1a5dd8b050949257cadb367ba36a4"
+    },
+    "index-szse": {
+      "source": "https://res.szse.cn/common/images/logo.png",
+      "page": "https://res.szse.cn/",
+      "licence": "Shenzhen Stock Exchange (trademark), from its own site",
+      "source_sha256": "90436f6cc7460de8a965d7539c163370e2e8d768d9142bbbd7c3257a7c5bf472",
+      "size": [
+        49,
+        64
+      ],
+      "sha256": "ed2caefd3869f75401668d6d811380518007b4af8663eb1b7861a2344132206a"
+    },
+    "index-hsi": {
+      "source": "https://www.hsi.com.hk/etc.clientlibs/hsinet/clientlibs/clientlib-react/resources/logo132.png",
+      "page": "https://www.hsi.com.hk/",
+      "licence": "Hang Seng Indexes Company (trademark), from its own site",
+      "source_sha256": "1849a562b47990956822801bcf7c3b985361700df589838569e72928194b0d03",
+      "size": [
+        64,
+        63
+      ],
+      "sha256": "6c21306d93dbca4d96acf58e342864a97676dd16fa20bac80197b2e0ad98ce21"
     }
   }
 }

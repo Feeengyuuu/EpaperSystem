@@ -3,8 +3,10 @@
 The card takes turns with CBOE's positioning (the VIX futures curve under the day's put/call
 ratios) and China's markets (five indices and the yuan's central parity), moving on one place
 every SLOT_SECONDS; a panel without its data gives its turn to the next. The central parity also
-stands on the dollar/yuan card. (For a day the holdings card's right half took turns with a market
-wire, the week's releases, retail chatter and IPO pricings; the owner did not want them.)
+stands on the dollar/yuan card. The holdings card's right half takes turns, on the same clock,
+between the holdings news and r/wallstreetbets' most mentioned tickers, each with its logo. (For a
+day it also took turns with a market wire, the week's releases and IPO pricings; the owner did not
+want those.)
 
 Every feed is optional: it has its own cache and life, a refresh fetches at most one of them (the
 ones on show first), and a failure only leaves the page as it was.
@@ -12,13 +14,18 @@ ones on show first), and a failure only leaves the page as it was.
 
 from __future__ import annotations
 
+import base64
 import html
+import io
 import re
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from PIL import Image
+
 from plugins.base_plugin.source_book import CLOCK_SKEW_SECONDS, LIVE, Source
-from utils.http_client import HttpStatusError, get_http_client
+from utils.http_client import HttpClientError, HttpStatusError, get_http_client
+from utils.safe_image import ImageLimits, safe_open_image
 
 from .sources import REQUEST_TIMEOUT, USER_AGENT, _finite, parse_time
 
@@ -29,15 +36,19 @@ HOUR = 3600
 # What takes turns on the yield-curve card, one place on every SLOT_SECONDS.
 SLOT_SECONDS = 3 * HOUR
 SLOT_A = ("curve", "volatility", "china")
-ALWAYS_READY = frozenset({"curve"})
+# And in the holdings card's right half ("news" is the holdings' own news).
+SLOT_B = ("chatter", "news")
+ALWAYS_READY = frozenset({"curve", "news"})
 # The feeds each panel reads (the first is the one it cannot do without); the parity is also on
 # the dollar/yuan card whatever the slots show.
-PANEL_FEEDS = {"volatility": ("vix_curve", "put_call"), "china": ("cn_indices", "parity")}
+PANEL_FEEDS = {"volatility": ("vix_curve", "put_call"), "china": ("cn_indices", "parity"), "chatter": ("chatter",)}
 ALWAYS_SHOWN = ("parity",)
-FEEDS = ("put_call", "vix_curve", "cn_indices", "parity")
+FEEDS = ("put_call", "vix_curve", "cn_indices", "parity", "chatter")
 # How long each reading is current, and how long a kept one may still be shown.
-FRESH_SECONDS = {"put_call": 6 * HOUR, "vix_curve": 6 * HOUR, "cn_indices": HOUR, "parity": 6 * HOUR}
-USABLE_SECONDS = {"put_call": 6 * 86400, "vix_curve": 6 * 86400, "cn_indices": 4 * 86400, "parity": 6 * 86400}
+FRESH_SECONDS = {"put_call": 6 * HOUR, "vix_curve": 6 * HOUR, "cn_indices": HOUR, "parity": 6 * HOUR,
+                 "chatter": 2 * HOUR}
+USABLE_SECONDS = {"put_call": 6 * 86400, "vix_curve": 6 * 86400, "cn_indices": 4 * 86400, "parity": 6 * 86400,
+                  "chatter": 2 * 86400}
 # A feed that is not on show is refreshed no more often than this; one that failed waits this long.
 HIDDEN_FRESH_SECONDS = 3 * HOUR
 RETRY_SECONDS = 2 * HOUR
@@ -64,6 +75,15 @@ CN_INDICES = (("s_sh000001", "上证"), ("s_sz399001", "深成"), ("s_sz399006",
 CN_INDEX_URL = "https://qt.gtimg.cn/q=" + ",".join(code for code, _name in CN_INDICES)
 PARITY_URL = "https://www.chinamoney.com.cn/ags/ms/cm-u-bk-ccpr/CcprHisNew"
 PARITY_DAYS = 30
+# r/wallstreetbets' most mentioned tickers (ApeWisdom), the list's first TICKER_LOGOS each with its
+# company's logo from Financial Modeling Prep's image host, kept small with the reading.
+CHATTER_URL = "https://apewisdom.io/api/v1.0/filter/wallstreetbets/page/1"
+MAX_TICKERS = 12
+CHATTER_MIN = 4
+TICKER_LOGO_URL = "https://images.financialmodelingprep.com/symbol/{ticker}.png"
+TICKER_LOGOS = 8
+TICKER_LOGO_PIXELS = 32
+TICKER_LOGO_LIMITS = ImageLimits(max_bytes=256 * 1024, max_width=1024, max_height=1024, max_pixels=1024 * 1024)
 
 
 def _get(url, context, *, max_bytes, params=None, headers=None, encoding=None):
@@ -248,6 +268,74 @@ def parity_reading(data):
     return rates[-1], (rates[-1] - rates[-2]) * 10000, rates
 
 
+# --- r/wallstreetbets' most mentioned tickers (ApeWisdom) --------------------------------------
+
+def normalize_chatter(payload):
+    """{tickers: [{ticker, mentions, rank, rank_before, mentions_before}]} in rank order."""
+    rows = payload.get("results") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        raise ValueError("ApeWisdom returned no ranking")
+    tickers = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        ticker = str(row.get("ticker") or "").strip().upper()
+        mentions, rank = _whole(row.get("mentions")), _whole(row.get("rank"))
+        if not re.fullmatch(r"[A-Z][A-Z0-9.]{0,5}", ticker) or mentions is None or not rank:
+            continue
+        tickers.append({"ticker": ticker, "mentions": mentions, "rank": rank,
+                        "rank_before": _whole(row.get("rank_24h_ago")) or None,
+                        "mentions_before": _whole(row.get("mentions_24h_ago"))})
+        if len(tickers) >= MAX_TICKERS:
+            break
+    if not tickers:
+        raise ValueError("ApeWisdom returned no tickers")
+    return {"tickers": tickers}
+
+
+def _ticker_logo(ticker, context):
+    """A ticker's logo from the image host, shrunk and kept as base64 PNG; "" when there is none
+    or it cannot be read."""
+    try:
+        data = get_http_client().request_bytes(
+            "GET", TICKER_LOGO_URL.format(ticker=ticker), context=context, timeout=REQUEST_TIMEOUT,
+            max_bytes=TICKER_LOGO_LIMITS.max_bytes, headers={"User-Agent": USER_AGENT}).data
+        logo = safe_open_image(io.BytesIO(data), limits=TICKER_LOGO_LIMITS).convert("RGBA")
+    except (HttpClientError, OSError, ValueError, Image.DecompressionBombError):
+        return ""
+    box = logo.getchannel("A").getbbox()
+    if box is None:
+        return ""
+    logo = logo.crop(box)
+    logo.thumbnail((TICKER_LOGO_PIXELS, TICKER_LOGO_PIXELS), Image.Resampling.LANCZOS)
+    out = io.BytesIO()
+    logo.save(out, format="PNG", optimize=True)
+    return base64.b64encode(out.getvalue()).decode("ascii")
+
+
+def fetch_chatter(context, known=None):
+    """The ranking, its first TICKER_LOGOS tickers with their logos: one already kept in ``known``
+    (the last reading) is not asked for again, found or not."""
+    chatter = normalize_chatter(_get(CHATTER_URL, context, max_bytes=128 * 1024, headers={"Accept": "application/json"}))
+    kept = {row.get("ticker"): row["logo"] for row in (known or {}).get("tickers") or []
+            if isinstance(row, dict) and isinstance(row.get("logo"), str)}
+    for row in chatter["tickers"][:TICKER_LOGOS]:
+        row["logo"] = kept[row["ticker"]] if row["ticker"] in kept else _ticker_logo(row["ticker"], context)
+    return chatter
+
+
+def valid_chatter(data):
+    tickers = (data or {}).get("tickers")
+    return isinstance(tickers, list) and bool(tickers) and all(
+        isinstance(row, dict) and row.get("ticker") and _whole(row.get("rank")) for row in tickers)
+
+
+def rank_move(row):
+    """Places climbed since a day ago (negative: fallen); None for a ticker that was not ranked."""
+    before = _whole(row.get("rank_before"))
+    return None if not before else before - row["rank"]
+
+
 # --- Whose turn it is --------------------------------------------------------------------------
 
 def slot_index(now):
@@ -272,6 +360,8 @@ def panel_ready(panel, loaded, now):
     data = feed_data(loaded, PANEL_FEEDS[panel][0])
     if panel == "volatility":
         return valid_vix_curve(data)
+    if panel == "chatter":
+        return valid_chatter(data) and len(data["tickers"]) >= CHATTER_MIN
     return valid_cn_indices(data)
 
 
@@ -284,6 +374,18 @@ def shown_panel(loaded, now):
         if panel_ready(panel, loaded, now):
             return panel
     return SLOT_A[0]
+
+
+def list_panel(now):
+    """What this slot schedules in the holdings card's right half."""
+    return SLOT_B[slot_index(now) % len(SLOT_B)]
+
+
+def shown_list(loaded, now):
+    """What to draw in the holdings card's right half: the scheduled list when it has its data,
+    else the holdings news."""
+    panel = list_panel(now)
+    return panel if panel_ready(panel, loaded, now) else "news"
 
 
 # --- Loading: one request a refresh ---------------------------------------------------------
@@ -337,12 +439,21 @@ def _sources(book, now, state):
         "vix_curve": dated("vix_curve", valid_vix_curve),
         "cn_indices": source("cn_indices", lambda context: fetch_cn_indices(context), valid_cn_indices),
         "parity": source("parity", lambda context: fetch_parity(now, context), valid_parity),
+        "chatter": source("chatter", lambda context: fetch_chatter(context, _kept(book, source("chatter", None,
+                                                                                               valid_chatter))),
+                          valid_chatter),
     }
 
 
+def _kept(book, spec):
+    kept = book.read(spec)
+    return kept.get("data") if isinstance(kept, dict) and isinstance(kept.get("data"), dict) else None
+
+
 def shown_feeds(now):
-    """The feeds whose panel this slot schedules, and the ones always on the page."""
-    return set(PANEL_FEEDS.get(slot_panel(now), ())) | set(ALWAYS_SHOWN)
+    """The feeds whose panels this slot schedules, and the ones always on the page."""
+    return {feed for panel in (slot_panel(now), list_panel(now)) for feed in PANEL_FEEDS.get(panel, ())} \
+        | set(ALWAYS_SHOWN)
 
 
 def _due(book, sources, state, now, force):

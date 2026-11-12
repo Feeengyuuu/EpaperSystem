@@ -150,7 +150,7 @@ class MoneyRadar(BasePlugin):
         trending = load(Source("trending", {"skip": list(coins)}, lambda ctx: sources.fetch_trending(coins, ctx),
                                fresh_seconds=2 * 3600, usable_seconds=2 * 86400, validate=sources.valid_trending,
                                timeout_seconds=12))
-        # The rotating feeds (extras.py): CBOE positioning and China's markets. At most one is
+        # The rotating feeds (extras.py): CBOE positioning, China's markets and retail chatter. At most one is
         # fetched a refresh, and like the trending coins they stay outside the page's provenance.
         rotating = extras.load(book, now, allow_network=allow_network, context=context, force=force)
         return {**results, "trending": trending, "extras": rotating, "symbols": list(symbols),

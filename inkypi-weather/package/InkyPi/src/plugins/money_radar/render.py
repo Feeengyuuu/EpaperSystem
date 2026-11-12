@@ -804,6 +804,12 @@ def _filings(canvas, payload, left, right, top, rows):
         canvas.text((left, top + len(items) * 19), text, 11, "muted", anchor="lm", bold=False, width=right - left)
 
 
+def _chatter_list(canvas, payload, left, right, top):
+    from . import extra_panels
+
+    extra_panels.draw_list(canvas, payload.get("extras"), left, right, top)
+
+
 def _holdings(canvas, payload, now):
     left, top, right, bottom = 12, 336, 788, 468
     canvas.draw.rounded_rectangle((left, top, right, bottom), radius=6, outline=canvas.color("rule"), width=1)
@@ -838,9 +844,14 @@ def _holdings(canvas, payload, now):
     body, rows = top + 42, 5
     news = payload["news"]["data"].get("items", [])
     middle = (left + right) // 2
+    # Where the right half only carries the news on, it takes turns with the retail chatter list.
+    chatter = extras.shown_list(payload.get("extras"), now) == "chatter"
     if not earnings_on and not filings_on:
         _news(canvas, news, now, left + 10, middle - 10, body, rows)
-        _news(canvas, news[rows:], now, middle + 10, right - 10, body, rows)
+        if chatter:
+            _chatter_list(canvas, payload, middle + 10, right - 10, body)
+        else:
+            _news(canvas, news[rows:], now, middle + 10, right - 10, body, rows)
         canvas.rule((middle, body - 8, middle, bottom - 8))
         return
     if not filings_on:
@@ -853,7 +864,9 @@ def _holdings(canvas, payload, now):
         canvas.rule((middle, body - 8, middle, bottom - 8))
         below = rows - earnings_rows
         _news(canvas, news, now, left + 10, middle - 10, split + 10, below)
-        if len(news) > below:
+        if chatter:
+            _chatter_list(canvas, payload, middle + 10, right - 10, body)
+        elif len(news) > below:
             _news(canvas, news[below:], now, middle + 10, right - 10, body, rows)
         return
     left_rows = rows
