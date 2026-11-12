@@ -2,7 +2,8 @@
 
 The main camera fills the left with its last three hourly stills beneath it; four more
 cameras on other roads fill the right. Each refresh takes the newest stills; when one
-cannot be fetched the last copy on disk stands in, marked with its age.
+cannot be fetched the last copy on disk stands in, marked with its age. A message one of
+Caltrans' changeable message signs shows that matters heads the page on a message board.
 """
 
 from __future__ import annotations
@@ -179,6 +180,13 @@ class BayTrafficCams(BasePlugin):
                 frames.update(self._load_frames([camera["image"] for camera in others], now,
                                                 allow_network=allow_network, context=context, want=EXTRA_PATROL))
                 extras = [camera for camera in others if camera["image"] in frames][:EXTRA_PATROL]
+        # What the district's message signs report, for the header's board: an extra, asked last so
+        # it never takes a still's time, and never part of the page's health.
+        signs = book.load(Source("signs", {"home": [round(home[0], 3), round(home[1], 3)]},
+                                 lambda ctx: sources.fetch_signs(home, ctx), fresh_seconds=300,
+                                 usable_seconds=30 * 60, validate=sources.valid_signs, timeout_seconds=8),
+                          now, allow_network=allow_network, context=context, force=force)
+        sign = sources.pick_message(signs["data"], chosen + extras)
         live = sum(1 for camera in chosen if (frames.get(camera["image"]) or {}).get("live"))
         if not frames:
             provenance = SourceProvenance.LOCAL_FALLBACK
@@ -189,7 +197,7 @@ class BayTrafficCams(BasePlugin):
         else:
             provenance = SourceProvenance.FRESH_CACHE
         return {"cameras": chosen, "extras": extras, "frames": frames, "list_state": cameras["state"],
-                "provenance": provenance}
+                "sign": sign, "signs_state": signs["state"], "provenance": provenance}
 
     def render_cached_display(self, settings, device_config, *, resolved_theme_context):
         return self.render_themed_image(settings, device_config, theme_render_only=True,

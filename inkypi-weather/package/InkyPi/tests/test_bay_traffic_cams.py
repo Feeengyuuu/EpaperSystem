@@ -17,6 +17,16 @@ NOW = datetime(2026, 10, 24, 10, 50, tzinfo=sources.PACIFIC)
 BASE = "https://cwwp2.dot.ca.gov/data/d4/cctv/image"
 
 
+@pytest.fixture(autouse=True)
+def no_message_signs(monkeypatch):
+    """The message signs are left out here (tests/test_bay_traffic_cams_signs.py has them): no test
+    reaches Caltrans for them."""
+    def offline(*_args):
+        raise OSError("offline in tests")
+
+    monkeypatch.setattr(sources, "fetch_signs", offline)
+
+
 def _row(name, route, direction, lat, lon, frequency="15", in_service="true"):
     camera_id = name.split(" ", 1)[0].lower()
     static = {"currentImageURL": f"{BASE}/{camera_id}/{camera_id}.jpg", "referenceImageUpdateFrequency": frequency,

@@ -1,6 +1,6 @@
 """Caltrans District 4 freeway cameras: the ones near home, a district-wide patrol for the main
 view, the live stills and the hourly reference stills Caltrans keeps for each camera (the
-time-lapse).
+time-lapse); and what the district's changeable message signs report when it matters.
 """
 
 from __future__ import annotations
@@ -252,6 +252,172 @@ def history_is_fresh(camera, frames, now, slack_minutes=90):
 def direction_label(direction):
     """The cardinal plaque's legend for Caltrans' direction ("North" -> "NORTH"), "" when unknown."""
     return DIRECTIONS.get(str(direction or "").strip().title(), "")
+
+
+# --- Changeable message signs ---------------------------------------------------------------------
+
+# District 4's changeable message signs (about 220 KB, served uncompressed, renewed every minute):
+# some 190 signs, most of them blank or showing travel times. Only the ones that report something
+# (a crash, blocked lanes, a closure, chain control) are kept, so the cache is a kilobyte or two.
+SIGNS_URL = "https://cwwp2.dot.ca.gov/data/d4/cms/cmsStatusD04.json"
+MAX_SIGNS_BYTES = 400 * 1024
+MAX_SIGNS = 24
+# A sign's message belongs to a camera on the same route this near it.
+SIGN_TIE_KM = 20
+# A travel-time line as the sign shows it: "MILPITAS  17 MIN".
+TRAVEL_LINE = re.compile(r".+?\s+\d{1,3}\s*MIN")
+# When a notice gives a day or an hour it is about something still to come.
+SCHEDULE = re.compile(
+    r"\b(?:MON|TUE|TUES|WED|THU|THUR|THURS|FRI|SAT|SUN)(?:DAY|SDAY|NESDAY|RSDAY|URDAY)?\b"
+    r"|\b(?:JAN|FEB|MAR|APR|JUN|JUL|AUG|SEP|SEPT|OCT|NOV|DEC)\b|\b(?:TONIGHT|TOMORROW|NIGHTLY|WEEKEND|WEEKNIGHTS?)\b"
+    r"|\d\s*(?:AM|PM)\b")
+CLOSING = re.compile(r"\b(?:CLOSED|CLOSURES?|CLOSING)\b")
+ROADWORK = re.compile(r"\b(?:ROAD ?WORK|CONSTRUCTION|DETOUR|PAVING|MAINTENANCE)\b")
+# What a message reports, most urgent first: (kind, what its words look like).
+SIGN_KINDS = (
+    ("crash", re.compile(r"\b(?:CRASH|ACCIDENT|COLLISION|INCIDENT|OVERTURN\w*|SPILL|STALL\w*|DEBRIS|EMERGENCY|POLICE)\b")),
+    ("alert", re.compile(r"\b(?:AMBER|SILVER|FEATHER|EBONY|ENDANGERED) ALERT\b|\bEVACUAT\w*|\bTSUNAMI\b")),
+    ("blocked", re.compile(r"\b(?:CLOSED|CLOSURES?|CLOSING|BLKD|BLOCKED)\b")),
+    ("weather", re.compile(r"\b(?:CHAINS?|SNOW|ICE|ICY|FOG|WINDS?|GUSTS?|FLOOD\w*|FIRE|SMOKE|SLIDE|MUDSLIDE|ROCKSLIDE)\b")),
+    ("work", re.compile(r"\b(?:ROAD ?WORK|CONSTRUCTION|DETOUR|PAVING|MAINTENANCE|DELAYS?|CONGEST\w*|HEAVY TRAFFIC|"
+                        r"TRAFFIC (?:AHEAD|ALERT|JAM)|EVENT TRAFFIC|BACKUP|EXPECT)\b")),
+)
+# A notice of something planned ranks between the weather and the roadwork under way.
+SIGN_RANK = {"crash": 0, "alert": 0, "blocked": 1, "weather": 2, "planned": 3, "work": 4}
+WEATHER_LABELS = (("CHAIN", "防滑链"), ("FOG", "浓雾"), ("WIND", "大风"), ("GUST", "大风"), ("FLOOD", "积水"),
+                  ("SNOW", "冰雪"), ("ICE", "冰雪"), ("ICY", "冰雪"), ("FIRE", "火情"), ("SMOKE", "火情"))
+
+
+def _sign_pages(message):
+    """A sign's pages as lists of its lines, in capitals, without the empty or unreported ones."""
+    pages = []
+    for phase in ("phase1", "phase2"):
+        page = message.get(phase) if isinstance(message, dict) else None
+        lines = [" ".join(str((page or {}).get(f"{phase}Line{index}") or "").split()).upper()[:24] for index in (1, 2, 3)]
+        lines = [line for line in lines if line and line != "NOT REPORTED"]
+        if lines:
+            pages.append(lines)
+    return pages
+
+
+def sign_kind(pages):
+    """What a sign's message reports ("crash", "alert", "blocked", "weather", "planned", "work"),
+    or None for travel times, a slogan or anything else that needs no one's attention."""
+    lines = [line for page in pages for line in page]
+    if not lines or all(TRAVEL_LINE.fullmatch(line) for line in lines):
+        return None
+    text = " ".join(lines)
+    for kind, pattern in SIGN_KINDS:
+        if pattern.search(text):
+            # A closure or roadwork with a day or an hour on it is a notice of what is to come.
+            if kind in ("blocked", "work") and (CLOSING.search(text) or ROADWORK.search(text)) and SCHEDULE.search(text):
+                return "planned"
+            return kind
+    return None
+
+
+def sign_label(kind, pages):
+    """The message's kind in Chinese, by its own words where the kind covers several things."""
+    text = " ".join(line for page in pages for line in page)
+    if kind == "blocked":
+        return "封闭" if CLOSING.search(text) else "车道受阻"
+    if kind == "planned":
+        return "封闭预告" if CLOSING.search(text) else "施工预告"
+    if kind == "weather":
+        return next((label for word, label in WEATHER_LABELS if re.search(rf"\b{word}", text)), "路况警示")
+    if kind == "work":
+        return "施工" if ROADWORK.search(text) else "延误"
+    return {"crash": "事故", "alert": "警报"}.get(kind, "情报板")
+
+
+def normalize_signs(payload, home):
+    """The in-service signs whose message matters, most urgent first and then nearest home:
+    {signs: [{id, route, direction, place, lat, lon, distance_km, pages, kind, posted}]}."""
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(rows, list) or len(rows) > 2000:
+        raise ValueError("Caltrans returned no sign list")
+    signs = []
+    for row in rows:
+        sign = row.get("cms") if isinstance(row, dict) else None
+        if not isinstance(sign, dict) or str(sign.get("inService")).lower() != "true":
+            continue
+        location, message = sign.get("location") or {}, sign.get("message") or {}
+        pages = _sign_pages(message)
+        kind = sign_kind(pages)
+        try:
+            point = (float(location.get("latitude")), float(location.get("longitude")))
+        except (TypeError, ValueError):
+            continue
+        if kind is None or not (-90 <= point[0] <= 90 and -180 <= point[1] <= 180):
+            continue
+        stamp = message.get("messageTimestamp") or {}
+        try:
+            posted = datetime.fromisoformat(f"{stamp.get('messageDate')}T{stamp.get('messageTime')}").replace(tzinfo=PACIFIC)
+        except (TypeError, ValueError):
+            posted = None
+        signs.append({"id": str(sign.get("index") or "")[:12], "route": str(location.get("route") or "")[:10],
+                      "direction": str(location.get("direction") or "")[:10],
+                      "place": str(location.get("nearbyPlace") or "")[:24],
+                      "lat": round(point[0], 5), "lon": round(point[1], 5),
+                      "distance_km": round(distance_km(home, point), 1), "pages": pages, "kind": kind,
+                      "posted": posted.isoformat() if posted else None})
+    signs.sort(key=lambda sign: (SIGN_RANK[sign["kind"]], sign["distance_km"], sign["id"]))
+    return {"signs": signs[:MAX_SIGNS]}
+
+
+def fetch_signs(home, context):
+    context.raise_if_cancelled()
+    response = get_http_client().request_json("GET", SIGNS_URL, context=context, timeout=(4, 8),
+                                              max_bytes=MAX_SIGNS_BYTES, headers={"User-Agent": USER_AGENT})
+    context.raise_if_cancelled()
+    return normalize_signs(response.data, home)
+
+
+def valid_signs(data):
+    signs = data.get("signs") if isinstance(data, dict) else None
+    return isinstance(signs, list) and len(signs) <= MAX_SIGNS and all(
+        isinstance(sign, dict) and isinstance(sign.get("route"), str) and sign.get("kind") in SIGN_RANK
+        and isinstance(sign.get("pages"), list) and sign["pages"]
+        and all(isinstance(page, list) and 1 <= len(page) <= 3 and all(isinstance(line, str) for line in page)
+                for page in sign["pages"])
+        and isinstance(sign.get("distance_km"), (int, float)) for sign in signs)
+
+
+def _tied_camera(sign, cameras):
+    """The first camera on screen that looks at the sign's road near it (its index), else None."""
+    for index, camera in enumerate(cameras or []):
+        try:
+            point = (float(camera["latitude"]), float(camera["longitude"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if camera.get("route") == sign["route"] and distance_km(point, (sign["lat"], sign["lon"])) <= SIGN_TIE_KM:
+            return index
+    return None
+
+
+def pick_message(data, cameras):
+    """The one message for the page's board: the most urgent kind first, then a message on the
+    road of a camera on screen (the main view before the wall), then the nearest to home. The
+    same message on several signs is one message, told at the sign that put it first; of a
+    sign's two pages the board takes the one that says what is the matter.
+    {kind, label, lines, route, direction, place, posted, signs, camera, more}, or None
+    (``camera`` is the index in ``cameras`` of the one on the sign's road, else None)."""
+    groups = {}
+    for sign in (data or {}).get("signs") or []:
+        tie = _tied_camera(sign, cameras)
+        order = (SIGN_RANK[sign["kind"]], tie is None, tie or 0, sign["distance_km"])
+        group = groups.setdefault((sign["kind"], tuple(sign["pages"][0][:2])), {"count": 0, "best": None})
+        group["count"] += 1
+        if group["best"] is None or order < group["best"][0]:
+            group["best"] = (order, sign, tie)
+    if not groups:
+        return None
+    ranked = sorted(groups.values(), key=lambda group: group["best"][0])
+    _order, sign, tie = ranked[0]["best"]
+    page = next((page for page in sign["pages"] if sign_kind([page]) is not None), sign["pages"][0])
+    return {"kind": sign["kind"], "label": sign_label(sign["kind"], sign["pages"]), "lines": list(page),
+            "route": sign["route"], "direction": sign["direction"], "place": sign["place"], "posted": sign["posted"],
+            "signs": ranked[0]["count"], "camera": tie, "more": len(ranked) - 1}
 
 
 def is_placeholder(image):

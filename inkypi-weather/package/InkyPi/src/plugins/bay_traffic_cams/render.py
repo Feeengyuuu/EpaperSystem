@@ -6,6 +6,10 @@ Every camera is labelled the way the road signs it: its official route shield, t
 direction plaque posted with it (NORTH, SOUTH, EAST, WEST) and a green guide sign with the place, then a navigation arrow the way it lies from
 home and how long ago the still was taken; one that stopped updating is marked 画面停更.
 Each still carries a CCTV-style camera tag.
+
+When one of Caltrans' changeable message signs reports something that matters (a crash, blocked
+lanes, a closure, chain control), the header's note gives its place to a message board with the
+sign's own lines, what they report and where the sign stands.
 """
 
 from __future__ import annotations
@@ -421,6 +425,96 @@ def _side(canvas, payload, now):
         _guide_sign(canvas, camera["place"], (cx, top + 25), 19, cell_w, series="D")
 
 
+# The header's message board: the face of one of Caltrans' changeable message signs with the
+# lines the sign shows, in the header between its top and the rule; then what the message
+# reports and where the sign stands.
+BOARD_TOP, BOARD_BOTTOM = 4, 48
+BOARD_FACE = (6, 7, 8)
+# The sign's lines are highway lettering (Roadgeek series D) in the recorder text's white: small
+# text stays uncoloured on the six-colour panel. The amber is on the housing's two beacons.
+BOARD_INK = crt.OSD
+BOARD_BEACON = (255, 176, 0)
+BOARD_TEXT = 13
+BOARD_LINE = 13
+BOARD_MAX_LINE = 190
+# Kinds that are happening now take the page's red; a notice or the weather its amber.
+BOARD_URGENT = ("crash", "alert", "blocked")
+
+
+def valid_message(message):
+    """Whether a payload's sign message has the shape the board draws."""
+    return (isinstance(message, dict) and isinstance(message.get("lines"), list) and 1 <= len(message["lines"]) <= 3
+            and all(isinstance(line, str) and line for line in message["lines"])
+            and all(isinstance(message.get(key), str) for key in ("label", "route", "kind")))
+
+
+def board_notes(message, wall=5):
+    """The note beside the board, fullest wording first: when the sign put the message up, the
+    camera on screen that looks at its road (the main view, a numbered one of the ``wall``
+    cameras, or one of the patrol strip's after them) and how many more messages wait. A narrow
+    header takes the first wording that fits, so the camera outlasts the hour and the count."""
+    try:
+        posted = f"{datetime.fromisoformat(str(message.get('posted'))):%H:%M}"
+    except (TypeError, ValueError):
+        posted = ""
+    tied = message.get("camera")
+    camera = "" if not isinstance(tied, int) or tied < 0 else (
+        "主画面同路" if tied == 0 else f"CAM-{tied + 1:02d} 同路" if tied < wall else "巡视镜头同路")
+    more = f"另 {message['more']} 条" if isinstance(message.get("more"), int) and message["more"] > 0 else ""
+    wordings = [(posted and f"{posted} 发布", camera, more), (posted, camera, more), (posted, camera), (camera, more),
+                (camera,), (posted and f"{posted} 发布", more), (posted and f"{posted} 发布",), (posted,)]
+    notes = [" · ".join(part for part in wording if part) for wording in wordings]
+    return list(dict.fromkeys(note for note in notes if note))
+
+
+def _message_board(canvas, message, left, right, wall=5):
+    """Draw the message board from ``left`` in the header and return its face's box; None (and
+    nothing drawn) when the face does not fit before ``right``.
+
+    The face is the sign's: a black panel in a grey housing, an amber beacon in each upper
+    corner, with the sign's own lines centred as the sign centres them. Beside it, as far as there
+    is room: a pill with what the message reports (red when it is happening now, amber for a
+    notice or the weather) and a note, then the sign's place the way the cameras are named, by
+    route shield, direction plaque and guide sign."""
+    legends = [fit_sign(canvas, line, BOARD_TEXT, BOARD_MAX_LINE, BOARD_LINE + 3, series="D") for line in message["lines"]]
+    face_w = round(max(legend.width for legend in legends)) + 30
+    if left + face_w > right:
+        return None
+    face = (round(left), BOARD_TOP, round(left) + face_w, BOARD_BOTTOM)
+    canvas.draw.rounded_rectangle(face, radius=4, fill=BOARD_FACE, outline=crt.BEZEL_LIGHT, width=1)
+    for x in (face[0] + 7, face[2] - 7):
+        canvas.draw.ellipse((x - 3, BOARD_TOP + 4, x + 3, BOARD_TOP + 10), fill=BOARD_BEACON)
+    middle = (BOARD_TOP + BOARD_BOTTOM) / 2
+    for index, legend in enumerate(legends):
+        y = middle + (index - (len(legends) - 1) / 2) * BOARD_LINE
+        legend.draw(canvas, (face[0] + face[2] - legend.width) / 2, y + 0.5, BOARD_INK)
+    x = face[2] + 10
+    urgent = message["kind"] in BOARD_URGENT
+    fill = canvas.color("live" if urgent else "stale")
+    label_w = canvas.width(message["label"], 11) + 14
+    if x + label_w <= right:
+        canvas.draw.rounded_rectangle((x, 7, x + label_w, 25), radius=9, fill=fill)
+        # Dark lettering on a light pill (the console's amber), white on a dark one.
+        light = 0.299 * fill[0] + 0.587 * fill[1] + 0.114 * fill[2] > 160
+        canvas.text((x + label_w / 2, 16), message["label"], 11, BLACK if light else WHITE, anchor="mm")
+        room = right - x - label_w - 6
+        note = next((note for note in board_notes(message, wall) if canvas.width(note, 10, bold=False) <= room), "")
+        if note:
+            canvas.text((x + label_w + 6, 16), note, 10, "ink", anchor="lm", bold=False)
+    if x + 24 <= right:
+        where = x + _shield(canvas, message["route"], (x, 29), 19) + 4
+        where += _direction_plate(canvas, message.get("direction"), (where, 31), 15)
+        place = str(message.get("place") or "")
+        count = f"等 {message['signs']} 处" if isinstance(message.get("signs"), int) and message["signs"] > 1 else ""
+        count_w = canvas.width(count, 10, bold=False) + 5 if count else 0
+        if place:
+            where += 4
+            where += _guide_sign(canvas, place, (where, 30), 17, right - where - count_w, series="D")
+        if count and where + count_w <= right:
+            canvas.text((where + 5, 38.5), count, 10, "ink", anchor="lm", bold=False)
+    return face
+
+
 def render_page(dimensions, payload, settings, now):
     canvas = PageCanvas(_palette(settings), family=(settings or {}).get("fontFamily") or "Microsoft YaHei")
     canvas.crt = crt_style(settings)
@@ -436,12 +530,17 @@ def render_page(dimensions, payload, settings, now):
     if caltrans is not None:
         _paste(canvas, caltrans, (x, 26 - caltrans.height / 2))
         x += caltrans.width + 12
-    note = "实时监控" if caltrans is not None else "Caltrans 实时监控"
-    if roving:
-        note += " · 湾区随机巡视"
-    if near:
-        note += f" · 离家最近 {near} 个镜头"
-    canvas.text((x, 26), note, 13, "ink", anchor="lm", bold=False, width=date_left - x - 12)
+    # A message one of Caltrans' signs shows that matters takes the note's place, as a board.
+    message = payload.get("sign") if valid_message(payload.get("sign")) else None
+    board = _message_board(canvas, message, x, date_left - 12, len(cameras)) if message else None
+    if board is None:
+        note = "实时监控" if caltrans is not None else "Caltrans 实时监控"
+        if roving:
+            note += " · 湾区随机巡视"
+        if near:
+            note += f" · 离家最近 {near} 个镜头"
+        canvas.text((x, 26), note, 13, "ink", anchor="lm", bold=False, width=date_left - x - 12)
+    canvas.image.info["sign_board"] = board
     canvas.rule((12, 52, 788, 52), "ink", 2)
     _main(canvas, payload, now)
     _timelapse(canvas, payload, now)
