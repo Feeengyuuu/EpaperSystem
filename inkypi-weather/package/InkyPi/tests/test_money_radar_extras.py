@@ -1,5 +1,4 @@
-"""Money Radar's rotating feeds: this week's releases, CBOE positioning, China's indices and the
-central parity, IPO pricings, r/wallstreetbets and the Chinese market wire."""
+"""Money Radar's rotating feeds: CBOE positioning, China's indices and the central parity."""
 
 import sys
 from datetime import datetime, timedelta
@@ -23,29 +22,6 @@ NOW = datetime(2026, 11, 11, 13, 0, tzinfo=sources.PACIFIC)
 EXTRA_HTTP_GET = extras._get
 
 # nfs.faireconomy.media/ff_calendar_thisweek.json, 2026-11-11 (rows of the week's 106).
-CALENDAR = [
-    {"title": "CPI y/y", "country": "CNY", "date": "2026-11-08T20:30:00-05:00", "impact": "Low",
-     "forecast": "0.8%", "previous": "0.9%"},
-    {"title": "FOMC Member Waller Speaks", "country": "USD", "date": "2026-11-10T04:00:00-05:00", "impact": "Medium",
-     "forecast": "", "previous": ""},
-    {"title": "Core CPI m/m", "country": "USD", "date": "2026-11-10T08:30:00-05:00", "impact": "High",
-     "forecast": "0.2%", "previous": "0.3%"},
-    {"title": "CPI m/m", "country": "USD", "date": "2026-11-10T08:30:00-05:00", "impact": "High",
-     "forecast": "0.3%", "previous": "0.6%"},
-    {"title": "Bank Holiday", "country": "USD", "date": "2026-11-11T08:00:00-05:00", "impact": "Holiday",
-     "forecast": "", "previous": ""},
-    {"title": "Unemployment Claims", "country": "USD", "date": "2026-11-12T08:30:00-05:00", "impact": "Medium",
-     "forecast": "194K", "previous": "189K"},
-    {"title": "Existing Home Sales", "country": "USD", "date": "2026-11-12T10:00:00-05:00", "impact": "Low",
-     "forecast": "3.89M", "previous": "3.99M"},
-    {"title": "Core PPI m/m", "country": "USD", "date": "2026-11-13T08:30:00-05:00", "impact": "High",
-     "forecast": "0.3%", "previous": "0.7%"},
-    {"title": "PPI m/m", "country": "USD", "date": "2026-11-13T08:30:00-05:00", "impact": "High",
-     "forecast": "0.4%", "previous": "1.3%"},
-    "junk",
-]
-# cdn.cboe.com/data/us/options/market_statistics/daily/2026-11-10_daily_options (its ratios, the
-# first volume table).
 PUT_CALL = {"ratios": [
     {"name": "TOTAL PUT/CALL RATIO", "value": "0.95"}, {"name": "INDEX PUT/CALL RATIO", "value": "1.02"},
     {"name": "EXCHANGE TRADED PRODUCTS PUT/CALL RATIO", "value": "1.04"},
@@ -87,56 +63,6 @@ PARITY = {"head": {"rep_code": "200"}, "data": {"currency": "USD/CNY", "total": 
     {"date": "2026-11-05", "values": ["6.7156"]}, {"date": "bad", "values": ["6.7"]},
     {"date": "2026-11-04", "values": ["---"]}]}
 # api.nasdaq.com/api/ipo/calendar?date=2026-11 (its upcoming table, one priced row).
-IPO = {"data": {"priced": {"rows": [
-    {"proposedTickerSymbol": "NARA", "companyName": "Narragansett Bancorp, Inc.", "proposedSharePrice": "10.00",
-     "pricedDate": "11/02/2026", "dollarValueOfSharesOffered": "$90,988,000", "dealStatus": "Priced"}]},
-    "upcoming": {"upcomingTable": {"rows": [
-        {"dealID": "1407642-119728", "proposedTickerSymbol": "ANT", "companyName": "ANTHROPIC, PBC",
-         "proposedExchange": "NASDAQ Global Select", "proposedSharePrice": "70.00-78.00",
-         "sharesOffered": "825,000,000", "expectedPriceDate": "11/19/2026",
-         "dollarValueOfSharesOffered": "$74,002,500,000"},
-        {"dealID": "1407588-119709", "proposedTickerSymbol": "WWB", "companyName": "WINDWARD BIO GROUP AG",
-         "proposedExchange": "NASDAQ Global", "proposedSharePrice": "16.00-18.00", "sharesOffered": "10,294,117",
-         "expectedPriceDate": "11/13/2026", "dollarValueOfSharesOffered": "$213,088,212"},
-        {"dealID": "1396081-118827", "proposedTickerSymbol": "TRCX", "companyName": "Tracx Logis Ltd.",
-         "proposedExchange": "NASDAQ Capital", "proposedSharePrice": "18.00-22.00", "sharesOffered": "1,000,000",
-         "expectedPriceDate": "11/13/2026", "dollarValueOfSharesOffered": "$25,300,000"},
-        {"dealID": "1407089-119692", "proposedTickerSymbol": "RZRA", "companyName": "Rezera Inc.",
-         "proposedExchange": "NASDAQ Global", "proposedSharePrice": "11.00-13.00", "sharesOffered": "16,666,667",
-         "expectedPriceDate": "11/12/2026", "dollarValueOfSharesOffered": "$249,166,671"}]}},
-    "month": "11", "year": "2026"}}
-# apewisdom.io/api/v1.0/filter/wallstreetbets/page/1 (the first of its 100 rows).
-CHATTER = {"count": 639, "pages": 7, "current_page": 1, "results": [
-    {"rank": 1, "ticker": "NVDA", "name": "NVIDIA", "mentions": 739, "upvotes": 5355, "rank_24h_ago": 1,
-     "mentions_24h_ago": 1106},
-    {"rank": 2, "ticker": "CRWV", "name": "CoreWeave", "mentions": 435, "upvotes": 1287, "rank_24h_ago": 23,
-     "mentions_24h_ago": 78},
-    {"rank": 3, "ticker": "SPY", "name": "SPDR S&amp;P 500 ETF Trust", "mentions": 230, "upvotes": 477,
-     "rank_24h_ago": 2, "mentions_24h_ago": 276},
-    {"rank": 4, "ticker": "MU", "name": "Micron Technology", "mentions": 220, "upvotes": 455, "rank_24h_ago": 6,
-     "mentions_24h_ago": 77},
-    {"rank": 5, "ticker": "QQQ", "name": "Invesco QQQ ETF", "mentions": 187, "upvotes": 358, "rank_24h_ago": 4,
-     "mentions_24h_ago": 156},
-    {"rank": 6, "ticker": "NBIS", "name": "Nebius Group", "mentions": 185, "upvotes": 380, "rank_24h_ago": None,
-     "mentions_24h_ago": None},
-    {"rank": 7, "ticker": "bad ticker!", "mentions": 3}]}
-# api-one.wallstcn.com/apiv1/content/lives?channel=global-channel&limit=20 (four of its items).
-WIRE = {"code": 20000, "message": "OK", "data": {"items": [
-    {"id": 3198617, "display_time": 1794430396, "title": "泽连斯基称已抵达都柏林，将与美方代表会晤",
-     "content_text": "乌克兰总统泽连斯基11日在社交媒体发文说，他已抵达爱尔兰首都都柏林。", "score": 1},
-    {"id": 3198612, "display_time": 1794429264, "title": "", "content_text": "微软：将按自己的方式向数据中心供电。",
-     "score": 1},
-    {"id": 3198610, "display_time": 1794429196, "title": "",
-     "content_text": "周三（11月11日）纽约尾盘，美元兑日元涨0.69%，报159.85日元，日内交投区间为158.67-159.94日元，"
-                     "逼近9月2日顶部160.39日元、7月23日顶部163.99日元。\n\n欧元兑日元涨0.05%，英镑兑日元涨0.2%。",
-     "score": 1},
-    {"id": 3198603, "display_time": 1794425348, "title": "报道：万斯为推动结束战争，考虑与伊朗强硬派举行直接会谈",
-     "content_text": "据美国、中东地区官员以及熟悉谈判的消息人士透露，美国副总统万斯正考虑与伊朗一名高级安全官员举行面对面会谈。",
-     "score": 2},
-    {"id": 1, "display_time": "soon", "title": "坏时间", "content_text": ""}, "junk"],
-    "next_cursor": "1794423394"}}
-
-
 def _context():
     return money_module.TaskContext.never_cancelled(deadline_monotonic=1e12)
 
@@ -148,30 +74,25 @@ def _result(data, state="fresh_cache"):
 def _all_extras():
     """Every rotating feed as its normalised reading of the fixtures above."""
     return {
-        "calendar": _result(extras.normalize_calendar(CALENDAR)),
         "put_call": _result(extras.normalize_put_call(PUT_CALL, "2026-11-10")),
         "vix_curve": _result(extras.normalize_vix_curve(VIX_CSV, "2026-11-10")),
         "cn_indices": _result(extras.normalize_cn_indices(CN_INDICES)),
         "parity": _result(extras.normalize_parity(PARITY)),
-        "ipo": _result(extras.normalize_ipo(IPO)),
-        "chatter": _result(extras.normalize_chatter(CHATTER)),
-        "wire": _result(extras.normalize_wire(WIRE)),
     }
 
 
-def _slot_time(panel_a=None, panel_b=None):
-    """The start of a three-hour slot from NOW on that schedules the given panels."""
+def _slot_time(panel):
+    """The start of a three-hour slot from NOW on that schedules ``panel`` on the yield-curve card."""
     first = int(NOW.timestamp() // extras.SLOT_SECONDS)
-    for index in range(first, first + len(extras.SLOT_A) * len(extras.SLOT_B)):
-        scheduled = extras.SLOT_A[index % len(extras.SLOT_A)], extras.SLOT_B[index % len(extras.SLOT_B)]
-        if panel_a in (None, scheduled[0]) and panel_b in (None, scheduled[1]):
+    for index in range(first, first + len(extras.SLOT_A)):
+        if extras.SLOT_A[index % len(extras.SLOT_A)] == panel:
             return datetime.fromtimestamp(index * extras.SLOT_SECONDS, sources.PACIFIC)
-    raise AssertionError((panel_a, panel_b))
+    raise AssertionError(panel)
 
 
-def _schedule(monkeypatch, panel_a=None, panel_b=None):
-    """Make the slot of every moment the one that schedules the given panels."""
-    index = int(_slot_time(panel_a, panel_b).timestamp() // extras.SLOT_SECONDS)
+def _schedule(monkeypatch, panel):
+    """Make the slot of every moment the one that schedules ``panel``."""
+    index = int(_slot_time(panel).timestamp() // extras.SLOT_SECONDS)
     monkeypatch.setattr(extras, "slot_index", lambda _now: index)
 
 
@@ -200,28 +121,6 @@ def _recording_canvas(monkeypatch, mode="day"):
 
 
 # --- parsers --------------------------------------------------------------------------------
-
-def test_the_calendar_keeps_the_weeks_dollar_releases_that_move_markets():
-    data = extras.normalize_calendar(CALENDAR)
-
-    assert [(event["title"], event["impact"]) for event in data["events"]] == [
-        ("FOMC Member Waller Speaks", "Medium"), ("Core CPI m/m", "High"), ("CPI m/m", "High"),
-        ("Unemployment Claims", "Medium"), ("Core PPI m/m", "High"), ("PPI m/m", "High")]
-    assert data["events"][-1] == {"title": "PPI m/m", "impact": "High", "time": "2026-11-13T13:30:00+00:00",
-                                  "forecast": "0.4%", "previous": "1.3%"}
-    assert extras.valid_calendar(data) and not extras.valid_calendar({"events": "x"})
-    # Wednesday afternoon: what is still to come, in time order.
-    coming = extras.upcoming_events(data, NOW, 4)
-    assert [event["title"] for event in coming] == ["Unemployment Claims", "Core PPI m/m", "PPI m/m"]
-    # Short of room the high-impact releases stay; one stays listed for half an hour after its time.
-    assert [event["title"] for event in extras.upcoming_events(data, NOW, 2)] == ["Core PPI m/m", "PPI m/m"]
-    tuesday = datetime(2026, 11, 10, 5, 50, tzinfo=sources.PACIFIC)
-    assert [event["title"] for event in extras.upcoming_events(data, tuesday, 2)] == ["Core CPI m/m", "CPI m/m"]
-    assert extras.event_name("Core PPI m/m") == "核心 PPI 月率" and extras.event_name("Unemployment Claims") == "初请失业金"
-    assert extras.event_name("Something New q/q") == "Something New q/q"
-    with pytest.raises(ValueError):
-        extras.normalize_calendar({"error": "rate limited"})
-
 
 def test_cboe_put_call_ratios_and_the_vix_futures_curve():
     ratios = extras.normalize_put_call(PUT_CALL, "2026-11-10")
@@ -294,88 +193,36 @@ def test_chinas_indices_and_the_central_parity():
         extras.normalize_parity({"records": [{"date": "2026-11-11", "values": ["6.7191"]}]})
 
 
-def test_the_ipo_calendar_lists_the_coming_pricings_nearest_first():
-    data = extras.normalize_ipo(IPO)
-
-    assert [(row["symbol"], row["date"]) for row in data["upcoming"]] == [
-        ("RZRA", "2026-11-12"), ("WWB", "2026-11-13"), ("TRCX", "2026-11-13"), ("ANT", "2026-11-19")]
-    assert data["upcoming"][-1] == {"symbol": "ANT", "name": "Anthropic", "date": "2026-11-19",
-                                    "price": "$70–78", "amount": 74002500000.0}
-    assert data["upcoming"][1]["name"] == "Windward Bio Group" and extras.valid_ipo(data)
-    assert extras.money_short(74002500000.0) == "$74.0B" and extras.money_short(25300000.0) == "$25M"
-    # A pricing drops out the day after its date, even from a cache kept longer.
-    friday = datetime(2026, 11, 13, 9, 0, tzinfo=sources.PACIFIC)
-    assert [row["symbol"] for row in extras.upcoming_ipos(data, friday, 4)] == ["WWB", "TRCX", "ANT"]
-    # Short of room the largest offers stay, still nearest first.
-    assert [row["symbol"] for row in extras.upcoming_ipos(data, NOW, 2)] == ["RZRA", "ANT"]
-    # A month with no table is an empty calendar, not a failure; a refusal is one.
-    assert extras.normalize_ipo({"data": {"upcoming": {"upcomingTable": {"rows": None}}}})["upcoming"] == []
-    with pytest.raises(ValueError):
-        extras.normalize_ipo({"data": None, "status": {"rCode": 400}})
-
-
-def test_wallstreetbets_mentions_carry_their_rank_change():
-    data = extras.normalize_chatter(CHATTER)
-
-    assert [(row["ticker"], row["mentions"], row["rank"], row["rank_before"]) for row in data["tickers"]] == [
-        ("NVDA", 739, 1, 1), ("CRWV", 435, 2, 23), ("SPY", 230, 3, 2), ("MU", 220, 4, 6), ("QQQ", 187, 5, 4),
-        ("NBIS", 185, 6, None)]
-    assert extras.valid_chatter(data) and not extras.valid_chatter({"tickers": []})
-    assert [extras.rank_move(row) for row in data["tickers"]] == [0, 21, -1, 2, -1, None]
-
-
-def test_the_wire_reads_time_first_and_falls_back_to_the_first_sentence():
-    data = extras.normalize_wire(WIRE)
-
-    assert [(item["text"], item["important"]) for item in data["items"]] == [
-        ("泽连斯基称已抵达都柏林，将与美方代表会晤", False),
-        ("微软：将按自己的方式向数据中心供电。", False),
-        ("周三（11月11日）纽约尾盘，美元兑日元涨0.69%，报159.85日元，日内交投区间为158.67-159.94日元，"
-         "逼近9月2日顶部160.39日元、7月23日顶部163.99日元。", False),
-        ("报道：万斯为推动结束战争，考虑与伊朗强硬派举行直接会谈", True)]
-    assert data["items"][0]["time"] == "2026-11-11T20:53:16+00:00" and extras.valid_wire(data)
-    # The newest is from 12:53 Pacific: at one o'clock all four are recent; half a day on, none is.
-    assert len(extras.recent_wire(data, NOW, 4)) == 4 and len(extras.recent_wire(data, NOW, 3)) == 3
-    assert extras.recent_wire(data, NOW + timedelta(hours=13), 4) == []
-    with pytest.raises(ValueError):
-        extras.normalize_wire({"code": 50000, "data": {}})
-
-
 # --- rotation -------------------------------------------------------------------------------
 
-def test_the_two_slots_take_turns_every_three_hours():
-    moments = [NOW + timedelta(seconds=step * extras.SLOT_SECONDS) for step in range(15)]
-    scheduled = [extras.slot_panels(moment) for moment in moments]
+def test_the_yield_curve_card_takes_turns_every_three_hours():
+    moments = [NOW + timedelta(seconds=step * extras.SLOT_SECONDS) for step in range(6)]
+    scheduled = [extras.slot_panel(moment) for moment in moments]
 
-    # Within a slot nothing changes; from one to the next both move on by one.
-    assert extras.slot_panels(moments[0] + timedelta(minutes=30)) in (scheduled[0], scheduled[1])
-    first_a, first_b = extras.SLOT_A.index(scheduled[0][0]), extras.SLOT_B.index(scheduled[0][1])
-    assert [panel for panel, _ in scheduled] == [extras.SLOT_A[(first_a + step) % 3] for step in range(15)]
-    assert [panel for _, panel in scheduled] == [extras.SLOT_B[(first_b + step) % 5] for step in range(15)]
-    # Three and five turns: every pairing comes up, and no hour of the day keeps the same one.
-    assert len(set(scheduled)) == 15
     assert extras.SLOT_A == ("curve", "volatility", "china")
-    assert extras.SLOT_B == ("wire", "calendar", "chatter", "ipo", "news")
+    first = extras.SLOT_A.index(scheduled[0])
+    assert scheduled == [extras.SLOT_A[(first + step) % 3] for step in range(6)]
+    assert extras.slot_panel(moments[0] + timedelta(minutes=30)) in (scheduled[0], scheduled[1])
+    # The lists that shared the holdings card for a day are gone with their feeds.
+    assert extras.FEEDS == ("put_call", "vix_curve", "cn_indices", "parity")
+    assert not hasattr(extras, "SLOT_B") and not hasattr(extras, "fetch_wire")
 
 
 def test_a_panel_without_its_data_gives_its_turn_to_the_next(monkeypatch):
     full = _all_extras()
-    _schedule(monkeypatch, "china", "wire")
+    _schedule(monkeypatch, "china")
 
-    assert extras.shown_panels(full, NOW) == ("china", "wire")
-    # Without the indices the yield curve keeps the card; without the wire the releases move up.
-    assert extras.shown_panels({**full, "cn_indices": _result({}, "unavailable"), "wire": _result({})},
-                               NOW) == ("curve", "calendar")
-    # A wire that has gone old is no longer the latest: it gives way too.
-    assert extras.shown_panels(full, NOW + timedelta(hours=13))[1] == "calendar"
+    assert extras.shown_panel(full, NOW) == "china"
+    # Without the indices the yield curve keeps the card.
+    assert extras.shown_panel({**full, "cn_indices": _result({}, "unavailable")}, NOW) == "curve"
     # Nothing at all: the page is the one it was.
-    assert extras.shown_panels({}, NOW) == ("curve", "news")
-    _schedule(monkeypatch, "volatility", "ipo")
-    assert extras.shown_panels(None, NOW) == ("curve", "news")
+    assert extras.shown_panel({}, NOW) == "curve"
+    _schedule(monkeypatch, "volatility")
+    assert extras.shown_panel(None, NOW) == "curve"
     # The volatility card needs the curve; the ratios are an extra on it.
-    assert extras.shown_panels({"vix_curve": full["vix_curve"]}, NOW)[0] == "volatility"
-    assert extras.shown_panels({"put_call": full["put_call"]}, NOW)[0] == "curve"
-    assert extras.shown_panels({"put_call": full["put_call"], "cn_indices": full["cn_indices"]}, NOW)[0] == "china"
+    assert extras.shown_panel({"vix_curve": full["vix_curve"]}, NOW) == "volatility"
+    assert extras.shown_panel({"put_call": full["put_call"]}, NOW) == "curve"
+    assert extras.shown_panel({"put_call": full["put_call"], "cn_indices": full["cn_indices"]}, NOW) == "china"
 
 
 # --- loading --------------------------------------------------------------------------------
@@ -421,7 +268,7 @@ def test_a_refresh_fetches_at_most_one_rotating_feed_and_those_on_show_first(mon
     calls = []
     _fetchers(monkeypatch, calls)
     book = _book(tmp_path)
-    moment = _slot_time("volatility", "wire")
+    moment = _slot_time("volatility")
     order = []
     for step in range(len(extras.FEEDS)):
         calls.clear()
@@ -431,18 +278,12 @@ def test_a_refresh_fetches_at_most_one_rotating_feed_and_those_on_show_first(mon
 
     # Each refresh brought one feed: first the ones this slot shows (the parity always shows).
     assert sorted(order) == sorted(extras.FEEDS)
-    assert set(order[:4]) == {"wire", "vix_curve", "put_call", "parity"}
+    assert set(order[:3]) == {"vix_curve", "put_call", "parity"} and order[3] == "cn_indices"
     assert all(result["state"] in ("live", "fresh_cache") for result in loaded.values())
-    # Everything is fresh now: the next refresh asks nobody.
+    # Everything is fresh now: the next refresh asks nobody, and a hidden feed (the indices, an
+    # hour's life) waits three hours however short its own life.
     calls.clear()
     extras.load(book, moment + timedelta(minutes=20), allow_network=True, context=_context())
-    assert calls == []
-    # An hour on only the wire (45 minutes) is stale among the feeds on show; a hidden feed waits
-    # three hours however short its own life.
-    calls.clear()
-    extras.load(book, moment + timedelta(minutes=70), allow_network=True, context=_context())
-    assert calls == ["wire"]
-    calls.clear()
     extras.load(book, moment + timedelta(minutes=100), allow_network=True, context=_context())
     assert calls == []
 
@@ -460,28 +301,28 @@ def test_a_failing_feed_keeps_its_last_reading_and_waits_before_its_next_try(mon
     calls = []
     _fetchers(monkeypatch, calls)
     book = _book(tmp_path)
-    moment = _slot_time("curve", "wire")
+    moment = _slot_time("china")
     for step in range(len(extras.FEEDS)):
         extras.load(book, moment + timedelta(minutes=step), allow_network=True, context=_context())
-    _fetchers(monkeypatch, calls, failing=("wire",))
+    _fetchers(monkeypatch, calls, failing=("cn_indices",))
 
     calls.clear()
-    later = moment + timedelta(minutes=60)
+    later = moment + timedelta(minutes=70)
     loaded = extras.load(book, later, allow_network=True, context=_context())
-    # The wire failed: the page keeps the last one, marked stale for nobody but itself.
-    assert calls == ["wire"] and loaded["wire"]["state"] == "stale_cache"
-    assert loaded["wire"]["data"]["items"]
-    # It is not asked again at once, so it cannot take every refresh's one request.
+    # The indices failed: the page keeps the last ones, marked stale for nobody but themselves.
+    assert calls == ["cn_indices"] and loaded["cn_indices"]["state"] == "stale_cache"
+    assert loaded["cn_indices"]["data"]["indices"]
+    # They are not asked again at once, so they cannot take every refresh's one request.
     calls.clear()
     extras.load(book, later + timedelta(minutes=30), allow_network=True, context=_context())
-    assert "wire" not in calls
+    assert "cn_indices" not in calls
     calls.clear()
     retry = later + timedelta(seconds=extras.RETRY_SECONDS + 60)
     # A refresh with no time left for it is no failure of the feed's: it is asked at the next one.
     spent = money_module.TaskContext.never_cancelled(deadline_monotonic=1.0, clock=lambda: 0.0)
-    assert extras.load(book, retry, allow_network=True, context=spent)["wire"]["error"] == "deadline_budget"
+    assert extras.load(book, retry, allow_network=True, context=spent)["cn_indices"]["error"] == "deadline_budget"
     extras.load(book, retry + timedelta(minutes=30), allow_network=True, context=_context())
-    assert calls == ["wire"]
+    assert calls == ["cn_indices"]
 
 
 def _fake_core(monkeypatch):
@@ -607,58 +448,24 @@ def test_the_china_card_lists_five_indices_and_the_parity(monkeypatch, mode):
     assert set(canvas.tones) <= {"ink", "muted"}
 
 
-@pytest.mark.parametrize("panel,expected", [
-    ("wire", ["财经快讯", "12:53", "泽连斯基称已抵达都柏林，将与美方代表会晤", "11:29"]),
-    ("calendar", ["本周美国数据", "明天 05:30", "初请失业金", "核心 PPI 月率", "194K", "0.7%"]),
-    ("chatter", ["散户热议", "NVDA", "CRWV", "739", "21", "新"]),
-    ("ipo", ["新股定价", "11/12", "RZRA", "ANT", "Anthropic", "$70–78", "$74.0B"]),
-])
-@pytest.mark.parametrize("mode", ["day", "night"])
-def test_the_holdings_right_half_takes_turns_with_the_new_lists(monkeypatch, mode, panel, expected):
-    canvas, drawn = _recording_canvas(monkeypatch, mode)
-    _schedule(monkeypatch, None, panel)
+def test_the_holdings_right_half_carries_the_holdings_news_in_every_slot(monkeypatch):
     payload = {**_core_payload(), "extras": _all_extras()}
-
-    money_render._holdings(canvas, payload, NOW)
-
-    right_half = [(x, y, text) for x, y, text in drawn if x >= 400 and y > 366]
-    texts = [text for *_xy, text in right_half]
-    for wanted in expected:
-        assert any(wanted in text for text in texts), (wanted, texts)
-    # The list keeps inside the card's right half under its title line, four rows deep, and the
-    # left half keeps its holdings news.
-    assert all(400 <= x <= 780 and y <= 462 for x, y, _text in right_half)
-    assert 3 <= len({y for _x, y, _text in right_half}) <= 1 + extra_panels.LIST_ROWS
-    assert any(text == "Story 0" for x, _y, text in drawn if x < 400)
-    assert not any(text.startswith("Story") for text in texts)
-    # Every word and figure of the list is ink; its colour is on the bars and dots.
-    assert {tone for (x, y, _text), tone in zip(drawn, canvas.tones) if x >= 400 and y > 366} <= {"ink", "muted"}
-
-
-def test_the_right_half_keeps_the_holdings_news_on_its_own_turn_and_beside_filings(monkeypatch):
-    canvas, drawn = _recording_canvas(monkeypatch)
-    payload = {**_core_payload(), "extras": _all_extras()}
-    _schedule(monkeypatch, None, "news")
-
-    money_render._holdings(canvas, payload, NOW)
-    assert any(text.startswith("Story") for x, _y, text in drawn if x >= 400)
-
-    # With SEC filings on, the right half is the only place the news has: it stays.
-    drawn.clear()
-    _schedule(monkeypatch, None, "calendar")
-    payload["filings"] = {"state": "live", "data": {"items": [], "insider": {}}}
-    money_render._holdings(canvas, payload, NOW)
-    assert any(text.startswith("Story") for x, _y, text in drawn if x >= 400)
-    assert not any("本周美国数据" in text for *_xy, text in drawn)
+    for panel in extras.SLOT_A:
+        canvas, drawn = _recording_canvas(monkeypatch)
+        _schedule(monkeypatch, panel)
+        money_render._holdings(canvas, payload, NOW)
+        assert any(text.startswith("Story") for x, _y, text in drawn if x >= 400)
+        assert not any(text in ("财经快讯", "本周美国数据", "散户热议", "新股定价") for *_xy, text in drawn)
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])
-def test_the_page_draws_every_pairing_of_the_two_slots(mode):
+def test_the_page_draws_each_turn_of_the_yield_curve_card(mode):
     payload = {**_core_payload(), "extras": _all_extras()}
     seen = set()
-    for step in range(15):
+    for step in range(6):
         moment = NOW + timedelta(seconds=step * extras.SLOT_SECONDS)
         image = money_render.render_page((800, 480), payload, {"_inkypi_theme": {"mode": mode}}, moment)
         assert image.size == (800, 480)
-        seen.add(image.tobytes())
-    assert len(seen) >= 12
+        seen.add(image.crop(money_render.CURVE_CARD).tobytes())
+    # Three cards take turns.
+    assert len(seen) == 3

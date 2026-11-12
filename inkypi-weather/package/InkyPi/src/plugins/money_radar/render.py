@@ -680,11 +680,6 @@ def _news(canvas, items, now, left, right, top, rows):
     return news(canvas, items, now, left, right, top, rows)
 
 
-def _rotating_list(canvas, panel, payload, now, left, right, top):
-    from .extra_panels import draw_list
-    draw_list(canvas, panel, payload.get("extras"), now, left, right, top)
-
-
 def _rotating_card(canvas, panel, payload, now):
     from .extra_panels import draw_card
     draw_card(canvas, panel, payload.get("extras"), now)
@@ -843,15 +838,9 @@ def _holdings(canvas, payload, now):
     body, rows = top + 42, 5
     news = payload["news"]["data"].get("items", [])
     middle = (left + right) // 2
-    # Where the right half only carries the news on, it takes turns with the rotating lists (the
-    # wire, the week's releases, retail chatter, IPO pricings); "news" is the holdings' own turn.
-    turn = extras.shown_panels(payload.get("extras"), now)[1]
     if not earnings_on and not filings_on:
         _news(canvas, news, now, left + 10, middle - 10, body, rows)
-        if turn == "news":
-            _news(canvas, news[rows:], now, middle + 10, right - 10, body, rows)
-        else:
-            _rotating_list(canvas, turn, payload, now, middle + 10, right - 10, body)
+        _news(canvas, news[rows:], now, middle + 10, right - 10, body, rows)
         canvas.rule((middle, body - 8, middle, bottom - 8))
         return
     if not filings_on:
@@ -864,9 +853,7 @@ def _holdings(canvas, payload, now):
         canvas.rule((middle, body - 8, middle, bottom - 8))
         below = rows - earnings_rows
         _news(canvas, news, now, left + 10, middle - 10, split + 10, below)
-        if turn != "news":
-            _rotating_list(canvas, turn, payload, now, middle + 10, right - 10, body)
-        elif len(news) > below:
+        if len(news) > below:
             _news(canvas, news[below:], now, middle + 10, right - 10, body, rows)
         return
     left_rows = rows
@@ -922,7 +909,7 @@ def render_page(dimensions, payload, settings, now):
     _yield_tile(canvas, payload, TILES[3])
     # The yield curve's card takes turns with the VIX futures curve and China's markets (the
     # 10-year card above keeps the curve's other points whichever is up).
-    card = extras.shown_panels(payload.get("extras"), now)[0]
+    card = extras.shown_panel(payload.get("extras"), now)
     if card == "curve":
         _curve(canvas, payload)
     else:
