@@ -453,3 +453,35 @@ def test_rows_wear_metacritic_on_the_art_a_weekly_move_and_the_achievement_count
     # The score sits on the art's top right corner in Metacritic's green.
     colours = {image.getpixel((x, y)) for x in range(90, 128) for y in range(97, 108)}
     assert overview_page.ACCENTS["day"]["up"] in colours
+
+
+def test_each_board_has_quiet_doodles_in_its_own_colour_under_its_rows(monkeypatch):
+    plugin = _plugin()
+    game = {"rank": 1, "name": "Dota 2", "current_players": 625_995, "peak_24h": 729_567, "spark": [1, 2, 3],
+            "store": {"genres": ["动作"], "developer": "Valve"}}
+    groups = [{"table_variant": "trending", "games": [dict(game, change_24h=120.0)]},
+              {"table_variant": "top_games", "games": [game]}]
+    laid = []
+    paint = overview_page.paint_doodles
+    monkeypatch.setattr(overview_page, "paint_doodles",
+                        lambda image, box, pattern, tint, **options: laid.append((box, Path(pattern).name, tint)) or paint(
+                            image, box, pattern, tint, **options))
+    image = plugin._render_live_overview((800, 480), groups, {}, {"mode": "day"}, "")
+    monkeypatch.setattr(overview_page, "paint_doodles", lambda *args, **kwargs: False)
+    plain = plugin._render_live_overview((800, 480), groups, {}, {"mode": "day"}, "")
+
+    accents = overview_page.ACCENTS["day"]
+    assert [(name, tint) for _box, name, tint in laid] == [("trending.png", accents["up"]), ("players.png", accents["blue"])]
+    assert all(overview_page.BOARD_DOODLES[key].is_file() for key in (True, False))
+    # Under the rows only (the header and the boards' titles are as they were), and quiet: in the
+    # empty rows no doodle pixel is far from the paper.
+    assert image.crop((0, 0, 800, laid[0][0][1])).tobytes() == plain.crop((0, 0, 800, laid[0][0][1])).tobytes()
+    empty = (12, 300, 394, 470)
+    changed = [pixel for pixel, before in zip(image.crop(empty).get_flattened_data(), plain.crop(empty).get_flattened_data())
+               if pixel != before]
+    assert changed and all(min(pixel) >= 190 for pixel in changed)
+    # A board without games has none.
+    laid.clear()
+    monkeypatch.setattr(overview_page, "paint_doodles", lambda *args, **kwargs: laid.append(args) or False)
+    plugin._render_live_overview((800, 480), [{"table_variant": "trending", "games": []}], {}, {"mode": "day"}, "")
+    assert laid == []

@@ -16,6 +16,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageOps
 
 from plugins.base_plugin import steam_studios
+from utils.doodle_backdrop import paint_doodles
 from utils.flat_icons import draw_icon
 from utils.theme_utils import contrast_ratio
 
@@ -54,6 +55,11 @@ LETTERING_SCALE = 1.45
 # the end of the lettering, the row below "STEAM CHARTS" and the underline's first row.
 SKYLINE_X, LETTERING_END, LETTERING_BOTTOM, UNDERLINE_TOP = 116, 158, 58, 70
 # Refined accents rather than the panel's pure inks; night lifts each tone.
+# Quiet doodles under each board's rows, in the board's own colour (utils.doodle_backdrop): flames
+# and rising charts under the trending games, gamepads and headsets under the most played. The
+# tiles are the ones 环球此刻's trends and LiveRadar's Twitch wall use.
+BOARD_DOODLES = {True: Path(__file__).resolve().parent / "assets" / "doodles" / "trending.png",
+                 False: Path(__file__).resolve().parent / "assets" / "doodles" / "players.png"}
 ACCENTS = {
     "day": {"up": (5, 150, 105), "down": (200, 30, 50), "blue": (27, 111, 168), "gold": (196, 140, 0)},
     "night": {"up": (52, 211, 153), "down": (255, 107, 120), "blue": (102, 192, 244), "gold": (251, 191, 36)},
@@ -241,6 +247,10 @@ class LiveOverviewMixin:
                   font=self._font(10), fill=colors["muted"])
         games = (group.get("games") or [])[:5]
         row_h = (472 - ROWS_TOP) / 5
+        if games:
+            # Laid first: the covers, type and charts stand on top of it.
+            region = (left, ROWS_TOP - 2, right, 472)
+            paint_doodles(image, region, BOARD_DOODLES[trending], colour, offset=region[:2])
         for index, game in enumerate(games):
             top = ROWS_TOP + index * row_h
             self._overview_row(image, draw, (left + 4, top, right, top + row_h), game, trending, colors)
