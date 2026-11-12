@@ -56,11 +56,14 @@ GROUP_CARD = (12, 336, 300, 468)
 RECENT_CARD = (310, 306, 788, 468)
 HEADER = 28
 # California's water at the filmstrip's foot, in turn with the line the foot has (even hours the
-# water, odd hours the line): from WATER_TOP down a key, a level gauge a reservoir (filled to its
+# water, odd hours the line): from WATER_TOP down a key, a level gauge a reservoir, three a turn (filled to its
 # share of capacity, a notch where the date's average stands, its name over its share of that
 # average) and the Sierra's snow: its depth over its water against the median for the date.
 WATER_TOP = 437
-WATER_KEY_W, WATER_CELL_W, WATER_GAUGE = 34, 56, (9, 22)
+WATER_KEY_W, WATER_CELL_W, WATER_GAUGE = 62, 100, (11, 22)
+# Three reservoirs a turn, so each has room for its name: the northern three and the southern
+# three on alternate even hours.
+WATER_PER_TURN = 3
 # Quiet nature doodles in each card's colour under its content, by the card's icon: leaves,
 # birds and butterflies, or the naturalist's binoculars, notebook and lens.
 DOODLES = {icon: Path(__file__).resolve().parent / "assets" / "doodles" / f"{name}.png"
@@ -526,7 +529,7 @@ def _gauge(canvas, x, top, level, mark=None):
         canvas.draw.line((x - 2, y, x + width + 2, y), fill=canvas.color("ink"), width=1)
 
 
-def _water(canvas, payload):
+def _water(canvas, payload, now):
     """California's water along the filmstrip's foot; False (nothing drawn) without the reservoirs."""
     water, snow = _shown(payload, "water"), _shown(payload, "snow")
     items = (water or {}).get("items") or []
@@ -534,16 +537,18 @@ def _water(canvas, payload):
         return False
     left, top = RECENT_CARD[0] + 8, WATER_TOP + 4
     upper, lower = top + 5, top + 17
-    canvas.text((left, upper), "水库", 10, anchor="lm")
-    canvas.text((left, lower), "常年%", 10, anchor="lm")
+    canvas.text((left, upper), "加州水库", 11, anchor="lm")
+    canvas.text((left, lower), "占常年", 11, anchor="lm", bold=False)
     x = left + WATER_KEY_W
-    for item in items[:6]:
+    turns = max(1, -(-len(items) // WATER_PER_TURN))
+    first = (now.hour // 2 % turns) * WATER_PER_TURN
+    for item in items[first:first + WATER_PER_TURN]:
         # The date's average as a level: where the water would stand at 100% of it.
         mark = item["pct_cap"] / item["pct_avg"] if item["pct_avg"] else None
         _gauge(canvas, x, top, item["pct_cap"] / 100, mark)
-        canvas.text((x + WATER_GAUGE[0] + 5, upper), item["name"], 10, "muted", anchor="lm", bold=False,
-                    width=WATER_CELL_W - WATER_GAUGE[0] - 6)
-        canvas.text((x + WATER_GAUGE[0] + 5, lower), f"{item['pct_avg']}%", 12, anchor="lm")
+        canvas.text((x + WATER_GAUGE[0] + 7, upper), item["name"], 11, anchor="lm", bold=False,
+                    width=WATER_CELL_W - WATER_GAUGE[0] - 10)
+        canvas.text((x + WATER_GAUGE[0] + 7, lower), f"{item['pct_avg']}%", 13, anchor="lm")
         x += WATER_CELL_W
     if snow and (snow.get("pct_median") is not None or snow.get("swe_in")):
         # The Sierra's snow water: a peak, white from its top as far as the snow stands to the median.
@@ -555,12 +560,12 @@ def _water(canvas, payload):
             half = cap * 7 / WATER_GAUGE[1]
             canvas.draw.polygon([(x + 7, top + 1), (x + 7 - half, top + cap), (x + 7 + half, top + cap)],
                                 fill=canvas.color("paper"))
-        room = RECENT_CARD[2] - 8 - x - 18
+        room = RECENT_CARD[2] - 8 - x - 21
         if snow.get("depth_in") is not None:
-            canvas.text((x + 18, upper), f"雪深 {snow['depth_in'] * 2.54:.0f} cm", 10, "muted", anchor="lm", bold=False,
+            canvas.text((x + 21, upper), f"雪深 {snow['depth_in'] * 2.54:.0f} cm", 11, anchor="lm", bold=False,
                         width=room)
-        canvas.text((x + 18, lower), f"雪水 {snow['pct_median']}%" if snow.get("pct_median") is not None
-                    else f"雪水 {snow['swe_in'] * 25.4:.0f} mm", 12, anchor="lm", width=room)
+        canvas.text((x + 21, lower), f"雪水 {snow['pct_median']}%" if snow.get("pct_median") is not None
+                    else f"雪水 {snow['swe_in'] * 25.4:.0f} mm", 13, anchor="lm", width=room)
     return True
 
 
@@ -587,7 +592,7 @@ def _recent(canvas, payload, images, now):
         meta = " · ".join(part for part in (ago(stamp, now).replace(" ", "") if stamp else "", item.get("place"))
                           if part)
         canvas.text((x, top + 89), meta, 10, "muted", anchor="lm", bold=False, width=width)
-    if water_turn(now) and _water(canvas, payload):
+    if water_turn(now) and _water(canvas, payload, now):
         return
     threatened = threatened_data(payload)
     if threatened and threatened["items"] and ((payload.get("birds") or {}).get("data") or {}).get("items"):

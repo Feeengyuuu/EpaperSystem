@@ -553,9 +553,13 @@ def test_californias_water_takes_turns_with_the_filmstrips_foot_line(monkeypatch
     drawn.clear()
     wet = render_page((800, 480), _water_payload(), settings, NOW, {})
 
-    # An even hour: six level gauges with their share of the average, then the Sierra's snow water.
-    assert {"沙斯塔", "92%", "奥罗维尔", "80%", "圣路易斯", "138%", "常年%", "雪深 3 cm", "雪水 128%"} <= set(drawn)
-    assert not any(text.startswith("本周最活跃") for text in drawn)
+    # An even hour: three level gauges with their share of the average (14:00, the southern three),
+    # then the Sierra's snow; the other even hours have the northern three.
+    assert {"唐佩德罗", "110%", "赫奇赫奇", "101%", "圣路易斯", "138%", "占常年", "雪深 3 cm", "雪水 128%"} <= set(drawn)
+    assert "沙斯塔" not in drawn and not any(text.startswith("本周最活跃") for text in drawn)
+    drawn.clear()
+    render_page((800, 480), _water_payload(), settings, NOW.replace(hour=12), {})
+    assert {"沙斯塔", "92%", "奥罗维尔", "80%", "新梅洛", "117%", "雪水 128%"} <= set(drawn) and "圣路易斯" not in drawn
     foot = (render.RECENT_CARD[0] + 2, render.WATER_TOP, render.RECENT_CARD[2] - 2, render.RECENT_CARD[3] - 2)
     assert render._palette(settings)["blue"] in set(wet.crop(foot).get_flattened_data())
     # Only the foot changes.
