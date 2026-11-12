@@ -430,9 +430,9 @@ def _side(canvas, payload, now):
 # reports and where the sign stands.
 BOARD_TOP, BOARD_BOTTOM = 4, 48
 BOARD_FACE = (6, 7, 8)
-# The sign's lines are highway lettering (Roadgeek series D) in the recorder text's white: small
-# text stays uncoloured on the six-colour panel. The amber is on the housing's two beacons.
-BOARD_INK = crt.OSD
+# The sign's lines are highway lettering (Roadgeek series D) in the signs' LED amber (the owner's
+# choice), a yellow the six-colour panel prints almost pure; the housing's beacons are amber.
+BOARD_INK = (255, 214, 10)
 BOARD_BEACON = (255, 176, 0)
 BOARD_TEXT = 13
 BOARD_LINE = 13

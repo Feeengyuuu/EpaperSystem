@@ -275,12 +275,12 @@ def test_the_header_carries_the_board_and_the_wall_below_it_stays(monkeypatch, m
     assert any("00:49" in text for text in drawn) and any("CAM-02" in text for text in drawn)
     assert not any("实时监控" in text for text in drawn)
     # The board is a dark face whatever the page's paper, an amber beacon in each upper corner,
-    # and its lettering is the recorder text's white, not a colour.
+    # and its lettering is the signs' LED amber.
     assert max(image.getpixel((left + 3, (top + bottom) // 2))) < 40
     assert image.getpixel((left + 8, top + 8)) == image.getpixel((right - 8, top + 8)) == render.BOARD_BEACON
     face = image.crop((left + 14, top + 2, right - 14, bottom - 2))
     assert render.BOARD_INK in set(face.get_flattened_data())
-    assert all(abs(red - green) < 30 and abs(green - blue) < 30 for red, green, blue in set(face.get_flattened_data()))
+    assert render.BOARD_INK == (255, 214, 10)
 
 
 def test_a_narrow_header_keeps_the_camera_before_the_hour_and_the_count():
