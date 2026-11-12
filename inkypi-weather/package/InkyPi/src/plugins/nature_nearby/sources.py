@@ -535,38 +535,46 @@ def valid_reservoirs(data):
                     and type(item.get("pct_avg")) is int and type(item.get("pct_cap")) is int for item in items))
 
 
-def _latest(element, key="value"):
-    """The newest day of a SNOTEL element with a number under ``key``: (date, number) or None."""
-    for row in reversed(element.get("values") or []):
+def _daily_values(element, key="value"):
+    """A SNOTEL element's valid daily readings, indexed by their observation date."""
+    readings = {}
+    for row in element.get("values") or []:
         number = _finite(row.get(key)) if isinstance(row, dict) else None
         if number is not None and number >= 0:
-            return str(row.get("date") or "")[:10], number
-    return None
+            day = str(row.get("date") or "")[:10]
+            try:
+                datetime.strptime(day, "%Y-%m-%d")
+            except ValueError:
+                continue
+            readings[day] = number
+    return readings
 
 
 def normalize_snow(payload):
     """The stations' newest day together as {date, stations, swe_in, median_in, pct_median,
     depth_in}: their mean snow water equivalent, the mean median for the date and the one as a
     percentage of the other (None while the median is next to nothing), and their mean depth."""
-    water, medians, depths, dates = [], [], [], []
+    stations = []
     for station in payload if isinstance(payload, list) else []:
         entries = station.get("data") if isinstance(station, dict) else None
         elements = {((entry.get("stationElement") or {}).get("elementCode")): entry
                     for entry in entries or [] if isinstance(entry, dict)}
-        swe = _latest(elements.get("WTEQ") or {})
-        median = _latest(elements.get("WTEQ") or {}, "median")
-        depth = _latest(elements.get("SNWD") or {})
-        if swe is None or median is None:
-            continue
-        water.append(swe[1])
-        medians.append(median[1])
-        dates.append(swe[0])
-        if depth is not None:
-            depths.append(depth[1])
-    if not water:
+        swe = _daily_values(elements.get("WTEQ") or {})
+        median = _daily_values(elements.get("WTEQ") or {}, "median")
+        paired_days = swe.keys() & median.keys()
+        if paired_days:
+            stations.append((swe, median, _daily_values(elements.get("SNWD") or {}), paired_days))
+    if not stations:
         raise ValueError("SNOTEL returned no snow water")
+    common_days = set.intersection(*(station[3] for station in stations))
+    if not common_days:
+        raise ValueError("SNOTEL returned no common day of snow water")
+    day = max(common_days)
+    water = [station[0][day] for station in stations]
+    medians = [station[1][day] for station in stations]
+    depths = [station[2][day] for station in stations if day in station[2]]
     mean_median = sum(medians) / len(medians)
-    return {"date": max(dates), "stations": len(water), "swe_in": round(sum(water) / len(water), 2),
+    return {"date": day, "stations": len(water), "swe_in": round(sum(water) / len(water), 2),
             "median_in": round(mean_median, 2),
             "pct_median": int(round(sum(water) / sum(medians) * 100)) if mean_median >= SNOW_MEDIAN_MIN else None,
             "depth_in": round(sum(depths) / len(depths), 1) if depths else None}

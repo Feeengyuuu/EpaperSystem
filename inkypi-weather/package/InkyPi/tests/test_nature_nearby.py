@@ -535,6 +535,23 @@ def test_reservoirs_and_sierra_snow_normalize():
         sources.normalize_snow([{"stationTriplet": "784:CA:SNTL", "data": []}])
 
 
+def test_snow_compares_measurements_and_medians_on_the_same_common_day():
+    stations = [
+        _snotel_station("784:CA:SNTL", [("2026-11-09", 2), ("2026-11-10", 6)],
+                        [("2026-11-09", 1.0, 2.0), ("2026-11-10", 5.0, None)]),
+        _snotel_station("463:CA:SNTL", [("2026-11-09", 4), ("2026-11-10", 10)],
+                        [("2026-11-09", 3.0, 2.0), ("2026-11-10", 9.0, 3.0)]),
+    ]
+    snow = sources.normalize_snow(stations)
+
+    assert snow == {"date": "2026-11-09", "stations": 2, "swe_in": 2.0, "median_in": 2.0,
+                    "pct_median": 100, "depth_in": 3.0}
+    # A late station must not silently turn yesterday's measurement into today's average.
+    stations[0]["data"][1]["values"] = [{"date": "2026-11-08", "value": 1.0, "median": 2.0}]
+    with pytest.raises(ValueError, match="common day"):
+        sources.normalize_snow(stations)
+
+
 def _water_payload():
     payload = _rich_payload()
     payload["water"] = {"state": "live", "data": sources.normalize_reservoirs(CDEC)}
