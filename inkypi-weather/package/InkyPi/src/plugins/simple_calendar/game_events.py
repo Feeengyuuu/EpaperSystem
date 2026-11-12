@@ -23,6 +23,9 @@ from utils.atomic_file import atomic_write_json
 from utils.http_client import DeadlineRetry, get_http_session, provider_io_lease
 
 CHECK_INTERVAL_SECONDS = 3 * 60 * 60
+# A check that failed is tried again this soon: a network fault that passes must not leave the
+# page stale until the next full interval.
+FAILED_CHECK_RETRY_SECONDS = 30 * 60
 MAX_STATE_BYTES = 2 * 1024 * 1024
 MAX_SOURCE_ITEMS = 256
 _REFRESH_LOCK = threading.RLock()
@@ -188,7 +191,8 @@ class GameEventProvider:
         return fetch
 
     def refresh(self, settings, *, now=None):
-        """DATA-only synchronization; failures also advance the durable poll gate."""
+        """DATA-only synchronization; failures also advance the durable poll gate, by the shorter
+        FAILED_CHECK_RETRY_SECONDS."""
         now = now or datetime.now(timezone.utc)
         if not enabled(settings.get(self.enabled_setting)):
             return GameEventResult([], {}, SourceProvenance.FRESH_CACHE)
@@ -207,7 +211,9 @@ class GameEventProvider:
                 batch = self.fetch_source(source_id, fetch, known, now)
                 self._merge_source(state, source_id, batch.announcements, now)
                 source["error"] = "; ".join(batch.errors)[:500]
-                if not batch.errors:
+                if batch.errors:
+                    source["next_check_at"] = (now + timedelta(seconds=FAILED_CHECK_RETRY_SECONDS)).isoformat()
+                else:
                     source["last_success_at"] = now.isoformat()
                 self._save(state)
                 self._log_source_transition(source_id, previous_error, source["error"], batch.details or batch.errors)

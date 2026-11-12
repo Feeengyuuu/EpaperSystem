@@ -71,6 +71,26 @@ def test_source_failure_keeps_pending_events_and_recovery_clears_marker(tmp_path
     assert recovered.events[0]["pending_verification"] is False
 
 
+def test_a_failed_check_is_tried_again_after_half_an_hour_not_three_hours(tmp_path):
+    # 2026-11-12: three hours of bad certificates on the home network left the calendar stale
+    # for three more after the network was back, until each source's next check came round.
+    web = Web()
+    provider = GameEventProvider(tmp_path, fetch_text=web)
+    provider.refresh(SETTINGS, now=NOW)
+    web.failure = True
+    failed = provider.refresh(SETTINGS, now=NOW + timedelta(hours=3))
+    assert failed.sources["playstation"]["next_check_at"] == (NOW + timedelta(hours=3, minutes=30)).isoformat()
+    web.failure = False
+    web.calls.clear()
+    assert provider.refresh(SETTINGS, now=NOW + timedelta(hours=3, minutes=29)).events[0]["pending_verification"] is True
+    assert web.calls == []
+    recovered = provider.refresh(SETTINGS, now=NOW + timedelta(hours=3, minutes=30))
+    assert web.calls and recovered.events[0]["pending_verification"] is False
+    assert recovered.provenance.value == "fresh_cache"
+    # A healthy check waits the full interval again.
+    assert recovered.sources["playstation"]["next_check_at"] == (NOW + timedelta(hours=6, minutes=30)).isoformat()
+
+
 def media_feed(host, *, official_link=True, day=3):
     evidence = f'<a href="{URL}">official announcement</a>' if official_link else ''
     return f'<rss version="2.0"><channel><title>News</title><item><title>Sony confirms State of Play September {day}, 2026</title><link>https://{host}/articles/state-of-play-confirmed</link><description><![CDATA[<p>Sony confirmed State of Play will air September {day}, 2026 at 6am PT.</p>{evidence}]]></description></item></channel></rss>'

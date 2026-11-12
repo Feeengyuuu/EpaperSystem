@@ -130,11 +130,12 @@ def test_three_hour_gate_survives_restart_and_failures_then_recovers(tmp_path):
     failed = restarted.refresh(SETTINGS, now=NOW + timedelta(hours=3))
     assert failed.events[0]["pending_verification"] and failed.provenance.value == "stale_cache"
     web.calls.clear()
-    restarted.refresh(SETTINGS, now=NOW + timedelta(hours=3, minutes=30))
+    # A failed check waits half an hour, not the three hours of a healthy one.
+    restarted.refresh(SETTINGS, now=NOW + timedelta(hours=3, minutes=29))
     assert web.calls == []
     web.failure = False
-    recovered = restarted.refresh(SETTINGS, now=NOW + timedelta(hours=6))
-    assert not recovered.events[0]["pending_verification"]
+    recovered = restarted.refresh(SETTINGS, now=NOW + timedelta(hours=3, minutes=30))
+    assert web.calls and not recovered.events[0]["pending_verification"]
 
 
 def test_new_uid_is_distinct_and_sequence_cancellation_cannot_be_reversed(tmp_path):
