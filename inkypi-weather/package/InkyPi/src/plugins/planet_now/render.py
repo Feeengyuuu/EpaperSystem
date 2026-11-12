@@ -406,10 +406,14 @@ def _grid_status(canvas, stats, span, top):
     if not name:
         return
     start, end = span
-    width = canvas.width(name, 10) + 12
-    if start + width <= end - 6:
-        canvas.pill((start, top + 17 - 8), name, 10, fill=GRID_SEVERITY.get(stats.get("severity"), "trends"),
-                    color="paper", pad=6, height=16)
+    text_width = canvas.width(name, 10)
+    # Public fallback fonts can leave a slightly narrower span. Keep the full label and
+    # its original size; tighten only the inner padding when the original pill cannot fit.
+    for pad in (6, 5, 4):
+        if start + text_width + pad * 2 <= end - 6:
+            canvas.pill((start, top + 17 - 8), name, 10, fill=GRID_SEVERITY.get(stats.get("severity"), "trends"),
+                        color="paper", pad=pad, height=16)
+            return
 
 
 def _grid(canvas, payload):

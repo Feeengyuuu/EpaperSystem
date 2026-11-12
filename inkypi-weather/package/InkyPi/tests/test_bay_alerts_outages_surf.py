@@ -440,8 +440,21 @@ def test_a_page_without_the_new_feeds_draws_exactly_as_before(monkeypatch):
 # --- on the page --------------------------------------------------------------------------------
 
 
+@pytest.fixture(params=("default", "public_noto"))
+def map_fonts(request, monkeypatch):
+    """Exercise the tracked public fallback even when local YaHei files are installed."""
+    if request.param == "public_noto":
+        from utils import app_utils, page_canvas
+
+        font = Path(__file__).resolve().parents[1] / "src/static/fonts/NotoSansSC-VF.ttf"
+        assert font.is_file()
+        monkeypatch.setattr(app_utils, "base_ui_font_candidates", lambda bold=False: (str(font),))
+        monkeypatch.setattr(page_canvas, "get_font", lambda _name, size, weight: app_utils.get_base_ui_font(
+            size, bold=weight == "bold"))
+
+
 @pytest.mark.parametrize("mode", ["day", "night"])
-def test_the_map_carries_the_outages_the_surf_and_the_bay_advisory_and_the_column_stays(monkeypatch, mode):
+def test_the_map_carries_the_outages_the_surf_and_the_bay_advisory_and_the_column_stays(monkeypatch, mode, map_fonts):
     settings = {"_inkypi_theme": {"mode": mode}}
     plain = render_page((800, 480), _payload(), settings, NOW)
     drawn = _record_text(monkeypatch)
@@ -484,7 +497,7 @@ def test_a_high_surf_alert_the_card_already_lists_is_not_named_twice(monkeypatch
                                shown=("High Surf Warning",))["alert"] is None
 
 
-def test_a_storm_grows_the_outage_box_and_labels_the_big_outages(monkeypatch):
+def test_a_storm_grows_the_outage_box_and_labels_the_big_outages(monkeypatch, map_fonts):
     big = {"features": [{**feature, "attributes": {**feature["attributes"],
                                                    "EST_CUSTOMERS": feature["attributes"]["EST_CUSTOMERS"] * 40}}
                         for feature in OUTAGE_POINTS["features"][:5]]}

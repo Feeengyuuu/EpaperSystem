@@ -450,6 +450,45 @@ def test_the_grid_summary_is_its_own_optional_feed():
     assert "grid_stats" not in planet_now.CORE_FEEDS
 
 
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_grid_status_keeps_the_full_label_in_the_public_font_header(monkeypatch, mode):
+    from utils.fonts import load_font
+
+    canvas = render.PageCanvas(render._palette({"_inkypi_theme": {"mode": mode}}))
+    font_path = Path(__file__).resolve().parents[1] / "src/static/fonts/NotoSansSC-VF.ttf"
+    monkeypatch.setattr(canvas, "font", lambda size, bold=True: load_font(font_path, size))
+    drawn = []
+    original = canvas.pill
+
+    def pill(xy, text, size, **options):
+        width = original(xy, text, size, **options)
+        drawn.append((xy, text, size, width, options))
+        return width
+
+    monkeypatch.setattr(canvas, "pill", pill)
+    # The original public-font header leaves 51 px after its 6 px logo gap.
+    render._grid_status(canvas, sources.parse_grid_stats(CAISO_STATS), (508, 565), 58)
+
+    assert len(drawn) == 1
+    xy, text, size, width, options = drawn[0]
+    assert text == "电网正常" and size == 10
+    assert xy == (508, 67) and xy[0] + width <= 565 - 6
+    assert options == {"fill": "grid", "color": "paper", "pad": 5, "height": 16}
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_grid_status_keeps_the_original_pixels_when_standard_padding_fits(mode):
+    palette = render._palette({"_inkypi_theme": {"mode": mode}})
+    actual, reference = render.PageCanvas(palette), render.PageCanvas(palette)
+    stats = sources.parse_grid_stats(CAISO_STATS)
+    span = (508, 508 + actual.width(stats["status_zh"], 10) + 12 + 6)
+
+    render._grid_status(actual, stats, span, 58)
+    reference.pill((508, 67), "电网正常", 10, fill="grid", color="paper", pad=6, height=16)
+
+    assert actual.image.tobytes() == reference.image.tobytes()
+
+
 def test_nasas_exoplanet_archive_gives_the_confirmed_planet_count():
     assert sources.parse_exoplanets([{"count(*)": 6464}]) == {"count": 6464}
     assert sources.valid_exoplanets({"count": 6464})

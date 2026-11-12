@@ -683,13 +683,13 @@ def _draw_outages(draw, palette, manifest, size, points, occupied, small_dots):
     return drawn[::-1]
 
 
-def _note_size(draw, fonts, note, rows=None, pill=True, when=True):
+def _note_size(draw, fonts, note, rows=None, pill=True, when=True, *, padding=7, icon_gap=15):
     """(width, height) of a live note's box: its title, ``rows`` of its rows (all by default; a
     row is a text, or a (name, figure) pair set at the two edges), then its alert pill and the
     pill's hours where it has them and they are wanted."""
     rows = note["lines"][1:] if rows is None else note["lines"][1:1 + rows]
     alert = note.get("alert") if pill else None
-    widths = [draw.textlength(note["lines"][0], font=fonts(11)) + 15]
+    widths = [draw.textlength(note["lines"][0], font=fonts(11)) + icon_gap]
     widths += [draw.textlength(row, font=fonts(10, False)) if isinstance(row, str) else
                draw.textlength(row[0], font=fonts(10, False)) + 5 + draw.textlength(row[1], font=fonts(10, False))
                for row in rows]
@@ -700,22 +700,22 @@ def _note_size(draw, fonts, note, rows=None, pill=True, when=True):
         if when and alert.get("when"):
             widths.append(draw.textlength(alert["when"], font=fonts(10, False)))
             height += NOTE_ROW
-    return round(max(widths) + 14), height
+    return round(max(widths) + padding * 2), height
 
 
-def _draw_note(draw, palette, fonts, note, box, icon, rows=None, pill=True, when=True):
+def _draw_note(draw, palette, fonts, note, box, icon, rows=None, pill=True, when=True, *, padding=7, icon_gap=15):
     """A live note in the near-home box's style: ``icon`` (a drawer taking the icon's centre) and
     the title, the rows, then the alert as a solid pill in its severity colour with its hours."""
     rows = note["lines"][1:] if rows is None else note["lines"][1:1 + rows]
     draw.rounded_rectangle(box, radius=5, fill=palette["paper"], outline=palette["rule"], width=1)
-    x, y = box[0] + 7, box[1]
+    x, y = box[0] + padding, box[1]
     icon((x + 5, y + 10))
-    draw.text((x + 15, y + 10), note["lines"][0], font=fonts(11), fill=palette["ink"], anchor="lm")
+    draw.text((x + icon_gap, y + 10), note["lines"][0], font=fonts(11), fill=palette["ink"], anchor="lm")
     y += NOTE_HEAD
     for row in rows:
         name, figure = (row, "") if isinstance(row, str) else row
         draw.text((x, y + 5), name, font=fonts(10, False), fill=palette["ink"], anchor="lm")
-        draw.text((box[2] - 7, y + 5), figure, font=fonts(10, False), fill=palette["ink"], anchor="rm")
+        draw.text((box[2] - padding, y + 5), figure, font=fonts(10, False), fill=palette["ink"], anchor="rm")
         y += NOTE_ROW
     alert = note.get("alert") if pill else None
     if alert:
@@ -736,11 +736,15 @@ def _place_note(draw, palette, fonts, note, icon, tops, occupied, frame, min_wid
         # The alert outlasts the later rows: it goes only when not even one row fits beside it.
         shapes = [(count, True, True)] + [(rows, True, False) for rows in range(count, 0, -1)] + shapes
     for rows, pill, when in shapes:
-        width, height = _note_size(draw, fonts, note, rows, pill, when)
-        box = _free_box(max(width, min_width), height, [(4, top) for top in tops(height)], occupied, frame)
-        if box:
-            _draw_note(draw, palette, fonts, note, box, icon, rows, pill, when)
-            return box
+        # A wider fallback font can touch a coast marker by a few pixels. Give up
+        # horizontal whitespace before dropping an alert or a near-home row.
+        for padding, icon_gap in ((7, 15), (4, 13)):
+            spacing = {"padding": padding, "icon_gap": icon_gap}
+            width, height = _note_size(draw, fonts, note, rows, pill, when, **spacing)
+            box = _free_box(max(width, min_width), height, [(4, top) for top in tops(height)], occupied, frame)
+            if box:
+                _draw_note(draw, palette, fonts, note, box, icon, rows, pill, when, **spacing)
+                return box
     return None
 
 
