@@ -92,7 +92,7 @@ def make_plugin(tmp_path, monkeypatch, answers):
     monkeypatch.setattr(plugin, "_cache_dir", lambda create=True: tmp_path)
     asked = []
 
-    def get_json(url, params=None):
+    def get_json(url, params=None, **kwargs):
         asked.append((url, dict(params or {})))
         answer = answers[min(len(asked), len(answers)) - 1]
         if isinstance(answer, Exception):
@@ -181,3 +181,23 @@ def test_the_page_carries_the_facts_beside_the_days_payload_not_inside_its_cache
     # A page that fell back to English shows none, and asks for none.
     english = plugin._with_did_you_know({**payload, "language": "en"}, ZH, NOW + timedelta(days=1), allow_network=True)
     assert "did_you_know" not in english and len(asked) == 1
+
+
+def test_the_optional_facts_request_has_a_small_response_budget(monkeypatch, tmp_path):
+    from plugins.daily_wiki_page import daily_wiki_page as module
+    calls = []
+
+    class Client:
+        def request_json(self, method, url, **kwargs):
+            calls.append((method, url, kwargs))
+            return type("Result", (), {"data": {"parse": {"text": DYK_HTML}}})()
+
+    monkeypatch.setattr(module, "get_http_client", lambda: Client(), raising=False)
+    monkeypatch.setattr(module, "get_http_session", lambda: pytest.fail("this optional source must be size-bounded"))
+    plugin = DailyWikiPage({"id": "daily_wiki_page"})
+    monkeypatch.setattr(plugin, "_cache_dir", lambda create=True: tmp_path)
+    assert plugin._did_you_know(ZH, NOW, allow_network=True)["facts"]
+    method, url, options = calls[0]
+    assert method == "GET" and url == did_you_know.API_URL
+    assert options["max_bytes"] == 256 * 1024 and options["timeout"] == (5, 12)
+    assert options["params"] == did_you_know.API_PARAMS

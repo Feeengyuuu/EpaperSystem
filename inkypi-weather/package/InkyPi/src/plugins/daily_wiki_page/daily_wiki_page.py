@@ -29,7 +29,7 @@ from runtime.refresh_contracts import TaskCancelled, TaskDeadlineExceeded
 from utils.app_utils import DEFAULT_FONT_FAMILY, coerce_bool, get_available_font_names, get_base_ui_font, get_font
 from utils.atomic_file import atomic_write_json
 from utils.cache_manager import CacheBudget, CachePathError
-from utils.http_client import get_http_session
+from utils.http_client import get_http_client, get_http_session
 from utils.image_utils import text_width
 from utils.safe_image import ImageLimits
 
@@ -594,7 +594,7 @@ class DailyWikiPage(BasePlugin):
             return {"facts": kept["facts"], "image_url": str(kept.get("image_url") or "")}
         if allow_network:
             try:
-                data = self._get_json(did_you_know.API_URL, params=dict(did_you_know.API_PARAMS))
+                data = self._get_json(did_you_know.API_URL, params=dict(did_you_know.API_PARAMS), max_bytes=256 * 1024)
                 found = did_you_know.facts_from_html(data.get("parse", {}).get("text"), self._html_text)
                 self._write_did_you_know({"schema": did_you_know.CACHE_SCHEMA, "fetched_at": seconds, **found})
                 return found
@@ -1179,7 +1179,10 @@ class DailyWikiPage(BasePlugin):
             return {"titles": title}
         raise WikiSourceError("article_without_id", "article has no pageid or title")
 
-    def _get_json(self, url, params=None):
+    def _get_json(self, url, params=None, *, max_bytes=None):
+        if max_bytes is not None:
+            return get_http_client().request_json(
+                "GET", url, params=params, headers=REQUEST_HEADERS, timeout=(5, 12), max_bytes=max_bytes).data
         response = get_http_session().get(url, params=params, headers=REQUEST_HEADERS, timeout=(5, 12))
         response.raise_for_status()
         try:

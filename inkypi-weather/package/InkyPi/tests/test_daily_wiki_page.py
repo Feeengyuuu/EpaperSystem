@@ -2122,7 +2122,7 @@ def test_generate_image_shows_did_you_know_and_its_failure_leaves_the_page_and_i
 
     asked = []
 
-    def offline(_url, params=None):
+    def offline(_url, params=None, **_kwargs):
         asked.append((params or {}).get("page"))
         raise RuntimeError("offline")
 
@@ -2141,7 +2141,7 @@ def test_generate_image_shows_did_you_know_and_its_failure_leaves_the_page_and_i
     assert failed.info["daily_wiki_layout"]["complete"] is True
     # The next refresh asks again (nothing was kept) and shows it; the day's own cache holds no facts.
     monkeypatch.setattr(plugin, "_get_json",
-                        lambda _url, params=None: asked.append(params.get("page")) or {"parse": {"text": DYK_PAGE}})
+                        lambda _url, params=None, **_kwargs: asked.append(params.get("page")) or {"parse": {"text": DYK_PAGE}})
     shown = plugin.generate_image(settings, FakeDeviceConfig())
     assert [fact["answer"] for fact in shown.info["daily_wiki_layout"]["did_you_know"]["facts"]] == ["诺肯袋"]
     assert read_source_provenance(shown) is SourceProvenance.FRESH_CACHE and asked == ["Template:Dyk"] * 2
