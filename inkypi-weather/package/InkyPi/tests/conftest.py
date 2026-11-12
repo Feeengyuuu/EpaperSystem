@@ -153,6 +153,18 @@ def _local_events_feeds_offline(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _tech_pulse_extra_boards_offline(monkeypatch):
+    """Tech Pulse's LMArena board and SDK download counts never reach the network in tests: their
+    loader finds no client (and keeps what it has) unless a test gives it one."""
+    from plugins.tech_pulse import extras
+
+    def offline():
+        raise RuntimeError("Tech Pulse's extra boards are offline in tests")
+
+    monkeypatch.setattr(extras, "get_http_client", offline)
+
+
+@pytest.fixture(autouse=True)
 def _collect_new_scratch_entries(request):
     """Queue whatever a test adds under the known scratch roots for teardown cleanup."""
 

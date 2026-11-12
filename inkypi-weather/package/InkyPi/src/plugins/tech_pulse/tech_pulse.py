@@ -23,9 +23,9 @@ from plugins.base_plugin.render_provenance import (
 from plugins.ai_ecosystem_pulse.ai_ecosystem_pulse import AiEcosystemPulse
 from plugins.ai_ecosystem_pulse.sources import parameter_text, pipeline_label
 from plugins.context_cache import write_context
-from plugins.tech_pulse import item_icons, openrouter, trends
+from plugins.tech_pulse import extras as extra_boards, item_icons, openrouter, trends
 from runtime.long_task_executor import task_context_or_default
-from runtime.refresh_contracts import TaskCancelled, TaskContext
+from runtime.refresh_contracts import TaskCancelled, TaskContext, TaskDeadlineExceeded
 from utils.app_utils import DEFAULT_FONT_FAMILY, bounded_int, coerce_bool, get_available_font_names, get_font
 from utils.flat_icons import draw_icon
 from utils.http_client import get_http_client, get_http_session
@@ -103,6 +103,10 @@ OPENROUTER_BOX = (14, 420, 786, 474)
 OPENROUTER_FILE = "openrouter.json"
 OPENROUTER_FRESH_HOURS = 6
 OPENROUTER_CARDS = 3
+# The strip takes turns (extras.py): OpenRouter's new models, LMArena's text leaderboard (its first
+# ARENA_CARDS places) and the AI SDKs' weekly downloads; the two boards are kept in EXTRAS_FILE.
+EXTRAS_FILE = "extras.json"
+ARENA_CARDS = 4
 # Each model's maker in its own colour (its brand's), on the model's chip.
 PROVIDER_COLOURS = {
     "openai": (16, 163, 127), "anthropic": (204, 120, 92), "google": (66, 133, 244), "meta-llama": (0, 100, 224),
@@ -300,9 +304,12 @@ class TechPulse(BasePlugin):
         if not theme_only:
             self._write_context(payload, now, ai)
         models = self._openrouter(now, cache_only=theme_only)
+        boards = self._extras(now, cache_only=theme_only)
         icons = self._icons(payload, ai, models, cache_only=theme_only)
         try:
-            image = self._render_page(dimensions, payload, settings, now, ai, history, models, icons)
+            # The boards go to the page only when they hold something: without them it is drawn as ever.
+            image = self._render_page(dimensions, payload, settings, now, ai, history, models, icons,
+                                      **({"extras": boards} if boards else {}))
         finally:
             for icon in icons.values():
                 icon.close()
@@ -777,7 +784,28 @@ class TechPulse(BasePlugin):
             logger.warning("Tech Pulse OpenRouter models unavailable: %s", exc)
             return cached or None
 
-    def _render_page(self, dimensions, payload, settings, now, ai=None, history=None, models=None, icons=None):
+    def _extras(self, now, *, cache_only=False):
+        """The boards that take turns with OpenRouter's strip (extras.py), from their file: brought
+        up to date on a refresh, read as they are for a theme render; None without the file. They
+        are optional: nothing here can fail the page."""
+        try:
+            path = self._cache_dir(create=not cache_only) / EXTRAS_FILE
+            cached = self._read_json(path, {})
+            cached = cached if isinstance(cached, dict) and cached else None
+            if cache_only:
+                return cached
+            state = extra_boards.refresh(cached or {}, now)
+            if state != cached:
+                self._write_json(path, state)
+            return state if extra_boards.arena_models(state) or extra_boards.sdk_rows(state) else None
+        except (TaskCancelled, TaskDeadlineExceeded):
+            raise
+        except Exception as exc:
+            logger.warning("Tech Pulse extra boards unavailable: %s", type(exc).__name__)
+            return None
+
+    def _render_page(self, dimensions, payload, settings, now, ai=None, history=None, models=None, icons=None,
+                     extras=None):
         palette = self._palette(settings)
         image = Image.new("RGB", PAGE_SIZE, palette["background"])
         draw = ImageDraw.Draw(image)
@@ -792,7 +820,8 @@ class TechPulse(BasePlugin):
         self._draw_skills(image, draw, SKILLS_BOX, ai, palette, fonts, history, now, icons=icons)
         self._draw_models(image, draw, MODELS_BOX, ai, palette, fonts, history, now, icons=icons)
         self._draw_repos(image, draw, REPOS_BOX, ai, palette, fonts, now, icons=icons)
-        self._draw_openrouter(image, draw, OPENROUTER_BOX, models, palette, fonts, now, icons=icons)
+        self._draw_bottom_strip(image, draw, OPENROUTER_BOX, extra_boards.strip_turn(now, extras), models, extras,
+                                palette, fonts, now, icons=icons)
         if tuple(dimensions) != PAGE_SIZE:
             image = image.resize(tuple(dimensions), Image.LANCZOS)
         return image
@@ -1370,6 +1399,88 @@ class TechPulse(BasePlugin):
             self._draw_text(draw, (card[0] + 10, bottom), self._fit_text(draw, " · ".join(facts), fonts["tiny"],
                                                                           card[2] - card[0] - 18),
                             fonts["tiny"], palette["muted"], anchor="lm")
+
+    def _draw_bottom_strip(self, image, draw, box, turn, models, extras, palette, fonts, now, icons=None):
+        """The bottom strip on its ``turn``: LMArena's leaderboard or the SDK downloads when it is
+        theirs and they have data, else OpenRouter's new models as ever."""
+        if turn == "arena" and extra_boards.arena_models(extras):
+            return self._draw_arena(image, draw, box, extras, palette, fonts)
+        if turn == "sdk" and extra_boards.sdk_rows(extras):
+            return self._draw_sdk(draw, box, extras, palette, fonts)
+        return self._draw_openrouter(image, draw, box, models, palette, fonts, now, icons=icons)
+
+    def _strip_title(self, draw, box, title, caption, palette, fonts):
+        """The strip's frame and its title in the thin-framed box OpenRouter's has; where the cards start."""
+        x0, y0, _x1, y1 = box
+        self._panel(draw, box, palette, 1.0)
+        middle = (y0 + y1) / 2
+        cards_left = x0 + 148
+        draw.rounded_rectangle((x0 + 6, y0 + 6, cards_left - 6, y1 - 6), radius=8, outline=palette["violet"], width=1)
+        self._draw_text(draw, (x0 + 14, middle - 11), title, fonts["section"], palette["ink"], anchor="lm")
+        self._draw_text(draw, (x0 + 14, middle + 10), caption, fonts["tiny_bold"], palette["muted"], anchor="lm")
+        return cards_left
+
+    def _draw_arena(self, image, draw, box, extras, palette, fonts):
+        """LMArena's text leaderboard: a card for each of its first ARENA_CARDS places with the
+        rank, the maker's official mark (its name without one), the score, and the model under them."""
+        _x0, y0, x1, y1 = box
+        day = str(extras["arena"].get("date") or "")
+        caption = f"文本总榜 · {day[5:7]}/{day[8:10]}" if len(day) == 10 else "文本总榜"
+        cards_left = self._strip_title(draw, box, "LMArena", caption, palette, fonts)
+        width = (x1 - 8 - cards_left - 6 * (ARENA_CARDS - 1)) / ARENA_CARDS
+        for index, model in enumerate(extra_boards.arena_models(extras)[:ARENA_CARDS]):
+            left = cards_left + index * (width + 6)
+            card = (left, y0 + 6, left + width, y1 - 6)
+            draw.rounded_rectangle(card, radius=8, fill=palette["row"])
+            maker = provider_author(model.get("maker"))
+            colour = PROVIDER_COLOURS.get(maker, palette["muted"])
+            if sum(colour) < 200 and sum(palette["background"]) < 240:
+                colour = palette["muted"]
+            draw.rounded_rectangle((card[0], card[1], card[0] + 4, card[3]), radius=2, fill=colour)
+            top, bottom = card[1] + 11, card[3] - 10
+            cursor = card[0] + 10
+            cursor += self._text_width(draw, str(model.get("rank")), fonts["name"]) + 6
+            self._draw_text(draw, (card[0] + 10, top), str(model.get("rank")), fonts["name"], palette["ink"], anchor="lm")
+            score = str(model.get("score"))
+            right = card[2] - 8 - self._text_width(draw, score, fonts["name"]) - 6
+            self._draw_text(draw, (card[2] - 8, top), score, fonts["name"], palette["ink"], anchor="rm")
+            mark = self._provider_mark(maker, palette) if maker else None
+            if mark is not None and cursor + mark.width <= right:
+                image.paste(mark.convert("RGB"), (int(cursor), int(top - mark.height / 2)), mark.getchannel("A"))
+            elif maker:
+                name = PROVIDER_NAMES.get(maker, maker.title())
+                self._draw_text(draw, (cursor, top), self._fit_text(draw, name, fonts["tiny_bold"], right - cursor),
+                                fonts["tiny_bold"], palette["muted"], anchor="lm")
+            self._draw_text(draw, (card[0] + 10, bottom), self._fit_text(draw, model.get("name") or "", fonts["small"],
+                                                                          card[2] - card[0] - 18),
+                            fonts["small"], palette["ink"], anchor="lm")
+
+    def _draw_sdk(self, draw, box, extras, palette, fonts):
+        """The AI SDKs' downloads last week, a row for npm and one for PyPI: each package's name and
+        count over a bar as long as its share of the largest count."""
+        _x0, y0, x1, y1 = box
+        rows = extra_boards.sdk_rows(extras)
+        cards_left = self._strip_title(draw, box, "AI SDK 周下载", "上周下载次数", palette, fonts)
+        most = max(count for _label, counts in rows for _name, count in counts) or 1
+        colours = {"npm": palette["down"], "PyPI": palette["cyan"]}
+        columns = max(len(counts) for _label, counts in rows)
+        label_w = 34
+        cell = (x1 - 10 - cards_left - label_w) / columns
+        pitch = (y1 - y0 - 12) / len(rows)
+        for line, (label, counts) in enumerate(rows):
+            top = y0 + 6 + line * pitch
+            text_y, bar_y = top + pitch / 2 - 4, top + pitch / 2 + 5
+            self._draw_text(draw, (cards_left, text_y), label, fonts["tiny_bold"], palette["muted"], anchor="lm")
+            for index, (name, count) in enumerate(counts):
+                left = cards_left + label_w + index * cell
+                right = left + cell - 10
+                value = extra_boards.count_text(count)
+                value_left = right - self._text_width(draw, value, fonts["tiny_bold"])
+                self._draw_text(draw, (right, text_y), value, fonts["tiny_bold"], palette["ink"], anchor="rm")
+                self._draw_text(draw, (left, text_y), self._fit_text(draw, name, fonts["tiny"], value_left - left - 4),
+                                fonts["tiny"], palette["ink"], anchor="lm")
+                draw.rectangle((left, bar_y, right, bar_y + 2), fill=palette["grid"])
+                draw.rectangle((left, bar_y, left + max(2, (right - left) * count / most), bar_y + 2), fill=colours[label])
 
     def _provider_mark(self, provider, palette):
         """The official mark of a model's maker (PROVIDER_LOGOS) PROVIDER_MARK_HEIGHT tall and at most
