@@ -68,6 +68,8 @@ WATER_KEY_W, WATER_CELL_W, WATER_GAUGE = 60, 92, (11, 26)
 # Three reservoirs a turn, so each has room for its name: the northern three and the southern
 # three on alternate even hours.
 WATER_PER_TURN = 3
+# On the other hours the foot carries up to this many cells (threatened species, the top observer).
+FOOT_CELLS = 3
 # Quiet nature doodles in each card's colour under its content, by the card's icon: leaves,
 # birds and butterflies, or the naturalist's binoculars, notebook and lens.
 DOODLES = {icon: Path(__file__).resolve().parent / "assets" / "doodles" / f"{name}.png"
@@ -564,6 +566,30 @@ def _water(canvas, payload, now):
     return True
 
 
+def _foot(canvas, key, note, cells):
+    """The filmstrip's foot on the hours the water does not have it, in the water's two lines: a
+    key (``key`` over ``note``), then ``cells`` of (Red List code or None, name, figure) sharing
+    the rest of the width, each name over its figure after its category's chip."""
+    left, right, top = RECENT_CARD[0] + 8, RECENT_CARD[2] - 8, WATER_TOP + 8
+    upper, lower = top + 4, top + 19
+    canvas.rule((left, WATER_TOP, right, WATER_TOP))
+    canvas.text((left, upper), key, 11, anchor="lm")
+    canvas.text((left, lower), note, 11, anchor="lm", bold=False)
+    x = left + WATER_KEY_W + 6
+    width = (right - x) / max(1, len(cells))
+    for code, name, figure in cells:
+        text_left = x
+        if code in IUCN_CATEGORIES:
+            fill = _rgb(IUCN_CATEGORIES[code][1])
+            canvas.draw.rounded_rectangle((x, top + 3, x + 24, top + 21), radius=5, fill=fill)
+            canvas.text((x + 12, top + 12), code, 10, (0, 0, 0) if _luminance(fill) > 0.35 else (255, 255, 255),
+                        anchor="mm")
+            text_left = x + 30
+        canvas.serif.text((text_left, upper), name, 12, anchor="lm", width=x + width - 8 - text_left)
+        canvas.text((text_left, lower), figure, 13, anchor="lm", width=x + width - 8 - text_left)
+        x += width
+
+
 def _recent(canvas, payload, images, now):
     items = payload["recent"]["data"].get("items", [])[1:1 + RECENT_TILES]
     stats = payload["stats"]["data"]
@@ -590,16 +616,22 @@ def _recent(canvas, payload, images, now):
     if water_turn(now) and _water(canvas, payload, now):
         return
     threatened = threatened_data(payload)
+    observer = []
+    if stats.get("top_observer"):
+        observer = [(None, f"@{stats['top_observer']}", f"{stats.get('top_observations', 0)} 条观察")]
     if threatened and threatened["items"] and ((payload.get("birds") or {}).get("data") or {}).get("items"):
-        # With eBird's birds in the groups card, the week's vulnerable-or-worse species take this line.
-        names = " · ".join(f"{_display_name(item)} {item['count']} 次"
-                           for item in _unshown(threatened["items"], pictured(payload))[:3])
-        canvas.text((left, RECENT_CARD[3] - 11), f"易危及以上 本周 {threatened_count(threatened)}：{names}", 11,
-                    "muted", anchor="lm", bold=False, width=right - left)
-    elif stats.get("top_observer"):
-        canvas.text((left, RECENT_CARD[3] - 11),
-                    f"本周最活跃：@{stats['top_observer']} · {stats.get('top_observations', 0)} 条观察 · "
-                    f"{stats.get('top_species', 0)} 种", 11, "muted", anchor="lm", bold=False, width=right - left)
+        # With eBird's birds in the groups card, the week's vulnerable-or-worse species take the
+        # foot: each its Red List category, its name and how often it was seen; the week's most
+        # active observer has the room a short list leaves.
+        cells = [(item.get("iucn"), _display_name(item), f"{item['count']} 次")
+                 for item in _unshown(threatened["items"], pictured(payload))[:FOOT_CELLS]]
+        cells += observer if len(cells) < FOOT_CELLS else []
+        _foot(canvas, "易危及以上", f"本周 {threatened_count(threatened)}", cells)
+    elif observer:
+        cells = observer + [(None, "记录物种", f"{stats.get('top_species', 0)} 种")]
+        if stats.get("observations") and stats.get("top_observations"):
+            cells.append((None, "占本周观察", f"{100 * stats['top_observations'] / stats['observations']:.0f}%"))
+        _foot(canvas, "本周最活跃", "观察者", cells)
 
 
 def render_page(dimensions, payload, settings, now, images):

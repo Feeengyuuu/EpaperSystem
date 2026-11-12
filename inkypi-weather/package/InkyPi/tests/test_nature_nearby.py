@@ -430,8 +430,26 @@ def test_with_ebirds_birds_the_threatened_species_take_the_filmstrips_foot(monke
          "time": NOW.isoformat(), "count": 1, "distance_km": 9.0, "confirmed": True}]}}
     render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, {})
 
-    assert "易危及以上 本周 35 种：美洲鹈鹕 24 次" in drawn
-    assert not any(text.startswith("本周最活跃") for text in drawn) and "受威胁物种" not in drawn
+    # The foot is the water's two lines: a key, then the species not already pictured with its
+    # Red List code and count, and the week's most active observer in the room that is left.
+    assert {"易危及以上", "本周 35 种", "CR", "美洲鹈鹕", "24 次", "@sms273", "278 条观察"} <= set(drawn)
+    assert "本周最活跃" not in drawn and "受威胁物种" not in drawn
+
+
+def test_without_threatened_species_at_the_foot_the_most_active_observer_fills_it(monkeypatch):
+    from plugins.nature_nearby import render
+
+    drawn = _recorded(monkeypatch)
+    image = render_page((800, 480), _payload(), {"_inkypi_theme": {"mode": "day"}}, NOW, {})
+
+    assert {"本周最活跃", "观察者", "@sms273", "278 条观察", "记录物种", "116 种", "占本周观察", "4%"} <= set(drawn)
+    # Both of the foot's lines carry ink, right across the card.
+    left, right = render.RECENT_CARD[0] + 8, render.RECENT_CARD[2] - 8
+    paper = render._palette({"_inkypi_theme": {"mode": "day"}})["paper"]
+    for band in ((render.WATER_TOP + 6, render.WATER_TOP + 18), (render.WATER_TOP + 21, render.WATER_TOP + 33)):
+        for box in ((left, band[0], left + 60, band[1]), (left + 66, band[0], left + 200, band[1]),
+                    (left + 250, band[0], right, band[1])):
+            assert any(pixel != paper for pixel in image.crop(box).convert("RGB").get_flattened_data())
 
 
 def test_the_extras_load_with_the_species_and_never_decide_provenance(monkeypatch, tmp_path):
@@ -479,7 +497,7 @@ def test_a_week_without_vulnerable_species_says_so_quietly(monkeypatch):
     payload["threatened"] = {"state": "live", "data": {**THREATENED, "partial": True}}
     drawn.clear()
     render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, {})
-    assert any(text.startswith("易危及以上 本周 35+ 种") for text in drawn)
+    assert {"易危及以上", "本周 35+ 种"} <= set(drawn)
 
 
 # cdec.water.ca.gov/resapp/service/res/conditions?date=2026-11-10&stationIds=SHA,ORO,SNL,DNP,HTH,NML
