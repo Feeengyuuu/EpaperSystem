@@ -201,3 +201,222 @@ def test_the_optional_facts_request_has_a_small_response_budget(monkeypatch, tmp
     assert method == "GET" and url == did_you_know.API_URL
     assert options["max_bytes"] == 256 * 1024 and options["timeout"] == (5, 12)
     assert options["params"] == did_you_know.API_PARAMS
+
+
+@pytest.mark.parametrize("cache_hours", [None, 7, 97])
+def test_optional_facts_retry_after_uses_kept_cache_without_canceling_a_live_parent(tmp_path, monkeypatch, cache_hours):
+    from plugins.daily_wiki_page import daily_wiki_page as module
+    from runtime.long_task_executor import InstanceIdentity, bind_long_task_runtime
+    from runtime.refresh_contracts import TaskContext
+    from tests.test_http_client import FakeResponse, FakeSession
+    from utils.http_client import HttpClient
+
+    plugin = DailyWikiPage({"id": "daily_wiki_page"})
+    monkeypatch.setattr(plugin, "_cache_dir", lambda create=True: tmp_path)
+    found = did_you_know.facts_from_html(DYK_HTML, html_text)
+    if cache_hours is not None:
+        plugin._write_did_you_know({"schema": did_you_know.CACHE_SCHEMA,
+                                   "fetched_at": (NOW - timedelta(hours=cache_hours)).timestamp(), **found})
+    path = tmp_path / did_you_know.CACHE_FILE
+    before = path.read_bytes() if path.exists() else None
+    response = FakeResponse(503, headers={"Retry-After": "30"})
+    session = FakeSession([response])
+    monkeypatch.setattr(module, "get_http_client", lambda: HttpClient(session=session))
+    parent = TaskContext.never_cancelled(deadline_monotonic=120, clock=lambda: 0)
+
+    with bind_long_task_runtime(parent, InstanceIdentity("wiki-facts", 1, 1)):
+        result = plugin._did_you_know(ZH, NOW, allow_network=True)
+
+    assert result == (found if cache_hours == 7 else {})
+    assert len(session.calls) == 1 and response.closed
+    assert parent.remaining_seconds() == 120
+    assert (path.read_bytes() if path.exists() else None) == before
+
+
+def test_optional_facts_skip_network_when_the_parent_needs_its_remaining_render_budget(tmp_path, monkeypatch):
+    from runtime.long_task_executor import InstanceIdentity, bind_long_task_runtime
+    from runtime.refresh_contracts import TaskContext
+
+    plugin, asked = make_plugin(tmp_path, monkeypatch, [{"parse": {"text": DYK_HTML}}])
+    found = did_you_know.facts_from_html(DYK_HTML, html_text)
+    plugin._write_did_you_know({"schema": did_you_know.CACHE_SCHEMA,
+                               "fetched_at": (NOW - timedelta(hours=7)).timestamp(), **found})
+    parent = TaskContext.never_cancelled(deadline_monotonic=15, clock=lambda: 0)
+    with bind_long_task_runtime(parent, InstanceIdentity("wiki-facts", 1, 1)):
+        assert plugin._did_you_know(ZH, NOW, allow_network=True) == found
+    assert asked == [] and parent.remaining_seconds() == 15
+
+
+@pytest.mark.parametrize("stop", ["cancel", "deadline"])
+def test_optional_facts_never_swallow_a_parent_stop_during_the_http_request(tmp_path, monkeypatch, stop):
+    from plugins.daily_wiki_page import daily_wiki_page as module
+    from runtime.long_task_executor import InstanceIdentity, bind_long_task_runtime
+    from runtime.refresh_contracts import TaskCancelled, TaskContext, TaskDeadlineExceeded
+    from tests.test_http_client import FakeResponse, FakeSession
+    from utils.http_client import HttpClient
+
+    plugin = DailyWikiPage({"id": "daily_wiki_page"})
+    monkeypatch.setattr(plugin, "_cache_dir", lambda create=True: tmp_path)
+    found = did_you_know.facts_from_html(DYK_HTML, html_text)
+    plugin._write_did_you_know({"schema": did_you_know.CACHE_SCHEMA,
+                               "fetched_at": (NOW - timedelta(hours=7)).timestamp(), **found})
+    clock = [0.0]
+    parent = TaskContext.never_cancelled(deadline_monotonic=120, clock=lambda: clock[0])
+    response = FakeResponse(503, headers={"Retry-After": "30"})
+
+    class StoppingSession(FakeSession):
+        def request(self, method, url, **kwargs):
+            result = super().request(method, url, **kwargs)
+            if stop == "deadline":
+                clock[0] = 121
+            else:
+                parent.cancel_event.set()
+            return result
+
+    session = StoppingSession([response])
+    monkeypatch.setattr(module, "get_http_client", lambda: HttpClient(session=session))
+    expected = TaskDeadlineExceeded if stop == "deadline" else TaskCancelled
+    with bind_long_task_runtime(parent, InstanceIdentity("wiki-facts", 1, 1)), pytest.raises(expected):
+        plugin._did_you_know(ZH, NOW, allow_network=True)
+    assert len(session.calls) == 1 and response.closed
+
+
+def picture_retry_case(tmp_path, monkeypatch, *, retry_after, cached=False, parent_seconds=120,
+                       request_seconds=0, stop=None):
+    """Real requests/urllib3 retry path, with only the socket response replaced."""
+    import os
+    import time
+    from io import BytesIO
+
+    from PIL import Image
+    from requests.adapters import HTTPAdapter
+    from urllib3.connectionpool import HTTPConnectionPool
+    from urllib3.response import HTTPResponse
+
+    from plugins.daily_wiki_page import daily_wiki_page as module
+    from runtime.refresh_contracts import TaskContext
+    from utils.http_client import DeadlineRetry, TimeoutSession
+
+    clock, waits, calls = [0.0], [], []
+
+    class ClockEvent:
+        cancelled = False
+
+        def is_set(self):
+            return self.cancelled
+
+        def set(self):
+            self.cancelled = True
+
+        def wait(self, seconds):
+            waits.append(seconds)
+            clock[0] += seconds
+            return self.cancelled
+
+    parent = TaskContext(ClockEvent(), parent_seconds, lambda: clock[0])
+    session = TimeoutSession()
+    session.trust_env = False
+    session.mount("https://", HTTPAdapter(max_retries=DeadlineRetry(
+        total=1, status=1, status_forcelist=[503], respect_retry_after_header=True, raise_on_status=False,
+    )))
+
+    def response(_pool, _connection, method, url, **_kwargs):
+        calls.append((method, url))
+        clock[0] += request_seconds
+        if stop == "cancel":
+            parent.cancel_event.set()
+        elif stop == "deadline":
+            clock[0] = parent_seconds + 1
+        return HTTPResponse(body=BytesIO(b"unavailable"), status=503,
+                            headers={"Retry-After": str(retry_after)}, preload_content=False)
+
+    monkeypatch.setattr(HTTPConnectionPool, "_make_request", response)
+    monkeypatch.setattr(module, "get_http_session", lambda: session)
+    plugin = DailyWikiPage({"id": "daily_wiki_page"})
+    path = tmp_path / "picture.png"
+    monkeypatch.setattr(plugin, "_media_cache_path", lambda _url, read_only=False: path)
+    if cached:
+        Image.new("RGB", (8, 10), (50, 100, 150)).save(path)
+        timestamp = time.time() - 48 * 3600
+        os.utime(path, (timestamp, timestamp))
+    return plugin, parent, session, calls, path, clock, waits
+
+
+@pytest.mark.parametrize("retry_after", [30, 130])
+@pytest.mark.parametrize("cached", [False, True])
+def test_optional_picture_retry_deadline_preserves_the_page_and_cached_media(tmp_path, monkeypatch, retry_after, cached):
+    from runtime.long_task_executor import InstanceIdentity, bind_long_task_runtime
+
+    plugin, parent, session, calls, path, _clock, waits = picture_retry_case(
+        tmp_path, monkeypatch, retry_after=retry_after, cached=cached,
+    )
+    before = (path.read_bytes(), path.stat().st_mtime_ns) if cached else None
+    url = did_you_know.facts_from_html(DYK_HTML, html_text)["image_url"]
+    with session, bind_long_task_runtime(parent, InstanceIdentity("wiki-picture", 1, 1)):
+        image = plugin._did_you_know_picture(url, (32, 32), {})
+    if cached:
+        assert image.getpixel((0, 0)) == (50, 100, 150)
+        assert (path.read_bytes(), path.stat().st_mtime_ns) == before
+    else:
+        assert image is None and not path.exists()
+    assert len(calls) == 1 and waits == []
+    assert parent.remaining_seconds() == 120
+
+
+def test_optional_picture_short_retry_cannot_take_the_parents_remaining_budget(tmp_path, monkeypatch):
+    from runtime.long_task_executor import InstanceIdentity, bind_long_task_runtime
+
+    plugin, parent, session, calls, _path, clock, waits = picture_retry_case(
+        tmp_path, monkeypatch, retry_after=5, request_seconds=9,
+    )
+    url = did_you_know.facts_from_html(DYK_HTML, html_text)["image_url"]
+    with session, bind_long_task_runtime(parent, InstanceIdentity("wiki-picture", 1, 1)):
+        assert plugin._did_you_know_picture(url, (32, 32), {}) is None
+    assert len(calls) == 1 and waits == [] and clock[0] == 9
+    assert parent.remaining_seconds() == 111
+
+
+@pytest.mark.parametrize("cached", [False, True])
+def test_optional_picture_low_budget_only_reads_existing_media(tmp_path, monkeypatch, cached):
+    from runtime.long_task_executor import InstanceIdentity, bind_long_task_runtime
+
+    plugin, parent, session, calls, path, _clock, waits = picture_retry_case(
+        tmp_path, monkeypatch, retry_after=30, cached=cached, parent_seconds=15,
+    )
+    before = (path.read_bytes(), path.stat().st_mtime_ns) if cached else None
+    url = did_you_know.facts_from_html(DYK_HTML, html_text)["image_url"]
+    with session, bind_long_task_runtime(parent, InstanceIdentity("wiki-picture", 1, 1)):
+        image = plugin._did_you_know_picture(url, (32, 32), {})
+    assert calls == waits == [] and parent.remaining_seconds() == 15
+    if cached:
+        assert image.getpixel((0, 0)) == (50, 100, 150)
+        assert (path.read_bytes(), path.stat().st_mtime_ns) == before
+    else:
+        assert image is None and not path.exists()
+
+
+@pytest.mark.parametrize("stop", ["cancel", "deadline"])
+def test_optional_picture_parent_cancellation_and_deadline_still_propagate(tmp_path, monkeypatch, stop):
+    from runtime.long_task_executor import InstanceIdentity, bind_long_task_runtime
+    from runtime.refresh_contracts import TaskCancelled, TaskDeadlineExceeded
+
+    plugin, parent, session, calls, _path, _clock, _waits = picture_retry_case(
+        tmp_path, monkeypatch, retry_after=130, cached=True, stop=stop,
+    )
+    url = did_you_know.facts_from_html(DYK_HTML, html_text)["image_url"]
+    expected = TaskDeadlineExceeded if stop == "deadline" else TaskCancelled
+    with session, bind_long_task_runtime(parent, InstanceIdentity("wiki-picture", 1, 1)), pytest.raises(expected):
+        plugin._did_you_know_picture(url, (32, 32), {})
+    assert len(calls) == 1
+
+
+def test_optional_picture_without_a_bound_parent_still_has_a_short_budget(tmp_path, monkeypatch):
+    from runtime.long_task_executor import current_task_context
+
+    plugin, _parent, session, calls, _path, _clock, _waits = picture_retry_case(
+        tmp_path, monkeypatch, retry_after=130,
+    )
+    url = did_you_know.facts_from_html(DYK_HTML, html_text)["image_url"]
+    with session:
+        assert plugin._did_you_know_picture(url, (32, 32), {}) is None
+    assert len(calls) == 1 and current_task_context() is None

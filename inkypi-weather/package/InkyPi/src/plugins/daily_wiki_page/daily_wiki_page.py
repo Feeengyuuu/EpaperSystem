@@ -25,7 +25,12 @@ from plugins.base_plugin.render_provenance import (
 )
 from plugins.context_cache import write_context
 from plugins.daily_wiki_page import almanac, day_colours, did_you_know, holiday_places, zh_daily_picture
-from runtime.refresh_contracts import TaskCancelled, TaskDeadlineExceeded
+from runtime.long_task_executor import (
+    InstanceIdentity, bind_long_task_runtime, current_instance_identity,
+    current_instance_identity_validator, current_parallel_image_runner,
+    current_task_context, task_context_or_default,
+)
+from runtime.refresh_contracts import TaskCancelled, TaskContext, TaskDeadlineExceeded
 from utils.app_utils import DEFAULT_FONT_FAMILY, coerce_bool, get_available_font_names, get_base_ui_font, get_font
 from utils.atomic_file import atomic_write_json
 from utils.cache_manager import CacheBudget, CachePathError
@@ -72,6 +77,10 @@ ZH_DATE_PAGE_API_URL = "https://zh.wikipedia.org/w/api.php"
 # Wikimedia throttles anonymous clients whose User-Agent carries no contact URL.
 USER_AGENT = "InkyPi DailyWikiPage/1.0 (https://github.com/Feeengyuuu/EpaperSystem)"
 REQUEST_HEADERS = {"User-Agent": USER_AGENT, "Accept": "application/json,*/*;q=0.8"}
+# Allow the optional 12-second request only when four seconds remain for rendering.
+DID_YOU_KNOW_MIN_REMAINING_SECONDS = 16
+DID_YOU_KNOW_PICTURE_SECONDS = 12
+DID_YOU_KNOW_RENDER_RESERVE_SECONDS = 4
 IMAGE_HEADERS = {"User-Agent": USER_AGENT, "Accept": "image/jpeg,image/png,image/webp,image/*;q=0.8"}
 RESAMPLE = getattr(Image, "Resampling", Image).LANCZOS
 DEFAULT_IMAGE_CACHE_HOURS = 24
@@ -585,20 +594,27 @@ class DailyWikiPage(BasePlugin):
         The facts are kept beside the day's page (did_you_know.CACHE_FILE) and asked for again
         once they are FRESH_SECONDS old, one request; a refresh that fails keeps the last good
         ones up to USABLE_SECONDS. Without ``allow_network`` (a redraw from cache) the kept facts
-        are only read. No failure here reaches the page."""
+        are only read. Source failures keep the page; task cancellation still propagates."""
         if not self._wants_simplified_chinese(self._language(settings)):
             return {}
+        parent = current_task_context()
+        if parent is not None:
+            parent.raise_if_cancelled()
         seconds = now.timestamp()
         kept = self._read_did_you_know(create=allow_network)
         if did_you_know.usable(kept, seconds, did_you_know.FRESH_SECONDS):
             return {"facts": kept["facts"], "image_url": str(kept.get("image_url") or "")}
-        if allow_network:
+        if allow_network and (parent is None or parent.remaining_seconds() >= DID_YOU_KNOW_MIN_REMAINING_SECONDS):
             try:
                 data = self._get_json(did_you_know.API_URL, params=dict(did_you_know.API_PARAMS), max_bytes=256 * 1024)
                 found = did_you_know.facts_from_html(data.get("parse", {}).get("text"), self._html_text)
                 self._write_did_you_know({"schema": did_you_know.CACHE_SCHEMA, "fetched_at": seconds, **found})
                 return found
-            except (TaskCancelled, TaskDeadlineExceeded):
+            except TaskDeadlineExceeded:
+                if parent is not None:
+                    parent.raise_if_cancelled()
+                logger.warning("DailyWikiPage did-you-know refresh exceeded its request budget")
+            except TaskCancelled:
                 raise
             except Exception as exc:
                 logger.warning("DailyWikiPage did-you-know refresh failed: %s", self._failure_summary(exc))
@@ -625,12 +641,33 @@ class DailyWikiPage(BasePlugin):
             logger.warning("DailyWikiPage did-you-know cache not saved: %s", type(exc).__name__)
 
     def _did_you_know_picture(self, image_url, target_size, settings):
-        """The 你知道吗 block's picture through the media cache, or None; never an error."""
+        """Read the optional picture with its own budget; a source failure keeps the page."""
         if not image_url or did_you_know.safe_picture_url(image_url) != image_url:
             return None
+        parent = current_task_context()
+        has_network_budget = parent is None or parent.remaining_seconds() >= DID_YOU_KNOW_MIN_REMAINING_SECONDS
+        parent = parent or task_context_or_default(timeout_seconds=DID_YOU_KNOW_MIN_REMAINING_SECONDS)
+        parent.raise_if_cancelled()
+        cached_settings = {**settings, "_theme_render_only": True}
         try:
-            return self._download_image(image_url, target_size, settings)
-        except (TaskCancelled, TaskDeadlineExceeded):
+            if (self._enabled(settings.get("_theme_render_only"), default=False)
+                    or not has_network_budget):
+                return self._download_image(image_url, target_size, cached_settings)
+            context = TaskContext(parent.cancel_event, min(
+                parent.deadline_monotonic - DID_YOU_KNOW_RENDER_RESERVE_SECONDS,
+                parent.clock() + DID_YOU_KNOW_PICTURE_SECONDS,
+            ), parent.clock)
+            try:
+                with bind_long_task_runtime(
+                    context, current_instance_identity() or InstanceIdentity(None, None, None),
+                    current_instance_identity_validator(), parallel_image_runner=current_parallel_image_runner(),
+                ):
+                    return self._download_image(image_url, target_size, settings)
+            except TaskDeadlineExceeded:
+                parent.raise_if_cancelled()
+                logger.warning("DailyWikiPage did-you-know picture exceeded its request budget")
+                return self._download_image(image_url, target_size, cached_settings)
+        except TaskCancelled:
             raise
         except Exception as exc:
             logger.warning("DailyWikiPage did-you-know picture unavailable: %s", type(exc).__name__)

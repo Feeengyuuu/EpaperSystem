@@ -32,12 +32,9 @@ MARS_REFRESH = 2 * HOUR
 # The page counts as live from its three main feeds; the rest (rain, Earth, Wikipedia, Apple,
 # Mars, the ISS, the crews in orbit) only fill in, so one of them lagging does not mark the page stale.
 CORE_FEEDS = ("grid", "goes", "trends")
-# The Earth now: typhoons (China's National Meteorological Centre), hurricanes (US NHC), the
-# week's significant earthquakes (USGS), China's own (the China Earthquake Networks list) and
-# NASA Earth Observatory's image of the day. All optional: they are asked last, each within
-# EARTH_FEED_SECONDS and only while EARTH_FEED_RESERVE seconds of the task remain for the pictures.
-EARTH_FEEDS = ("typhoons", "hurricanes", "quakes", "china_quakes", "earth_photo")
-EARTH_FEED_SECONDS, EARTH_FEED_RESERVE = 8, 12
+# NASA Earth Observatory's image is optional; leave time for the page's pictures.
+EARTH_PHOTO_SECONDS, EARTH_PHOTO_RESERVE = 8, 12
+EARTH_THUMBNAIL_SECONDS, RENDER_RESERVE_SECONDS = 7, 4
 
 
 def _checkpoint(context):
@@ -46,6 +43,29 @@ def _checkpoint(context):
     validator = current_instance_identity_validator()
     if identity is not None and validator is not None and not validator(identity):
         raise TaskCancelled("Planet Now instance changed during refresh")
+
+
+def _earth_thumbnail(url, directory, *, allow_network, context):
+    def load(cached_only, task):
+        return load_thumbnails([url], directory, http=get_http_client(), context=task, cached_only=cached_only,
+                               safe_url=sources.safe_image_url, user_agent=sources.USER_AGENT)
+
+    if not allow_network:
+        return load(True, context)
+    _checkpoint(context)
+    if context.remaining_seconds() < EARTH_THUMBNAIL_SECONDS + RENDER_RESERVE_SECONDS:
+        return load(True, context)
+    child = TaskContext(context.cancel_event,
+                        min(context.deadline_monotonic - RENDER_RESERVE_SECONDS,
+                            context.clock() + EARTH_THUMBNAIL_SECONDS), context.clock)
+    try:
+        return load(False, child)
+    except TaskDeadlineExceeded:
+        # A short image request (including Retry-After) may expire while the page still has time.
+        # True parent cancellation/expiry must still propagate; otherwise keep any cached picture.
+        _checkpoint(context)
+        logger.warning("Planet Now Earth thumbnail exceeded its request budget")
+        return load(True, context)
 
 
 class PlanetNow(BasePlugin):
@@ -85,16 +105,8 @@ class PlanetNow(BasePlugin):
             "fireballs": load("fireballs", sources.fetch_fireballs, 6 * HOUR, 7 * DAY, sources.valid_fireballs),
             "exoplanets": load("exoplanets", sources.fetch_exoplanets, 7 * DAY, 60 * DAY,
                                sources.valid_exoplanets),
-            "typhoons": load("typhoons", lambda ctx: sources.fetch_typhoons(now, ctx), HOUR, 12 * HOUR,
-                             sources.valid_storms, timeout=EARTH_FEED_SECONDS, reserve=EARTH_FEED_RESERVE),
-            "hurricanes": load("hurricanes", sources.fetch_hurricanes, HOUR, 12 * HOUR,
-                               sources.valid_storms, timeout=EARTH_FEED_SECONDS, reserve=EARTH_FEED_RESERVE),
-            "quakes": load("quakes", sources.fetch_world_quakes, HOUR, 2 * DAY,
-                           sources.valid_quakes, timeout=EARTH_FEED_SECONDS, reserve=EARTH_FEED_RESERVE),
-            "china_quakes": load("china_quakes", sources.fetch_china_quakes, HOUR, 2 * DAY,
-                                 sources.valid_quakes, timeout=EARTH_FEED_SECONDS, reserve=EARTH_FEED_RESERVE),
             "earth_photo": load("earth_photo", sources.fetch_earth_photo, 6 * HOUR, 4 * DAY,
-                                sources.valid_earth_photo, timeout=EARTH_FEED_SECONDS, reserve=EARTH_FEED_RESERVE),
+                                sources.valid_earth_photo, timeout=EARTH_PHOTO_SECONDS, reserve=EARTH_PHOTO_RESERVE),
         }
         old_mars = payload["mars"]["data"] or {}
         if allow_network and old_mars.get("image") and not isinstance(old_mars.get("photos"), list):
@@ -113,11 +125,17 @@ class PlanetNow(BasePlugin):
         urls += [person.get("image") for station in (payload["people"]["data"] or {}).get("stations") or []
                  for person in station.get("crew") or []][:12]
         earth_photo = (payload["earth_photo"]["data"] or {}).get("image")
-        urls += [earth_photo] if earth_photo else []
-        images = load_thumbnails(urls, self.cache_dir(env_var="PLANET_NOW_CACHE_DIR", leaf="pictures", create=True,
-                                                      strip=True),
-                                 http=get_http_client(), context=context, cached_only=not allow_network,
+        directory = self.cache_dir(env_var="PLANET_NOW_CACHE_DIR", leaf="pictures", create=True, strip=True)
+        images = load_thumbnails(urls, directory, http=get_http_client(), context=context, cached_only=not allow_network,
                                  safe_url=sources.safe_image_url, user_agent=sources.USER_AGENT)
+        if earth_photo and earth_photo not in images:
+            try:
+                # Keep this optional request separate so its timeout cannot close the main pictures.
+                images.update(_earth_thumbnail(earth_photo, directory, allow_network=allow_network, context=context))
+            except TaskCancelled:
+                for picture in images.values():
+                    picture.close()
+                raise
         payload["provenance"] = combined_provenance([payload[name] for name in CORE_FEEDS])
         available = [photo for photo in photos[:3] if isinstance(photo, dict) and photo.get("image") in images]
         # The Earth image of the day shares the photo slot with Mars, one turn in the rotation, once

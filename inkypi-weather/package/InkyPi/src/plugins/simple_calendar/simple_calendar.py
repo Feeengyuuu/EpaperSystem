@@ -27,7 +27,7 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from plugins.context_cache import read_contexts
-from plugins.simple_calendar import almanac_render, cn_almanac, cn_holidays, panel_scene
+from plugins.simple_calendar import cn_holidays, panel_scene
 from plugins.simple_calendar.panel_stage import PanelStageMixin
 from plugins.simple_calendar.game_events import GameEventProvider, enabled as game_events_enabled
 from plugins.simple_calendar.apple_events import AppleEventProvider
@@ -313,7 +313,6 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
     def __init__(self, config, **dependencies):
         self.game_events = dependencies.pop("game_event_provider", None) or GameEventProvider()
         self.apple_events = dependencies.pop("apple_event_provider", None) or AppleEventProvider()
-        self.almanac = dependencies.pop("almanac_provider", None) or cn_almanac.AlmanacProvider()
         super().__init__(config, **dependencies)
 
     def generate_settings_template(self):
@@ -429,9 +428,6 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
             provenance = self._worst_source_provenance([
                 provenance or SourceProvenance.LIVE, event_result.provenance
             ])
-        almanac_days = (self.almanac.read() if cached_events is not None or theme_render_only or display_render
-                        else self.almanac.refresh(selected_date))
-        almanac = cn_almanac.day_note(almanac_days, selected_date)
         # The panel's art and host follow the moment it is shown: the background
         # turns over with the time of day, and the host reacts to today's plans.
         weather_slug = self._weather_panel_slug(settings, device_config)
@@ -464,7 +460,6 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
             reference_dt,
             theme_palette,
             scene,
-            **({"almanac": almanac} if almanac else {}),
         )
         if provenance is not None:
             image = attach_source_provenance(image, provenance)
@@ -489,7 +484,6 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
         reference_dt=None,
         theme_palette=None,
         scene=None,
-        almanac=None,
     ):
         W, H = dimensions
         holiday_events = holiday_events or []
@@ -651,12 +645,6 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
             draw, (panel_cx, date_y), month_year, clean_date_font, focus_muted,
             surface if outlined else None, text_color,
         )
-        almanac_box = almanac_render.draw_strip(
-            draw, (p_left + 16, rule_y - 12, p_right - 16, date_y + 14), almanac,
-            fonts=(self._get_holiday_title_font(13, bold=True), self._get_holiday_title_font(13),
-                   self._get_holiday_title_font(11)), ink=text_color, paper=surface)
-        if almanac_box:
-            img.info["simple_calendar_almanac"] = {"bounds": list(almanac_box)}
         if date_hero_overlay_enabled and scene is not None:
             # The host stands under the month line and never covers the date.
             def text_box(xy, text, font):
