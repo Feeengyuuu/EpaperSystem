@@ -110,6 +110,10 @@ _PROVIDER_HOST_SUFFIXES = {
     "cleveland": ("clevelandart.org",),
     "vam": ("vam.ac.uk",),
     "smk": ("smk.dk",),
+    # Japan Search names pictures on its member databases' hosts: ColBase's and the National Diet Library's.
+    "jpsearch": ("nich.go.jp", "ndl.go.jp"),
+    "artsmia": ("artsmia.org",),
+    "rumsey": ("davidrumsey.com",),
 }
 _FEDERATED_PUBLIC_SOURCES = frozenset({"europeana"})
 

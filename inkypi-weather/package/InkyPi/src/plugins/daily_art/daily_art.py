@@ -37,6 +37,8 @@ from plugins.daily_art.presentation_bank import (
     settings_key,
     validate_provider_media_target,
 )
+from runtime.long_task_executor import current_task_context
+from runtime.refresh_contracts import TaskCancelled, TaskDeadlineExceeded
 from security.ssrf import get_ssrf_policy
 from utils.atomic_file import atomic_write_bytes
 from utils.app_utils import DEFAULT_FONT_FAMILY, get_available_font_names, get_font
@@ -60,9 +62,9 @@ DAILY_ART_RENDER_STYLE_VERSION = "daily-art-gallery-v3"
 # The gallery's accent: the label numbers, date chips and timeline markers.
 DAILY_ART_ACCENT = (0, 70, 200)
 DAILY_ART_TITLE = "DAILY ART"
-DEFAULT_SOURCES = ("met", "artic", "cleveland", "vam", "smk", "europeana", "harvard")
+DEFAULT_SOURCES = ("met", "artic", "cleveland", "vam", "smk", "jpsearch", "artsmia", "rumsey", "europeana", "harvard")
 # The open collections that need no key; Europeana and Harvard need one each.
-OPEN_SOURCES = ("met", "artic", "cleveland", "vam", "smk")
+OPEN_SOURCES = ("met", "artic", "cleveland", "vam", "smk", "jpsearch", "artsmia", "rumsey")
 DEFAULT_QUERY_TERMS = (
     "painting",
     "portrait",
@@ -97,6 +99,26 @@ CLEVELAND_SEARCH_URL = "https://openaccess-api.clevelandart.org/api/artworks/"
 VAM_SEARCH_URL = "https://api.vam.ac.uk/v2/objects/search"
 VAM_IMAGE_SIZE = "full/!1200,1200/0/default.jpg"
 SMK_SEARCH_URL = "https://api.smk.dk/api/v1/art/search/"
+# Three themed keyless collections, each its own subject whatever the page's search term:
+# ukiyo-e through Japan Search (pictures whose record states open rights: ColBase's are CC BY),
+# the Minneapolis Institute of Art's public-domain Chinese works (its search answers a random
+# set), and antique maps from the David Rumsey Map Collection (maps to RUMSEY_LATEST_YEAR, whose
+# originals are out of copyright; the collection licenses its scans CC BY-NC-SA).
+JAPAN_SEARCH_URL = "https://jpsearch.go.jp/api/item/search/jps-cross"
+JAPAN_SEARCH_KEYWORD, JAPAN_SEARCH_ROWS, JAPAN_SEARCH_DEPTH = "浮世絵", 30, 600
+JAPAN_SEARCH_RIGHTS = {"pdm": "Public Domain", "cc0": "CC0", "ccby": "CC BY"}
+MIA_SEARCH_URL = "https://search.artsmia.org/random/art"
+MIA_QUERY = 'image:valid rights_type:"Public Domain" country:China'
+MIA_IMAGE_URL = "https://{shard}.api.artsmia.org/800/{id}.jpg"
+RUMSEY_SEARCH_URL = "https://www.davidrumsey.com/luna/servlet/as/search"
+RUMSEY_QUERIES = ("San Francisco", "California", "China")
+RUMSEY_ROWS, RUMSEY_DEPTH, RUMSEY_LATEST_YEAR = 24, 480, 1925
+RUMSEY_RIGHTS = "Public Domain · image CC BY-NC-SA, David Rumsey Map Collection"
+COLLECTION_FRESH_SECONDS = 24 * 60 * 60
+COLLECTION_USABLE_SECONDS = 7 * COLLECTION_FRESH_SECONDS
+COLLECTION_MAX_BYTES = 300 * 1024
+# Leave enough time after the catalogue request for the selected artwork images and rendering.
+COLLECTION_MIN_REMAINING_SECONDS = 24
 
 REQUEST_HEADERS = {
     "User-Agent": "InkyPi DailyArt/1.0",
@@ -840,6 +862,8 @@ class DailyArt(BasePlugin):
                     candidates.extend(self._fetch_vam_candidates(term, limit, rng))
                 elif source == "smk":
                     candidates.extend(self._fetch_smk_candidates(term, limit, rng))
+                elif source in {"jpsearch", "artsmia", "rumsey"}:
+                    candidates.extend(self._cached_collection_candidates(source, term, limit, rng, now))
                 elif source == "europeana":
                     key = self._env_value(device_config, EUROPEANA_ENV_KEYS, settings, ("europeanaApiKey",))
                     if key:
@@ -848,10 +872,66 @@ class DailyArt(BasePlugin):
                     key = self._env_value(device_config, HARVARD_ENV_KEYS, settings, ("harvardApiKey",))
                     if key:
                         candidates.extend(self._fetch_harvard_candidates(term, limit, key, rng))
+            except (TaskCancelled, TaskDeadlineExceeded):
+                raise
             except Exception as exc:
                 logger.warning("DailyArt source %s failed: %s", source, exc)
 
         return self._dedupe_candidates(candidates)
+
+    def _read_collection_candidates(self, path, source, now):
+        """Read one bounded, normalised collection pool; corrupt or expired pools are discarded."""
+        try:
+            cached = read_bounded_json_object(path)
+            age = now.timestamp() - float(cached["fetched_at"])
+            if cached.get("source") != source or not 0 <= age <= COLLECTION_USABLE_SECONDS:
+                return [], None, 0
+            rows = cached.get("candidates")
+            if not isinstance(rows, list) or len(rows) > 50:
+                return [], None, 0
+            candidates = [ArtworkCandidate(**row) for row in rows if isinstance(row, dict)]
+            candidates = [work for work in candidates if work.source == source and work.artwork_id and work.image_url]
+            return candidates, age, int(cached.get("limit", 0))
+        except (TaskCancelled, TaskDeadlineExceeded):
+            raise
+        except (OSError, RuntimeError, KeyError, TypeError, ValueError):
+            return [], None, 0
+
+    def _cached_collection_candidates(self, source, term, limit, rng, now):
+        """Reuse static art catalogues for a day and retain a last good pool through short outages."""
+        parent = current_task_context()
+        if parent is not None:
+            parent.raise_if_cancelled()
+        path = self._cache_dir() / f"collection-{source}.json"
+        previous, age, cached_limit = self._read_collection_candidates(path, source, now)
+        if previous and age < COLLECTION_FRESH_SECONDS and cached_limit >= limit:
+            return previous[:limit]
+        if parent is not None and parent.remaining_seconds() < COLLECTION_MIN_REMAINING_SECONDS:
+            return previous[:limit]
+        loaders = {"jpsearch": self._fetch_japan_search_candidates, "artsmia": self._fetch_mia_candidates,
+                   "rumsey": self._fetch_rumsey_candidates}
+        try:
+            candidates = loaders[source](term, limit, rng)[:limit]
+        except TaskDeadlineExceeded:
+            if parent is not None:
+                parent.raise_if_cancelled()
+            logger.warning("DailyArt collection %s exceeded its request budget", source)
+            return previous[:limit]
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("DailyArt collection %s refresh failed: %s", source, exc)
+            return previous[:limit]
+        if not candidates:
+            return previous[:limit]
+        document = {"source": source, "fetched_at": now.timestamp(), "limit": limit,
+                    "candidates": [asdict(work) for work in candidates]}
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_bytes(path, json.dumps(document, ensure_ascii=True).encode("utf-8"), mode=0o600)
+        except OSError as exc:
+            logger.warning("DailyArt collection %s cache write failed: %s", source, exc)
+        return candidates
 
     def _met_search_page(self, term, offset):
         payload = self._get_json(
@@ -1104,6 +1184,137 @@ class DailyArt(BasePlugin):
             ))
         return candidates
 
+    def _fetch_japan_search_candidates(self, _term, limit, rng):
+        """Ukiyo-e from Japan Search (no key): the pictures of one page of its results whose record
+        states open rights. Most are the Tokyo National Museum's through ColBase, whose address
+        for the full picture differs from its small thumbnail's by one folder."""
+        params = {"keyword": JAPAN_SEARCH_KEYWORD, "size": JAPAN_SEARCH_ROWS,
+                  "from": rng.randrange(0, JAPAN_SEARCH_DEPTH, JAPAN_SEARCH_ROWS)}
+        payload = self._get_json(JAPAN_SEARCH_URL, params, headers=REQUEST_HEADERS)
+        records = payload.get("list") if isinstance(payload, dict) else []
+        if not isinstance(records, list):
+            return []
+        rng.shuffle(records)
+        candidates = []
+        for record in records:
+            common = record.get("common") if isinstance(record, dict) and isinstance(record.get("common"), dict) else {}
+            rights = JAPAN_SEARCH_RIGHTS.get(_clean_text(common.get("contentsRightsType")).lower())
+            image_url = _first_list_text(common.get("thumbnailUrl"))
+            identity = _first_text(common, ["id"])
+            if not rights or not image_url or not identity or common.get("contentsType") != "image":
+                continue
+            names = [_clean_text(name) for name in common.get("contributor") or [] if _clean_text(name)] \
+                if isinstance(common.get("contributor"), list) else []
+            latin = [name for name in names if name.isascii()]
+            by = next((name[3:] for name in latin if name.startswith("By ")), "")
+            maker = by or next((name for name in names if name.endswith("筆")), "")
+            temporal = [_clean_text(value) for value in common.get("temporal") or [] if _clean_text(value)] \
+                if isinstance(common.get("temporal"), list) else []
+            candidates.append(ArtworkCandidate(
+                source="jpsearch",
+                source_label="Japan Search",
+                artwork_id=f"jpsearch:{identity}",
+                title=_first_text(common, ["titleEn", "title"]) or "Untitled",
+                artist=re.split(r"\s*[(（]", maker)[0].removesuffix("筆").strip(),
+                date=next((value for value in temporal if value.isascii()), temporal[0] if temporal else ""),
+                medium="Ukiyo-e",
+                museum=next((name for name in latin if not name.startswith("By ")), "") or (names[-1] if names else ""),
+                rights=rights,
+                image_url=image_url.replace("/image/slideshow_s/", "/image/slideshow/"),
+                page_url=_first_text(common, ["linkUrl"]),
+                culture="Japan",
+                lifespan=_life_years(maker),
+            ))
+            if len(candidates) >= int(limit):
+                break
+        return candidates
+
+    def _fetch_mia_candidates(self, _term, limit, _rng):
+        """The Minneapolis Institute of Art's public-domain Chinese works with a picture (no key).
+        Its search answers a random set each time, so the day's works are the first it gives."""
+        payload = self._get_json(MIA_SEARCH_URL, {"q": MIA_QUERY, "size": int(limit)}, headers=REQUEST_HEADERS)
+        if not isinstance(payload, list):
+            return []
+        candidates = []
+        for hit in payload:
+            record = hit.get("_source") if isinstance(hit, dict) and isinstance(hit.get("_source"), dict) else {}
+            try:
+                number = int(record.get("id"))
+            except (TypeError, ValueError):
+                continue
+            if record.get("image") != "valid" or _clean_text(record.get("rights_type")) != "Public Domain":
+                continue
+            artist = _first_text(record, ["artist"])
+            # A work without a known maker is filed under its country or as "Unknown".
+            if artist.lower() in {"unknown", "", _first_text(record, ["country"]).lower()}:
+                artist = ""
+            room = re.fullmatch(r"G?(\d{1,4}[A-Z]?)", _first_text(record, ["room"]))
+            candidates.append(ArtworkCandidate(
+                source="artsmia",
+                source_label="Minneapolis Institute of Art",
+                artwork_id=f"artsmia:{number}",
+                title=_first_text(record, ["title"]) or "Untitled",
+                artist=artist,
+                date=_first_text(record, ["dated"]),
+                medium=_first_text(record, ["medium"]),
+                museum="Minneapolis Institute of Art",
+                rights="Public Domain",
+                image_url=MIA_IMAGE_URL.format(shard=number % 7, id=number),
+                page_url=f"https://collections.artsmia.org/art/{number}",
+                culture=_first_text(record, ["culture", "country"]) or "China",
+                lifespan=_life_years(record.get("life_date")),
+                dimensions=_cm_dimensions(record.get("dimension")),
+                gallery=room.group(1) if room else "",
+                highlight="1" if record.get("highlights") in (1, "1", True) else "",
+            ))
+        return candidates
+
+    def _fetch_rumsey_candidates(self, _term, limit, rng):
+        """Antique maps from the David Rumsey Map Collection (no key): one page of the results for
+        one of RUMSEY_QUERIES, its maps dated to RUMSEY_LATEST_YEAR (text pages and later maps
+        left out), each in the size nearest the page's frames."""
+        params = {"q": rng.choice(RUMSEY_QUERIES), "lc": "RUMSEY~8~1",
+                  "os": rng.randrange(0, RUMSEY_DEPTH, RUMSEY_ROWS), "bs": RUMSEY_ROWS}
+        payload = self._get_json(RUMSEY_SEARCH_URL, params, headers=REQUEST_HEADERS)
+        records = payload.get("results") if isinstance(payload, dict) else []
+        if not isinstance(records, list):
+            return []
+        rng.shuffle(records)
+        candidates = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            fields = {}
+            for entry in record.get("fieldValues") if isinstance(record.get("fieldValues"), list) else []:
+                if isinstance(entry, dict):
+                    fields.update({name: _first_list_text(value) for name, value in entry.items()})
+            year = re.search(r"(?<!\d)(1[0-9]{3})(?!\d)", fields.get("Date") or "")
+            kind = fields.get("Type") or ""
+            image_url = _first_text(record, ["urlSize3", "urlSize2"])
+            identity = _first_text(record, ["id"])
+            if (not year or int(year.group(1)) > RUMSEY_LATEST_YEAR or "map" not in kind.lower() or not image_url
+                    or not identity):
+                continue
+            height, width = fields.get("Obj Height cm"), fields.get("Obj Width cm")
+            candidates.append(ArtworkCandidate(
+                source="rumsey",
+                source_label="David Rumsey Map Collection",
+                artwork_id=f"rumsey:{identity}",
+                title=_first_text(record, ["displayName"]) or fields.get("Short Title") or "Untitled",
+                artist=fields.get("Author") or fields.get("Publisher") or "",
+                date=year.group(1),
+                medium=kind,
+                museum="David Rumsey Map Collection",
+                rights=RUMSEY_RIGHTS,
+                image_url=image_url,
+                page_url=f"https://www.davidrumsey.com/luna/servlet/detail/{identity}",
+                culture=fields.get("State/Province") or fields.get("City") or fields.get("Country") or "",
+                dimensions=f"{height}×{width} cm" if height and width else "",
+            ))
+            if len(candidates) >= int(limit):
+                break
+        return candidates
+
     def _fetch_europeana_candidates(self, term, limit, api_key, rng):
         params = {
             "wskey": api_key,
@@ -1225,12 +1436,15 @@ class DailyArt(BasePlugin):
         return _first_text(record, ["primaryimageurl"])
 
     def _get_json(self, url, params, headers=None):
+        limits = {"max_bytes": COLLECTION_MAX_BYTES} if url in {
+            JAPAN_SEARCH_URL, MIA_SEARCH_URL, RUMSEY_SEARCH_URL} else {}
         response = get_http_client().request_json(
             "GET",
             url,
             params=params,
             headers=headers or REQUEST_HEADERS,
             timeout=(5, 12),
+            **limits,
         )
         return response.data
 
@@ -2035,6 +2249,15 @@ def _source_tokens(value):
         "va": "vam",
         "victoria-and-albert": "vam",
         "statens-museum-for-kunst": "smk",
+        "japan-search": "jpsearch",
+        "japansearch": "jpsearch",
+        "ukiyo-e": "jpsearch",
+        "ukiyoe": "jpsearch",
+        "mia": "artsmia",
+        "minneapolis": "artsmia",
+        "david-rumsey": "rumsey",
+        "davidrumsey": "rumsey",
+        "maps": "rumsey",
     }
     tokens = []
     for raw in re.split(r"[,;\s]+", str(value or "").strip().lower()):

@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
+from runtime.long_task_executor import current_task_context
 from runtime.refresh_contracts import TaskCancelled, TaskDeadlineExceeded
 from utils.http_client import get_http_client
 
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 USER_AGENT = "InkyPi TechPulse/1.0 (personal e-paper display)"
 REQUEST_TIMEOUT = (4, 10)
+RENDER_RESERVE_SECONDS = 4
 MAX_BYTES = 128 * 1024
 ARENA_URL = "https://datasets-server.huggingface.co/rows"
 ARENA_PARAMS = {"dataset": "lmarena-ai/leaderboard-dataset", "config": "text", "split": "latest", "offset": "0",
@@ -120,9 +122,21 @@ def _stale(entry, now, hours):
 
 
 def _attempt(what, ask):
+    parent = current_task_context()
+    if parent is not None:
+        parent.raise_if_cancelled()
+        if parent.remaining_seconds() < max(REQUEST_TIMEOUT) + RENDER_RESERVE_SECONDS:
+            return None
     try:
         return ask()
-    except (TaskCancelled, TaskDeadlineExceeded):
+    except TaskDeadlineExceeded:
+        # HTTP has its own short deadline, including Retry-After. Only a stopped parent
+        # ends the page; a provider that used its slice leaves its previous board in place.
+        if parent is not None:
+            parent.raise_if_cancelled()
+        logger.warning("Tech Pulse %s exceeded its request budget", what)
+        return None
+    except TaskCancelled:
         raise
     except Exception as exc:
         logger.warning("Tech Pulse %s unavailable. | error_type: %s", what, type(exc).__name__)
@@ -134,6 +148,9 @@ def refresh(previous, now, fetch=None):
     {package: {count, fetched_at}}, "pypi": {...}}}. Asks LMArena when its copy is ARENA_FRESH_HOURS
     old, and per registry the first count that is COUNT_FRESH_HOURS old (npm's plain packages in one
     request); a failure keeps what was there."""
+    parent = current_task_context()
+    if parent is not None:
+        parent.raise_if_cancelled()
     fetch = fetch or fetch_json
     now = now.astimezone(timezone.utc)
     stamp = now.isoformat()

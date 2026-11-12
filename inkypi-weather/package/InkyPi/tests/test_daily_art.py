@@ -305,13 +305,15 @@ def test_settings_default_font_is_microsoft_yahei():
 def test_enabled_sources_skips_keyed_sources_without_keys(tmp_path):
     plugin = make_plugin(tmp_path)
 
-    assert plugin._enabled_sources({"sourceMode": "all"}, FakeDeviceConfig()) == ["met", "artic", "cleveland", "vam", "smk"]
+    assert plugin._enabled_sources({"sourceMode": "all"}, FakeDeviceConfig()) == ["met", "artic", "cleveland", "vam", "smk",
+                                                                                 "jpsearch", "artsmia", "rumsey"]
 
 
 def test_open_source_mode_includes_every_keyless_collection(tmp_path):
     plugin = make_plugin(tmp_path)
 
-    assert plugin._enabled_sources({"sourceMode": "open"}, FakeDeviceConfig()) == ["met", "artic", "cleveland", "vam", "smk"]
+    assert plugin._enabled_sources({"sourceMode": "open"}, FakeDeviceConfig()) == ["met", "artic", "cleveland", "vam", "smk",
+                                                                                 "jpsearch", "artsmia", "rumsey"]
     assert plugin._enabled_sources({"sourceMode": "smk"}, FakeDeviceConfig()) == ["smk"]
 
 
@@ -320,6 +322,7 @@ def test_enabled_sources_uses_manual_device_keys(tmp_path):
     device = FakeDeviceConfig(env={"Europeana_Key": "eu-secret", "Harvard_Art_Key": "ha-secret"})
 
     assert plugin._enabled_sources({"sourceMode": "all"}, device) == ["met", "artic", "cleveland", "vam", "smk",
+                                                                       "jpsearch", "artsmia", "rumsey",
                                                                        "europeana", "harvard"]
 
 

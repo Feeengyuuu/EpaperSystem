@@ -257,6 +257,8 @@ class TicketmasterEvents(WeekPageMixin, BoxOfficeTopMovies):
                     )
                 provenance = SourceProvenance.STALE_CACHE
                 logger.warning("Ticketmaster refresh skipped: %s", exc)
+            except (TaskCancelled, TaskDeadlineExceeded):
+                raise
             except Exception as exc:
                 logger.warning(
                     "Ticketmaster events refresh failed. | error_type: %s",

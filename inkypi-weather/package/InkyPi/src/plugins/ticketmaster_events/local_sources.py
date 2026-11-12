@@ -16,6 +16,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
+from runtime.long_task_executor import current_task_context
 from runtime.refresh_contracts import TaskCancelled, TaskDeadlineExceeded
 from utils.http_client import get_http_client
 
@@ -37,6 +38,7 @@ LUMA_IMAGE_HOST = "images.lumacdn.com"
 LUMA_IMAGE_SIZE = "cdn-cgi/image/fit=cover,quality=75,width=400,height=225"
 # Both answers are about 150 KB of JSON (40 KB on the wire).
 MAX_BYTES, REQUEST_SECONDS = 512 * 1024, 10
+RENDER_RESERVE_SECONDS = 4
 FRESH_HOURS, USABLE_HOURS = 3, 12
 # Rows of a feed kept in the page's state, and the most the list takes from each by default.
 KEPT = 12
@@ -214,22 +216,34 @@ def load_local_sources(previous, now, fetchers=None):
     asked again once its kept answer is FRESH_HOURS old. A feed that fails keeps its last answer
     until that is USABLE_HOURS old, then has none; that is never an error for the page."""
     fetchers = fetchers or {DOTHEBAY: _fetch_dothebay, LUMA: _fetch_luma}
+    parent = current_task_context()
     state = {}
     for source in SOURCES:
+        if parent is not None:
+            parent.raise_if_cancelled()
         kept = previous.get(source) if isinstance(previous, dict) else None
         kept = kept if isinstance(kept, dict) and isinstance(kept.get("events"), list) else None
         age = _age_hours(kept, now) if kept else None
         if age is not None and -0.1 <= age < FRESH_HOURS:
             state[source] = kept
             continue
+        fallback = kept if age is not None and -0.1 <= age <= USABLE_HOURS else dict(EMPTY)
+        if parent is not None and parent.remaining_seconds() < REQUEST_SECONDS + RENDER_RESERVE_SECONDS:
+            state[source] = fallback
+            continue
         try:
             rows = PARSERS[source](fetchers[source]())[:KEPT]
             state[source] = {"fetched_at": now.astimezone(timezone.utc).isoformat(), "events": rows}
-        except (TaskCancelled, TaskDeadlineExceeded):
+        except TaskDeadlineExceeded:
+            if parent is not None:
+                parent.raise_if_cancelled()
+            logger.warning("Local events source %s exceeded its request budget", source)
+            state[source] = fallback
+        except TaskCancelled:
             raise
         except Exception as exc:
             logger.warning("Local events source %s unavailable. | error_type: %s", source, type(exc).__name__)
-            state[source] = kept if age is not None and -0.1 <= age <= USABLE_HOURS else dict(EMPTY)
+            state[source] = fallback
     return state
 
 
