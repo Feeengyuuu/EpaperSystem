@@ -154,7 +154,7 @@ def _local_events_feeds_offline(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _tech_pulse_extra_boards_offline(monkeypatch):
-    """Tech Pulse's LMArena board and SDK download counts never reach the network in tests: their
+    """Tech Pulse's LMArena board never reaches the network in tests: its
     loader finds no client (and keeps what it has) unless a test gives it one."""
     from plugins.tech_pulse import extras
 

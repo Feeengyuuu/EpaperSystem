@@ -103,8 +103,8 @@ OPENROUTER_BOX = (14, 420, 786, 474)
 OPENROUTER_FILE = "openrouter.json"
 OPENROUTER_FRESH_HOURS = 6
 OPENROUTER_CARDS = 3
-# The strip takes turns (extras.py): OpenRouter's new models, LMArena's text leaderboard (its first
-# ARENA_CARDS places) and the AI SDKs' weekly downloads; the two boards are kept in EXTRAS_FILE.
+# The strip takes turns (extras.py): OpenRouter's new models and LMArena's text leaderboard (its
+# first ARENA_CARDS places), which is kept in EXTRAS_FILE.
 EXTRAS_FILE = "extras.json"
 ARENA_CARDS = 4
 # Each model's maker in its own colour (its brand's), on the model's chip.
@@ -797,7 +797,7 @@ class TechPulse(BasePlugin):
             state = extra_boards.refresh(cached or {}, now)
             if state != cached:
                 self._write_json(path, state)
-            return state if extra_boards.arena_models(state) or extra_boards.sdk_rows(state) else None
+            return state if extra_boards.arena_models(state) else None
         except (TaskCancelled, TaskDeadlineExceeded):
             raise
         except Exception as exc:
@@ -1401,12 +1401,10 @@ class TechPulse(BasePlugin):
                             fonts["tiny"], palette["muted"], anchor="lm")
 
     def _draw_bottom_strip(self, image, draw, box, turn, models, extras, palette, fonts, now, icons=None):
-        """The bottom strip on its ``turn``: LMArena's leaderboard or the SDK downloads when it is
-        theirs and they have data, else OpenRouter's new models as ever."""
+        """The bottom strip on its ``turn``: LMArena's leaderboard when it is its turn and it has
+        data, else OpenRouter's new models as ever."""
         if turn == "arena" and extra_boards.arena_models(extras):
             return self._draw_arena(image, draw, box, extras, palette, fonts)
-        if turn == "sdk" and extra_boards.sdk_rows(extras):
-            return self._draw_sdk(draw, box, extras, palette, fonts)
         return self._draw_openrouter(image, draw, box, models, palette, fonts, now, icons=icons)
 
     def _strip_title(self, draw, box, title, caption, palette, fonts):
@@ -1454,33 +1452,6 @@ class TechPulse(BasePlugin):
             self._draw_text(draw, (card[0] + 10, bottom), self._fit_text(draw, model.get("name") or "", fonts["small"],
                                                                           card[2] - card[0] - 18),
                             fonts["small"], palette["ink"], anchor="lm")
-
-    def _draw_sdk(self, draw, box, extras, palette, fonts):
-        """The AI SDKs' downloads last week, a row for npm and one for PyPI: each package's name and
-        count over a bar as long as its share of the largest count."""
-        _x0, y0, x1, y1 = box
-        rows = extra_boards.sdk_rows(extras)
-        cards_left = self._strip_title(draw, box, "AI SDK 周下载", "上周下载次数", palette, fonts)
-        most = max(count for _label, counts in rows for _name, count in counts) or 1
-        colours = {"npm": palette["down"], "PyPI": palette["cyan"]}
-        columns = max(len(counts) for _label, counts in rows)
-        label_w = 34
-        cell = (x1 - 10 - cards_left - label_w) / columns
-        pitch = (y1 - y0 - 12) / len(rows)
-        for line, (label, counts) in enumerate(rows):
-            top = y0 + 6 + line * pitch
-            text_y, bar_y = top + pitch / 2 - 4, top + pitch / 2 + 5
-            self._draw_text(draw, (cards_left, text_y), label, fonts["tiny_bold"], palette["muted"], anchor="lm")
-            for index, (name, count) in enumerate(counts):
-                left = cards_left + label_w + index * cell
-                right = left + cell - 10
-                value = extra_boards.count_text(count)
-                value_left = right - self._text_width(draw, value, fonts["tiny_bold"])
-                self._draw_text(draw, (right, text_y), value, fonts["tiny_bold"], palette["ink"], anchor="rm")
-                self._draw_text(draw, (left, text_y), self._fit_text(draw, name, fonts["tiny"], value_left - left - 4),
-                                fonts["tiny"], palette["ink"], anchor="lm")
-                draw.rectangle((left, bar_y, right, bar_y + 2), fill=palette["grid"])
-                draw.rectangle((left, bar_y, left + max(2, (right - left) * count / most), bar_y + 2), fill=colours[label])
 
     def _provider_mark(self, provider, palette):
         """The official mark of a model's maker (PROVIDER_LOGOS) PROVIDER_MARK_HEIGHT tall and at most

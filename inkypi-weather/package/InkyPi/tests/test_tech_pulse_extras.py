@@ -1,5 +1,5 @@
-"""Tech Pulse's bottom strip takes turns: OpenRouter's new models, LMArena's text leaderboard and
-the AI SDKs' weekly downloads. The fixtures are cut from the providers' answers of 2026-11-11."""
+"""Tech Pulse's bottom strip takes turns: OpenRouter's new models and LMArena's text leaderboard.
+The fixture is cut from the provider's answer of 2026-11-11."""
 
 import sys
 from datetime import datetime, timedelta, timezone
@@ -32,23 +32,11 @@ ARENA = {"features": [], "num_rows_total": 11175, "num_rows_per_page": 100, "par
     _arena_row(6, "Muse Wonder (Max)", "meta", 1503.0484713809174, 12032),
     _arena_row(1, "Some Coder", "openai", 1400.0, 900, category="coding"),
 ]}
-NPM_BULK = {"openai": {"downloads": 57910951, "package": "openai", "start": "2026-11-04", "end": "2026-11-10"},
-            "langchain": {"downloads": 4060209, "package": "langchain", "start": "2026-11-04", "end": "2026-11-10"},
-            "ai": {"downloads": 45363657, "package": "ai", "start": "2026-11-04", "end": "2026-11-10"}}
-NPM_SCOPED = {"downloads": 68126267, "start": "2026-11-04", "end": "2026-11-10", "package": "@anthropic-ai/sdk"}
-PYPI_TORCH = {"data": {"last_day": 1897790, "last_month": 58964343, "last_week": 13470975}, "package": "torch",
-              "type": "recent_downloads"}
 
 
 def _answers(url, **_options):
-    if "datasets-server" in url:
-        return ARENA
-    if url.endswith("/@anthropic-ai/sdk"):
-        return NPM_SCOPED
-    if "api.npmjs.org" in url:
-        return NPM_BULK
-    package = url.rstrip("/").split("/")[-2]
-    return {"data": {"last_week": {"torch": 13470975}.get(package, 1000000)}, "package": package}
+    assert "datasets-server" in url, url
+    return ARENA
 
 
 def test_the_arenas_rows_give_the_overall_top_with_rank_maker_and_score():
@@ -64,21 +52,7 @@ def test_the_arenas_rows_give_the_overall_top_with_rank_maker_and_score():
             extras.parse_arena(broken)
 
 
-def test_download_counts_read_npms_bulk_and_single_answers_and_pypis():
-    assert extras.parse_npm(NPM_BULK) == {"openai": 57910951, "langchain": 4060209, "ai": 45363657}
-    assert extras.parse_npm(NPM_SCOPED) == {"@anthropic-ai/sdk": 68126267}
-    assert extras.parse_pypi(PYPI_TORCH) == {"torch": 13470975}
-    for parse in (extras.parse_npm, extras.parse_pypi):
-        with pytest.raises(ValueError):
-            parse({"error": "package not found"})
-    # A scoped package cannot ride in npm's bulk answer (it answers 400): it is asked alone.
-    assert all(not name.startswith("@") for name in extras.NPM_BULK)
-    assert extras.NPM_SINGLE == ("@anthropic-ai/sdk",)
-    assert extras.count_text(57910951) == "5791万" and extras.count_text(123456789) == "1.2亿"
-    assert extras.count_text(9500) == "9500"
-
-
-def test_a_refresh_asks_the_arena_once_and_one_stale_count_per_registry():
+def test_a_refresh_asks_only_the_arena_and_only_when_its_copy_is_stale():
     asked = []
 
     def fetch(url, **options):
@@ -86,21 +60,13 @@ def test_a_refresh_asks_the_arena_once_and_one_stale_count_per_registry():
         return _answers(url)
 
     state = extras.refresh({}, NOW, fetch)
-    assert asked == ["https://datasets-server.huggingface.co/rows",
-                     "https://api.npmjs.org/downloads/point/last-week/openai,langchain,ai",
-                     "https://pypistats.org/api/packages/openai/recent"]
-    assert state["arena"]["models"][0]["score"] == 1538 and state["downloads"]["npm"]["openai"]["count"] == 57910951
-    # Each later refresh asks one more stale count per registry until all are in.
-    for _turn in range(5):
-        state = extras.refresh(state, NOW + timedelta(minutes=30), fetch)
-    assert set(state["downloads"]["npm"]) == {"openai", "langchain", "ai", "@anthropic-ai/sdk"}
-    assert set(state["downloads"]["pypi"]) == set(extras.PYPI)
-    assert asked.count("https://datasets-server.huggingface.co/rows") == 1
-    asked.clear()
-    assert extras.refresh(state, NOW + timedelta(hours=1), fetch) == state and asked == []
-    # A day on, the counts are asked again, still one per registry per refresh; the arena after six hours.
-    extras.refresh(state, NOW + timedelta(hours=25), fetch)
-    assert len(asked) == 3
+    assert asked == ["https://datasets-server.huggingface.co/rows"]
+    assert set(state) == {"arena"} and state["arena"]["models"][0]["score"] == 1538
+    assert extras.refresh(state, NOW + timedelta(hours=5), fetch) == state and len(asked) == 1
+    extras.refresh(state, NOW + timedelta(hours=7), fetch)
+    assert len(asked) == 2
+    # A state kept from the day the strip also had download counts loses them.
+    assert set(extras.refresh({**state, "downloads": {"npm": {}}}, NOW, fetch)) == {"arena"}
 
 
 def test_a_provider_that_fails_keeps_its_last_good_copy():
@@ -110,9 +76,9 @@ def test_a_provider_that_fails_keeps_its_last_good_copy():
         raise OSError("503")
 
     later = extras.refresh(state, NOW + timedelta(days=3), down)
-    assert later["arena"] == state["arena"] and later["downloads"] == state["downloads"]
-    assert extras.refresh({}, NOW, down) == {"arena": {}, "downloads": {"npm": {}, "pypi": {}}}
-    assert extras.refresh("junk", NOW, down) == {"arena": {}, "downloads": {"npm": {}, "pypi": {}}}
+    assert later["arena"] == state["arena"]
+    assert extras.refresh({}, NOW, down) == {"arena": {}}
+    assert extras.refresh("junk", NOW, down) == {"arena": {}}
 
 
 def test_the_strip_takes_turns_and_openrouter_keeps_half_of_them():
@@ -120,7 +86,7 @@ def test_the_strip_takes_turns_and_openrouter_keeps_half_of_them():
     slot = extras.TURN_MINUTES * 60
     start = datetime.fromtimestamp(slot * 4000, tz=timezone.utc)
     turns = [extras.strip_turn(start + timedelta(seconds=slot * index), full) for index in range(8)]
-    assert turns == ["openrouter", "arena", "openrouter", "sdk"] * 2
+    assert turns == ["openrouter", "arena"] * 4
     # A board without data gives its turn back to OpenRouter.
     assert {extras.strip_turn(start + timedelta(seconds=slot * index), {}) for index in range(4)} == {"openrouter"}
     assert {extras.strip_turn(start + timedelta(seconds=slot * index), None) for index in range(4)} == {"openrouter"}
@@ -139,7 +105,7 @@ def test_the_plugin_keeps_the_extras_on_disk_and_a_theme_redraw_never_asks(monke
 
     assert plugin._extras(NOW, cache_only=True) is None and calls == []
     state = plugin._extras(NOW)
-    assert state["arena"]["models"] and len(calls) == 3
+    assert state["arena"]["models"] and len(calls) == 1
     calls.clear()
     assert plugin._extras(NOW, cache_only=True) == state and calls == []
 
@@ -186,25 +152,6 @@ def test_the_arena_strip_lists_rank_maker_model_and_score(monkeypatch, tmp_path,
     assert len(set(card.get_flattened_data())) > 8
 
 
-@pytest.mark.parametrize("mode", ["day", "night"])
-def test_the_sdk_strip_draws_each_packages_weekly_downloads_as_a_bar(monkeypatch, tmp_path, mode):
-    plugin = _plugin(monkeypatch, tmp_path)
-    state = extras.refresh({}, NOW, lambda url, **_options: _answers(url))
-    for _turn in range(5):
-        state = extras.refresh(state, NOW, lambda url, **_options: _answers(url))
-
-    image, drawn, palette = _strip(plugin, "sdk", state, mode)
-    texts = [text for text, _fill in drawn]
-
-    assert "AI SDK 周下载" in texts and "npm" in texts and "PyPI" in texts
-    for label in ("openai", "anthropic", "langchain", "torch", "transformers", "5791万", "6813万", "1347万"):
-        assert label in texts, label
-    assert {fill for _text, fill in drawn} <= {palette["ink"], palette["muted"]}
-    # The bars carry the colour: npm's and PyPI's, the longest npm bar the scoped Anthropic SDK's.
-    colours = set(image.crop(module.OPENROUTER_BOX).get_flattened_data())
-    assert palette["down"] in colours and palette["cyan"] in colours
-
-
 def test_openrouters_turn_and_a_page_without_extras_draw_the_strip_as_before(monkeypatch, tmp_path):
     plugin = _plugin(monkeypatch, tmp_path)
     models = {"week": 3, "models": [{"id": "openai/gpt-6.1-terra", "provider": "openai", "name": "GPT-6.1 Terra",
@@ -217,7 +164,7 @@ def test_openrouters_turn_and_a_page_without_extras_draw_the_strip_as_before(mon
     plugin._draw_openrouter(reference, ImageDraw.Draw(reference), module.OPENROUTER_BOX, models, palette, fonts, NOW)
     assert before.tobytes() == reference.tobytes()
     # A turn whose board is empty falls back to OpenRouter's strip too.
-    empty, _drawn, _palette = _strip(plugin, "arena", {"arena": {}, "downloads": {"npm": {}, "pypi": {}}}, models=models)
+    empty, _drawn, _palette = _strip(plugin, "arena", {"arena": {}}, models=models)
     assert empty.tobytes() == reference.tobytes()
     assert _strip(plugin, "arena", state, models=models)[0].tobytes() != reference.tobytes()
 
@@ -226,11 +173,11 @@ def test_the_page_passes_the_turn_to_the_strip(monkeypatch, tmp_path):
     plugin = _plugin(monkeypatch, tmp_path)
     seen = []
     monkeypatch.setattr(plugin, "_draw_bottom_strip", lambda image, draw, box, turn, *_args, **_kwargs: seen.append(turn))
-    monkeypatch.setattr(extras, "strip_turn", lambda now, state: "sdk" if state else "openrouter")
+    monkeypatch.setattr(extras, "strip_turn", lambda now, state: "arena" if state else "openrouter")
     settings = {"_inkypi_theme": plugin.resolve_theme({"themeMode": "day"}, None)}
     payload = {"stories": [], "status": {}}
 
     plugin._render_page((800, 480), payload, settings, NOW, extras={"arena": {}})
     plugin._render_page((800, 480), payload, settings, NOW)
 
-    assert seen == ["sdk", "openrouter"]
+    assert seen == ["arena", "openrouter"]

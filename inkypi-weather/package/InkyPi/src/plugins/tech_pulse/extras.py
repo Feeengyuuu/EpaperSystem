@@ -1,11 +1,10 @@
-"""Two boards that take turns with OpenRouter's new models in Tech Pulse's bottom strip (keyless).
+"""The board that takes turns with OpenRouter's new models in Tech Pulse's bottom strip (keyless).
 
 LMArena's text leaderboard, read through the Hugging Face datasets server (the file lists the
-overall board first, so one small request is its top), and the weekly downloads of a short fixed
-list of AI SDKs from npm and PyPI Stats. The datasets server answers 503 now and then and the
-counts move once a day, so everything is kept on disk: the board is asked again after
-ARENA_FRESH_HOURS, a count after COUNT_FRESH_HOURS and only one stale count per registry in a
-refresh, and whatever fails keeps its last good copy.
+overall board first, so one small request is its top). The datasets server answers 503 now and
+then, so the board is kept on disk: it is asked again after ARENA_FRESH_HOURS and a failure keeps
+its last good copy. (The AI SDKs' weekly downloads shared the strip for a day; the owner found
+them useless and they are gone.)
 """
 
 from __future__ import annotations
@@ -27,22 +26,9 @@ ARENA_URL = "https://datasets-server.huggingface.co/rows"
 ARENA_PARAMS = {"dataset": "lmarena-ai/leaderboard-dataset", "config": "text", "split": "latest", "offset": "0",
                 "length": "15"}
 ARENA_FRESH_HOURS, ARENA_KEPT = 6, 6
-NPM_URL = "https://api.npmjs.org/downloads/point/last-week/{packages}"
-PYPI_URL = "https://pypistats.org/api/packages/{package}/recent"
-# npm answers several plain packages at once; a scoped one (400 in a bulk request) is asked alone.
-NPM_BULK = ("openai", "langchain", "ai")
-NPM_SINGLE = ("@anthropic-ai/sdk",)
-PYPI = ("openai", "anthropic", "langchain", "transformers", "torch")
-COUNT_FRESH_HOURS = 24
-# The strip's rows: (registry, its name on the page, [(package, its name on the page)]).
-SDK_ROWS = (("npm", "npm", (("openai", "openai"), ("@anthropic-ai/sdk", "anthropic"), ("ai", "ai (Vercel)"),
-                            ("langchain", "langchain"))),
-            ("pypi", "PyPI", (("openai", "openai"), ("anthropic", "anthropic"), ("torch", "torch"),
-                              ("transformers", "transformers"), ("langchain", "langchain"))))
 # The strip's turns, one every TURN_MINUTES: OpenRouter keeps every other one.
 TURN_MINUTES = 20
-TURNS = ("openrouter", "arena", "openrouter", "sdk")
-SDK_MIN_COUNTS = 3
+TURNS = ("openrouter", "arena")
 
 
 def fetch_json(url, **options):
@@ -78,34 +64,6 @@ def parse_arena(payload):
         raise ValueError("LMArena listed no models")
     models.sort(key=lambda model: model["rank"])
     return {"date": date, "models": models[:ARENA_KEPT]}
-
-
-def parse_npm(payload):
-    """{package: downloads last week} from npm's answer for one package or for several."""
-    if isinstance(payload, dict) and payload.get("package") and _whole(payload.get("downloads")) is not None:
-        return {str(payload["package"]): _whole(payload["downloads"])}
-    counts = {str(name): _whole(row.get("downloads")) for name, row in (payload.items() if isinstance(payload, dict) else ())
-              if isinstance(row, dict) and _whole(row.get("downloads")) is not None}
-    if not counts:
-        raise ValueError("npm gave no download counts")
-    return counts
-
-
-def parse_pypi(payload):
-    """{package: downloads last week} from PyPI Stats' recent-downloads answer."""
-    data = payload.get("data") if isinstance(payload, dict) else None
-    count = _whole(data.get("last_week")) if isinstance(data, dict) else None
-    if count is None or not payload.get("package"):
-        raise ValueError("PyPI Stats gave no download count")
-    return {str(payload["package"]): count}
-
-
-def count_text(count):
-    """57910951 -> '5791万', 123456789 -> '1.2亿'."""
-    count = int(count or 0)
-    if count >= 100_000_000:
-        return f"{count / 100_000_000:.1f}亿"
-    return f"{round(count / 10_000)}万" if count >= 10_000 else str(count)
 
 
 def _hours(stamp, now):
@@ -144,10 +102,8 @@ def _attempt(what, ask):
 
 
 def refresh(previous, now, fetch=None):
-    """The kept state brought up to date: {"arena": {date, models, fetched_at}, "downloads": {"npm":
-    {package: {count, fetched_at}}, "pypi": {...}}}. Asks LMArena when its copy is ARENA_FRESH_HOURS
-    old, and per registry the first count that is COUNT_FRESH_HOURS old (npm's plain packages in one
-    request); a failure keeps what was there."""
+    """The kept state brought up to date: {"arena": {date, models, fetched_at}}. Asks LMArena when
+    its copy is ARENA_FRESH_HOURS old; a failure keeps what was there."""
     parent = current_task_context()
     if parent is not None:
         parent.raise_if_cancelled()
@@ -156,38 +112,11 @@ def refresh(previous, now, fetch=None):
     stamp = now.isoformat()
     previous = previous if isinstance(previous, dict) else {}
     arena = previous.get("arena") if isinstance(previous.get("arena"), dict) else {}
-    kept = previous.get("downloads") if isinstance(previous.get("downloads"), dict) else {}
-    downloads = {registry: dict(kept.get(registry)) if isinstance(kept.get(registry), dict) else {}
-                 for registry in ("npm", "pypi")}
     if not arena.get("models") or _stale(arena, now, ARENA_FRESH_HOURS):
         board = _attempt("LMArena", lambda: parse_arena(fetch(ARENA_URL, params=ARENA_PARAMS)))
         if board:
             arena = {**board, "fetched_at": stamp}
-    npm = downloads["npm"]
-    wanted = (NPM_BULK if any(_stale(npm.get(name), now, COUNT_FRESH_HOURS) for name in NPM_BULK) else
-              next(((name,) for name in NPM_SINGLE if _stale(npm.get(name), now, COUNT_FRESH_HOURS)), ()))
-    if wanted:
-        counts = _attempt("npm downloads", lambda: parse_npm(fetch(NPM_URL.format(packages=",".join(wanted)))))
-        npm.update({name: {"count": counts[name], "fetched_at": stamp} for name in wanted if name in (counts or {})})
-    package = next((name for name in PYPI if _stale(downloads["pypi"].get(name), now, COUNT_FRESH_HOURS)), None)
-    if package:
-        counts = _attempt("PyPI downloads", lambda: parse_pypi(fetch(PYPI_URL.format(package=package))))
-        if counts and package in counts:
-            downloads["pypi"][package] = {"count": counts[package], "fetched_at": stamp}
-    return {"arena": arena, "downloads": downloads}
-
-
-def sdk_rows(state):
-    """[(registry name, [(package name, count)])] of the counts at hand, in the strip's order."""
-    downloads = state.get("downloads") if isinstance(state, dict) and isinstance(state.get("downloads"), dict) else {}
-    rows = []
-    for registry, label, packages in SDK_ROWS:
-        kept = downloads.get(registry) if isinstance(downloads.get(registry), dict) else {}
-        counts = [(name, kept[package]["count"]) for package, name in packages
-                  if isinstance(kept.get(package), dict) and isinstance(kept[package].get("count"), int)]
-        if counts:
-            rows.append((label, counts))
-    return rows
+    return {"arena": arena}
 
 
 def arena_models(state):
@@ -197,11 +126,9 @@ def arena_models(state):
 
 
 def strip_turn(now, state):
-    """Whose turn the bottom strip is: 'openrouter', 'arena' or 'sdk'. A board without data gives
-    its turn back to OpenRouter."""
+    """Whose turn the bottom strip is: 'openrouter' or 'arena'. The board without data gives its
+    turn back to OpenRouter."""
     turn = TURNS[int(now.timestamp() // (TURN_MINUTES * 60)) % len(TURNS)]
     if turn == "arena" and not arena_models(state):
-        return "openrouter"
-    if turn == "sdk" and sum(len(counts) for _label, counts in sdk_rows(state)) < SDK_MIN_COUNTS:
         return "openrouter"
     return turn
