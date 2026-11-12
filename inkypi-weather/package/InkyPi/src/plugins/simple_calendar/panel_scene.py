@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 
 HOSTS = (
@@ -235,6 +235,14 @@ def _everyday_scene(events, today, now, part, weather_slug):
 
 def _lines(first, second=None):
     return (first, second) if second and second != first else (first,)
+
+
+def with_almanac(scene, line):
+    """The scene with the day's almanac (its 宜 and 忌 in one short line) as the balloon's second
+    line, when the host has only one of its own; otherwise the scene as it is."""
+    if scene is None or not line or len(scene.lines) != 1:
+        return scene
+    return replace(scene, lines=(scene.lines[0], line))
 
 
 def _next_notable(events, today):

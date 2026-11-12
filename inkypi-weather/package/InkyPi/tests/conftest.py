@@ -165,6 +165,18 @@ def _tech_pulse_extra_boards_offline(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _calendar_almanac_offline(monkeypatch):
+    """The calendar's almanac never reaches Baidu in tests: a provider that a test gave no fetcher
+    of its own only reads what it kept (and so creates no state folder either)."""
+    from plugins.simple_calendar import cn_almanac
+
+    refresh = cn_almanac.AlmanacProvider.refresh
+    monkeypatch.setattr(
+        cn_almanac.AlmanacProvider, "refresh",
+        lambda self, today, **kwargs: refresh(self, today, **kwargs) if self.fetch else self.read())
+
+
+@pytest.fixture(autouse=True)
 def _collect_new_scratch_entries(request):
     """Queue whatever a test adds under the known scratch roots for teardown cleanup."""
 
