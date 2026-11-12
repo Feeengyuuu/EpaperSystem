@@ -141,6 +141,18 @@ def _stock_tracker_market_feeds_offline(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _local_events_feeds_offline(monkeypatch):
+    """Local Events' keyless feeds (DoTheBay, Luma) never reach the network in tests: their
+    loader finds no client (and leaves them out) unless a test gives it one."""
+    from plugins.ticketmaster_events import local_sources
+
+    def offline():
+        raise RuntimeError("local events feeds are offline in tests")
+
+    monkeypatch.setattr(local_sources, "get_http_client", offline)
+
+
+@pytest.fixture(autouse=True)
 def _collect_new_scratch_entries(request):
     """Queue whatever a test adds under the known scratch roots for teardown cleanup."""
 

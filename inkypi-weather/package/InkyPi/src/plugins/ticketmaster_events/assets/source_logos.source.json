@@ -10,6 +10,30 @@
         64
       ],
       "sha256": "ba2574f276bd54c8667717b192fcfb8d25787765efd04f99bf5c4ac8fea2c140"
+    },
+    "dothebay": {
+      "source": "https://assets0.dostuffmedia.com/uploads/aws_asset/aws_asset/5016082/60471a3c-4483-4d80-be0c-808fa31ae4c1.png",
+      "page": "https://dothebay.com/",
+      "licence": "DoTheBay's own logo from its site header, shown to credit the source of its events",
+      "source_sha256": "afc1a83a02fb8e038489613f07103531cf198bc2b2d461071f33509c0a683fb4",
+      "processing": "white lettering (for a dark header) set near-black; cropped, 64 px tall",
+      "size": [
+        94,
+        64
+      ],
+      "sha256": "2374e5f500c16c408756aaedefa7d6500195c2164be53e09374a9632bea6a4a5"
+    },
+    "luma": {
+      "source": "https://lu.ma/sf (the header's inline SVG wordmark in the 'Luma Home' link)",
+      "page": "https://lu.ma/sf",
+      "licence": "Luma's own wordmark from its site header, shown to credit the source of its events",
+      "source_sha256": "e4680d3be99e8813b83a253186aa2b336390e49cbd2d9380adf8bdca1244e593",
+      "processing": "its currentColor drawn near-black; cropped, 64 px tall",
+      "size": [
+        176,
+        64
+      ],
+      "sha256": "2e79184929650323714a88267af926f81cc42b647636505b8ad7b6c1aa30453a"
     }
   }
 }

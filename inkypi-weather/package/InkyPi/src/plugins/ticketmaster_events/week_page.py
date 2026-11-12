@@ -22,6 +22,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageOps
 
 from utils.doodle_backdrop import paint_doodles
+from utils.local_wordmark import load_source_logo
 
 from .team_logos import read_title, team_logo
 from .venue_logos import paste_venue_logo
@@ -39,6 +40,18 @@ HEADER_WORDMARK_PATH = Path(__file__).with_name("header_wordmark.png")
 HEADER_WORDMARK, SOURCE_LOGO_GAP = (250, 44), 18
 TICKETMASTER_LOGO_PATH = Path(__file__).with_name("assets") / "ticketmaster.png"
 TICKETMASTER_LOGO_HEIGHT = 18
+# The keyless sources (local_sources.py) are named the same way, by their own logos from their
+# sites (assets/dothebay.png, assets/luma.png): after Ticketmaster's wordmark in the header while
+# one of their events is listed (HEADER_SOURCE_HEIGHTS tall, and only where the logo ends
+# HEADER_SOURCE_CLEAR before the summary at the right), and at the end of each of their rows'
+# second line (SLIP_SOURCE_HEIGHTS tall, SLIP_SOURCE_GAP after the facts). DoTheBay's is an emblem,
+# Luma's a wordmark: the emblem stands taller so the two read as one weight.
+SOURCE_LOGO_DIR = Path(__file__).with_name("assets")
+HEADER_SOURCE_HEIGHTS = {"dothebay": 28, "luma": 15}
+SLIP_SOURCE_HEIGHTS = {"dothebay": 15, "luma": 11}
+HEADER_SOURCE_CLEAR, SLIP_SOURCE_GAP = 12, 6
+# A meetup says how many are going from this many guests up.
+MEETUP_GUESTS_SHOWN = 30
 # The mix legend under the stacked bar: its type size, the gap between entries, a row's height
 # and the most rows it may take (one fewer when sales are listed above it).
 LEGEND_SIZE, LEGEND_GAP, LEGEND_ROW_H, LEGEND_ROWS = 11, 9, 15, 3
@@ -67,6 +80,8 @@ GENRE_KINDS = {
     "hobby/special interest expos": ("展会", "ferris"), "food & drink": ("美食", "ferris"),
     "tennis": ("网球", "ticket"), "golf": ("高尔夫", "ticket"), "volleyball": ("排球", "ticket"),
     "esports": ("电竞", "ticket"),
+    # Luma's meetups (local_sources.LUMA_KIND).
+    "tech meetup": ("科技", "microphone"),
 }
 SEGMENT_KINDS = {"music": ("音乐", "microphone"), "sports": ("体育", "ticket"), "arts & theatre": ("戏剧", "masks"),
                  "film": ("电影", "film"), "miscellaneous": ("其他", "ticket")}
@@ -299,6 +314,20 @@ def _ticketmaster_logo(height, ink=None):
     return mark
 
 
+def source_logo(source, height, ink=None):
+    """A keyless source's own logo ``height`` px tall (dark lettering; in ``ink`` on a dark page),
+    or None for Ticketmaster, an unknown source or a missing file."""
+    if source not in HEADER_SOURCE_HEIGHTS:
+        return None
+    return load_source_logo(SOURCE_LOGO_DIR / f"{source}.png", height, ink)
+
+
+def listed_sources(events):
+    """The keyless sources with an event among ``events``, in the header's order."""
+    used = {(event.extra or {}).get("source") for event in events}
+    return tuple(source for source in HEADER_SOURCE_HEIGHTS if source in used)
+
+
 @lru_cache(maxsize=64)
 def _genre_icon(name, size, ground, ink):
     """A kind's sticker ``size`` px on its longer side, its dark outlines in ``ink`` where they
@@ -331,7 +360,8 @@ class WeekPageMixin:
         today = generated_at.date() if isinstance(generated_at, datetime) else date.today()
         days = (week or {}).get("days") or []
         rule = colors.get("rule", colors["line"])
-        self._draw_page_header(image, draw, settings, generated_at, stale, days, colors)
+        self._draw_page_header(image, draw, settings, generated_at, stale, days, colors,
+                               sources=listed_sources(events[:1 + LIST_ROWS]))
         draw.line((MARGIN, HEADER_H, width - MARGIN, HEADER_H), fill=rule)
         draw.line((COLUMN_RULE, HERO[1], COLUMN_RULE, HERO[3]), fill=rule)
         section = self._plan_section(draw, events, days, on_sale or [], colors)
@@ -362,9 +392,10 @@ class WeekPageMixin:
             paint_doodles(image, box, DOODLE_PATH, tint, strength=strength, offset=box[:2])
 
     # -- header -----------------------------------------------------------------------------
-    def _draw_page_header(self, image, draw, settings, generated_at, stale, days, colors):
-        """The page's wordmark, Ticketmaster's own wordmark after it, and at the right the week's
-        count over the area and the update time."""
+    def _draw_page_header(self, image, draw, settings, generated_at, stale, days, colors, sources=()):
+        """The page's wordmark, Ticketmaster's own wordmark after it, then the logos of the keyless
+        ``sources`` with an event on the page, and at the right the week's count over the area and
+        the update time."""
         right = 800 - MARGIN
         wordmark_bottom = self._draw_header_wordmark(image, draw, MARGIN, 5, *HEADER_WORDMARK, colors)
         if wordmark_bottom is None:
@@ -384,6 +415,15 @@ class WeekPageMixin:
         when = generated_at.strftime("%m/%d %H:%M") if isinstance(generated_at, datetime) else ""
         note = f"{self._place_label(settings)} · {'缓存 ' if stale else ''}{when} 更新"
         draw.text((right - draw.textlength(note, font=small), 32), note, fill=colors["ink"], font=small)
+        # The keyless sources' logos follow Ticketmaster's while they clear the summary.
+        cursor = source_x + (mark.width if mark is not None else 0)
+        limit = right - max(draw.textlength(headline, font=total_font), draw.textlength(note, font=small))
+        for source in sources:
+            logo = source_logo(source, HEADER_SOURCE_HEIGHTS[source], None if colors["mode"] != "dark" else tuple(colors["ink"]))
+            if logo is None or cursor + SOURCE_LOGO_GAP + logo.width > limit - HEADER_SOURCE_CLEAR:
+                continue
+            image.paste(logo, (round(cursor + SOURCE_LOGO_GAP), HEADER_H // 2 - logo.height // 2), logo)
+            cursor += SOURCE_LOGO_GAP + logo.width
 
     def _place_label(self, settings):
         radius = self._bounded_int(settings.get("radiusMiles"), 50, 1, 250)
@@ -856,6 +896,12 @@ class WeekPageMixin:
         draw.rectangle((bar_x, thumb_y, thumb_x - 1, thumb_y + THUMB[1] - 1), fill=kind_colour)
         text_x, right = thumb_x + THUMB[0] + 9, sx1
         self._draw_slip_title(image, draw, event, (text_x, sy0 + 3), right - text_x, colors)
+        # A keyless source's row ends its second line with the source's own logo, straight on the page.
+        source = (event.extra or {}).get("source")
+        logo = source_logo(source, SLIP_SOURCE_HEIGHTS.get(source, 0), None if colors["mode"] != "dark" else tuple(ink))
+        if logo is not None:
+            image.paste(logo, (right - logo.width, y + 7 - logo.height // 2), logo)
+            right -= logo.width + SLIP_SOURCE_GAP
         place_x = text_x
         # Reserve the complete distance and important facts before fitting the venue.
         distance = f" · {event.distance}" if event.distance else ""
@@ -903,13 +949,15 @@ class WeekPageMixin:
 
     def _slip_facts(self, event, now):
         """[(text, alarm)] to know before buying, most important first: a sale stopped or a date
-        moved (alarm), the public sale opening later, the age limit, more showtimes the same
-        day, a big tour, a family show, several days."""
+        moved (alarm), the public sale opening later, a meetup that asks for approval, the age
+        limit, more showtimes the same day, a big tour, a family show, several days, and how many
+        are going to a meetup."""
         extra = event.extra or {}
         facts = []
         # Some public listings retain onsale/$0 metadata after their title is marked SOLD OUT.
         # Only the explicit bracketed marker takes priority; an artist/title word never does.
-        sold_out = bool(SOLD_OUT_NOTICE.search(event.title or ""))
+        # A keyless source says it in a field of its own.
+        sold_out = bool(SOLD_OUT_NOTICE.search(event.title or "")) or extra.get("sold_out") is True
         status = (event.status or "").lower()
         if status in STATUS_LABELS and status != "onsale":
             facts.append((STATUS_LABELS[status], True))
@@ -918,6 +966,8 @@ class WeekPageMixin:
         sale = self._parse_datetime(extra.get("sale_start")) if extra.get("sale_start") else None
         if not sold_out and sale and now and sale > now:
             facts.append((f"{sale.astimezone(now.tzinfo):%m/%d} 开售" if now.tzinfo else f"{sale:%m/%d} 开售", False))
+        if extra.get("approval") is True:
+            facts.append(("需审批", False))
         if extra.get("age"):
             facts.append((extra["age"], False))
         if self._more_text(event):
@@ -928,6 +978,8 @@ class WeekPageMixin:
             facts.append(("亲子", False))
         if extra.get("multi_day"):
             facts.append(("多日", False))
+        if isinstance(extra.get("guests"), int) and extra["guests"] >= MEETUP_GUESTS_SHOWN:
+            facts.append((f"{extra['guests']} 人", False))
         return facts
 
     # -- the week under the list ------------------------------------------------------------

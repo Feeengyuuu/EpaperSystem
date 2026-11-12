@@ -23,7 +23,9 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from plugins.context_cache import write_context
+from runtime.refresh_contracts import TaskCancelled, TaskDeadlineExceeded
 
+from . import local_sources
 from .week_page import WeekPageMixin, category_color, category_key, event_category
 from utils.cache_manager import CacheBudget
 from utils.http_client import get_http_client, get_http_session
@@ -39,6 +41,10 @@ AGE_PATTERN = re.compile(r"\b(21|18|16)\s*(?:\+|and\s+(?:over|up|older)|or\s+old
 ALL_AGES_PATTERN = re.compile(r"\ball\s+ages\b", re.IGNORECASE)
 # The page lists a featured event and LIST_EVENTS - 1 more, the soonest first.
 MAX_ITEMS = LIST_EVENTS = 8
+# Of the list's rows, up to LOCAL_ROWS go to today's shows from the keyless sources (DoTheBay,
+# Luma: local_sources.py), more only when Ticketmaster has too few rows to fill the list. The
+# featured event and the rest stay Ticketmaster's.
+LOCAL_ROWS = 3
 # Repeat showtimes collapse into one listing, so ask for enough rows to fill.
 DISCOVERY_ROW_FLOOR = 20
 # The week strip: each of WEEK_DAYS days is asked for its own count (the page total), with up
@@ -223,6 +229,7 @@ class TicketmasterEvents(WeekPageMixin, BoxOfficeTopMovies):
                 if not api_key:
                     raise MissingTicketmasterCredentials("Ticketmaster API key is not configured.")
                 events, week, on_sale = self._load_overview(settings, api_key, generated_at)
+                events, local_state = self._with_local_events(events, cache, settings, generated_at)
                 overview = {"week": week, "on_sale": on_sale}
                 self._download_event_images(events, dimensions)
                 generated_at = self._now_for_device(device_config)
@@ -233,6 +240,7 @@ class TicketmasterEvents(WeekPageMixin, BoxOfficeTopMovies):
                     "events": [event.to_dict() for event in events],
                     "week": week,
                     "on_sale": on_sale,
+                    "local_sources": local_state,
                 })
                 provenance = SourceProvenance.LIVE
             except MissingTicketmasterCredentials as exc:
@@ -291,6 +299,47 @@ class TicketmasterEvents(WeekPageMixin, BoxOfficeTopMovies):
     def _local_fallback_image(image):
         image.info["inkypi_skip_cache"] = True
         return attach_source_provenance(image, SourceProvenance.LOCAL_FALLBACK)
+
+    def _home_latlong(self, settings):
+        """(lat, lon) of the page's postal code where the page knows it, else None."""
+        try:
+            lat, lon = (float(part) for part in ZIP_LATLONG_FALLBACKS[self._postal_code(settings)].split(","))
+        except (KeyError, ValueError):
+            return None
+        return lat, lon
+
+    def _with_local_events(self, events, cache, settings, now):
+        """(events, state): Ticketmaster's events with a few of today's shows from the keyless
+        sources merged into the list, and those sources' kept answers for the page's cache.
+        The sources are optional: whatever goes wrong with them leaves ``events`` as they are."""
+        try:
+            previous = cache.get("local_sources") if isinstance(cache, dict) else None
+            state = local_sources.load_local_sources(previous if isinstance(previous, dict) else {}, now)
+            limit = max(LOCAL_ROWS, LIST_EVENTS - len(events))
+            radius = self._bounded_int(settings.get("radiusMiles"), 50, 1, 250)
+            picked = local_sources.pick_local_events(state, events, now, self._home_latlong(settings), radius, limit)
+            return self._merge_local_events(events, [TicketmasterEvent.from_dict(row) for row in picked]), state
+        except (TaskCancelled, TaskDeadlineExceeded):
+            raise
+        except Exception as exc:
+            logger.warning("Local events sources skipped. | error_type: %s", type(exc).__name__)
+            return events, {}
+
+    @staticmethod
+    def _merge_local_events(events, extras):
+        """Ticketmaster's featured event first, then its soonest rows and ``extras`` together by
+        start time: the extras take the places of Ticketmaster's latest rows, never more than the
+        list has."""
+        if not extras or not events:
+            return events
+        extras = extras[:LIST_EVENTS - 1]
+        rest = events[1:][:LIST_EVENTS - 1 - len(extras)]
+        # A stable sort: Ticketmaster's rows keep their own order where times tie.
+        merged = sorted(rest + extras, key=lambda event: (event.local_date or "9999", event.local_time or "00:00:00"))
+        ordered = [events[0]] + merged
+        for rank, event in enumerate(ordered, 1):
+            event.rank = rank
+        return ordered
 
     def _request_param_candidates(self, settings, api_key, items_count):
         params = self._base_params(settings, api_key, items_count)
