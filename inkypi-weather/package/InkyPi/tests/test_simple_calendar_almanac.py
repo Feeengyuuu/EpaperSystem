@@ -11,7 +11,7 @@ from PIL import ImageDraw
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from plugins.base_plugin.render_provenance import read_source_provenance  # noqa: E402
-from plugins.simple_calendar import cn_almanac, panel_scene  # noqa: E402
+from plugins.simple_calendar import cn_almanac  # noqa: E402
 from plugins.simple_calendar.cn_almanac import AlmanacProvider  # noqa: E402
 from plugins.simple_calendar.panel_scene import Scene  # noqa: E402
 from plugins.simple_calendar.simple_calendar import LOCALE_DATA, SimpleCalendar  # noqa: E402
@@ -63,16 +63,6 @@ def test_the_days_note_names_its_ganzhi_and_the_solar_term_today_or_next():
     # No solar term among the kept days ahead: the note goes without; a day that is not kept has no note.
     assert "term" not in cn_almanac.day_note({"2026-11-11": days["2026-11-11"]}, TODAY)
     assert cn_almanac.day_note(days, date(2026, 11, 12)) is None and cn_almanac.day_note({}, TODAY) is None
-
-
-def test_the_hosts_line_is_one_thing_to_do_and_one_to_avoid():
-    days = cn_almanac.days_from_payload(PAYLOAD)
-
-    assert cn_almanac.balloon_line(cn_almanac.day_note(days, TODAY)) == "宜会亲友 忌结婚"
-    # A day whose 忌 is a saying is quoted whole.
-    assert cn_almanac.balloon_line(cn_almanac.day_note(days, date(2026, 11, 7))) == "宜打扫 馀事勿取"
-    assert cn_almanac.balloon_line({"suit": ["无"], "avoid": ["诸事不宜"]}) == "诸事不宜"
-    assert cn_almanac.balloon_line({"suit": [], "avoid": []}) == "" and cn_almanac.balloon_line(None) == ""
 
 
 def provider(tmp_path, answers):
@@ -152,15 +142,6 @@ def test_the_month_is_asked_from_baidu_in_gbk_with_a_size_cap(monkeypatch):
     assert asked["encoding"] == "gbk" and asked["max_bytes"] <= 300 * 1024 and asked["timeout"] <= 15
 
 
-def test_the_host_adds_the_almanac_only_to_a_one_line_balloon():
-    one = Scene("sky_runner", "sit", None, ("离周末还有 3 天",), "day", "everyday")
-    two = Scene("clockwork_robot", "point", "appointment", ("上午 11:45 预约", "还有 2 小时"), "day", "appointment")
-
-    assert panel_scene.with_almanac(one, "宜会亲友 忌结婚").lines == ("离周末还有 3 天", "宜会亲友 忌结婚")
-    assert panel_scene.with_almanac(two, "宜会亲友 忌结婚") is two
-    assert panel_scene.with_almanac(one, "") is one and panel_scene.with_almanac(None, "宜理发") is None
-
-
 # --- on the page -------------------------------------------------------------------------------------
 
 NOTE = {"ganzhi": "丙午年 己亥月 己丑日", "suit": ["会亲友", "理发", "买衣服", "安床", "安门", "结网", "开光"],
@@ -171,7 +152,7 @@ NIGHT = {"accent": (105, 185, 197), "background": (11, 21, 24), "panel": (28, 42
 VETERANS = {"date": TODAY, "label": "US", "title": "Veterans Day", "color": (0, 74, 173)}
 
 
-def render(events=(), almanac=None, scene=None, theme=None, drawn=None, monkeypatch=None):
+def render(events=(), almanac=None, scene=None, theme=None, drawn=None, monkeypatch=None, side="left"):
     if drawn is not None:
         original = ImageDraw.ImageDraw.text
         monkeypatch.setattr(ImageDraw.ImageDraw, "text",
@@ -179,67 +160,60 @@ def render(events=(), almanac=None, scene=None, theme=None, drawn=None, monkeypa
                             or original(self, xy, text, *args, **kwargs))
     plugin = SimpleCalendar({"id": "simple_calendar"})
     return plugin._render_calendar(
-        (800, 480), TODAY, (46, 46, 46), (163, 13, 13), LOCALE_DATA["en"], "en", "left", list(events), None,
+        (800, 480), TODAY, (46, 46, 46), (163, 13, 13), LOCALE_DATA["en"], "en", side, list(events), None,
         scene is not None, datetime(2026, 11, 11, 10, 0), theme, scene, almanac=almanac)
 
 
 @pytest.mark.parametrize("theme", [None, NIGHT])
-def test_a_day_without_an_event_pins_the_almanac_slip_where_the_event_card_goes(monkeypatch, theme):
+@pytest.mark.parametrize("side", ["left", "right"])
+def test_the_almanac_has_its_own_strip_below_the_date(monkeypatch, theme, side):
     drawn = []
-    image = render(almanac=NOTE, theme=theme, drawn=drawn, monkeypatch=monkeypatch)
-    plain = render(theme=theme)
-
+    image = render(almanac=NOTE, theme=theme, drawn=drawn, monkeypatch=monkeypatch, side=side)
+    plain = render(theme=theme, side=side)
     words = [text for text, _xy, _fill in drawn]
     assert {"黄历", "丙午年 己亥月 己丑日", "宜", "忌", "小雪 11/22 还有11天"} <= set(words)
-    # As many whole items as each line holds, in the almanac's order, never a cut one.
     suit = next(text for text in words if text.startswith("会亲友"))
     avoid = next(text for text in words if text.startswith("结婚"))
     assert suit.split(" ") == NOTE["suit"][:len(suit.split(" "))] and len(suit.split(" ")) >= 3
     assert avoid.split(" ") == NOTE["avoid"][:len(avoid.split(" "))] and len(avoid.split(" ")) >= 3
-    # Every word of it is in the slip's ink; colour is only on the stamps under 宜 / 忌 / 节.
     ink = next(fill for text, _xy, fill in drawn if text == "丙午年 己亥月 己丑日")
     assert all(fill == ink for text, _xy, fill in drawn if text in (suit, avoid, "小雪 11/22 还有11天"))
-    # The slip stays in the panel's top slot: above the weekday, left of the calendar page.
     box = image.info["simple_calendar_almanac"]["bounds"]
-    assert 0 < box[0] and box[2] < 304 and 0 <= box[1] and box[3] <= 114
-    changed = [(x, y) for x in range(0, 800, 2) for y in range(0, 480, 2) if image.getpixel((x, y)) != plain.getpixel((x, y))]
-    assert changed and all(box[0] - 1 <= x <= box[2] + 6 and box[1] - 1 <= y <= box[3] + 6 for x, y in changed)
+    panel_left = 0 if side == "left" else 496
+    assert panel_left < box[0] < box[2] < panel_left + 304
+    assert 315 <= box[1] < box[3] <= 390
+    changed = [(x, y) for x in range(0, 800, 2) for y in range(0, 480, 2)
+               if image.getpixel((x, y)) != plain.getpixel((x, y))]
+    assert changed and all(box[0] <= x <= box[2] and box[1] <= y <= box[3] for x, y in changed)
 
 
-def test_the_month_grid_and_its_marks_are_untouched_by_the_almanac():
-    with_note, without = render(almanac=NOTE), render()
-
-    assert with_note.crop((304, 0, 800, 480)).tobytes() == without.crop((304, 0, 800, 480)).tobytes()
-    assert with_note.crop((0, 115, 304, 480)).tobytes() == without.crop((0, 115, 304, 480)).tobytes()
-
-
-def test_on_an_event_day_the_card_stays_and_the_host_says_the_almanac_in_a_free_line(monkeypatch):
+def test_the_almanac_does_not_change_the_date_month_grid_or_host():
     scene = Scene("sky_runner", "sit", None, ("离周末还有 3 天",), "day", "everyday")
+    with_note, without = render(almanac=NOTE, scene=scene), render(scene=scene)
+    for box in ((304, 0, 800, 480), (0, 0, 304, 315), (0, 390, 304, 480)):
+        assert with_note.crop(box).tobytes() == without.crop(box).tobytes()
+
+
+@pytest.mark.parametrize("lines", [("离周末还有 3 天",), ("上午 11:45 预约", "还有 2 小时")])
+def test_events_and_full_host_balloons_keep_their_space_and_the_almanac_still_shows(monkeypatch, lines):
+    scene = Scene("sky_runner", "sit", None, lines, "day", "everyday")
     drawn = []
     image = render([VETERANS], almanac=NOTE, scene=scene, drawn=drawn, monkeypatch=monkeypatch)
     card_only = render([VETERANS], scene=scene)
-
     words = [text for text, _xy, _fill in drawn]
-    assert "Veterans Day" in words and "黄历" not in words and "simple_calendar_almanac" not in image.info
-    assert "宜会亲友 忌结婚" in words and "离周末还有 3 天" in words
-    # The event's card is drawn exactly as without the almanac.
-    assert image.crop((0, 0, 304, 114)).tobytes() == card_only.crop((0, 0, 304, 114)).tobytes()
-    # A host with two lines of its own keeps them.
-    busy = Scene("clockwork_robot", "point", "appointment", ("上午 11:45 预约", "还有 2 小时"), "day", "appointment")
-    drawn.clear()
-    render([VETERANS], almanac=NOTE, scene=busy, drawn=drawn, monkeypatch=monkeypatch)
-    assert "宜会亲友 忌结婚" not in [text for text, _xy, _fill in drawn]
+    assert "Veterans Day" in words and "黄历" in words
+    assert "宜会亲友 忌结婚" not in words
+    assert image.crop((0, 0, 304, 315)).tobytes() == card_only.crop((0, 0, 304, 315)).tobytes()
+    assert image.crop((0, 390, 304, 480)).tobytes() == card_only.crop((0, 390, 304, 480)).tobytes()
 
 
-def test_short_lists_and_a_missing_term_make_a_smaller_slip(monkeypatch):
+def test_short_lists_and_a_missing_term_keep_the_same_dedicated_strip(monkeypatch):
     drawn = []
-    image = render(almanac={"ganzhi": "丙午年 己亥月 乙酉日", "suit": ["打扫"], "avoid": ["馀事勿取"]}, drawn=drawn,
-                   monkeypatch=monkeypatch)
+    image = render(almanac={"ganzhi": "丙午年 己亥月 乙酉日", "suit": ["打扫"], "avoid": ["馀事勿取"]},
+                   drawn=drawn, monkeypatch=monkeypatch)
     full = render(almanac=NOTE)
-
     assert {"打扫", "馀事勿取"} <= {text for text, _xy, _fill in drawn}
-    small, large = image.info["simple_calendar_almanac"]["bounds"], full.info["simple_calendar_almanac"]["bounds"]
-    assert small[3] - small[1] < large[3] - large[1]
+    assert image.info["simple_calendar_almanac"]["bounds"] == full.info["simple_calendar_almanac"]["bounds"]
 
 
 class Device:

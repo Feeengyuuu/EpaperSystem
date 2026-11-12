@@ -36,8 +36,6 @@ SOLAR_TERMS = frozenset((
     "小暑", "大暑", "立秋", "处暑", "白露", "秋分", "寒露", "霜降", "立冬", "小雪", "大雪", "冬至"))
 # How far ahead the next solar term is looked for (they are about fifteen days apart).
 TERM_LOOKAHEAD_DAYS = 31
-# A day's 宜 or 忌 that is a saying rather than a list of things.
-SAYINGS = frozenset(("诸事不宜", "馀事勿取", "余事勿取", "大事勿用"))
 
 
 def fetch_month(year, month, context=None) -> dict:
@@ -100,18 +98,6 @@ def day_note(days, day):
                             else f"{term} {later.month}/{later.day} 还有{ahead}天")
             break
     return note
-
-
-def balloon_line(note):
-    """The almanac in one short line for the host: the first thing the day favours and the first it
-    warns against ("宜会亲友 忌结婚"), a saying quoted whole; "" without either."""
-    if not isinstance(note, dict):
-        return ""
-    suit = next((item for item in note.get("suit") or [] if item != "无"), "")
-    avoid = next((item for item in note.get("avoid") or [] if item != "无"), "")
-    parts = [f"宜{suit}" if suit and suit not in SAYINGS else suit,
-             avoid if avoid in SAYINGS else (f"忌{avoid}" if avoid else "")]
-    return " ".join(part for part in parts if part)
 
 
 def _instant(value):

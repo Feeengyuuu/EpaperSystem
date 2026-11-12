@@ -27,7 +27,7 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from plugins.context_cache import read_contexts
-from plugins.simple_calendar import cn_almanac, cn_holidays, panel_scene
+from plugins.simple_calendar import almanac_render, cn_almanac, cn_holidays, panel_scene
 from plugins.simple_calendar.panel_stage import PanelStageMixin
 from plugins.simple_calendar.game_events import GameEventProvider, enabled as game_events_enabled
 from plugins.simple_calendar.apple_events import AppleEventProvider
@@ -429,8 +429,6 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
             provenance = self._worst_source_provenance([
                 provenance or SourceProvenance.LIVE, event_result.provenance
             ])
-        # 今日黄历 is an extra: asked for once a month on a data refresh, only read on a redraw, and
-        # never part of the page's provenance.
         almanac_days = (self.almanac.read() if cached_events is not None or theme_render_only or display_render
                         else self.almanac.refresh(selected_date))
         almanac = cn_almanac.day_note(almanac_days, selected_date)
@@ -614,11 +612,9 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
         date_y = panel_cy + int(panel_h * 0.28)
         rule_w = int(panel_w * 0.30)
 
-        focus_events = self._events_for_focus_day(
-            holiday_events_by_day.get(selected_date.day, []), selected_date, reference_dt)
         self._draw_focus_holiday(
             draw,
-            focus_events,
+            self._events_for_focus_day(holiday_events_by_day.get(selected_date.day, []), selected_date, reference_dt),
             panel_cx,
             p_top + int(panel_h * 0.12),
             int(panel_w * 0.84),
@@ -626,17 +622,6 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
             muted_text,
             theme_palette,
         )
-        if almanac and focus_events:
-            # Today's event keeps its card: the host says the almanac, when it has a line to spare.
-            scene = panel_scene.with_almanac(scene, cn_almanac.balloon_line(almanac))
-        elif almanac:
-            # No event today: 今日黄历 is pinned where the event's card would be, clear of the weekday.
-            weekday_top = draw.textbbox((panel_cx, weekday_y), weekday_str, font=clean_weekday_font, anchor="mm")[1]
-            slip = self._draw_focus_almanac(
-                draw, almanac, panel_cx, p_top + int(panel_h * 0.12), (p_top + 4, weekday_top - 4),
-                int(panel_w * 0.84), text_color, muted_text, theme_palette)
-            if slip:
-                img.info["simple_calendar_almanac"] = {"bounds": list(slip)}
         # Over a picture the date is lettered in ink with a surface halo and a thin
         # ink edge, so it reads on bright and dark parts of the art alike.
         outlined = bool(weather_panel_background_path)
@@ -666,6 +651,12 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
             draw, (panel_cx, date_y), month_year, clean_date_font, focus_muted,
             surface if outlined else None, text_color,
         )
+        almanac_box = almanac_render.draw_strip(
+            draw, (p_left + 16, rule_y - 12, p_right - 16, date_y + 14), almanac,
+            fonts=(self._get_holiday_title_font(13, bold=True), self._get_holiday_title_font(13),
+                   self._get_holiday_title_font(11)), ink=text_color, paper=surface)
+        if almanac_box:
+            img.info["simple_calendar_almanac"] = {"bounds": list(almanac_box)}
         if date_hero_overlay_enabled and scene is not None:
             # The host stands under the month line and never covers the date.
             def text_box(xy, text, font):
@@ -2684,9 +2675,39 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
         right = left + card_w
         bottom = top + card_h
 
-        colors = self._focus_card_colors(text_color, muted_text, theme_palette)
-        paper_light, ink, red_dark = colors["paper_light"], colors["ink"], colors["red_dark"]
-        self._draw_focus_card(draw, (left, top, right, bottom), colors)
+        shadow = (25, 38, 45)
+        paper = (238, 218, 158)
+        paper_light = (255, 239, 183)
+        border = (43, 37, 30)
+        ink = (39, 31, 22)
+        rail = (156, 92, 43)
+        red = (166, 31, 36)
+        red_dark = (101, 26, 31)
+        gold = (239, 195, 95)
+        lower_rail = (111, 74, 39)
+        corner = (217, 177, 90)
+        if theme_palette:
+            shadow = muted_text
+            paper = theme_palette["panel"]
+            paper_light = theme_palette["background"]
+            border = theme_palette["rule"]
+            ink = text_color
+            rail = theme_palette["rule"]
+            red = theme_palette["accent"]
+            red_dark = text_color
+            gold = theme_palette["accent"]
+            lower_rail = theme_palette["rule"]
+            corner = theme_palette["accent"]
+
+        draw.rounded_rectangle([left + 5, top + 5, right + 5, bottom + 5], radius=8, fill=shadow)
+        draw.rounded_rectangle([left, top, right, bottom], radius=8, fill=paper, outline=border, width=2)
+        draw.rounded_rectangle([left + 4, top + 4, right - 4, bottom - 4], radius=6, outline=paper_light, width=1)
+        draw.rectangle([left + 8, top + 8, left + 14, bottom - 8], fill=red)
+        draw.line([(left + 20, top + 30), (right - 22, top + 30)], fill=rail, width=1)
+        draw.line([(left + 20, bottom - 11), (right - 22, bottom - 11)], fill=lower_rail, width=1)
+        draw.polygon([(right - 18, top), (right, top), (right, top + 18)], fill=corner, outline=border)
+        for dot_y in (top + 18, bottom - 18):
+            draw.ellipse([right - 17, dot_y - 2, right - 13, dot_y + 2], fill=gold, outline=border)
 
         if label:
             label_bbox = draw.textbbox((0, 0), label, font=label_font)
@@ -2715,91 +2736,6 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
         first_title_y = top + (47 if label else 34)
         for line_index, title_line in enumerate(title_lines or [""]):
             draw.text((title_cx, first_title_y + line_index * 16), title_line, fill=ink, font=text_font, anchor="mm")
-
-    @staticmethod
-    def _focus_card_colors(text_color, muted_text, theme_palette=None):
-        """The pinned card's paper, inks and trims: its own by day, the theme's by night."""
-        if theme_palette:
-            return {"shadow": muted_text, "paper": theme_palette["panel"], "paper_light": theme_palette["background"],
-                    "border": theme_palette["rule"], "ink": text_color, "rail": theme_palette["rule"],
-                    "red": theme_palette["accent"], "red_dark": text_color, "gold": theme_palette["accent"],
-                    "lower_rail": theme_palette["rule"], "corner": theme_palette["accent"]}
-        return {"shadow": (25, 38, 45), "paper": (238, 218, 158), "paper_light": (255, 239, 183), "border": (43, 37, 30),
-                "ink": (39, 31, 22), "rail": (156, 92, 43), "red": (166, 31, 36), "red_dark": (101, 26, 31),
-                "gold": (239, 195, 95), "lower_rail": (111, 74, 39), "corner": (217, 177, 90)}
-
-    @staticmethod
-    def _draw_focus_card(draw, box, colors):
-        """The pinned card itself: hard shadow, ink edge, red margin bar, two rails, a folded corner and pins."""
-        left, top, right, bottom = box
-        draw.rounded_rectangle([left + 5, top + 5, right + 5, bottom + 5], radius=8, fill=colors["shadow"])
-        draw.rounded_rectangle([left, top, right, bottom], radius=8, fill=colors["paper"], outline=colors["border"], width=2)
-        draw.rounded_rectangle([left + 4, top + 4, right - 4, bottom - 4], radius=6, outline=colors["paper_light"], width=1)
-        draw.rectangle([left + 8, top + 8, left + 14, bottom - 8], fill=colors["red"])
-        draw.line([(left + 20, top + 30), (right - 22, top + 30)], fill=colors["rail"], width=1)
-        draw.line([(left + 20, bottom - 11), (right - 22, bottom - 11)], fill=colors["lower_rail"], width=1)
-        draw.polygon([(right - 18, top), (right, top), (right, top + 18)], fill=colors["corner"], outline=colors["border"])
-        for dot_y in (top + 18, bottom - 18):
-            draw.ellipse([right - 17, dot_y - 2, right - 13, dot_y + 2], fill=colors["gold"], outline=colors["border"])
-
-    def _draw_focus_almanac(self, draw, almanac, x, y, limits, max_width, text_color, muted_text, theme_palette=None):
-        """今日黄历 on the card today's event would be pinned to, centred on ``y`` and kept between
-        ``limits`` (top, bottom): 黄历 and the day's 干支 on the chip's row, then 宜, 忌 and the solar
-        term, each behind a small solid stamp, with as many whole items as its line holds. Every
-        word is in the card's ink; colour is on the stamps. Returns the card's box, or None when
-        not even one row fits."""
-        rows = [(stamp, " ".join(str(item) for item in almanac.get(key) or []), key)
-                for stamp, key in (("宜", "suit"), ("忌", "avoid"))]
-        rows = [(stamp, text, key) for stamp, text, key in rows if text]
-        if almanac.get("term"):
-            rows.append(("节", str(almanac["term"]), "term"))
-        card_w = int(max_width * 0.98)
-        # The term gives way first, then 忌, when the slot is too short for every row.
-        while rows and 63 + 16 * (len(rows) - 1) + 5 > limits[1] - limits[0]:
-            rows.pop()
-        if not rows:
-            return None
-        card_h = 63 + 16 * (len(rows) - 1)
-        left = int(x - card_w / 2)
-        top = int(min(max(y - card_h / 2, limits[0]), limits[1] - 5 - card_h))
-        right, bottom = left + card_w, top + card_h
-        colors = self._focus_card_colors(text_color, muted_text, theme_palette)
-        self._draw_focus_card(draw, (left, top, right, bottom), colors)
-        ink, paper_light = colors["ink"], colors["paper_light"]
-        chip_font = self._get_holiday_title_font(11, bold=True)
-        head_font = self._get_holiday_title_font(12, bold=True)
-        text_font = self._get_holiday_title_font(13, bold=True)
-        chip_left, chip_top = left + 24, top + 9
-        chip_w = max(int(self._text_width(draw, "黄历", chip_font)) + 14, 36)
-        draw.rounded_rectangle([chip_left, chip_top, chip_left + chip_w, chip_top + 16], radius=4, fill=paper_light,
-                               outline=colors["red_dark"], width=1)
-        draw.text((chip_left + chip_w / 2, chip_top + 8), "黄历", fill=ink, font=chip_font, anchor="mm")
-        text_right = right - 24
-        head_left = chip_left + chip_w + 8
-        draw.text((head_left, chip_top + 8), self._fit_text(draw, str(almanac.get("ganzhi") or ""), head_font,
-                                                         text_right - head_left), fill=ink, font=head_font, anchor="lm")
-        stamp_fills = {"suit": colors["red"], "avoid": ink, "term": colors["rail"]}
-        for index, (stamp, text, key) in enumerate(rows):
-            row_y = top + 42 + 16 * index
-            fill = stamp_fills[key]
-            stamp_left = left + 24
-            draw.rounded_rectangle([stamp_left, row_y - 7, stamp_left + 14, row_y + 7], radius=3, fill=fill)
-            glyph = max((paper_light, ink, colors["paper"]), key=lambda colour: contrast_ratio(colour, fill))
-            draw.text((stamp_left + 7, row_y + 0.5), stamp, fill=glyph, font=self._get_holiday_title_font(10, bold=True),
-                      anchor="mm")
-            text_left = stamp_left + 14 + 7
-            if key != "term":
-                # Whole items only, in the almanac's order.
-                items, shown = text.split(" "), []
-                for item in items:
-                    if self._text_width(draw, " ".join([*shown, item]), text_font) > text_right - text_left:
-                        break
-                    shown.append(item)
-                text = " ".join(shown) if shown else self._fit_text(draw, items[0], text_font, text_right - text_left)
-            else:
-                text = self._fit_text(draw, text, text_font, text_right - text_left)
-            draw.text((text_left, row_y), text, fill=ink, font=text_font, anchor="lm")
-        return (left, top, right, bottom)
 
     def _draw_holiday_markers(
         self,
