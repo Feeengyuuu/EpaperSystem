@@ -10,8 +10,12 @@ import pytest
 
 from plugins.vehicle_status import superchargers
 from plugins.vehicle_status import vehicle_status as vehicle_module
+from runtime.long_task_executor import InstanceIdentity, bind_long_task_runtime
 from runtime.refresh_contracts import TaskCancelled, TaskDeadlineExceeded
+from runtime.refresh_contracts import TaskContext
+from tests.test_http_client import FakeResponse, FakeSession
 from tests.test_vehicle_status import _summary_v3
+from utils.http_client import HttpClient
 
 
 def _change(day, status, previous, stalls, power, name, latitude, longitude, kind="UPDATE"):
@@ -77,15 +81,45 @@ class Client:
         return SimpleNamespace(data=CHANGES if url.endswith("/changes") else SITES)
 
 
-@pytest.mark.parametrize("error", [TaskCancelled, TaskDeadlineExceeded])
-def test_optional_charger_requests_do_not_swallow_refresh_cancellation(tmp_path, monkeypatch, error):
+def test_optional_charger_requests_do_not_swallow_refresh_cancellation(tmp_path, monkeypatch):
     def stop(*_args, **_kwargs):
-        raise error("refresh stopped")
+        raise TaskCancelled("refresh stopped")
 
     monkeypatch.setattr(superchargers, "get_http_client", lambda: SimpleNamespace(request_json=stop))
-    with pytest.raises(error, match="refresh stopped"):
+    with pytest.raises(TaskCancelled, match="refresh stopped"):
         superchargers.refresh(tmp_path, NOW)
     assert not (tmp_path / superchargers.CACHE_NAME).exists()
+
+
+@pytest.mark.parametrize("parent_state", ["active", "cancelled", "expired"])
+def test_charger_retry_after_keeps_old_data_unless_the_parent_has_stopped(tmp_path, monkeypatch, parent_state):
+    monkeypatch.setattr(superchargers, "get_http_client", lambda: Client())
+    superchargers.refresh(tmp_path, NOW)
+    original = (tmp_path / superchargers.CACHE_NAME).read_bytes()
+    clock = [0.0]
+    parent = TaskContext.never_cancelled(deadline_monotonic=120, clock=lambda: clock[0])
+    session = FakeSession([FakeResponse(503, headers={"Retry-After": "30"}) for _ in range(2)])
+    request = session.request
+
+    def respond(*args, **kwargs):
+        if parent_state == "cancelled":
+            parent.cancel_event.set()
+        elif parent_state == "expired":
+            clock[0] = 121
+        return request(*args, **kwargs)
+
+    session.request = respond
+    monkeypatch.setattr(superchargers, "get_http_client", lambda: HttpClient(session=session))
+    with bind_long_task_runtime(parent, InstanceIdentity(None, None, None)):
+        if parent_state == "active":
+            superchargers.refresh(tmp_path, NOW + 13 * 3600)
+            assert len(session.calls) == 2 and parent.remaining_seconds() == 120
+            assert superchargers.read(tmp_path, NOW + 13 * 3600)
+        else:
+            with pytest.raises(TaskDeadlineExceeded if parent_state == "expired" else TaskCancelled):
+                superchargers.refresh(tmp_path, NOW + 13 * 3600)
+            assert len(session.calls) == 1
+    assert (tmp_path / superchargers.CACHE_NAME).read_bytes() == original
 
 
 def test_news_is_cached_twelve_hours_keeps_its_last_copy_and_asks_for_no_place(tmp_path, monkeypatch):

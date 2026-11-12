@@ -11,6 +11,7 @@ import math
 from datetime import datetime
 from pathlib import Path
 
+from runtime.long_task_executor import current_task_context
 from runtime.refresh_contracts import TaskCancelled, TaskDeadlineExceeded
 from utils.atomic_file import atomic_write_json
 from utils.http_client import get_http_client
@@ -140,7 +141,14 @@ def refresh(directory, now):
         try:
             kept[name] = {"fetched_at": float(now), "items": _fetch(path, params, parse)}
             changed = True
-        except (TaskCancelled, TaskDeadlineExceeded):
+        except TaskDeadlineExceeded:
+            # HTTP owns a short request budget. Exhausting it must not cancel the vehicle page;
+            # only a stopped parent refresh does that. Keep this source's previous reading.
+            parent = current_task_context()
+            if parent is not None:
+                parent.raise_if_cancelled()
+            logger.info("Supercharger %s unavailable type=source_deadline", name)
+        except TaskCancelled:
             raise
         except Exception as exc:
             logger.info("Supercharger %s unavailable type=%s", name, type(exc).__name__)

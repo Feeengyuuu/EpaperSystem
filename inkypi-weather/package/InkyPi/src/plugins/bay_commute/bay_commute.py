@@ -13,7 +13,7 @@ from plugins.base_plugin.render_provenance import SourceProvenance, attach_sourc
 from runtime.long_task_executor import (
     current_instance_identity, current_instance_identity_validator, task_context_or_default,
 )
-from runtime.refresh_contracts import TaskCancelled, TaskContext
+from runtime.refresh_contracts import TaskCancelled, TaskContext, TaskDeadlineExceeded
 from utils.app_utils import bounded_int, coerce_bool, get_available_font_names
 from utils.cache_manager import CacheBudget
 
@@ -186,6 +186,11 @@ class BayCommute(BasePlugin):
                 fresh = self._fresh(name, payload, now)
                 return {**payload, "state": "live" if fresh else "stale_cache",
                         "error": "" if fresh else "source_timestamp_stale"}
+            except TaskDeadlineExceeded:
+                if name not in sierra.REST:
+                    raise
+                context.raise_if_cancelled()
+                error = "source_deadline"
             except TaskCancelled:
                 raise
             except Exception as exc:
@@ -199,9 +204,14 @@ class BayCommute(BasePlugin):
         """The drive to Tahoe and Yosemite (road conditions, chain controls, the resort): extras
         like the buoy, and of the three at most one is read per refresh, the one furthest past
         its rest."""
-        readers = {"sierra_roads": ({"routes": list(sierra.ROUTES)}, lambda: sierra.fetch_road_conditions(context)),
-                   "sierra_chains": ({"feed": "cc"}, lambda: sierra.fetch_chain_controls(context)),
-                   "sierra_resort": ({"resort": sierra.RESORT_ID}, lambda: sierra.fetch_resort(now, context))}
+        # Give the optional request its own slice, so a long Retry-After cannot spend the
+        # primary page's refresh budget. _source still checks the parent before falling back.
+        child = TaskContext(context.cancel_event,
+                            min(context.deadline_monotonic, context.clock() + max(sierra.REQUEST_TIMEOUT)),
+                            context.clock)
+        readers = {"sierra_roads": ({"routes": list(sierra.ROUTES)}, lambda: sierra.fetch_road_conditions(child)),
+                   "sierra_chains": ({"feed": "cc"}, lambda: sierra.fetch_chain_controls(child)),
+                   "sierra_resort": ({"resort": sierra.RESORT_ID}, lambda: sierra.fetch_resort(now, child))}
         turn = None
         if allow_network:
             kept = {name: self._read_cache(name, identity) for name, (identity, _fetch) in readers.items()}

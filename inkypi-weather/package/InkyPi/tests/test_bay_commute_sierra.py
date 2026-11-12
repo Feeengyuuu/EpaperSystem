@@ -11,6 +11,9 @@ from plugins.bay_commute import sierra, sources
 from plugins.bay_commute.bay_commute import BayCommute
 from plugins.bay_commute.command_render import SIGN_BOX, Page
 from plugins.bay_commute.render import render_page
+from runtime.refresh_contracts import TaskCancelled, TaskContext, TaskDeadlineExceeded
+from tests.test_http_client import FakeResponse, FakeSession
+from utils.http_client import HttpClient
 from tests.test_bay_commute import (
     BART_PAYLOAD, BUOY_PAGE, CMS_PAYLOAD, SETTINGS, context, road_data, tide_data,
 )
@@ -325,6 +328,33 @@ def test_a_cache_only_redraw_reads_no_sierra_source(plugin, offline_page):
     payload = plugin._payload(SETTINGS, NOW, allow_network=False, context=context())
 
     assert offline_page == [] and payload["sierra"] is None
+
+
+@pytest.mark.parametrize("parent_state", ["active", "cancelled", "expired"])
+def test_sierra_retry_after_is_bounded_by_its_optional_budget(plugin, monkeypatch, parent_state):
+    clock = [0.0]
+    parent = TaskContext.never_cancelled(deadline_monotonic=120, clock=lambda: clock[0])
+    monkeypatch.setattr(parent.cancel_event, "wait", lambda *_args: pytest.fail("optional source waited for retry"))
+    response = FakeResponse(503, headers={"Retry-After": "30"})
+    session = FakeSession([response])
+    request = session.request
+
+    def respond(*args, **kwargs):
+        if parent_state == "cancelled":
+            parent.cancel_event.set()
+        elif parent_state == "expired":
+            clock[0] = 121
+        return request(*args, **kwargs)
+
+    session.request = respond
+    monkeypatch.setattr(sierra, "get_http_client", lambda: HttpClient(session=session))
+    if parent_state == "active":
+        assert plugin._sierra(NOW, allow_network=True, context=parent) is None
+        assert parent.remaining_seconds() == 120
+    else:
+        with pytest.raises(TaskDeadlineExceeded if parent_state == "expired" else TaskCancelled):
+            plugin._sierra(NOW, allow_network=True, context=parent)
+    assert len(session.calls) == 1 and response.closed
 
 
 def reading(data, at=NOW):

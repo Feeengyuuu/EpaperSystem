@@ -13,9 +13,12 @@ from plugins.nature_nearby.nature_nearby import NatureNearby  # noqa: E402
 from plugins.nature_nearby.render import render_page  # noqa: E402
 from runtime.refresh_contracts import TaskContext  # noqa: E402
 from utils.remote_thumbnails import load_thumbnails  # noqa: E402
+from tests.test_http_client import FakeResponse, FakeSession  # noqa: E402
+from utils.http_client import HttpClient  # noqa: E402
 
 NOW = datetime(2026, 10, 21, 14, 0, tzinfo=sources.PACIFIC)
 PHOTO = "https://inaturalist-open-data.s3.amazonaws.com/photos/753861248/square.jpg"
+WATER_FETCHERS = {name: getattr(sources, name) for name in ("fetch_reservoirs", "fetch_snow")}
 
 
 THREATENED = {"level": "VU", "total": 35, "partial": False, "items": [
@@ -625,3 +628,24 @@ def test_the_water_loads_on_its_own_ttl_and_never_decides_provenance(monkeypatch
     assert len(calls) == 4 and cached["snow"]["data"]["pct_median"] == 128
     gone, _images = plugin._refresh({}, NOW + timedelta(days=9), allow_network=True, context=task)
     assert gone["water"]["state"] == "unavailable" and gone["provenance"] is SourceProvenance.LIVE
+
+
+def test_water_retry_after_is_local_to_each_optional_source(monkeypatch, tmp_path):
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path / "cache"))
+    payload = _payload()
+    for name in ("recent", "species", "groups", "stats"):
+        monkeypatch.setattr(sources, f"fetch_{name}", lambda *_args, data=payload[name]["data"]: data)
+    for name, fetch in WATER_FETCHERS.items():
+        monkeypatch.setattr(sources, name, fetch)
+    responses = [FakeResponse(503, headers={"Retry-After": "30"}) for _ in range(2)]
+    session = FakeSession(responses)
+    monkeypatch.setattr(sources, "get_http_client", lambda: HttpClient(session=session))
+    parent = TaskContext.never_cancelled(deadline_monotonic=120, clock=lambda: 0)
+    plugin = NatureNearby({"id": "nature_nearby"})
+
+    result, _images = plugin._refresh({}, NOW, allow_network=True, context=parent)
+
+    assert len(session.calls) == 2 and all(response.closed for response in responses)
+    assert parent.remaining_seconds() == 120
+    assert all(result[name]["error"] == "source_deadline" for name in ("water", "snow"))
+    assert result["provenance"] is SourceProvenance.LIVE
