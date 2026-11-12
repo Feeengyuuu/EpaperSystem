@@ -51,7 +51,10 @@ FRESHNESS = {
     "debt": (6 * HOUR, 7 * DAY),
     "fear_greed": (3 * HOUR, 3 * DAY),
     "wordle": (7 * DAY, 7 * DAY),
+    "puzzle": (6 * HOUR, DAY),
 }
+# xkcd's comic, kept small for its tile.
+COMIC_PIXELS = (480, 360)
 # The sun is fetched once per slot and an older slot's copy stands in for up to SUN_USABLE.
 SUN_SLOT_SECONDS = 30 * 60
 SUN_USABLE_SLOTS = 12
@@ -154,6 +157,11 @@ class DailyDigest(BasePlugin):
         # cover lookups failing never makes the page stale.
         payload["music"][sources.BILLBOARD_ID] = load("music-billboard", "billboard", {"chart": "hot-100", "fields": 1},
                                                       sources.fetch_billboard, sources.valid_chart, timeout=15)
+        # 每日一题 (the day's chess puzzle, xkcd or Connections board) is an extra too: one request,
+        # kept six hours, and never part of the page's provenance.
+        kind = sources.puzzle_kind(now)
+        payload["puzzle"] = load(f"puzzle-{kind}", "puzzle", {"kind": kind},
+                                 lambda ctx: sources.fetch_puzzle(kind, now, ctx), sources.valid_puzzle, timeout=6)
         payload["provenance"] = combined_provenance(results)
         return payload
 
@@ -204,6 +212,12 @@ class DailyDigest(BasePlugin):
                 images["space"] = found[picture["image"]]
         payload["space"] = {"name": name, **(picture or {})} if picture else None
         images.update(self._art(payload, now, allow_network=allow_network, options=options))
+        comic = ((payload.get("puzzle") or {}).get("data") or {}).get("image")
+        if comic:
+            found = load_thumbnails([comic], self._cache_subdir("art"), cached_only=not allow_network,
+                                    size=COMIC_PIXELS, budget=ART_BUDGET, safe_url=sources.safe_xkcd_image, **options)
+            if comic in found:
+                images["puzzle"] = found[comic]
         return images
 
     def render_cached_display(self, settings, device_config, *, resolved_theme_context):

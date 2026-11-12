@@ -528,6 +528,95 @@ def valid_wordle(data):
     return isinstance(data, dict) and bool(re.fullmatch(r"[A-Z]{5}", str(data.get("solution") or "")))
 
 
+# --- 每日一题: the chess.com puzzle, today's xkcd or the Connections board ---------------------------
+
+CHESS_PUZZLE = "https://api.chess.com/pub/puzzle"
+XKCD = "https://xkcd.com/info.0.json"
+XKCD_IMAGE_HOST = "imgs.xkcd.com"
+CONNECTIONS = "https://www.nytimes.com/svc/connections/v2/{day}.json"
+PUZZLES = ("chess", "xkcd", "connections")
+_FEN_RANK = re.compile(r"[pnbrqkPNBRQK1-8]{1,8}")
+
+
+def puzzle_kind(now):
+    """The day's puzzle: the three take turns, one a day."""
+    return PUZZLES[now.date().toordinal() % len(PUZZLES)]
+
+
+def fen_board(fen):
+    """Eight ranks of eight squares from a FEN's placement, rank 8 first: a piece letter or None."""
+    ranks = str(fen or "").split(" ")[0].split("/")
+    board = []
+    for rank in ranks:
+        if not _FEN_RANK.fullmatch(rank):
+            raise ValueError("not a FEN rank")
+        squares = [square for char in rank for square in ([None] * int(char) if char.isdigit() else [char])]
+        board.append(squares)
+    if len(board) != 8 or any(len(squares) != 8 for squares in board):
+        raise ValueError("not a FEN board")
+    return board
+
+
+def fen_side(fen):
+    parts = str(fen or "").split(" ")
+    return "b" if len(parts) > 1 and parts[1] == "b" else "w"
+
+
+def normalize_chess(payload):
+    """chess.com's daily puzzle: its title and position (placement and side to move). The moves
+    that solve it are not kept."""
+    payload = payload if isinstance(payload, dict) else {}
+    fen = " ".join(str(payload.get("fen") or "").split())
+    fen_board(fen)
+    return {"kind": "chess", "title": _clean(payload.get("title"), 40), "fen": f"{fen.split(' ')[0]} {fen_side(fen)}"}
+
+
+def safe_xkcd_image(value):
+    url = str(value or "").strip()
+    parts = urlsplit(url)
+    return url if parts.scheme == "https" and parts.hostname == XKCD_IMAGE_HOST else None
+
+
+def normalize_xkcd(payload):
+    payload = payload if isinstance(payload, dict) else {}
+    image = safe_xkcd_image(payload.get("img"))
+    title = _clean(payload.get("safe_title") or payload.get("title"), 60)
+    if not image or not title or not isinstance(payload.get("num"), int):
+        raise ValueError("xkcd returned no comic")
+    return {"kind": "xkcd", "num": payload["num"], "title": title, "image": image}
+
+
+def normalize_connections(payload, day):
+    """The day's Connections board: its sixteen words in the order the game itself deals them.
+    The groups and their titles (the answers) are never kept."""
+    payload = payload if isinstance(payload, dict) else {}
+    if str(payload.get("print_date") or "") != day:
+        raise ValueError("Connections returned another day")
+    cards = [card for group in payload.get("categories") or [] if isinstance(group, dict)
+             for card in group.get("cards") or [] if isinstance(card, dict)]
+    placed = {card.get("position"): " ".join(str(card.get("content") or "").split()).upper()[:16] for card in cards}
+    if sorted(position for position in placed if isinstance(position, int)) != list(range(16)) or not all(placed.values()):
+        raise ValueError("Connections returned no sixteen-word board")
+    number = payload.get("id")
+    return {"kind": "connections", "day": day, "number": number if isinstance(number, int) else None,
+            "words": [placed[position] for position in range(16)]}
+
+
+def fetch_puzzle(kind, now, context):
+    """One request for the day's puzzle of ``kind``."""
+    if kind == "chess":
+        return normalize_chess(_get(CHESS_PUZZLE, context))
+    if kind == "xkcd":
+        return normalize_xkcd(_get(XKCD, context))
+    day = now.date().isoformat()
+    return normalize_connections(_get(CONNECTIONS.format(day=day), context), day)
+
+
+def valid_puzzle(data):
+    return isinstance(data, dict) and data.get("kind") in PUZZLES and bool(
+        data.get("fen") or data.get("image") or data.get("words"))
+
+
 # --- The sun ----------------------------------------------------------------------------------------
 
 def safe_sun_image(value):
