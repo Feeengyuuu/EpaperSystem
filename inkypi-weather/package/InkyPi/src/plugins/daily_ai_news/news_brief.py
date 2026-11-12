@@ -657,7 +657,9 @@ class NewsBriefMixin:
             if source is None or self._item_section(source) != "world" or ref in used or self._is_vague_story(story):
                 continue
             used.add(ref)
-            grounded.append(story)
+            # Where the story came from, so the page can show its article's picture.
+            link = str(source.get("link") or "")[:220]
+            grounded.append({**story, "link": link} if link else story)
         return grounded
 
     @staticmethod

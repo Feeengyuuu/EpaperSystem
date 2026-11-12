@@ -3331,3 +3331,89 @@ def test_every_topic_has_its_generated_backdrop():
         assert (news_pictures.BACKDROP_DIR / f"{kind}.jpg").is_file(), kind
     record = json.loads((news_pictures.BACKDROP_DIR / "source.json").read_text(encoding="utf-8"))
     assert set(record["files"]) == {f"{kind}.jpg" for kind in kinds}
+
+
+def _story_payload():
+    payload = _page_payload()
+    payload["brief"]["world"] = [
+        {"tag": "中东", "title": "英国派战机协防沙特", "why": "应对胡塞武装袭击", "link": "https://www.bbc.com/news/uk-jets"},
+        {"tag": "外交", "title": "美特使在莫斯科会见普京", "why": "此后将赴基辅", "link": "https://www.nytimes.com/b.html"}]
+    payload["items"] = [
+        {"source": "中国新闻网要闻", "section": "mainland", "title": "大陆新闻1", "link": "https://www.chinanews.com.cn/gn/1.shtml"},
+        {"source": "BBC世界", "section": "world", "title": "UK jets", "link": "https://www.bbc.com/news/uk-jets"},
+        {"source": "纽约时报国际", "section": "world", "title": "Envoy", "link": "https://www.nytimes.com/b.html",
+         "image": NYT_PICTURE}]
+    return payload
+
+
+def test_a_world_story_keeps_the_link_of_the_item_it_names():
+    plugin = _plugin()
+    items = [{"section": "world", "title": "UK jets", "link": "https://www.bbc.com/news/uk-jets"},
+             {"section": "world", "title": "No link"}]
+    grounded = plugin._grounded_world_stories([{"ref": "1", "title": "英国派战机协防沙特"},
+                                               {"ref": "2", "title": "刚果东部袭击致22人死亡"}], items)
+    assert grounded[0]["link"] == "https://www.bbc.com/news/uk-jets" and "link" not in grounded[1]
+
+
+def test_a_columns_first_stories_show_their_articles_pictures_in_place_of_the_badge(monkeypatch, tmp_path):
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path))
+    plugin = _plugin()
+    monkeypatch.setattr(plugin, "_lead_picture", lambda lead, settings: None)
+    bbc = "https://ichef.bbci.co.uk/ace/standard/1024/jets.jpg"
+    pages, asked = {"https://www.bbc.com/news/uk-jets": bbc}, []
+
+    def article_picture(link, cache_path, **options):
+        asked.append((link, options["cached_only"]))
+        return pages.get(link, "")
+
+    monkeypatch.setattr(news_pictures, "article_picture", article_picture)
+    loaded = []
+
+    def thumbnails(urls, directory, **options):
+        loaded.append((list(urls), Path(directory).name, options["cached_only"]))
+        return {url: Image.new("RGB", (152, 120), (30, 160, 60)) for url in urls}
+
+    monkeypatch.setattr(daily_ai_news_module, "load_thumbnails", thumbnails)
+    badges = []
+    monkeypatch.setattr(news_art, "draw_story_icon", lambda *args, **kwargs: badges.append(args[1:3]))
+    image = plugin._render((800, 480), {"brief_title": "整点新闻"}, _story_payload(), datetime(2026, 10, 21, 8, 0),
+                           {"mode": "day"})
+
+    # The world stories by the links the brief kept, the mainland ones found again by their title;
+    # a page that names no picture leaves the story its RSS item's.
+    assert ("https://www.bbc.com/news/uk-jets", False) in asked and ("https://www.nytimes.com/b.html", False) in asked
+    assert ("https://www.chinanews.com.cn/gn/1.shtml", False) in asked
+    assert loaded == [([bbc, NYT_PICTURE], "stories", False)]
+    # Two pictures stand at the right of the world column, rounded and unframed; the stories
+    # without one keep their badges.
+    green = [(x, y) for x in range(760, 790) for y in range(150, 400) if image.getpixel((x, y))[:3] == (30, 160, 60)]
+    assert len(green) > 2 * 20 * 20 and len(badges) == 4
+    assert min(x for x, _y in green) >= 790 - news_layout.STORY_PHOTO_WIDTH - 12
+
+    # A redraw from cache reads no page and downloads nothing.
+    asked.clear()
+    loaded.clear()
+    plugin._render((800, 480), {"brief_title": "整点新闻", "_theme_render_only": True}, _story_payload(),
+                   datetime(2026, 10, 21, 8, 0), {"mode": "day"})
+    assert all(cached for _link, cached in asked) and all(cached for *_rest, cached in loaded)
+
+
+def test_only_a_few_new_article_pages_are_read_for_story_pictures_a_refresh(monkeypatch, tmp_path):
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path))
+    plugin = _plugin()
+    asked = []
+    monkeypatch.setattr(news_pictures, "article_picture", lambda link, cache_path, **options: asked.append(link) or "")
+    monkeypatch.setattr(daily_ai_news_module, "load_thumbnails", lambda urls, directory, **options: {})
+    columns = ([{"title": f"国内{index}", "link": f"https://www.chinanews.com.cn/gn/{index}.shtml"} for index in range(7)],
+               [{"title": f"国际{index}", "link": f"https://www.bbc.com/news/{index}"} for index in range(7)])
+
+    assert plugin._story_pictures(columns, {}) == {}
+    # Four stories a column are pictured; of their eight pages, six are read this refresh.
+    assert len(asked) == daily_ai_news_module.STORY_NEW_PAGES == 6
+    assert all("photo_url" in item for column in columns for item in column[:daily_ai_news_module.STORY_PHOTOS])
+    assert not any("photo_url" in item for column in columns for item in column[daily_ai_news_module.STORY_PHOTOS:])
+    # A page already read answers from what is kept and does not count.
+    monkeypatch.setattr(news_pictures, "article_known", lambda link, cache_path: True)
+    asked.clear()
+    plugin._story_pictures(columns, {})
+    assert len(asked) == 8

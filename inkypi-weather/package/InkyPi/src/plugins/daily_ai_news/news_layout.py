@@ -71,6 +71,9 @@ STORY_FACT_SIZE, STORY_FACT_WEIGHT = 12, 400
 # Each story ends in a topic ring; its text stops short of this right-hand slot.
 STORY_ICON_SLOT = 40
 STORY_ICON_RADIUS = 15
+# A story with its article's picture shows it there instead, this wide and as tall as the row
+# allows, on rows at least STORY_PHOTO_MIN_HEIGHT tall (a one-line row keeps its badge).
+STORY_PHOTO_WIDTH, STORY_PHOTO_MIN_HEIGHT, STORY_PHOTO_RADIUS = 38, 30, 5
 # Accents are palette roles (the plugin's page colours fill them); anything unlisted stays in ink.
 SECTION_ACCENTS = {"国内": "red", "A股": "red", "国际": "blue", "美股": "blue"}
 # Each section's label is led by its generated badge (topic_icons/section_*.png) in its colour;
@@ -514,10 +517,23 @@ class NewsPage:
         if why:
             self.text((text_x, row_y + 7), why, STORY_FACT_SIZE, STORY_FACT_WEIGHT, c["ink"], "lm")
         height = len(lines) * TITLE_LINE + (ITEM_FOOTER if why else 0)
+        photo = item.get("photo")
+        if photo is not None and height >= STORY_PHOTO_MIN_HEIGHT:
+            self.story_photo(photo, (x + width - STORY_PHOTO_WIDTH, y + 1, x + width, y + height - 3))
+            return height
         radius = min(STORY_ICON_RADIUS, height // 2 - 1)
         news_art.draw_story_icon(self.d, x + width - STORY_ICON_RADIUS - 2, y + height // 2 - 1,
                                  radius, kind, c["ink"], accent, c["panel"], image=self.img)
         return height
+
+    def story_photo(self, photo, box):
+        """A story's own picture filling ``box`` with rounded corners, no frame."""
+        left, top, right, bottom = (round(value) for value in box)
+        size = (right - left, bottom - top)
+        art = ImageOps.fit(photo.convert("RGB"), (size[0] * 3, size[1] * 3), Image.Resampling.LANCZOS, centering=(0.5, 0.4))
+        mask = Image.new("L", art.size, 0)
+        ImageDraw.Draw(mask).rounded_rectangle((0, 0, art.width - 1, art.height - 1), radius=STORY_PHOTO_RADIUS * 3, fill=255)
+        self.img.paste(art.resize(size, Image.Resampling.LANCZOS), (left, top), mask.resize(size, Image.Resampling.LANCZOS))
 
     def globe_filler(self, x, top, width, bottom, label, sources):
         c = self.c

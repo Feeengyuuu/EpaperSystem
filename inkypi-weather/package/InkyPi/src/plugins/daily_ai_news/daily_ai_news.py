@@ -79,6 +79,13 @@ PAGE_SIZE = (800, 480)
 # refresh into its own cache, at most this large, within this many seconds; a redraw reads the cache.
 LEAD_PHOTO_PIXELS = (360, 240)
 LEAD_PHOTO_SECONDS = 12
+# The first STORY_PHOTOS stories of each column show their article's picture where the topic badge
+# stood: at most STORY_NEW_PAGES article pages are read for them a refresh (the rest wait for the
+# next one), within STORY_PHOTO_SECONDS, each picture kept this small.
+STORY_PHOTOS = 4
+STORY_NEW_PAGES = 6
+STORY_PHOTO_SECONDS = 20
+STORY_PHOTO_PIXELS = (152, 120)
 LEAD_PHOTO_USER_AGENT = "InkyPi Daily AI News/1.0"
 # The lead's headline is set in a newspaper's serif banner face (Noto Serif SC at its heaviest,
 # kept to GB 2312, tools/build_news_headline_font.py); a headline it cannot set whole keeps the
@@ -399,6 +406,10 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
         photo = self._lead_picture(lead, settings) if lead else None
         if photo is not None:
             lead["photo"] = photo
+        story_photos = self._story_pictures((mainland, world), settings)
+        for item in mainland + world:
+            if story_photos.get(item.get("photo_url")) is not None:
+                item["photo"] = story_photos[item["photo_url"]]
         NewsPage(self, img, palette, DEFAULT_FONT).render(
             title=title,
             lead=lead,
@@ -409,6 +420,8 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
         )
         if photo is not None:
             photo.close()
+        for picture in story_photos.values():
+            picture.close()
         if tuple(dimensions) != PAGE_SIZE:
             img = self._fit_page(img, dimensions, palette["background"])
         return img
@@ -458,7 +471,47 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
             lead["source_logo"] = self._source_logo_key(origin.get("source"), origin.get("link"))
             lead["image_url"] = self._lead_image_url(origin, payload)
             lead["article_link"] = str(origin.get("link") or "")
+        for item in mainland + world:
+            # A story the brief kept no link for is found again by its title (the Chinese desks).
+            if not item.get("link"):
+                item["link"] = str((self._lead_item(item["title"], payload) or {}).get("link") or "")
+            item["image_url"] = self._lead_image_url({"link": item["link"]}, payload) if item["link"] else ""
         return lead, mainland, world
+
+    def _story_pictures(self, columns, settings) -> dict[str, Image.Image]:
+        """{picture URL: thumbnail} for the first STORY_PHOTOS stories of each column, each story's
+        "photo_url" set to its own: its article page's picture, else its RSS item's. Pages already
+        read answer from what is kept; at most STORY_NEW_PAGES new ones are read a refresh."""
+        cached_only = any(common._enabled(settings.get(key))
+                          for key in ("_theme_render_only", "_cached_render_only", "cached_render_only"))
+        directory = self._cache_dir(create=not cached_only) / "lead_photos"
+        kept, context, budget = directory / "articles.json", task_context_or_default(STORY_PHOTO_SECONDS), STORY_NEW_PAGES
+        for item in [story for column in columns for story in column[:STORY_PHOTOS]]:
+            link, url = item.get("link") or "", ""
+            known = news_pictures.article_known(link, kept)
+            if link and (known or cached_only or budget > 0):
+                budget -= 0 if known or cached_only else 1
+                try:
+                    url = news_pictures.article_picture(link, kept, http=get_http_client(), context=context,
+                                                        cached_only=cached_only)
+                except TaskCancelled:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - the story keeps its topic badge.
+                    logger.warning("Daily AI news story picture skipped: %s", type(exc).__name__)
+            item["photo_url"] = url or item.get("image_url") or ""
+        urls = list(dict.fromkeys(item["photo_url"] for column in columns for item in column[:STORY_PHOTOS]
+                                  if item.get("photo_url")))
+        if not urls:
+            return {}
+        try:
+            return load_thumbnails(urls, directory / "stories", http=get_http_client(), context=context,
+                                   cached_only=cached_only, safe_url=lead_image_url,
+                                   user_agent=LEAD_PHOTO_USER_AGENT, size=STORY_PHOTO_PIXELS)
+        except TaskCancelled:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the stories keep their topic badges.
+            logger.warning("Daily AI news story photos skipped: %s", type(exc).__name__)
+            return {}
 
     @staticmethod
     def _lead_image_url(origin: dict[str, Any], payload: dict[str, Any]) -> str:
@@ -550,7 +603,8 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
             return None
         # Cached tags from before the fixed vocabulary are mapped onto it too.
         tag = self._normalized_tag(item.get("tag"), title) if isinstance(item, dict) and "tag" in item else ""
-        return {"title": title, "why": self._tidy_visible_text(why), "tag": tag[:NEWS_TAG_MAX_CHARS]}
+        link = str(item.get("link") or "") if isinstance(item, dict) else ""
+        return {"title": title, "why": self._tidy_visible_text(why), "tag": tag[:NEWS_TAG_MAX_CHARS], "link": link}
 
     def _page_quotes(self, payload: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         groups = (payload.get("market_snapshot") or {}).get("groups") or {}

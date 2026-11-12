@@ -35,7 +35,7 @@ PAGE_BYTES = 400 * 1024
 PAGE_SECONDS = 8
 PAGE_AGENT = "Mozilla/5.0 (compatible; InkyPi DailyNews/1.0; +https://github.com/Feeengyuuu/EpaperSystem)"
 FOUND_TTL, MISSED_TTL = timedelta(days=7), timedelta(hours=6)
-KEPT_LINKS = 64
+KEPT_LINKS = 200
 _META = re.compile(r"<meta\b[^>]*(?:property|name)\s*=\s*[\"'](?:og:image(?::secure_url)?|twitter:image(?::src)?)[\"'][^>]*>",
                    re.I)
 _CONTENT = re.compile(r"content\s*=\s*[\"']([^\"']+)[\"']", re.I)
@@ -67,6 +67,18 @@ def _article_host(link):
     host = re.sub(r"^www\.", "", urlparse(str(link or "")).netloc.lower().split(":")[0])
     return urlparse(str(link or "")).scheme == "https" and any(host == item or host.endswith("." + item)
                                                                for item in ARTICLE_HOSTS)
+
+
+def article_known(link, cache_path, now=None):
+    """Whether the link's page was read recently enough that ``article_picture`` answers from what
+    is kept (a page that named no picture counts for MISSED_TTL)."""
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    try:
+        kept = json.loads(Path(cache_path).read_text(encoding="utf-8"))
+        entry = kept[str(link or "")]
+        return now - datetime.fromisoformat(entry["at"]) <= (FOUND_TTL if entry.get("picture") else MISSED_TTL)
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
 
 
 def article_picture(link, cache_path, *, http, context, cached_only, now=None):
