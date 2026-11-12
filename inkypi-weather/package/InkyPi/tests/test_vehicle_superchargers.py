@@ -10,6 +10,7 @@ import pytest
 
 from plugins.vehicle_status import superchargers
 from plugins.vehicle_status import vehicle_status as vehicle_module
+from runtime.refresh_contracts import TaskCancelled, TaskDeadlineExceeded
 from tests.test_vehicle_status import _summary_v3
 
 
@@ -74,6 +75,17 @@ class Client:
         if self.fail:
             raise OSError("offline")
         return SimpleNamespace(data=CHANGES if url.endswith("/changes") else SITES)
+
+
+@pytest.mark.parametrize("error", [TaskCancelled, TaskDeadlineExceeded])
+def test_optional_charger_requests_do_not_swallow_refresh_cancellation(tmp_path, monkeypatch, error):
+    def stop(*_args, **_kwargs):
+        raise error("refresh stopped")
+
+    monkeypatch.setattr(superchargers, "get_http_client", lambda: SimpleNamespace(request_json=stop))
+    with pytest.raises(error, match="refresh stopped"):
+        superchargers.refresh(tmp_path, NOW)
+    assert not (tmp_path / superchargers.CACHE_NAME).exists()
 
 
 def test_news_is_cached_twelve_hours_keeps_its_last_copy_and_asks_for_no_place(tmp_path, monkeypatch):
