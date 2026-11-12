@@ -559,6 +559,11 @@ def test_the_holdings_right_half_takes_turns_between_the_news_and_the_chatter_li
     # logos in the list's columns, each before its ticker.
     logos = [xy for xy in pasted if isinstance(xy, tuple) and xy[0] >= 400 and xy[1] >= 380]
     assert len(logos) == 3
+    # Reddit's own mark (its orange) stands before the source note on the title line.
+    note_x, title_y = next((x, y) for x, y, text in right if text.startswith("r/wallstreetbets"))
+    assert note_x > 700
+    band = canvas.image.crop((560, title_y - 8, 700, title_y + 8)).convert("RGB")
+    assert any(red > 230 and 40 < green < 110 and blue < 40 for red, green, blue in band.get_flattened_data())
     # The other lists stay gone.
     assert not any(text in ("财经快讯", "本周美国数据", "新股定价") for *_xy, text in drawn)
 

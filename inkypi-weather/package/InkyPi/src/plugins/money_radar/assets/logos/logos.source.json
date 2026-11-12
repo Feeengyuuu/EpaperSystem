@@ -99,6 +99,17 @@
         63
       ],
       "sha256": "6c21306d93dbca4d96acf58e342864a97676dd16fa20bac80197b2e0ad98ce21"
+    },
+    "reddit": {
+      "source": "https://www.redditstatic.com/shreddit/assets/favicon/192x192.png",
+      "page": "https://www.reddit.com/",
+      "licence": "Reddit, Inc. (trademark), from its own site",
+      "source_sha256": "925fe993dba774b69b734410aad20f58a2c95eccaf7f0662abcc2e61530e105c",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "7173cddac610e86ef9314f35ceef2611f540f71ab7c4e98c753f9d06695ef5bd"
     }
   }
 }

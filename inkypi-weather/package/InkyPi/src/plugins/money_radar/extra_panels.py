@@ -28,6 +28,8 @@ LIST_ROWS, LIST_PITCH = 4, 19
 CHATTER_TITLE = ("散户热议", "r/wallstreetbets · 24 小时提及", render.KIND_COLOURS["加密"])
 CHATTER_COLUMNS, CHATTER_BAR = 2, 24
 CHATTER_LOGO_SIZE, CHATTER_LOGO_SLOT = 14, 20
+# Reddit's mark before the list's source note, this tall.
+CHATTER_SOURCE_MARK = 14
 # A logo part this close to the paper in lightness would vanish on it: it is drawn in the ink.
 LOGO_MIN_CONTRAST = 1.6
 # A logo this opaque over its whole box is a tile with its own ground, and is left as it is.
@@ -217,7 +219,11 @@ def draw_list(canvas, loaded, left, right, top):
     title, note, colour = CHATTER_TITLE
     canvas.draw.rectangle((left, top - 6, left + 3, top + 6), fill=_colour(canvas, colour))
     news_rows.text(canvas, (left + 9, top), title, "title", 13)
-    news_rows.text(canvas, (right, top), note, "time", 10, "muted", "right")
+    reach = news_rows.text(canvas, (right, top), note, "time", 10, "muted", "right")
+    # Where the ranking is read from, by its own mark before the forum's name.
+    mark = render._asset("logos/reddit", CHATTER_SOURCE_MARK)
+    if mark is not None:
+        render._paste(canvas, mark, (round(right - reach - mark.width - 4), round(top - mark.height / 2)))
     canvas.draw.line((left, top + 9, right, top + 9), fill=canvas.color("rule"), width=1)
     _chatter(canvas, loaded, left, right, top + LIST_PITCH)
 
