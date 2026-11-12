@@ -129,15 +129,10 @@ def _money_radar_rotating_feeds_offline(monkeypatch):
 @pytest.fixture(autouse=True)
 def _stock_tracker_market_feeds_offline(monkeypatch):
     """The stock page's Nasdaq extras never reach the network in tests: a refresh asks for no
-    insider or short-interest reply, and the Nasdaq-100 list fails (the holdings table keeps its
-    place), unless a test stands in for them."""
-    from plugins.stocktracker import market_map, market_signals
-
-    def offline(*_args, **_kwargs):
-        raise ValueError("the stock page's market feeds are offline in tests")
+    insider or short-interest reply, unless a test stands in for them."""
+    from plugins.stocktracker import market_signals
 
     monkeypatch.setattr(market_signals, "FETCH_PER_REFRESH", 0)
-    monkeypatch.setattr(market_map, "fetch", offline)
 
 
 @pytest.fixture(autouse=True)

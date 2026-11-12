@@ -90,7 +90,7 @@ from utils.massive_market_data import (
 )
 from utils.robinhood_mcp import RobinhoodMCPClient
 from utils.theme_utils import get_theme_palette
-from plugins.stocktracker import fundamentals, market_map, market_signals, sec_filings, trend_chart
+from plugins.stocktracker import fundamentals, market_signals, sec_filings, trend_chart
 from runtime.long_task_executor import task_context_or_default
 from runtime.refresh_contracts import TaskCancelled
 import csv
@@ -361,14 +361,6 @@ MARKET_SIGNALS_CACHE_LEAF = "market_signals"
 INSIDER_SIGNAL = ("内部人3月", "accent_orange")
 SHORT_SIGNAL = ("空头", "cinnabar")
 SHORT_CHANGE_MIN, SIGNAL_ENTRIES = 5.0, 2
-# On the map's display turn the Nasdaq-100 heat map (market_map.py) takes the holdings table's
-# place: every member a cell as large as its market value, in the page's rise and fall colours at
-# the strength of the day's move ((from this many percent, day strength, night strength), flat
-# below the last), its symbol and change in ink where they fit (MAP_LABEL sizes), a corner
-# marking the ones held.
-MARKET_MAP_CACHE_LEAF = "market_map"
-MAP_STEPS = ((3.0, 1.0, 0.5), (1.5, 0.74, 0.4), (0.5, 0.5, 0.3), (0.05, 0.28, 0.18))
-MAP_LABEL_MAX, MAP_LABEL_MIN, MAP_HELD_MARK = 30, 8, 8
 
 _LEGACY_STOCK_COLORS = {
 	"mode": "day",
@@ -574,10 +566,6 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			period, holdings = self._portfolio_holdings_from_settings(settings)
 		source_key = self._source_cache_key(period, holdings, portfolio_meta, data_provider)
 		theme_render_only = self._enabled(settings.get("_theme_render_only"))
-		# Which display turn this is: the holdings table gives one in market_map.MAP_EVERY to the
-		# Nasdaq-100 heat map.
-		page_turn = market_map.turn(datetime.now().astimezone())
-
 		if theme_render_only:
 			cached = self._read_source_cache(source_key)
 			if cached is None:
@@ -646,7 +634,6 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			updated_at=updated_at,
 			portfolio_meta=portfolio_meta,
 			holdings_order=settings.get("holdings_order") or "smart",
-			market=self._market_map(allow_network=not theme_render_only, wanted=page_turn == market_map.MAP_TURN),
 		)
 		if hasattr(image, "info"):
 			provenance = SourceProvenance.FRESH_CACHE if theme_render_only else SourceProvenance.LIVE
@@ -679,23 +666,6 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			raise
 		except (OSError, ValueError, TypeError) as error:
 			logging.warning(f"Holding insider and short interest unavailable: {type(error).__name__}: {error}")
-
-	def _market_map(self, *, allow_network, wanted):
-		"""The Nasdaq-100 heat map's data when this is its display turn (``wanted``), else None. A
-		refresh renews the cached list whichever turn it is, so a later redraw from cache has it; a
-		redraw reads the cache only. Without the list the holdings table keeps its place."""
-		if not allow_network and not wanted:
-			return None
-		try:
-			directory = self.cache_dir(leaf=MARKET_MAP_CACHE_LEAF, create=allow_network)
-			market = market_map.load(directory, context=task_context_or_default(timeout_seconds=15),
-									 allow_network=allow_network)
-		except TaskCancelled:
-			raise
-		except (OSError, ValueError, TypeError) as error:
-			logging.warning(f"Nasdaq-100 heat map unavailable: {type(error).__name__}: {error}")
-			return None
-		return market if wanted else None
 
 	def _publish_holdings_context(self, stock_data):
 		"""Share only the held ticker symbols (largest first) so Money Radar can follow the portfolio."""
@@ -3120,100 +3090,6 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				x += self._text_width(draw, when, when_font) + 9
 			x += 6
 
-	def _map_colour(self, percent):
-		"""A heat-map cell's colour: the page's rise or fall colour at the strength of the day's
-		move (MAP_STEPS), a flat grey for one that barely moved or has no change."""
-		colors = _active_stock_colors()
-		if percent is not None:
-			for threshold, day, night in MAP_STEPS:
-				if abs(percent) >= threshold:
-					return self._blend(self._change_color(percent), colors["panel"], night if colors["mode"] == "night" else day)
-		return self._blend(colors["grid"], colors["panel"], 0.45)
-
-	def _draw_market_map(self, img, draw, box, market, held=()):
-		"""The Nasdaq-100 heat map in the holdings table's box: Nasdaq's logo and 100 for a title,
-		the colour scale and the held mark's key, the day's breadth and the list's time on the
-		right; under them every member as a cell (market_map.squarify), the largest first."""
-		colors = _active_stock_colors()
-		left, top, right, bottom = box
-		self._draw_box(draw, box, None, accent=colors["accent_blue"], fill=colors["panel"], canvas=img)
-		center_y = top + 22
-		ink = colors["ink"]
-		x = left + 12
-		logo = load_source_logo(os.path.join(HEADER_SOURCE_DIR, "nasdaq.png"), 17,
-								ink if colors["mode"] == "night" else None)
-		title, title_font = ("100" if logo else "NASDAQ-100"), self._font(20, True)
-		if logo:
-			img.paste(logo, (x, round(center_y - logo.height / 2)), logo)
-			x += logo.width + 5
-		draw.text((x, self._centered_text_y(draw, title, title_font, center_y)), title, fill=ink, font=title_font)
-		x += self._text_width(draw, title, title_font) + 16
-		# The scale: a swatch for each step from the deepest fall to the strongest rise.
-		key_font = self._font(10, True)
-		steps = [-step[0] for step in MAP_STEPS] + [0.0] + [step[0] for step in reversed(MAP_STEPS)]
-		low, high = f"-{MAP_STEPS[0][0]:.0f}%", f"+{MAP_STEPS[0][0]:.0f}%"
-		draw.text((x, self._centered_text_y(draw, low, key_font, center_y)), low, fill=ink, font=key_font)
-		x += self._text_width(draw, low, key_font) + 4
-		for percent in steps:
-			draw.rectangle((x, center_y - 5, x + 10, center_y + 5), fill=self._map_colour(percent))
-			x += 12
-		draw.text((x + 2, self._centered_text_y(draw, high, key_font, center_y)), high, fill=ink, font=key_font)
-		x += self._text_width(draw, high, key_font) + 16
-		mark = MAP_HELD_MARK
-		draw.polygon(((x, center_y - mark / 2), (x + mark, center_y - mark / 2), (x + mark, center_y + mark / 2)), fill=ink)
-		draw.text((x + mark + 4, self._centered_text_y(draw, "HELD", key_font, center_y)), "HELD", fill=ink, font=key_font)
-
-		rows = market["rows"]
-		up = sum(1 for row in rows if (row[2] or 0) > 0.005)
-		down = sum(1 for row in rows if (row[2] or 0) < -0.005)
-		parts = [(f"{up} UP", 1.0), (f"{down} DOWN", -1.0)]
-		try:
-			as_of = datetime.strptime(str(market.get("as_of") or ""), "%b %d, %Y %I:%M %p")
-			parts.append((as_of.strftime("%b %d %I:%M %p ET").upper().replace(" 0", " "), None))
-		except ValueError:
-			pass
-		status_font = self._font(11, True)
-		x = right - 14
-		for index, (text, arrow) in enumerate(reversed(parts)):
-			x -= self._text_width(draw, text, status_font)
-			draw.text((x, self._centered_text_y(draw, text, status_font, center_y)), text, fill=ink, font=status_font)
-			if arrow is not None:
-				x -= 12
-				self._draw_change_arrow(draw, x, center_y, arrow, size=9)
-			if index < len(parts) - 1:
-				x -= 16
-				draw.ellipse((x + 6, center_y - 1.5, x + 9, center_y + 1.5), fill=ink)
-
-		area = (left + 8, top + 36, right - 7, bottom - 7)
-		for (symbol, _value, percent), rect in zip(rows, market_map.squarify([row[1] for row in rows], area)):
-			cell_left, cell_top, cell_right, cell_bottom = (round(edge) for edge in rect)
-			# One pixel of the panel between cells keeps them apart without a frame.
-			cell_right, cell_bottom = cell_right - 1, cell_bottom - 1
-			if cell_right <= cell_left or cell_bottom <= cell_top:
-				continue
-			draw.rectangle((cell_left, cell_top, cell_right, cell_bottom), fill=self._map_colour(percent))
-			width, height = cell_right - cell_left, cell_bottom - cell_top
-			if symbol in held and width >= 2 * mark and height >= 2 * mark:
-				draw.polygon(((cell_right - mark, cell_top), (cell_right, cell_top), (cell_right, cell_top + mark)), fill=ink)
-			size = int(min(MAP_LABEL_MAX, height * 0.46, width * 1.5 / max(len(symbol), 3)))
-			while size >= MAP_LABEL_MIN and self._text_width(draw, symbol, self._font(size, True)) > width - 4:
-				size -= 1
-			if size < MAP_LABEL_MIN or height < size + 2:
-				continue
-			font = self._font(size, True)
-			change = "" if percent is None else f"{percent:+.1f}%"
-			change_font = self._font(max(MAP_LABEL_MIN + 1, round(size * 0.7)))
-			middle_x, middle_y = (cell_left + cell_right) / 2, (cell_top + cell_bottom) / 2
-			two_lines = bool(change) and height >= size + change_font.size + 5 and \
-				self._text_width(draw, change, change_font) <= width - 4
-			symbol_y = middle_y - (change_font.size * 0.55 if two_lines else 0)
-			draw.text((middle_x - self._text_width(draw, symbol, font) / 2, self._centered_text_y(draw, symbol, font, symbol_y)),
-					  symbol, fill=ink, font=font)
-			if two_lines:
-				change_y = symbol_y + size * 0.5 + change_font.size * 0.62
-				draw.text((middle_x - self._text_width(draw, change, change_font) / 2,
-						   self._centered_text_y(draw, change, change_font, change_y)), change, fill=ink, font=change_font)
-
 	def _draw_weight_bar(self, draw, span, center_y, item, max_weight):
 		"""The row's weight against the largest shown, filled in its kind's colour, with the tick
 		of its weight at the window's start when that moved by WEIGHT_DRIFT_MIN points or more."""
@@ -3286,10 +3162,8 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		updated_at=None,
 		portfolio_meta=None,
 		holdings_order="smart",
-		market=None,
 	):
-		"""Account summary and trend on top, every holding with its day and window movement below
-		(with ``market``, the Nasdaq-100 heat map in the holdings table's place).
+		"""Account summary and trend on top, every holding with its day and window movement below.
 
 		``holdings_order`` "smart" ranks the rows by today's impact (see _smart_order); "value"
 		keeps the pinned symbols first and the rest by value.
@@ -3361,10 +3235,6 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				date_range=date_range,
 				extremes=True,
 			)
-			if market_map.valid(market):
-				held = {str(item["data"].get("symbol") or "").upper() for item in metrics if not item["is_cash"]}
-				self._draw_market_map(img, draw, (margin, HOLDINGS_TOP, width - margin, height - 10), market, held)
-				return img
 			self._draw_holdings(
 				img,
 				draw,
