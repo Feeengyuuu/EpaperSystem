@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import plugins.stocktracker.stocktracker as stocktracker_module  # noqa: E402
 from plugins.stocktracker import market_map, market_signals  # noqa: E402
 from plugins.stocktracker.stocktracker import StockTracker  # noqa: E402
-from runtime.refresh_contracts import TaskContext  # noqa: E402
+from runtime.refresh_contracts import TaskCancelled, TaskContext, TaskDeadlineExceeded  # noqa: E402
 from tests.test_stocktracker import FakeDeviceConfig, _canonical_theme, _stock  # noqa: E402
 from utils.http_client import HttpStatusError  # noqa: E402
 
@@ -65,6 +65,33 @@ def _listing(extra=60):
 
 def _context():
     return TaskContext.never_cancelled(deadline_monotonic=time.monotonic() + 30)
+
+
+@pytest.mark.parametrize("kind", ["map", "signals"])
+def test_optional_nasdaq_requests_propagate_cancellation(tmp_path, kind):
+    def cancel(*_args):
+        raise TaskCancelled("refresh canceled")
+
+    with pytest.raises(TaskCancelled, match="refresh canceled"):
+        if kind == "map":
+            market_map.load(tmp_path, context=_context(), now=NOW, fetcher=cancel)
+        else:
+            market_signals.attach([{"symbol": "AAPL"}], tmp_path, context=_context(), now=NOW,
+                                  fetchers={"insider": cancel}, budget=1)
+    assert not list(tmp_path.glob("*.json"))
+
+
+@pytest.mark.parametrize("kind", ["map", "signals"])
+def test_an_optional_nasdaq_request_deadline_does_not_fail_the_page(tmp_path, kind):
+    def timeout(*_args):
+        raise TaskDeadlineExceeded("optional source budget")
+
+    if kind == "map":
+        assert market_map.load(tmp_path, context=_context(), now=NOW, fetcher=timeout) is None
+    else:
+        assert market_signals.attach([{"symbol": "AAPL"}], tmp_path, context=_context(), now=NOW,
+                                     fetchers={"insider": timeout}, budget=1) == [{"symbol": "AAPL"}]
+    assert not list(tmp_path.glob("*.json"))
 
 
 def test_insider_counts_and_the_move_of_short_interest_are_read_from_nasdaqs_replies():
