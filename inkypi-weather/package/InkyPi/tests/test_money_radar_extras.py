@@ -16,8 +16,11 @@ from plugins.money_radar import render as money_render  # noqa: E402
 from plugins.money_radar.money_radar import MoneyRadar  # noqa: E402
 from utils.http_client import HttpStatusError  # noqa: E402
 from utils.page_canvas import PageCanvas  # noqa: E402
+from tests.test_http_client import FakeResponse, FakeSession  # noqa: E402
+from utils.http_client import HttpClient  # noqa: E402
 
 NOW = datetime(2026, 11, 11, 13, 0, tzinfo=sources.PACIFIC)
+EXTRA_HTTP_GET = extras._get
 
 # nfs.faireconomy.media/ff_calendar_thisweek.json, 2026-11-11 (rows of the week's 106).
 CALENDAR = [
@@ -395,6 +398,23 @@ def _fetchers(monkeypatch, calls, failing=()):
 
 def _book(tmp_path):
     return money_module.SourceBook(tmp_path / "sources", money_module.CACHE_BUDGET, schema=money_module.CACHE_SCHEMA)
+
+
+@pytest.mark.parametrize("feed", extras.FEEDS)
+def test_retry_after_stays_within_the_rotating_sources_budget(monkeypatch, tmp_path, feed):
+    response = FakeResponse(503, headers={"Retry-After": "30"})
+    session = FakeSession([response])
+    monkeypatch.setattr(extras, "_get", EXTRA_HTTP_GET)
+    monkeypatch.setattr(extras, "get_http_client", lambda: HttpClient(session=session))
+    monkeypatch.setattr(extras, "_due", lambda *_args: feed)
+    parent = money_module.TaskContext.never_cancelled(deadline_monotonic=120, clock=lambda: 0)
+
+    loaded = extras.load(_book(tmp_path), NOW, allow_network=True, context=parent)
+
+    assert loaded[feed]["error"] == "source_deadline"
+    assert loaded[feed]["state"] == "unavailable"
+    assert len(session.calls) == 1 and response.closed
+    assert parent.remaining_seconds() == 120
 
 
 def test_a_refresh_fetches_at_most_one_rotating_feed_and_those_on_show_first(monkeypatch, tmp_path):
