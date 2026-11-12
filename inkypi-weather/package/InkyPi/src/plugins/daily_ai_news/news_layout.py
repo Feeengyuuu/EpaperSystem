@@ -48,7 +48,7 @@ SEAL_SIZE = (28, 54)
 # the page showing through the rest of it: a quiet ground for the type.
 LEAD_PHOTO_SPAN = 780
 LEAD_PHOTO_FADE = 0.7
-LEAD_PHOTO_STRENGTH = 0.34
+LEAD_PHOTO_STRENGTH = 0.44
 # The headline's letters start LEAD_HEADLINE_TOP px into the band; over a photo, the seal and they
 # sit LEAD_PHOTO_PAD px in from its left and top edges (the column cards' own bleed).
 LEAD_HEADLINE_TOP = 4
