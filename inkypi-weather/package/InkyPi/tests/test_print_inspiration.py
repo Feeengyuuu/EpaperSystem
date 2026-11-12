@@ -328,3 +328,38 @@ def test_a_short_named_card_fills_its_spare_line_with_category_and_rating(monkey
     # shows its first tag); a name that needs the room keeps it.
     assert {"家居 · 节庆", "4.9", "#fidget"} <= set(shown)
     assert "玩具游戏" not in shown and "3.9" not in shown
+
+
+def test_the_classics_take_turns_three_at_a_time_through_the_all_time_list():
+    from datetime import timedelta
+
+    classics = [sources.normalize_hit(hit(str(3000 + index), f"Classic {index}")) for index in range(8)]
+    turns = [sources.classics_turn(classics, NOW + timedelta(seconds=step * sources.CLASSICS_TURN_SECONDS))
+             for step in range(4)]
+    ranks = [[model["rank"] for model in turn] for turn in turns]
+    # Three in a row with their places; two full turns in a list of eight, then round again.
+    assert sorted(ranks[:2]) == [[1, 2, 3], [4, 5, 6]] and ranks[2:] == ranks[:2]
+    assert all(model["of"] == 8 for turn in turns for model in turn)
+    assert turns[0] == sources.classics_turn(classics, NOW + timedelta(minutes=5)) or ranks[0] != ranks[1]
+    assert sources.classics_turn([], NOW) == [] and len(sources.classics_turn(classics[:2], NOW)) == 2
+    assert sources.CLASSICS == ("likeCount", 30)
+
+
+def test_a_classic_row_gives_its_place_counts_maker_and_year(monkeypatch):
+    drawn = []
+    original = render.PageCanvas.text
+
+    def text(self, xy, value, *args, **kwargs):
+        drawn.append(str(value))
+        return original(self, xy, value, *args, **kwargs)
+
+    monkeypatch.setattr(render.PageCanvas, "text", text)
+    payload = _payload()
+    payload["classics"] = [{**model, "rank": 7 + index, "of": 30, "downloads": 81000, "likes": 46000, "makes": 9200,
+                            "maker": "Jakob", "published": "2023-05-02T10:00:00+00:00"}
+                           for index, model in enumerate(payload["classics"])]
+    image = render.render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, {})
+
+    assert image.size == (800, 480)
+    assert "点赞榜 7–9 / 30" in drawn and {"7", "8", "9"} <= set(drawn)
+    assert {"81k", "46k", "9.2k", "2023 年", "Jakob"} <= set(drawn)

@@ -27,7 +27,10 @@ IMAGE_HOST_SUFFIX = ".bblmw.com"
 # The trending pool (MakerWorld's hot ranking): its first models lead the page and the most printed
 # of the pool fill the right column; the classics are the all-time most liked.
 POOL = ("hotScore", 30)
-CLASSICS = ("likeCount", 3)
+CLASSICS = ("likeCount", 30)
+# The page shows CLASSICS_SHOWN of them at a time, the next ones every CLASSICS_TURN_SECONDS.
+CLASSICS_SHOWN = 3
+CLASSICS_TURN_SECONDS = 3 * 3600
 WEEK = 7
 # The lead and the four cards under it read their own design pages (print profile, rating).
 DETAILED = 5
@@ -250,6 +253,16 @@ def lists(pool, classics, details=None):
     shown = {model["id"] for model in week[:DETAILED]}
     makes = sorted((model for model in pool if model["id"] not in shown), key=lambda model: model["makes"], reverse=True)
     return {"week": week, "makes": makes[:MAKES], "classics": list(classics)}
+
+
+def classics_turn(classics, now):
+    """The classics on show at ``now``: CLASSICS_SHOWN in a row of the all-time list, each with its
+    place in it ("rank") and the list's length ("of"), moving on every CLASSICS_TURN_SECONDS and
+    starting again after the last full turn."""
+    ranked = [{**model, "rank": index + 1, "of": len(classics)} for index, model in enumerate(classics)]
+    turns = max(1, len(ranked) // CLASSICS_SHOWN)
+    first = (int(now.timestamp() // CLASSICS_TURN_SECONDS) % turns) * CLASSICS_SHOWN
+    return ranked[first:first + CLASSICS_SHOWN]
 
 
 def valid_list(data):

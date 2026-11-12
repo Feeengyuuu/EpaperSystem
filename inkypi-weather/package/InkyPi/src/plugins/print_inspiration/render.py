@@ -517,6 +517,35 @@ def _row(canvas, y, model, images, chinese, stat):
         _maker(canvas, x, middle, model, images, x2, avatar_size=12, size=9)
 
 
+def _year_text(value):
+    """"2023 年" for a model's ISO publication time, else ""."""
+    try:
+        return f"{datetime.fromisoformat(str(value)).astimezone(LOCAL_TZ).year} 年"
+    except (TypeError, ValueError):
+        return ""
+
+
+def _classic_row(canvas, y, model, images, chinese):
+    """An all-time classic: its picture under its place in the list, then its name, its downloads,
+    likes and prints, and who made it and in which year."""
+    x1, _y1, x2, _y2 = RIGHT
+    top = y + (ROW_HEIGHT - THUMB[1]) // 2
+    _picture(canvas, images.get(model.get("image_small")) or images.get(model["image"]),
+             (x1, top, x1 + THUMB[0], top + THUMB[1]), radius=5)
+    if model.get("rank"):
+        _badge(canvas, x1 + 2, top + 2, model["rank"], size=16)
+    name, _summary, _translated = shown_name(model, chinese)
+    left = x1 + THUMB[0] + 8
+    canvas.text((left, top + 8), name, 12, anchor="lm", width=x2 - left)
+    x, middle = left, top + 24
+    for kind, value in (("download", count_text(model["downloads"])), ("heart", count_text(model["likes"])),
+                        ("nozzle", count_text(model["makes"]))):
+        x += _stat(canvas, x, middle, kind, value, size=10, icon=10) + 7
+    year = _year_text(model.get("published"))
+    year_w = canvas.text((x2, top + 40), year, 9, "muted", anchor="rm", bold=False) + 6 if year else 0
+    _maker(canvas, left, top + 40, model, images, x2 - year_w, avatar_size=13, size=9)
+
+
 def render_page(size, payload, settings, now, images):
     palette = _palette(settings)
     canvas = PageCanvas(palette, family=str((settings or {}).get("fontFamily") or "Microsoft YaHei"), size=(800, 480))
@@ -539,11 +568,18 @@ def render_page(size, payload, settings, now, images):
         _row(canvas, y, model, images, chinese, ("nozzle", f"{count_text(model['makes'])} 次打印"))
         y += ROW_HEIGHT
     y += 4
+    classics = list(payload.get("classics") or [])[:CLASSIC_ROWS]
     y = _section(canvas, y, "历史名作", "trophy")
-    for model in list(payload.get("classics") or [])[:CLASSIC_ROWS]:
+    if classics and classics[0].get("rank"):
+        # Which places of the all-time list this turn shows, at the section rule's right end.
+        places = f"点赞榜 {classics[0]['rank']}–{classics[-1]['rank']} / {classics[0]['of']}"
+        width = canvas.width(places, 10, False)
+        canvas.draw.rectangle((RIGHT[2] - width - 6, y - SECTION_HEIGHT + 3, RIGHT[2], y - 3), fill=canvas.color("paper"))
+        canvas.text((RIGHT[2], y - SECTION_HEIGHT + 9), places, 10, "muted", anchor="rm", bold=False)
+    for model in classics:
         if y + ROW_HEIGHT > RIGHT[3] + 2:
             break
-        _row(canvas, y, model, images, chinese, ("download", f"{count_text(model['downloads'])} 下载"))
+        _classic_row(canvas, y, model, images, chinese)
         y += ROW_HEIGHT
     image = canvas.image
     if tuple(size) != image.size:

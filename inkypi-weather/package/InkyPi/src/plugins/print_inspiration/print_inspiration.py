@@ -95,7 +95,9 @@ class PrintInspiration(BasePlugin):
                                 fresh_seconds=DETAILS_FRESH_SECONDS, usable_seconds=USABLE_SECONDS,
                                 validate=sources.valid_details, timeout_seconds=12))
             details[model["id"]] = (found.get("data") or {}).get("details") or {}
-        lists = sources.lists(models, (classics.get("data") or {}).get("models") or [], details)
+        # The all-time list is long; the page shows this turn's three of it.
+        shown = sources.classics_turn((classics.get("data") or {}).get("models") or [], now)
+        lists = sources.lists(models, shown, details)
         # A design's page only adds detail; the lists alone decide whether the page is current.
         return {**lists, "provenance": combined_provenance([pool, classics])}
 
