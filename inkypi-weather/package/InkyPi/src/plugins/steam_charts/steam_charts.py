@@ -90,6 +90,9 @@ STEAM_CAPSULE_CACHE_SIZE = 128
 # logos a refresh, kept this size; the newest MAX_STUDIOS of each.
 STUDIO_STATE_FILE = "studios.json"
 STUDIO_CLAN_TTL, STUDIO_LOGO_TTL = 7 * 24 * 3600, 30 * 24 * 3600
+# A lookup that found no creator page or no avatar is asked again this soon: Steam answering a
+# busy page once must not leave a studio without its logo for a month.
+STUDIO_EMPTY_TTL = 24 * 3600
 MAX_NEW_STUDIO_LOGOS, MAX_STUDIOS = 2, 200
 STUDIO_LOGO_SIZE = 96
 STUDIO_PAGE_BYTES = 512 * 1024
@@ -1422,7 +1425,8 @@ class SteamCharts(LiveOverviewMixin, BasePlugin):
         now = time.time()
         known = state["clans"]
         appids = [str(game.get("app_id")) for game in games if str(game.get("app_id") or "").isdecimal()]
-        stale = [appid for appid in appids if now - float((known.get(appid) or {}).get("at") or 0) > STUDIO_CLAN_TTL]
+        stale = [appid for appid in appids if now - float((known.get(appid) or {}).get("at") or 0) > (
+            STUDIO_CLAN_TTL if (known.get(appid) or {}).get("clan") else STUDIO_EMPTY_TTL)]
         if stale:
             query = {"ids": [{"appid": int(appid)} for appid in stale],
                      "context": {"language": STEAM_PRIMARY_GAME_LANGUAGE, "country_code": "US"},
@@ -1443,7 +1447,8 @@ class SteamCharts(LiveOverviewMixin, BasePlugin):
         a failed fetch keeps whatever was kept and stops this refresh's fetching."""
         path = self.cache_dir(leaf="media") / f"studio_{clan}.png"
         entry = state["logos"].get(clan) or {}
-        if entry and time.time() - float(entry.get("at") or 0) < STUDIO_LOGO_TTL or budget <= 0:
+        life = STUDIO_LOGO_TTL if entry.get("url") else STUDIO_EMPTY_TTL
+        if entry and time.time() - float(entry.get("at") or 0) < life or budget <= 0:
             return (self._png_data_uri(path) if (entry.get("url") or not entry) and path.is_file() else ""), budget
         try:
             page = get_http_client().request_bytes(

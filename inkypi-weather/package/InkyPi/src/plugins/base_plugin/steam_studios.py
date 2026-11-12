@@ -256,15 +256,18 @@ def official_mark(logo, height=48, widest=8):
 
 
 def developer_clans(store_items):
-    """Each app's first developer's creator clan (account id, as text) from GetItems' items; apps
-    whose developer has none are left out."""
+    """Each app's studio's creator clan (account id, as text) from GetItems' items: its first
+    developer's, else (a developer without a creator page) its first publisher's; apps with
+    neither are left out."""
     clans = {}
     for item in store_items or ():
         if not isinstance(item, dict) or not str(item.get("appid") or "").isdecimal():
             continue
         basic = item.get("basic_info") if isinstance(item.get("basic_info"), dict) else {}
-        developers = [entry for entry in basic.get("developers") or [] if isinstance(entry, dict)]
-        clan = str((developers[0].get("creator_clan_account_id") if developers else "") or "")
-        if clan.isdecimal() and int(clan):
-            clans[str(item["appid"])] = clan
+        for role in ("developers", "publishers"):
+            studios = [entry for entry in basic.get(role) or [] if isinstance(entry, dict)]
+            clan = str((studios[0].get("creator_clan_account_id") if studios else "") or "")
+            if clan.isdecimal() and int(clan):
+                clans[str(item["appid"])] = clan
+                break
     return clans

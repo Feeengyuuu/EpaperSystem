@@ -38,8 +38,11 @@ def test_a_photo_has_no_ground_and_a_one_colour_mark_keeps_itself():
 
 def test_developer_clans_come_from_getitems_basic_info():
     items = [{"appid": 730, "basic_info": {"developers": [{"name": "Valve", "creator_clan_account_id": 4}]}},
-             {"appid": 9, "basic_info": {"developers": [{"name": "Solo"}]}}, {"appid": "x"}]
-    assert steam_studios.developer_clans(items) == {"730": "4"}
+             {"appid": 9, "basic_info": {"developers": [{"name": "Solo"}]}}, {"appid": "x"},
+             # For The King II: its developer has no creator page, its publisher has.
+             {"appid": 1676840, "basic_info": {"developers": [{"name": "IronOak Games"}],
+                                               "publishers": [{"name": "Curve Games", "creator_clan_account_id": 33019968}]}}]
+    assert steam_studios.developer_clans(items) == {"730": "4", "1676840": "33019968"}
     page = "<avatarFull><![CDATA[https://avatars.fastly.steamstatic.com/" + "a" * 40 + "_full.jpg]]></avatarFull>"
     assert steam_studios.avatar_url(page).endswith("_full.jpg") and steam_studios.avatar_url("<x/>") == ""
     assert steam_studios.clan_page_url(4).endswith("/gid/103582791429521412/memberslistxml/?xml=1")

@@ -2,6 +2,7 @@
 
 import json
 import sys
+import time
 from pathlib import Path
 
 from PIL import ImageDraw
@@ -300,6 +301,15 @@ def test_rows_get_their_studios_logos_a_few_new_ones_a_refresh_and_kept(tmp_path
     assert second[0]["store"]["studio_logo"].startswith("data:image/png;base64,")
     plugin._attach_studio_logos(games())
     assert len(steam.asked) == 6
+    # A lookup that found nothing (no creator page, no avatar) is asked again after a day, in case
+    # Steam only answered a busy page; what was found is kept its week and month.
+    clock = time.time()
+    monkeypatch.setattr("plugins.steam_charts.steam_charts.time.time", lambda: clock + 25 * 3600)
+    steam.avatars["9"] = avatar
+    later = games()
+    plugin._attach_studio_logos(later)
+    assert steam.asked[6:] == ["items", "clan 9", "avatar"]
+    assert [bool(game["store"].get("studio_logo")) for game in later] == [True, True, True, True, False]
 
 
 def test_a_refused_studio_page_stops_the_lookups_until_the_next_refresh(tmp_path, monkeypatch):
@@ -314,7 +324,7 @@ def test_a_refused_studio_page_stops_the_lookups_until_the_next_refresh(tmp_path
     assert not any(game["store"].get("studio_logo") for game in games)
 
 
-def test_a_rows_studio_logo_leads_its_second_line_with_the_studio_first(monkeypatch):
+def test_a_rows_studio_logo_stands_for_the_studio_in_place_of_its_name(monkeypatch):
     import base64
     from io import BytesIO
 
@@ -338,11 +348,18 @@ def test_a_rows_studio_logo_leads_its_second_line_with_the_studio_first(monkeypa
     image = plugin._render_live_overview((800, 480), [{"table_variant": "trending", "games": []},
                                                       {"table_variant": "top_games", "games": [game]}], {}, {"mode": "day"}, "")
 
-    text, (x, y) = next(item for item in drawn if item[0].startswith("S-GAME"))
-    # The studio first, then the English name (the line is cut to the row).
-    assert text.startswith("S-GAME · Phantom")
+    text, (x, y) = next(item for item in drawn if item[0].startswith("Phantom"))
+    # The logo in place of the studio's name, then the English name (the line is cut to the row).
+    assert not any("S-GAME" in item[0] for item in drawn)
     # The logo stands just before it, on the same line.
     assert image.getpixel((round(x) - overview_page.STUDIO_MARK // 2 - 4, round(y) + 6)) == (200, 30, 30)
+    # Without a logo the studio is named as before.
+    drawn.clear()
+    game["store"].pop("studio_logo")
+    game["secondary_name"] = ""
+    plugin._render_live_overview((800, 480), [{"table_variant": "trending", "games": []},
+                                              {"table_variant": "top_games", "games": [game]}], {}, {"mode": "day"}, "")
+    assert any("S-GAME" in item[0] for item in drawn)
 
 
 def test_a_studio_mark_that_melts_into_the_page_takes_its_ink_and_one_that_reads_keeps_its_colours():

@@ -32,7 +32,7 @@ COVER_RADIUS = 6
 # flat ground, this tall and at most this wide, inked when its colours have less than this
 # contrast with the page.
 STUDIO_MARK = 13
-STUDIO_CUT_H, STUDIO_CUT_W = 11, 46
+STUDIO_CUT_H, STUDIO_CUT_W = 13, 60
 STUDIO_MIN_CONTRAST = 2.0
 # ...unless at least this share of it already stands out (it keeps its own colours).
 STUDIO_KEEP_SHARE = 0.25
@@ -264,12 +264,13 @@ class LiveOverviewMixin:
         secondary = str(game.get("secondary_name") or "")
         developer = str(store.get("developer") or "")
         genres = " / ".join(store.get("genres") or [])
-        # With its studio's logo, line two starts with the studio the logo stands for.
+        # With its studio's logo, line two starts with the logo and the studio's name is not
+        # printed after it (owner: the logo instead of the text).
         studio = self._decode_data_image(store.get("studio_logo")) if developer else None
-        order = (developer, secondary, genres) if studio is not None else (
+        order = (secondary, genres) if studio is not None else (
             (secondary, genres, developer) if secondary else (developer, genres))
         facts = " · ".join(part for part in order if part)
-        name_y, detail_y = (top + 3, top + 41) if facts else (top + 11, top + 35)
+        name_y, detail_y = (top + 3, top + 41) if facts or studio is not None else (top + 11, top + 35)
         # The name runs on to the figure beside it, smaller before it is cut short.
         name_width = right - hero_w - 10 - text_x
         name_font = next((self._font(size, "bold") for size in NAME_SIZES
@@ -277,7 +278,7 @@ class LiveOverviewMixin:
                          self._font(NAME_SIZES[-1], "bold"))
         draw.text((text_x, name_y + (17 - name_font.size) // 2), self._overview_clip(draw, name, name_font, name_width),
                   font=name_font, fill=colors["ink"])
-        if facts:
+        if facts or studio is not None:
             facts_x = text_x
             if studio is not None:
                 facts_x += self._overview_studio_logo(image, (text_x, top + 23), studio, colors) + 6
