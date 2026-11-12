@@ -157,7 +157,7 @@ class DailyDigest(BasePlugin):
         # cover lookups failing never makes the page stale.
         payload["music"][sources.BILLBOARD_ID] = load("music-billboard", "billboard", {"chart": "hot-100", "fields": 1},
                                                       sources.fetch_billboard, sources.valid_chart, timeout=15)
-        # 每日一题 (the day's chess puzzle, xkcd or Connections board) is an extra too: one request,
+        # 每日一题 (the day's chess puzzle or xkcd) is an extra too: one request,
         # kept six hours, and never part of the page's provenance.
         kind = sources.puzzle_kind(now)
         payload["puzzle"] = load(f"puzzle-{kind}", "puzzle", {"kind": kind},

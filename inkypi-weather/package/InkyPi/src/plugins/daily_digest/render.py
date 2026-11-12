@@ -23,6 +23,7 @@ and the cards beside it take the room.
 from __future__ import annotations
 
 import math
+from functools import lru_cache
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -540,16 +541,24 @@ def _wordle_tile(canvas, night, box, wordle):
     canvas.text(((left + right) / 2, bottom - 12), "今天的题不剧透", 10, "muted", anchor="mm", bold=False)
 
 
-# --- 每日一题: the day's chess puzzle, xkcd or Connections board, in the Wordle tile's turn ----------
+# --- 每日一题: the day's chess puzzle or xkcd, in the Wordle tile's turn ------------------------------
 
-CHESS_SQUARE = 11
+# The board is a printed diagram, the same on either page: twelve-pixel squares, white or screened
+# with ink dots, and the standard diagram pieces (assets/chess, Cburnett's set) in pure black and white.
+CHESS_SQUARE = 12
+CHESS_BODY_TOP = BAND + 18
+CHESS_LIGHT, CHESS_INK = (255, 255, 255), (0, 0, 0)
+# A scaled figure's greys are stretched over these ranges: a white piece's thin outline to ink,
+# a black piece's body to ink with its light drawing kept.
+CHESS_TONE_RANGE = {"white": (110, 215), "black": (50, 190)}
+CHESS_ASSETS = Path(__file__).resolve().parent / "assets" / "chess"
 PUZZLE_BODY_TOP = BAND + 24
 COMIC_WIDE = 2.2
 
 
 def chess_squares(box):
     """{(row, column): its box} of the board as drawn in the tile ``box``, the top row first."""
-    left, top = box[0] + 8, box[1] + PUZZLE_BODY_TOP
+    left, top = box[0] + 8, box[1] + CHESS_BODY_TOP
     return {(row, column): (left + column * CHESS_SQUARE, top + row * CHESS_SQUARE,
                             left + (column + 1) * CHESS_SQUARE, top + (row + 1) * CHESS_SQUARE)
             for row in range(8) for column in range(8)}
@@ -564,41 +573,58 @@ def comic_view(picture, size):
     return ImageOps.contain(picture, size, method=Image.Resampling.LANCZOS)
 
 
-def _puzzle_head(canvas, box, title, note=""):
-    """The tile's frame and its title in type (none of the three sources' logos ships with the page)."""
+@lru_cache(maxsize=32)
+def chess_piece(piece, size):
+    """The diagram icon of a FEN piece letter (upper case white, lower case black), ``size`` square:
+    the figure as drawn, its lines pushed toward pure ink and its faces toward pure white so a
+    figure a dozen pixels tall still reads on the panel. None for a letter without an icon."""
+    path = CHESS_ASSETS / f"{piece.lower()}{'l' if piece.isupper() else 'd'}.png"
+    try:
+        with Image.open(path) as source:
+            art = source.convert("RGBA").resize((size, size), Image.Resampling.LANCZOS)
+    except OSError:
+        return None
+    low, high = CHESS_TONE_RANGE["white" if piece.isupper() else "black"]
+    tone = art.convert("L").point(lambda value: max(0, min(255, round((value - low) * 255 / (high - low)))))
+    icon = Image.merge("RGBA", (tone, tone, tone, art.getchannel("A").point(lambda value: min(255, value * 2))))
+    return icon
+
+
+def _puzzle_head(canvas, box, title, note="", middle=12):
+    """The tile's frame and its title in type (neither source's logo ships with the page)."""
     left, top, right, _bottom = box
     _card(canvas, box, "游戏")
-    middle = top + BAND + 12
+    middle = top + BAND + middle
     x = left + 8 + canvas.text((left + 8, middle), title, 12, anchor="lm") + 6
     if note and right - 8 - x > 20:
         canvas.text((right - 8, middle), note, 10, "muted", anchor="rm", bold=False, width=right - 8 - x)
 
 
 def _chess_tile(canvas, box, puzzle):
-    """The position drawn from its FEN, the side to move at the bottom: dark squares in the page's
-    track tone, white's pieces light discs with a dark edge, black's dark discs, each lettered."""
-    _puzzle_head(canvas, box, "每日棋题", puzzle.get("title") or "")
+    """The position drawn from its FEN as a diagram, the side to move at the bottom: the board's
+    own light and dark squares and the standard piece icons, the same by day and by night."""
+    _puzzle_head(canvas, box, "每日棋题", puzzle.get("title") or "", middle=8)
     board, side = puzzle["_board"], puzzle["_side"]
     if side == "b":
         board = [list(reversed(rank)) for rank in reversed(board)]
     squares = chess_squares(box)
-    ink, paper = canvas.color("ink"), canvas.color("paper")
-    light, dark = (ink, paper) if sum(ink) > sum(paper) else (paper, ink)
-    font = canvas.font(9, True)
     for (row, column), (x0, y0, x1, y1) in squares.items():
+        canvas.draw.rectangle((x0, y0, x1 - 1, y1 - 1), fill=CHESS_LIGHT)
         if (row + column) % 2:
-            canvas.draw.rectangle((x0, y0, x1 - 1, y1 - 1), fill=canvas.color("track"))
-        piece = board[row][column]
-        if piece:
-            fill, edge = (light, dark) if piece.isupper() else (dark, light)
-            canvas.draw.ellipse((x0, y0, x1 - 1, y1 - 1), fill=fill, outline=edge)
-            canvas.draw.text(((x0 + x1 - 1) / 2, (y0 + y1 - 1) / 2 + 0.5), piece.upper(), font=font, fill=edge, anchor="mm")
+            # A dark square is a fine screen of ink dots, as in a printed diagram: no grey to dither.
+            canvas.draw.point([(x, y) for x in range(x0, x1) for y in range(y0, y1) if (x + y) % 2 == 0 and y % 2 == 0],
+                              fill=CHESS_INK)
+        icon = chess_piece(board[row][column], CHESS_SQUARE) if board[row][column] else None
+        if icon is not None:
+            canvas.image.paste(icon, (x0, y0), icon)
     first, last = squares[(0, 0)], squares[(7, 7)]
-    canvas.draw.rectangle((first[0] - 1, first[1] - 1, last[2], last[3]), outline=ink)
-    # Who moves, beside the board: that side's disc and its word.
-    centre = (last[2] + box[2]) / 2
-    fill, edge = (light, dark) if side == "w" else (dark, light)
-    canvas.draw.ellipse((centre - 8, first[1] + 12, centre + 8, first[1] + 28), fill=fill, outline=edge if fill == paper else ink)
+    canvas.draw.rectangle((first[0] - 1, first[1] - 1, last[2], last[3]), outline=CHESS_INK)
+    # Who moves, beside the board: that side's king on a light square, and its word.
+    centre = round((last[2] + box[2]) / 2)
+    king = chess_piece("K" if side == "w" else "k", 20)
+    canvas.draw.rectangle((centre - 11, first[1] + 8, centre + 10, first[1] + 29), fill=CHESS_LIGHT, outline=CHESS_INK)
+    if king is not None:
+        canvas.image.paste(king, (centre - 10, first[1] + 9), king)
     canvas.text((centre, first[1] + 42), "白先" if side == "w" else "黑先", 11, anchor="mm")
 
 
@@ -614,29 +640,6 @@ def _xkcd_tile(canvas, night, box, puzzle, picture):
                 width=right - left - 12)
 
 
-def _connections_tile(canvas, box, puzzle):
-    """The sixteen words in the game's own order, whole, a slash between them; never the groups."""
-    left, top, right, bottom = box
-    number = f"#{puzzle['number']}" if puzzle.get("number") else ""
-    _puzzle_head(canvas, box, "Connections", number)
-    width = right - left - 16
-    first = top + PUZZLE_BODY_TOP - 3
-    # The largest type at which all sixteen fit; the tightest setting holds any board of short words.
-    for size, pitch in ((10, 12), (10, 11), (9, 11), (9, 10)):
-        lines = [""]
-        for index, word in enumerate(puzzle["words"]):
-            piece = word + (" /" if index < len(puzzle["words"]) - 1 else "")
-            trial = f"{lines[-1]} {piece}".strip()
-            if lines[-1] and canvas.width(trial, size, False) > width:
-                lines.append(piece)
-            else:
-                lines[-1] = trial
-        if first + len(lines) * pitch <= bottom - 3:
-            break
-    for number, line in enumerate(lines):
-        canvas.text((left + 8, first + number * pitch + pitch / 2), line, size, anchor="lm", bold=False, width=width)
-
-
 def _puzzle_ready(payload):
     """The day's puzzle when the tile can draw it (xkcd needs its picture at hand), else None."""
     data = ((payload.get("puzzle") or {}).get("data")) or {}
@@ -645,8 +648,6 @@ def _puzzle_ready(payload):
         if kind == "chess":
             return {**data, "_board": sources.fen_board(data.get("fen")), "_side": sources.fen_side(data.get("fen"))}
         if kind == "xkcd" and payload.get("_puzzle_image") is not None and data.get("num"):
-            return data
-        if kind == "connections" and len(data.get("words") or []) == 16:
             return data
     except ValueError:
         return None
@@ -658,10 +659,8 @@ def _puzzle_tile(canvas, night, box, payload):
     canvas.image.info["daily_digest_puzzle"] = {"kind": puzzle["kind"], "box": list(box)}
     if puzzle["kind"] == "chess":
         _chess_tile(canvas, box, puzzle)
-    elif puzzle["kind"] == "xkcd":
-        _xkcd_tile(canvas, night, box, puzzle, payload["_puzzle_image"])
     else:
-        _connections_tile(canvas, box, puzzle)
+        _xkcd_tile(canvas, night, box, puzzle, payload["_puzzle_image"])
 
 
 def _puzzle_turn(payload):

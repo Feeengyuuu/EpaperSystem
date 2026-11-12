@@ -528,18 +528,17 @@ def valid_wordle(data):
     return isinstance(data, dict) and bool(re.fullmatch(r"[A-Z]{5}", str(data.get("solution") or "")))
 
 
-# --- 每日一题: the chess.com puzzle, today's xkcd or the Connections board ---------------------------
+# --- 每日一题: the chess.com puzzle or today's xkcd ---------------------------------------------------
 
 CHESS_PUZZLE = "https://api.chess.com/pub/puzzle"
 XKCD = "https://xkcd.com/info.0.json"
 XKCD_IMAGE_HOST = "imgs.xkcd.com"
-CONNECTIONS = "https://www.nytimes.com/svc/connections/v2/{day}.json"
-PUZZLES = ("chess", "xkcd", "connections")
+PUZZLES = ("chess", "xkcd")
 _FEN_RANK = re.compile(r"[pnbrqkPNBRQK1-8]{1,8}")
 
 
 def puzzle_kind(now):
-    """The day's puzzle: the three take turns, one a day."""
+    """The day's puzzle: the two take turns, one a day."""
     return PUZZLES[now.date().toordinal() % len(PUZZLES)]
 
 
@@ -586,35 +585,15 @@ def normalize_xkcd(payload):
     return {"kind": "xkcd", "num": payload["num"], "title": title, "image": image}
 
 
-def normalize_connections(payload, day):
-    """The day's Connections board: its sixteen words in the order the game itself deals them.
-    The groups and their titles (the answers) are never kept."""
-    payload = payload if isinstance(payload, dict) else {}
-    if str(payload.get("print_date") or "") != day:
-        raise ValueError("Connections returned another day")
-    cards = [card for group in payload.get("categories") or [] if isinstance(group, dict)
-             for card in group.get("cards") or [] if isinstance(card, dict)]
-    placed = {card.get("position"): " ".join(str(card.get("content") or "").split()).upper()[:16] for card in cards}
-    if sorted(position for position in placed if isinstance(position, int)) != list(range(16)) or not all(placed.values()):
-        raise ValueError("Connections returned no sixteen-word board")
-    number = payload.get("id")
-    return {"kind": "connections", "day": day, "number": number if isinstance(number, int) else None,
-            "words": [placed[position] for position in range(16)]}
-
-
 def fetch_puzzle(kind, now, context):
     """One request for the day's puzzle of ``kind``."""
     if kind == "chess":
         return normalize_chess(_get(CHESS_PUZZLE, context))
-    if kind == "xkcd":
-        return normalize_xkcd(_get(XKCD, context))
-    day = now.date().isoformat()
-    return normalize_connections(_get(CONNECTIONS.format(day=day), context), day)
+    return normalize_xkcd(_get(XKCD, context))
 
 
 def valid_puzzle(data):
-    return isinstance(data, dict) and data.get("kind") in PUZZLES and bool(
-        data.get("fen") or data.get("image") or data.get("words"))
+    return isinstance(data, dict) and data.get("kind") in PUZZLES and bool(data.get("fen") or data.get("image"))
 
 
 # --- The sun ----------------------------------------------------------------------------------------

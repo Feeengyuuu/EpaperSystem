@@ -1,4 +1,4 @@
-"""每日一题 on 万象速览: the chess.com puzzle, today's xkcd or the Connections board, in the Wordle tile's turn."""
+"""每日一题 on 万象速览: the chess.com puzzle or today's xkcd, in the Wordle tile's turn."""
 
 import sys
 import time
@@ -13,22 +13,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from plugins.daily_digest import daily_digest as module, render, sources  # noqa: E402
 from runtime.refresh_contracts import TaskContext  # noqa: E402
 
-# The three sources as they answered on 2026-11-11 (Connections cut to two of its four groups' shape).
+# The two sources as they answered on 2026-11-11.
 CHESS = {"title": "Eviction Notice", "url": "https://www.chess.com/daily/2026-11-11", "publish_time": 1794384000,
          "fen": "6k1/4rb2/3b1R1Q/p6p/2pq3r/P2n2NP/1P4P1/5R1K w - - 0 1",
          "pgn": "[White \"David_Goldfarb\"]\n\n1. Rg6+ Bxg6 2. Rf8# *",
          "image": "https://www.chess.com/dynboard?fen=6k1/4rb2/3b1R1Q&size=2"}
 XKCD = {"month": "11", "num": 3323, "year": "2026", "safe_title": "Meteor Fear", "alt": "Don't worry",
         "img": "https://imgs.xkcd.com/comics/meteor_fear.png", "title": "Meteor Fear", "day": "11"}
-CONNECTIONS = {"status": "OK", "id": 1354, "print_date": "2026-11-11", "editor": "Wyna Liu", "categories": [
-    {"title": "KINDS OF MEDICINE", "cards": [{"content": "FOLK", "position": 5}, {"content": "HERBAL", "position": 1},
-                                             {"content": "HOLISTIC", "position": 13}, {"content": "TRADITIONAL", "position": 10}]},
-    {"title": "PARTS OF A GOLF COURSE", "cards": [{"content": "GREEN", "position": 4}, {"content": "ROUGH", "position": 7},
-                                                  {"content": "SAND TRAP", "position": 12}, {"content": "TEE BOX", "position": 15}]},
-    {"title": "THINGS FILLED WITH AIR", "cards": [{"content": "BALLOON", "position": 0}, {"content": "BUBBLE", "position": 9},
-                                                  {"content": "LUNG", "position": 2}, {"content": "TIRE", "position": 14}]},
-    {"title": "___ BOX", "cards": [{"content": "JUKE", "position": 3}, {"content": "LITTER", "position": 6},
-                                   {"content": "MAIL", "position": 8}, {"content": "SOAP", "position": 11}]}]}
 NOW = datetime(2026, 11, 11, 13, 0, tzinfo=sources.PACIFIC)
 
 
@@ -56,33 +47,20 @@ def test_xkcd_keeps_its_number_title_and_a_picture_only_from_its_own_host():
     assert sources.safe_xkcd_image("http://imgs.xkcd.com/comics/a.png") is None
 
 
-def test_connections_keeps_the_sixteen_words_in_the_boards_own_shuffle_and_nothing_of_the_groups():
-    board = sources.normalize_connections(CONNECTIONS, "2026-11-11")
-
-    assert board["kind"] == "connections" and board["number"] == 1354 and len(board["words"]) == 16
-    assert board["words"][:6] == ["BALLOON", "HERBAL", "LUNG", "JUKE", "GREEN", "FOLK"]
-    # No group title, and no two neighbours that give a group away by order.
-    assert set(board) == {"kind", "day", "number", "words"}
-    assert "MEDICINE" not in str(board) and "GOLF" not in str(board)
-    with pytest.raises(ValueError):
-        sources.normalize_connections(CONNECTIONS, "2026-11-12")
-    with pytest.raises(ValueError):
-        sources.normalize_connections({**CONNECTIONS, "categories": CONNECTIONS["categories"][:3]}, "2026-11-11")
-
-
 def test_the_day_chooses_one_puzzle_and_each_is_asked_at_its_own_address(monkeypatch):
-    kinds = [sources.puzzle_kind(NOW + timedelta(days=offset)) for offset in range(6)]
-    assert sorted(kinds[:3]) == sorted(sources.PUZZLES) and kinds[3:] == kinds[:3]
+    kinds = [sources.puzzle_kind(NOW + timedelta(days=offset)) for offset in range(4)]
+    assert sorted(kinds[:2]) == ["chess", "xkcd"] == sorted(sources.PUZZLES) and kinds[2:] == kinds[:2]
     assert sources.puzzle_kind(NOW.replace(hour=0)) == sources.puzzle_kind(NOW.replace(hour=23))
 
     asked = []
-    answers = {"chess": CHESS, "xkcd": XKCD, "connections": CONNECTIONS}
+    answers = {"chess": CHESS, "xkcd": XKCD}
     monkeypatch.setattr(sources, "_get", lambda url, context, **kwargs: asked.append(url) or next(
         answer for key, answer in answers.items() if key in url or (key == "chess" and "chess.com" in url)))
     for kind in sources.PUZZLES:
         assert sources.fetch_puzzle(kind, NOW, _context())["kind"] == kind
-    assert asked == ["https://api.chess.com/pub/puzzle", "https://xkcd.com/info.0.json",
-                     "https://www.nytimes.com/svc/connections/v2/2026-11-11.json"]
+    assert asked == ["https://api.chess.com/pub/puzzle", "https://xkcd.com/info.0.json"]
+    # A Connections board kept from the day the tile had one is no longer a puzzle.
+    assert not sources.valid_puzzle({"kind": "connections", "words": ["A"] * 16})
 
 
 def _plugin(monkeypatch, tmp_path, puzzle):
@@ -160,22 +138,42 @@ def test_the_puzzle_takes_the_wordle_tiles_turn_on_odd_hours(monkeypatch, mode):
     assert "每日棋题" in drawn
 
 
-def test_the_board_is_drawn_from_the_position_with_the_side_to_move_at_the_bottom():
-    image = _page(sources.normalize_chess(CHESS), 13)
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_the_board_is_a_diagram_with_piece_icons_and_the_side_to_move_at_the_bottom(mode):
+    image = _page(sources.normalize_chess(CHESS), 13, mode)
     box = tuple(image.info["daily_digest_puzzle"]["box"])
     squares = render.chess_squares(box)
-    ink, paper = (18, 26, 32), (255, 255, 255)
 
-    def has(square, colour):
+    def colours(square):
         left, top, right, bottom = squares[square]
-        return any(image.getpixel((x, y)) == colour for x in range(left + 2, right - 1) for y in range(top + 2, bottom - 1))
+        return {image.getpixel((x, y)) for x in range(left, right) for y in range(top, bottom)}
 
-    # White to move: rank 8 on top. The black king on g8 is a solid ink piece, the white king on h1 an outlined one.
-    assert has((0, 6), ink) and has((7, 7), ink) and has((7, 7), paper)
-    left, top, right, bottom = squares[(0, 0)]
-    assert {image.getpixel((x, y)) for x in range(left + 1, right) for y in range(top + 1, bottom)} == {paper}
+    # White to move: rank 8 on top. The board prints in pure black and white on either page:
+    # a light square is white, a dark one white screened with ink dots.
+    assert colours((0, 0)) == {render.CHESS_LIGHT} and colours((0, 1)) == {render.CHESS_LIGHT, render.CHESS_INK}
+    # Every tone on the board is a neutral one: the figures are black, white and the greys between.
+    board = {colour for square in squares for colour in colours(square)}
+    assert all(red == green == blue for red, green, blue in board) and {(0, 0, 0), (255, 255, 255)} <= board
+
+    def share(square, colour):
+        left, top, right, bottom = squares[square]
+        return sum(image.getpixel((x, y)) == colour for x in range(left, right) for y in range(top, bottom)) / 144
+
+    # The black king on g8 is a mostly black figure; the white king on h1 an outlined white one.
+    def dark(square):
+        left, top, right, bottom = squares[square]
+        return sum(image.getpixel((x, y))[0] < 96 for x in range(left, right) for y in range(top, bottom)) / 144
+
+    assert dark((0, 6)) > 0.2
+    assert dark((7, 7)) > 0.05 and share((7, 7), (255, 255, 255)) > 0.3
+    # The two kings are different figures from a rook: the icon follows the piece.
+    king, rook = render.chess_piece("K", 12), render.chess_piece("R", 12)
+    assert king.size == (12, 12) and king.tobytes() != rook.tobytes()
+    assert render.chess_piece("K", 12).tobytes() != render.chess_piece("k", 12).tobytes()
+    # The board stays inside its tile.
+    assert squares[(7, 7)][3] <= box[3] - 2 and squares[(7, 7)][2] <= box[2] - 20
     # Black to move turns the board round.
-    flipped = _page({**sources.normalize_chess(CHESS), "fen": CHESS["fen"].split(" ")[0] + " b"}, 13)
+    flipped = _page({**sources.normalize_chess(CHESS), "fen": CHESS["fen"].split(" ")[0] + " b"}, 13, mode)
     assert flipped.crop(box).tobytes() != image.crop(box).tobytes()
 
 
@@ -194,16 +192,3 @@ def test_xkcd_is_scaled_whole_into_the_tile_and_a_wide_strip_shows_its_first_pan
     drawn.clear()
     _page(comic, 13, drawn=drawn, monkeypatch=monkeypatch)
     assert "Wordle 昨日" in drawn and page.size == (800, 480)
-
-
-def test_connections_prints_its_sixteen_words_whole_and_no_group(monkeypatch):
-    board = sources.normalize_connections(CONNECTIONS, "2026-11-11")
-    drawn = []
-    for mode in ("day", "night"):
-        _page(board, 13, mode, drawn=drawn, monkeypatch=monkeypatch)
-
-    assert "Connections" in drawn
-    lines = [text for text in drawn if "BALLOON" in text or "SAND TRAP" in text or "TEE BOX" in text]
-    printed = "  ".join(text for text in drawn if text.isupper() and text not in ("VIPER",))
-    assert lines and all(word in printed for word in board["words"])
-    assert not any("MEDICINE" in text or "GOLF" in text for text in drawn)
