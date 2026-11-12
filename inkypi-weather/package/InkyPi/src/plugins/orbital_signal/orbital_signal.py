@@ -1653,7 +1653,7 @@ class OrbitalSignal(BasePlugin):
         teams = [team for team in market.get("teams") or [] if isinstance(team, dict)]
         logos = [self._market_mark(team.get("mark"), MATCHUP_LOGO) for team in teams[:2]] if image is not None else []
         title = str(market.get("title") or "MARKET").upper()
-        if len(logos) == 2 and all(logos):
+        if len(teams) >= 2 and len(logos) == 2 and all(logos):
             # The matchup sits in the middle of the art, above the question.
             middle = art_box[1] + (QUESTION_TOP - ART_TOP) // 2
             vs_font = self._font(13, True, family)
@@ -1668,6 +1668,9 @@ class OrbitalSignal(BasePlugin):
                 image.paste(logo, (round(slot - logo.width / 2), round(middle - logo.height / 2)), logo)
             draw.text((cx - vs_box[2] / 2, middle - (vs_box[1] + vs_box[3]) / 2), "VS", font=vs_font,
                       fill=palette["ink"], stroke_width=2, stroke_fill=palette["paper"])
+        if len(teams) >= 2 and image is not None:
+            # Two teams read as the matchup's two rows whether or not both logos are at hand (one
+            # refused or still to come leaves its row with the team's colour bar and name).
             self._draw_matchup(draw, image, teams[:2], cx, width, top + QUESTION_TOP, palette, family)
         else:
             self._draw_question(draw, title, cx, width, top + QUESTION_TOP, palette, family)

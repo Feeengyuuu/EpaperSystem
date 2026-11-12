@@ -1519,6 +1519,34 @@ def test_matchup_reads_as_two_crested_rows_with_a_vs_between(monkeypatch):
     assert {(0x22, 0x44, 0xAC), (0x00, 0x82, 0x82), (0, 40, 90)} <= colours  # both team bars and crests
 
 
+def test_a_matchup_whose_logo_is_missing_still_reads_as_the_two_teams(monkeypatch):
+    # Polymarket's Türkiye logo is a 5000 px picture the device refuses: the column used to fall
+    # back to the bare question and lose the two rows.
+    from plugins.orbital_signal.market_style import market_palette
+
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    crest = Image.new("RGBA", (15, 15), (0, 40, 90, 255))
+    monkeypatch.setattr(plugin, "_market_mark", lambda key, *_args, **_kwargs: crest if key else None)
+    monkeypatch.setattr(plugin, "_paste_event_art", lambda *_args: None)
+    palette = market_palette(DAY_PALETTE)
+    image = Image.new("RGB", (140, 420), palette["paper"])
+    draw = ImageDraw.Draw(image)
+    texts, draw_text = [], draw.text
+    monkeypatch.setattr(draw, "text", lambda xy, text, *args, **kwargs: texts.append(text) or draw_text(xy, text, *args, **kwargs))
+    market = {"title": "Türkiye vs. Belgium", "category": "SPORT", "league": "UEFA NATIONS LEAGUE", "leader": "Belgium",
+              "probability": 0.8, "heat": 100, "volume_24h": 1400000,
+              "teams": [{"name": "Türkiye", "alias": "Türkiye", "color": "#e30a17", "mark": ""},
+                        {"name": "Belgium", "alias": "Belgium", "color": "#ef3340", "mark": "belgium"}]}
+
+    plugin._draw_market_column(draw, market, 10, 110, 0, palette, DEFAULT_FONT, image)
+
+    assert "TÜRKIYE" in texts and "BELGIUM" in texts and texts.count("VS") == 1
+    assert not any("TÜRKIYE VS" in text for text in texts)
+    colours = {colour for _count, colour in image.getcolors(1 << 16)}
+    # Both rows carry their team's colour bar; the one crest at hand is shown.
+    assert {(0xE3, 0x0A, 0x17), (0xEF, 0x33, 0x40), (0, 40, 90)} <= colours
+
+
 def test_a_long_team_name_drops_its_generic_word_before_it_is_cut(monkeypatch):
     texts, _image = _matchup_texts(monkeypatch, [{"alias": "Bilibili Gaming", "color": "#20bfdf"},
                                                  {"alias": "T1", "color": "#c41c35"}], DAY_PALETTE)
