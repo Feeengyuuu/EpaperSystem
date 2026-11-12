@@ -691,7 +691,7 @@ def _note_size(draw, fonts, note, rows=None, pill=True, when=True):
     alert = note.get("alert") if pill else None
     widths = [draw.textlength(note["lines"][0], font=fonts(11)) + 15]
     widths += [draw.textlength(row, font=fonts(10, False)) if isinstance(row, str) else
-               draw.textlength(row[0], font=fonts(10, False)) + 8 + draw.textlength(row[1], font=fonts(10, False))
+               draw.textlength(row[0], font=fonts(10, False)) + 5 + draw.textlength(row[1], font=fonts(10, False))
                for row in rows]
     height = NOTE_HEAD + NOTE_ROW * len(rows)
     if alert:
@@ -886,6 +886,7 @@ def render_bay_map(size, palette, fonts, *, quakes, alerts, home, home_label, no
         point = project(lat, lon, manifest, size)
         if point is not None:
             small_dots.append((point[0] - 3, point[1] - 3, point[0] + 3, point[1] + 3))
+    towns = len(small_dots)
     outage_marks = _draw_outages(draw, palette, manifest, size, (outages or {}).get("points") or [], occupied,
                                  small_dots)
     order = sorted(quakes, key=lambda quake: (quake_age_class(quake, now) != "old",
@@ -947,7 +948,9 @@ def render_bay_map(size, palette, fonts, *, quakes, alerts, home, home_label, no
         floor = size[1] - 46 - NOTE_GAP
         outage_box = _place_note(
             draw, palette, fonts, outages, lambda centre: _bolt(draw, centre, (7, 11), palette["ink"], palette["paper"]),
-            lambda height: range(floor - height, SUMMARY_CORNERS[0][1] - 1, -2), occupied + small_dots, frame, note_width)
+            # A county's row may reach a coast town's dot: the town then goes without its dot.
+            lambda height: range(floor - height, SUMMARY_CORNERS[0][1] - 1, -2), occupied + small_dots[towns:], frame,
+            note_width)
         if outage_box:
             occupied.append(outage_box)
     if surf and surf.get("lines"):
@@ -1059,7 +1062,9 @@ def render_bay_map(size, palette, fonts, *, quakes, alerts, home, home_label, no
             inside = box[0] >= 2 and box[1] >= 2 and box[2] <= size[0] - 2 and box[3] <= size[1] - 22
             if inside and not any(_overlaps(box, other) for other in others):
                 # A town dot never sits on a quake: the quake marks the spot.
-                if dot and not any(math.dist((x, y), point) <= radius + 2 for point, radius in dots.values()):
+                covered = outage_box is not None and _overlaps(outage_box, (x - 3, y - 3, x + 3, y + 3))
+                if dot and not covered and not any(
+                        math.dist((x, y), point) <= radius + 2 for point, radius in dots.values()):
                     draw.ellipse((x - 2, y - 2, x + 2, y + 2), fill=palette["ink"])
                 draw.text((x + dx, y + dy), name, font=font, fill=palette["ink"],
                           stroke_width=2, stroke_fill=palette["paper"])

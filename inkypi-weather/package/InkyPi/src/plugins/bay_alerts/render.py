@@ -77,11 +77,6 @@ SAME_FIRE_KM = 15
 OUTAGE_SIGNIFICANT = 2000
 OUTAGE_COUNTY_ROWS = 3
 NEAR_OUTAGE_KM = 10
-# The counties in Chinese for the map's note, like the map's own place names.
-COUNTY_NAMES = {
-    "Alameda": "阿拉米达", "Contra Costa": "康特拉科斯塔", "Marin": "马林", "Napa": "纳帕", "San Francisco": "旧金山",
-    "San Mateo": "圣马特奥", "Santa Clara": "圣克拉拉", "Santa Cruz": "圣克鲁斯", "Solano": "索拉诺", "Sonoma": "索诺马",
-}
 
 
 def _palette(settings):
@@ -177,7 +172,7 @@ def outage_summary(payload, now):
         lines = [f"停电 {total / 10000:.1f} 万户" if total >= 10000 else f"停电 {total:,} 户"]
         significant = total - stats["planned"] >= OUTAGE_SIGNIFICANT
         if significant:
-            lines += [(COUNTY_NAMES.get(row["county"], row["county"]), f"{row['customers']:,}")
+            lines += [(row["county"], f"{row['customers']:,}")
                       for row in stats["counties"][:OUTAGE_COUNTY_ROWS] if row["customers"]]
     near = [point for point in points if point.get("distance_km", NEAR_OUTAGE_KM + 1) <= NEAR_OUTAGE_KM]
     if near:
@@ -195,17 +190,17 @@ def _hours(start, end, joined=False):
 
 def surf_summary(payload, now, shown=()):
     """The breakers for the map: {"lines", "alert"}. The lines give the nearest ocean beaches'
-    breaker height today and tomorrow in metres (NWS's surf zone forecast); ``alert`` is the
+    breaker height today and tomorrow in feet (NWS's surf zone forecast); ``alert`` is the
     coast's high-surf warning or advisory unless the alert card already lists it (``shown``, the
     events of its rows). None without the forecast."""
     data = _extra(payload, "surf", valid_surf)
     outlook = surf_outlook(data, now) if data else None
     if outlook is None:
         return None
-    lines = ["浪高 · 米"]
+    lines = ["浪高 · 英尺"]
     for day in outlook["days"]:
-        low, high = day["low_m"], day["high_m"]
-        lines.append(f"{day['label']} {low:.1f}–{high:.1f}" if high > low else f"{day['label']} {high:.1f}")
+        low, high = day["low"], day["high"]
+        lines.append(f"{day['label']} {low}–{high}" if high > low else f"{day['label']} {high}")
     alert = outlook["alert"]
     if alert and alert["event"] in shown:
         alert = None

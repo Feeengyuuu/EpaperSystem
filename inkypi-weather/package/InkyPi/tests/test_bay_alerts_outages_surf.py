@@ -274,7 +274,7 @@ def test_a_quiet_day_is_one_line_and_a_storm_names_the_counties():
     storm = render.outage_summary({**_payload(), **_sea_and_power(stats=_storm_stats(), points=far)}, NOW)
     assert storm["significant"] is True
     # The counties with the most, each a (county, customers) pair for the box's two edges.
-    assert storm["lines"] == ["停电 2.2 万户", ("旧金山", "9,420"), ("马林", "5,640"), ("阿拉米达", "3,497")]
+    assert storm["lines"] == ["停电 2.2 万户", ("San Francisco", "9,420"), ("Marin", "5,640"), ("Alameda", "3,497")]
     # No outage at all is said in a line too; without either feed there is nothing to draw.
     none = {"features": []}
     assert render.outage_summary({**_payload(), **_sea_and_power(stats=none, points=none)}, NOW)["lines"] == ["暂无停电"]
@@ -328,21 +328,21 @@ def test_breaker_wordings_and_period_names_are_read():
     assert low["zones"]["CAZ509"]["days"][0] == {"date": "2026-11-11", "low": 1, "high": 1, "facing": ""}
 
 
-def test_the_outlook_is_todays_and_tomorrows_breakers_in_metres_for_the_nearest_coast():
+def test_the_outlook_is_todays_and_tomorrows_breakers_in_feet_for_the_nearest_coast():
     data = sources.parse_surf(SURF_TEXT)
 
     outlook = sources.surf_outlook(data, NOW)
     assert outlook["zone"] == "CAZ509"
-    assert outlook["days"] == [{"label": "今天", "low_m": 2.7, "high_m": 4.0}, {"label": "明天", "low_m": 3.0, "high_m": 4.3}]
+    assert outlook["days"] == [{"label": "今天", "low": 9, "high": 13}, {"label": "明天", "low": 10, "high": 14}]
     assert outlook["alert"] == {"event": "High Surf Warning", "name": "大浪警告", "tone": "alert",
                                 "start": "周五 18:00", "end": "周日 04:00"}
     # A day later the forecast's second day is today; once both are past there is no outlook.
     assert sources.surf_outlook(data, NOW + timedelta(days=1))["days"] == [
-        {"label": "今天", "low_m": 3.0, "high_m": 4.3}]
+        {"label": "今天", "low": 10, "high": 14}]
     assert sources.surf_outlook(data, NOW + timedelta(days=2)) is None
     # Without the San Francisco and San Mateo coast, Sonoma and Marin's stands in.
     north = {**data, "zones": {"CAZ505": data["zones"]["CAZ505"]}}
-    assert sources.surf_outlook(north, NOW)["days"][0] == {"label": "今天", "low_m": 3.0, "high_m": 4.3}
+    assert sources.surf_outlook(north, NOW)["days"][0] == {"label": "今天", "low": 10, "high": 14}
     assert sources.surf_outlook({}, NOW) is None
 
 
@@ -461,7 +461,7 @@ def test_the_map_carries_the_outages_the_surf_and_the_bay_advisory_and_the_colum
     assert not any(map_view._overlaps(first, second) for index, first in enumerate(boxes) for second in boxes[index + 1:])
     # The boxes stand in the ocean, the Bay advisory in San Pablo Bay.
     assert all(box[2] <= 120 for box in boxes) and image.info["marine_tag"][1] < 70
-    assert {"停电 583 户", "家附近", "17 户", "浪高 · 米", "今天 2.7–4.0", "明天 3.0–4.3", "小船提示",
+    assert {"停电 583 户", "家附近", "17 户", "浪高 · 英尺", "今天 9–13", "明天 10–14", "小船提示",
             "周四晚–周五晨"} <= set(drawn)
     # The alert rows do not list the high surf here, so the surf box names it.
     assert "大浪警告" in drawn and "周五 18:00 起" in drawn
@@ -477,7 +477,7 @@ def test_a_high_surf_alert_the_card_already_lists_is_not_named_twice(monkeypatch
 
     assert image.info["column_cards"]["alerts"]["rows"] == 1
     # Its name is drawn once, by the card's row; the surf box keeps to the breakers.
-    assert "今天 2.7–4.0" in drawn and drawn.count("大浪警告") == 1 and "周五 18:00 起" not in drawn
+    assert "今天 9–13" in drawn and drawn.count("大浪警告") == 1 and "周五 18:00 起" not in drawn
     # Hidden below the rows the card shows ("另有 N 条"), it is named by the surf box again.
     assert render.surf_summary({**_payload(alerts=alerts), **_sea_and_power()}, NOW, shown=())["alert"] is not None
     assert render.surf_summary({**_payload(alerts=alerts), **_sea_and_power()}, NOW,
@@ -495,7 +495,7 @@ def test_a_storm_grows_the_outage_box_and_labels_the_big_outages(monkeypatch):
 
     quiet_box, storm_box = quiet.info["outage_box"], storm.info["outage_box"]
     assert storm_box[3] - storm_box[1] > quiet_box[3] - quiet_box[1]
-    assert {"停电 2.2 万户", "9,420", "马林", "5,640", "阿拉米达", "3,497"} <= set(drawn)
+    assert {"停电 2.2 万户", "San Francisco", "9,420", "Marin", "5,640", "Alameda", "3,497"} <= set(drawn)
     # An outage of a thousand customers or more carries its size beside its bolt.
     assert "5,880 户" in drawn and "3,200 户" in drawn and "1,120 户" in drawn and "640 户" not in drawn
     assert {"家附近", "680 户"} <= set(drawn)
@@ -514,7 +514,7 @@ def test_a_note_gives_up_its_later_rows_before_its_alert_when_the_ocean_is_short
     palette = render._palette(DAY)
     fonts = PageCanvas(palette).font
     draw = ImageDraw.Draw(Image.new("RGB", (440, 408)))
-    note = {"lines": ["浪高 · 米", "今天 2.7–4.0", "明天 3.0–4.3"],
+    note = {"lines": ["浪高 · 英尺", "今天 9–13", "明天 10–14"],
             "alert": {"name": "大浪警告", "tone": "alert", "when": "周五 18:00 起"}}
     frame = (2, 2, 438, 388)
 

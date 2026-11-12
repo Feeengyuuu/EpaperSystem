@@ -743,7 +743,6 @@ MARINE_NAMES = {
     "Hazardous Seas Watch": ("险恶海况监视", "moderate"), "Special Marine Warning": ("特别海事警告", "alert"),
     "Dense Fog Advisory": ("浓雾提示", "moderate"),
 }
-FEET = 0.3048
 _MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
 _WEEKDAYS = ("MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY")
 _STAMP = re.compile(r"^(\d{1,2})(\d{2}) ([AP])M [A-Z]{3,4} \w{3} (\w{3}) (\d{1,2}) (\d{4})\s*$", re.MULTILINE)
@@ -898,7 +897,7 @@ def headline_span(when):
 
 
 def surf_outlook(data, now):
-    """The nearest coast's breakers from today on (at most two days, in metres) and its high-surf
+    """The nearest coast's breakers from today on (at most two days, in feet as the forecast gives them) and its high-surf
     headline, from the surf forecast; None once the forecast has no day left."""
     zones = data.get("zones") if isinstance(data, dict) else None
     today = now.date()
@@ -909,7 +908,7 @@ def surf_outlook(data, now):
         if not days:
             continue
         listed = [{"label": labels.get(day["date"]) or "周" + _WEEKDAY_ZH[datetime.fromisoformat(day["date"]).weekday()],
-                   "low_m": round(day["low"] * FEET, 1), "high_m": round(day["high"] * FEET, 1)} for day in days]
+                   "low": day["low"], "high": day["high"]} for day in days]
         alert = next((line for line in zone.get("headlines") or [] if line.get("event") in HIGH_SURF), None)
         if alert:
             start, end = headline_span(alert.get("when"))
