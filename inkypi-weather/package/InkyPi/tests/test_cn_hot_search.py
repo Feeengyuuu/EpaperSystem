@@ -1,5 +1,5 @@
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -13,6 +13,8 @@ from plugins.cn_hot_search.render import (  # noqa: E402
 )
 
 NOW = datetime(2026, 10, 28, 21, 30, tzinfo=sources.PACIFIC)
+# A ten-minute boundary at the start of all two-/three-/four-/five-card cycles.
+TURN_START = datetime(2026, 10, 28, 17, 0, tzinfo=sources.PACIFIC)
 
 
 def test_baidu_skips_the_pinned_row_and_keeps_heat_summary_picture_and_move():
@@ -332,19 +334,19 @@ def test_the_overseas_talk_takes_turns_between_bluesky_and_mastodon():
         sources.normalize_overseas({}, [])
 
 
-def test_the_spare_card_takes_turns_by_the_hour_with_the_papers_list_and_the_overseas_talk():
+def test_the_spare_card_takes_ten_minute_turns_with_the_papers_list_and_the_overseas_talk():
     lists = {platform: [] for platform in ("weibo",) + sources.PLATFORMS}
     extras = {"thepaper": sources.normalize_thepaper(THEPAPER)["rows"],
               "overseas": sources.normalize_overseas(BLUESKY, MASTODON)["rows"]}
     payload = {"lists": lists, "extras": extras}
 
-    assert [_slots(payload, NOW.replace(hour=hour))[-1] for hour in (21, 22, 23)] == ["shared", "thepaper", "overseas"]
+    assert [_slots(payload, TURN_START + timedelta(minutes=minute))[-1] for minute in (0, 10, 20)] == ["shared", "thepaper", "overseas"]
     # A card with nothing at hand gives its turns to the rest.
     only = {"lists": lists, "extras": {"overseas": extras["overseas"]}}
-    assert [_slots(only, NOW.replace(hour=hour))[-1] for hour in (22, 23)] == ["shared", "overseas"]
+    assert [_slots(only, TURN_START + timedelta(minutes=minute))[-1] for minute in (0, 10)] == ["shared", "overseas"]
     # Without Weibo's list the two spare places of a 3 x 2 grid go to two of them in turn.
     four = {"lists": {platform: [] for platform in sources.PLATFORMS}, "extras": extras}
-    assert _slots(four, NOW.replace(hour=22)) == [*sources.PLATFORMS, "thepaper", "overseas"]
+    assert _slots(four, TURN_START + timedelta(minutes=10)) == [*sources.PLATFORMS, "thepaper", "overseas"]
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])
@@ -364,7 +366,7 @@ def test_the_turn_cards_name_their_sources_and_list_their_stories(monkeypatch, m
                "extras": {"thepaper": sources.normalize_thepaper(THEPAPER)["rows"],
                           "overseas": sources.normalize_overseas(BLUESKY, MASTODON)["rows"]}}
 
-    render_page((800, 480), payload, {"_inkypi_theme": {"mode": mode}}, NOW.replace(hour=22), {})
+    render_page((800, 480), payload, {"_inkypi_theme": {"mode": mode}}, TURN_START + timedelta(minutes=10), {})
 
     assert {"thepaper", "bluesky", "mastodon"} <= set(logos)
     assert {"澎湃热榜", "海外热议", "霍志静任北京人艺院长，冯远征不再担任", "Godzilla Minus Zero opens", "人事风向"} <= set(drawn)
@@ -448,7 +450,8 @@ def test_the_most_read_card_takes_its_turn_under_the_wikipedia_mark(monkeypatch)
 
     lists = {platform: [] for platform in ("weibo",) + sources.PLATFORMS}
     extras = {"zhwiki": sources.normalize_zhwiki(ZHWIKI)["rows"]}
-    hours = {render._slots({"lists": lists, "extras": extras}, NOW.replace(hour=hour))[-1] for hour in range(4)}
+    hours = {render._slots({"lists": lists, "extras": extras}, TURN_START + timedelta(minutes=10 * turn))[-1]
+             for turn in range(4)}
     assert hours == {"shared", "zhwiki"}
 
     drawn, logos = [], []
@@ -531,12 +534,12 @@ def test_tieba_takes_its_turn_in_the_spare_card_under_its_own_logo(monkeypatch):
     extras = {"thepaper": sources.normalize_thepaper(THEPAPER)["rows"],
               "overseas": sources.normalize_overseas(BLUESKY, MASTODON)["rows"],
               "zhwiki": sources.normalize_zhwiki(ZHWIKI)["rows"], "tieba": sources.normalize_tieba(TIEBA)["rows"]}
-    # One hour in five with every turn card at hand; the others keep their order.
-    turns = [render._slots({"lists": lists, "extras": extras}, NOW.replace(hour=hour))[-1] for hour in range(5)]
+    # Ten minutes in fifty with every turn card at hand; the others keep their order.
+    turns = [render._slots({"lists": lists, "extras": extras}, TURN_START + timedelta(minutes=10 * turn))[-1] for turn in range(5)]
     assert turns == ["shared", "thepaper", "overseas", "zhwiki", "tieba"]
     # Without Tieba's list the page turns exactly as before.
     without = {key: value for key, value in extras.items() if key != "tieba"}
-    assert [render._slots({"lists": lists, "extras": without}, NOW.replace(hour=hour))[-1] for hour in range(4)] == [
+    assert [render._slots({"lists": lists, "extras": without}, TURN_START + timedelta(minutes=10 * turn))[-1] for turn in range(4)] == [
         "shared", "thepaper", "overseas", "zhwiki"]
 
     drawn, logos = [], []
@@ -550,7 +553,7 @@ def test_tieba_takes_its_turn_in_the_spare_card_under_its_own_logo(monkeypatch):
               for platform in ("weibo",) + sources.PLATFORMS}
     for mode in ("day", "night"):
         image = render_page((800, 480), {"lists": filled, "topics": [], "history": {}, "extras": {"tieba": extras["tieba"]}},
-                            {"_inkypi_theme": {"mode": mode}}, NOW.replace(hour=1), {})
+                            {"_inkypi_theme": {"mode": mode}}, TURN_START + timedelta(minutes=10), {})
         assert image.size == (800, 480)
 
     assert "tieba" in logos and render._logo_art("tieba", render.LOGO_HEIGHTS["tieba"], False) is not None
@@ -591,6 +594,9 @@ def test_tiebas_list_is_kept_an_hour_survives_a_failed_refresh_and_never_fails_t
     first = payload(NOW)
     assert first["extras"]["tieba"][0]["title"] == "吧友连续14年盖楼支持诺基亚" and len(asked) == 1
     # Within the hour the kept list is read; a redraw from cache never asks, however old the list.
+    for minute in (10, 20, 30, 40, 50):
+        assert payload(NOW + timedelta(minutes=minute), allow_network=False)["extras"]["tieba"]
+        assert len(asked) == 1
     assert payload(NOW + timedelta(minutes=40))["extras"]["tieba"] and len(asked) == 1
     assert payload(NOW + timedelta(hours=5), allow_network=False)["extras"]["tieba"] and len(asked) == 1
     # After the hour it is asked once more; a failure keeps the last good list and the page's health.
@@ -611,3 +617,15 @@ def test_tieba_asks_its_hot_list_once(monkeypatch):
     assert [url for url, _kwargs in asked] == ["https://tieba.baidu.com/hottopic/browse/topicList"]
     assert asked[0][1]["max_bytes"] <= 300 * 1024
     assert sources.EXTRA_FETCHERS["tieba"] is sources.fetch_tieba
+
+
+def test_ten_minute_turns_hold_until_the_boundary_and_continue_across_midnight():
+    payload = {"lists": {platform: [] for platform in ("weibo",) + sources.PLATFORMS},
+               "extras": {name: [{"title": name}] for name in ("thepaper", "overseas", "zhwiki", "tieba")}}
+    assert _slots(payload, TURN_START)[-1] == "shared"
+    assert _slots(payload, TURN_START + timedelta(minutes=9, seconds=59))[-1] == "shared"
+    assert _slots(payload, TURN_START + timedelta(minutes=10))[-1] == "thepaper"
+    assert _slots(payload, TURN_START + timedelta(minutes=50))[-1] == "shared"
+    midnight = datetime(2026, 11, 12, 0, 0, tzinfo=sources.PACIFIC)
+    assert [_slots(payload, midnight + timedelta(minutes=minute))[-1] for minute in (-10, 0, 10)] == [
+        "zhwiki", "tieba", "shared"]

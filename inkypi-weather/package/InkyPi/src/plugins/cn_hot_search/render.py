@@ -46,6 +46,7 @@ LOGO_HEIGHTS = {"weibo": 19, "baidu": 20, "toutiao": 15, "zhihu": 17, "douyin": 
 # Wikipedia's most read and 百度贴吧's 热议榜. Each turn card wears its source's colour: 澎湃's
 # ink-black mark, Bluesky's butterfly blue, the Baidu blue of Tieba's paw.
 TURN_CARDS = ("shared", "thepaper", "overseas", "zhwiki", "tieba")
+TURN_SECONDS = 10 * 60
 EXTRA_TINTS = {"overseas": (0x00, 0x85, 0xFF), "tieba": BRANDS["baidu"]}
 # Tieba's logo already reads 贴吧: its card's title is only the list's name.
 EXTRA_TITLES = {"thepaper": "澎湃热榜", "overseas": "海外热议", "zhwiki": "维基热读", "tieba": "热议榜"}
@@ -392,13 +393,15 @@ def _lead(canvas, payload, images, platforms, now):
 
 def _slots(payload, now=None):
     """The cards in order: Weibo when the owner signed in, the four lists, then the turn cards at
-    hand (TURN_CARDS, the hour choosing which comes first) in the 3 x 2 grid's spare places; the
+    hand (TURN_CARDS, each ten-minute slot choosing which comes first) in the grid's spare places; the
     grid stays even, so the four lists alone keep a 2 x 2 grid when nothing else is at hand."""
     lists = payload.get("lists") or {}
     slots = (["weibo"] if "weibo" in lists else []) + list(sources.PLATFORMS)
     extras = payload.get("extras") or {}
     candidates = [name for name in TURN_CARDS if name == "shared" or extras.get(name)]
-    turn = (now.hour if now else 0) % len(candidates)
+    # Absolute slots keep the cycle continuous across midnight and DST changes.
+    # This only selects already-cached rows; source refresh TTLs are independent.
+    turn = (int(now.timestamp()) // TURN_SECONDS if now else 0) % len(candidates)
     chosen = (candidates[turn:] + candidates[:turn])[:max(0, 6 - len(slots))]
     if (len(slots) + len(chosen)) % 2:
         chosen = chosen[:-1]
