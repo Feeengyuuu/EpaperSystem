@@ -71,9 +71,11 @@ STORY_FACT_SIZE, STORY_FACT_WEIGHT = 12, 400
 # Each story ends in a topic ring; its text stops short of this right-hand slot.
 STORY_ICON_SLOT = 40
 STORY_ICON_RADIUS = 15
-# A story with its article's picture shows it there instead, this wide and as tall as the row
-# allows, on rows at least STORY_PHOTO_MIN_HEIGHT tall (a one-line row keeps its badge).
-STORY_PHOTO_WIDTH, STORY_PHOTO_MIN_HEIGHT, STORY_PHOTO_RADIUS = 38, 30, 5
+# A story with its article's picture shows it there instead, on rows at least
+# STORY_PHOTO_MIN_HEIGHT tall (a one-line row keeps its badge): the picture fills the row from top
+# to bottom at the card's right edge, STORY_PHOTO_WIDTH wide, whole over its right
+# STORY_PHOTO_SOLID px and fading out to its left, under the end of the text (printed plain).
+STORY_PHOTO_WIDTH, STORY_PHOTO_SOLID, STORY_PHOTO_MIN_HEIGHT = 104, 44, 30
 # Accents are palette roles (the plugin's page colours fill them); anything unlisted stays in ink.
 SECTION_ACCENTS = {"国内": "red", "A股": "red", "国际": "blue", "美股": "blue"}
 # Each section's label is led by its generated badge (topic_icons/section_*.png) in its colour;
@@ -446,10 +448,13 @@ class NewsPage:
         band = self.tint(mark, BAND_TINT)
         for number, (item, title_lines, fact) in enumerate(zip(items, plan, facts), 1):
             # Every other story reads off a band across the card, so the eye keeps its line.
+            height = self.item_height(width, item, title_lines, fact)
+            row = (x - CARD_BLEED + 2, y - gap // 2 - 1, x + width + CARD_BLEED - 2, y + height + (gap + 1) // 2)
             if number % 2 == 0:
-                height = self.item_height(width, item, title_lines, fact)
-                self.d.rounded_rectangle((x - CARD_BLEED + 2, y - gap // 2 - 1, x + width + CARD_BLEED - 2,
-                                          y + height + (gap + 1) // 2), radius=4, fill=band)
+                self.d.rounded_rectangle(row, radius=4, fill=band)
+            if item.get("photo") is not None and height >= STORY_PHOTO_MIN_HEIGHT:
+                # Under the text: the picture from the row's top to its bottom.
+                self.story_photo(item["photo"], (row[2] - STORY_PHOTO_WIDTH, row[1], row[2], row[3] + 1))
             height = self.item(x, y, width, number, item, title_lines, mark, with_fact=fact)
             y += height + gap
         self.text((count_x, COLUMN_TOP + 2), str(len(plan)), 11, True, mark)
@@ -517,23 +522,25 @@ class NewsPage:
         if why:
             self.text((text_x, row_y + 7), why, STORY_FACT_SIZE, STORY_FACT_WEIGHT, c["ink"], "lm")
         height = len(lines) * TITLE_LINE + (ITEM_FOOTER if why else 0)
-        photo = item.get("photo")
-        if photo is not None and height >= STORY_PHOTO_MIN_HEIGHT:
-            self.story_photo(photo, (x + width - STORY_PHOTO_WIDTH, y + 1, x + width, y + height - 3))
-            return height
+        if item.get("photo") is not None and height >= STORY_PHOTO_MIN_HEIGHT:
+            return height  # its picture stands where the badge would (drawn under the row by the column)
         radius = min(STORY_ICON_RADIUS, height // 2 - 1)
         news_art.draw_story_icon(self.d, x + width - STORY_ICON_RADIUS - 2, y + height // 2 - 1,
                                  radius, kind, c["ink"], accent, c["panel"], image=self.img)
         return height
 
     def story_photo(self, photo, box):
-        """A story's own picture filling ``box`` with rounded corners, no frame."""
+        """A story's own picture filling ``box`` (a row's right end, top to bottom), whole over its
+        right STORY_PHOTO_SOLID px and fading out smoothly to the left edge; no frame."""
         left, top, right, bottom = (round(value) for value in box)
         size = (right - left, bottom - top)
-        art = ImageOps.fit(photo.convert("RGB"), (size[0] * 3, size[1] * 3), Image.Resampling.LANCZOS, centering=(0.5, 0.4))
-        mask = Image.new("L", art.size, 0)
-        ImageDraw.Draw(mask).rounded_rectangle((0, 0, art.width - 1, art.height - 1), radius=STORY_PHOTO_RADIUS * 3, fill=255)
-        self.img.paste(art.resize(size, Image.Resampling.LANCZOS), (left, top), mask.resize(size, Image.Resampling.LANCZOS))
+        art = ImageOps.fit(photo.convert("RGB"), size, Image.Resampling.LANCZOS, centering=(0.5, 0.4))
+        fade = max(1, size[0] - STORY_PHOTO_SOLID)
+        ramp = Image.new("L", (size[0], 1), 255)
+        for column in range(fade):
+            share = column / fade
+            ramp.putpixel((column, 0), round(255 * share * share * (3 - 2 * share)))
+        self.img.paste(art, (left, top), ramp.resize(size))
 
     def globe_filler(self, x, top, width, bottom, label, sources):
         c = self.c

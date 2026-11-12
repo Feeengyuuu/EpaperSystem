@@ -3384,11 +3384,19 @@ def test_a_columns_first_stories_show_their_articles_pictures_in_place_of_the_ba
     assert ("https://www.bbc.com/news/uk-jets", False) in asked and ("https://www.nytimes.com/b.html", False) in asked
     assert ("https://www.chinanews.com.cn/gn/1.shtml", False) in asked
     assert loaded == [([bbc, NYT_PICTURE], "stories", False)]
-    # Two pictures stand at the right of the world column, rounded and unframed; the stories
-    # without one keep their badges.
-    green = [(x, y) for x in range(760, 790) for y in range(150, 400) if image.getpixel((x, y))[:3] == (30, 160, 60)]
-    assert len(green) > 2 * 20 * 20 and len(badges) == 4
-    assert min(x for x, _y in green) >= 790 - news_layout.STORY_PHOTO_WIDTH - 12
+    # Two pictures stand at the right of the world column; the stories without one keep their badges.
+    green = [(x, y) for x in range(700, 800) for y in range(150, 400) if image.getpixel((x, y))[:3] == (30, 160, 60)]
+    assert len(green) > 2 * 30 * 30 and len(badges) == 4
+    # Each fills its row from top to bottom: the two rows' pictures meet, with no paper between.
+    column = [y for x, y in green if x == max(x for x, _y in green) - 4]
+    assert max(column) - min(column) + 1 == len(column) >= 2 * news_layout.STORY_PHOTO_MIN_HEIGHT
+    # Whole at the right, it fades out to the left: no hard edge where it begins.
+    right, middle = max(x for x, _y in green), min(column) + 10
+    solid_left = min(x for x, y in green if y == middle)
+    assert right - solid_left + 1 >= news_layout.STORY_PHOTO_SOLID - 2
+    start = right - news_layout.STORY_PHOTO_WIDTH + 1
+    steps = [image.getpixel((x, middle))[1] - image.getpixel((x - 1, middle))[1] for x in range(start + 1, start + 12)]
+    assert image.getpixel((start, middle))[:3] != (30, 160, 60) and max(abs(step) for step in steps) < 40
 
     # A redraw from cache reads no page and downloads nothing.
     asked.clear()
