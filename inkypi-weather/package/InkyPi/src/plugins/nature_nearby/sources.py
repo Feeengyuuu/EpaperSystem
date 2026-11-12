@@ -245,7 +245,10 @@ def fetch_stats(home, radius, now, context):
     total = _get_json(f"{V1_URL}/observations", {**params, "per_page": 0}, context, max_bytes=64 * 1024)
     observers = _get_json(f"{V1_URL}/observations/observers", {**params, "per_page": 1}, context)
     top = ((observers or {}).get("results") or [{}])[0] or {}
+    user = top.get("user") if isinstance(top.get("user"), dict) else {}
     return {
+        # Their avatar, when it is on iNaturalist's own image hosts.
+        "top_icon": safe_photo_url(user.get("icon_url")) or safe_photo_url(user.get("icon")) or "",
         "observations": int((total or {}).get("total_results") or 0),
         "observers": int((observers or {}).get("total_results") or 0),
         "top_observer": str(((top.get("user") or {}).get("login")) or "")[:30],

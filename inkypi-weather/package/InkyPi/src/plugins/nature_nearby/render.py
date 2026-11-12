@@ -7,7 +7,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageDraw, ImageOps
 
 from utils.doodle_backdrop import paint_doodles
 from utils.flat_icons import draw_icon
@@ -70,6 +70,8 @@ WATER_KEY_W, WATER_CELL_W, WATER_GAUGE = 60, 92, (11, 26)
 WATER_PER_TURN = 3
 # On the other hours the foot carries up to this many cells (threatened species, the top observer).
 FOOT_CELLS = 3
+# The most active observer's round avatar there.
+FOOT_AVATAR = 26
 # Quiet nature doodles in each card's colour under its content, by the card's icon: leaves,
 # birds and butterflies, or the naturalist's binoculars, notebook and lens.
 DOODLES = {icon: Path(__file__).resolve().parent / "assets" / "doodles" / f"{name}.png"
@@ -568,8 +570,9 @@ def _water(canvas, payload, now):
 
 def _foot(canvas, key, note, cells):
     """The filmstrip's foot on the hours the water does not have it, in the water's two lines: a
-    key (``key`` over ``note``), then ``cells`` of (Red List code or None, name, figure) sharing
-    the rest of the width, each name over its figure after its category's chip."""
+    key (``key`` over ``note``), then ``cells`` of (mark, name, figure) sharing the rest of the
+    width, each name over its figure after its mark: a Red List code as its category's chip, a
+    picture (an observer's avatar) as a round portrait, None for no mark."""
     left, right, top = RECENT_CARD[0] + 8, RECENT_CARD[2] - 8, WATER_TOP + 8
     upper, lower = top + 4, top + 19
     canvas.rule((left, WATER_TOP, right, WATER_TOP))
@@ -579,12 +582,20 @@ def _foot(canvas, key, note, cells):
     width = (right - x) / max(1, len(cells))
     for code, name, figure in cells:
         text_left = x
-        if code in IUCN_CATEGORIES:
+        if isinstance(code, str) and code in IUCN_CATEGORIES:
             fill = _rgb(IUCN_CATEGORIES[code][1])
             canvas.draw.rounded_rectangle((x, top + 3, x + 24, top + 21), radius=5, fill=fill)
             canvas.text((x + 12, top + 12), code, 10, (0, 0, 0) if _luminance(fill) > 0.35 else (255, 255, 255),
                         anchor="mm")
             text_left = x + 30
+        elif isinstance(code, Image.Image):
+            side = FOOT_AVATAR
+            face = ImageOps.fit(code.convert("RGB"), (side * 4, side * 4), Image.Resampling.LANCZOS)
+            mask = Image.new("L", face.size, 0)
+            ImageDraw.Draw(mask).ellipse((0, 0, face.width - 1, face.height - 1), fill=255)
+            face, mask = (part.resize((side, side), Image.Resampling.LANCZOS) for part in (face, mask))
+            canvas.image.paste(face, (round(x), top - 1), mask)
+            text_left = x + side + 6
         canvas.serif.text((text_left, upper), name, 12, anchor="lm", width=x + width - 8 - text_left)
         canvas.text((text_left, lower), figure, 13, anchor="lm", width=x + width - 8 - text_left)
         x += width
@@ -618,7 +629,8 @@ def _recent(canvas, payload, images, now):
     threatened = threatened_data(payload)
     observer = []
     if stats.get("top_observer"):
-        observer = [(None, f"@{stats['top_observer']}", f"{stats.get('top_observations', 0)} 条观察")]
+        observer = [(images.get(stats.get("top_icon")), f"@{stats['top_observer']}",
+                     f"{stats.get('top_observations', 0)} 条观察")]
     if threatened and threatened["items"] and ((payload.get("birds") or {}).get("data") or {}).get("items"):
         # With eBird's birds in the groups card, the week's vulnerable-or-worse species take the
         # foot: each its Red List category, its name and how often it was seen; the week's most

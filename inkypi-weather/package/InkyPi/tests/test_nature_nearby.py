@@ -705,3 +705,33 @@ def test_a_species_the_page_pictures_is_not_listed_again_among_the_threatened():
     assert [item["name"] for item in render._unshown(THREATENED["items"], shown)] == ["美洲鹈鹕"]
     # With nothing else to name, the list keeps what it has.
     assert render._unshown(THREATENED["items"][:1], shown) == THREATENED["items"][:1]
+
+
+def test_the_most_active_observer_stands_on_the_foot_with_their_avatar(monkeypatch):
+    from PIL import Image
+
+    from plugins.nature_nearby import render
+
+    icon = "https://static.inaturalist.org/attachments/users/icons/8953913/medium.jpg?1776529104"
+    answers = {"observations": {"total_results": 6229},
+               "observations/observers": {"total_results": 813, "results": [
+                   {"observation_count": 278, "species_count": 116,
+                    "user": {"login": "sms273", "icon": icon.replace("medium", "thumb"), "icon_url": icon}}]}}
+    monkeypatch.setattr(sources, "_get_json", lambda url, *_args, **_kwargs: answers[url.split("/v1/")[1]])
+    stats = sources.fetch_stats(sources.DEFAULT_HOME, 40, NOW, None)
+    assert stats["top_icon"] == icon and stats["top_observer"] == "sms273"
+    # An avatar anywhere but iNaturalist's own image hosts is not fetched.
+    answers["observations/observers"]["results"][0]["user"] = {"login": "sms273", "icon_url": "https://example.com/a.jpg"}
+    assert sources.fetch_stats(sources.DEFAULT_HOME, 40, NOW, None)["top_icon"] == ""
+
+    payload = _payload()
+    payload["stats"]["data"]["top_icon"] = icon
+    plain = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, {})
+    shown = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW,
+                        {icon: Image.new("RGB", (96, 96), (200, 40, 160))})
+    left, top = render.RECENT_CARD[0] + 8 + render.WATER_KEY_W + 6, render.WATER_TOP + 7
+    face = (left, top, left + render.FOOT_AVATAR, top + render.FOOT_AVATAR)
+    assert (200, 40, 160) in set(shown.crop(face).convert("RGB").get_flattened_data())
+    assert (200, 40, 160) not in set(plain.convert("RGB").get_flattened_data())
+    # Round: the portrait's corners stay paper.
+    assert shown.getpixel((face[0], face[1])) != (200, 40, 160)
