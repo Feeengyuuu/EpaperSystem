@@ -354,12 +354,13 @@ EXTREME_SLACK = 0.3
 # and filings as two more pills: 内部人3月 with each holding's open-market buys (买) and sells (卖)
 # of the past three months, the busiest first; 空头 with the change of its short interest on the
 # report before, the largest moves first (SHORT_CHANGE_MIN percent or more); SIGNAL_ENTRIES of each
-# at most. As many pills as fit are drawn; on the SIGNALS_FIRST_TURN display turn (market_map.turn)
-# these two stand before the dates, the short interest leading, so a full row still shows them.
+# at most. With such a note to show, the status on the row's right is cut to its figures
+# (N POS, the day's risers and fallers by their arrows) to make their room: the window it also
+# named stands on the trend card and over the trend column.
 MARKET_SIGNALS_CACHE_LEAF = "market_signals"
 INSIDER_SIGNAL = ("内部人3月", "accent_orange")
 SHORT_SIGNAL = ("空头", "cinnabar")
-SHORT_CHANGE_MIN, SIGNAL_ENTRIES, SIGNALS_FIRST_TURN = 5.0, 2, 1
+SHORT_CHANGE_MIN, SIGNAL_ENTRIES = 5.0, 2
 # On the map's display turn the Nasdaq-100 heat map (market_map.py) takes the holdings table's
 # place: every member a cell as large as its market value, in the page's rise and fall colours at
 # the strength of the day's move ((from this many percent, day strength, night strength), flat
@@ -574,7 +575,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		source_key = self._source_cache_key(period, holdings, portfolio_meta, data_provider)
 		theme_render_only = self._enabled(settings.get("_theme_render_only"))
 		# Which display turn this is: the holdings table gives one in market_map.MAP_EVERY to the
-		# Nasdaq-100 heat map, and the title row's notes change their order on another.
+		# Nasdaq-100 heat map.
 		page_turn = market_map.turn(datetime.now().astimezone())
 
 		if theme_render_only:
@@ -646,7 +647,6 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			portfolio_meta=portfolio_meta,
 			holdings_order=settings.get("holdings_order") or "smart",
 			market=self._market_map(allow_network=not theme_render_only, wanted=page_turn == market_map.MAP_TURN),
-			page_turn=page_turn,
 		)
 		if hasattr(image, "info"):
 			provenance = SourceProvenance.FRESH_CACHE if theme_render_only else SourceProvenance.LIVE
@@ -2678,7 +2678,6 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		sorted_by_day=False,
 		keep_symbols=None,
 		today=None,
-		signals_first=False,
 	):
 		colors = _active_stock_colors()
 		left, top, right, bottom = box
@@ -2691,8 +2690,9 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			fill=colors["panel"],
 			canvas=img,
 		)
-		status_left = self._draw_holdings_status(draw, (right - 14, top + 22), metrics, tracking_window_label)
-		self._draw_holding_events(img, draw, (left + 142, status_left - 18), top + 22, metrics, today, signals_first)
+		status_left = self._draw_holdings_status(draw, (right - 14, top + 22), metrics, tracking_window_label,
+												 brief=bool(self._holding_signals(metrics)))
+		self._draw_holding_events(img, draw, (left + 142, status_left - 18), top + 22, metrics, today)
 		doodles = (left + 3, top + 30, right - 3, bottom - 3)
 		paint_doodles(img, doodles, HOLDINGS_DOODLES_PATH, colors["malachite"], strength=HOLDINGS_DOODLES_STRENGTH,
 					  radius=4, offset=doodles[:2])
@@ -2891,8 +2891,10 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				positions[key] = round(left + width * fraction)
 		return positions
 
-	def _draw_holdings_status(self, draw, anchor, metrics, tracking_window_label):
-		"""Right side of the HOLDINGS title row: position count, today's breadth, window."""
+	def _draw_holdings_status(self, draw, anchor, metrics, tracking_window_label, brief=False):
+		"""Right side of the HOLDINGS title row: position count, today's breadth, window; ``brief``
+		keeps the figures alone (N POS, the risers and fallers by their arrows) and leaves the
+		window to the trend card, for a row with more notes to carry."""
 		colors = _active_stock_colors()
 		right, center_y = anchor
 		font = self._font(11, True)
@@ -2900,7 +2902,9 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		up = sum(1 for item in equities if (item["day_percent"] or 0) > 0.005)
 		down = sum(1 for item in equities if (item["day_percent"] or 0) < -0.005)
 		parts = [(f"{len(equities)} POSITIONS", None), (f"{up} UP", 1.0), (f"{down} DOWN", -1.0)]
-		if tracking_window_label:
+		if brief:
+			parts = [(f"{len(equities)} POS", None), (str(up), 1.0), (str(down), -1.0)]
+		elif tracking_window_label:
 			parts.append((tracking_window_label, None))
 		x = right
 		for index, (text, arrow) in enumerate(reversed(parts)):
@@ -3049,11 +3053,11 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				groups.append((label, colour, [row[-2:] for row in sorted(rows)[:SIGNAL_ENTRIES]]))
 		return groups
 
-	def _draw_holding_events(self, img, draw, span, center_y, metrics, today, signals_first=False):
+	def _draw_holding_events(self, img, draw, span, center_y, metrics, today):
 		"""The title row's notes, as many as fit between ``span``'s ends: the coming ex-dividend
 		dates behind a solid 除息 pill and the week's filings behind 公告, each holding by the
 		table's logo, its symbol (the Vanguard funds share one mark) and the date or form; then the
-		insider and short-interest pills (_holding_signals), which go first with ``signals_first``."""
+		insider and short-interest pills (_holding_signals)."""
 		colors = _active_stock_colors()
 		left, right = span
 		events = self._holding_events(metrics, today)
@@ -3067,11 +3071,27 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			if rows:
 				groups.append((label, colour, [(symbol, when) for when, symbol in rows]))
 		signals = self._holding_signals(metrics)
-		# On their turn the short interest leads, so each of the two is seen first in a tight row.
-		groups = signals[::-1] + groups if signals_first else groups + signals
-		if not groups or right - left < 80:
+		if not (groups or signals) or right - left < 80:
 			return
 		pill_font, date_font, symbol_font = get_base_ui_font(10, bold=True), self._font(11), self._font(11, True)
+
+		def group_width(label, rows):
+			width = self._text_width(draw, label, pill_font) + 10 + 5 + 6
+			for symbol, when in rows:
+				logo = self._holding_logo_image(symbol, EVENT_LOGO_SIZE, width=EVENT_LOGO_SIZE + 4)
+				width += (logo.width + 2 if logo else 0) + self._text_width(draw, symbol, symbol_font) + 3 + self._text_width(
+					draw, when, date_font if when.isascii() else get_base_ui_font(10, bold=True)) + 9
+			return width
+
+		# The dates and filings keep all their entries; the insider and short-interest pills share
+		# the room after them: one holding each first, then a second where it still fits.
+		room = right - left - sum(group_width(label, rows) for label, _colour, rows in groups)
+		shown = [1] * len(signals)
+		for index, (label, _colour, rows) in enumerate(signals):
+			planned = sum(group_width(name, entries[:count]) for (name, _c, entries), count in zip(signals, shown))
+			if len(rows) > 1 and planned - group_width(label, rows[:1]) + group_width(label, rows) <= room:
+				shown[index] = len(rows)
+		groups += [(label, colour, rows[:count]) for (label, colour, rows), count in zip(signals, shown)]
 		x = left
 		for label, colour, rows in groups:
 			pill_w = self._text_width(draw, label, pill_font) + 10
@@ -3267,7 +3287,6 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		portfolio_meta=None,
 		holdings_order="smart",
 		market=None,
-		page_turn=0,
 	):
 		"""Account summary and trend on top, every holding with its day and window movement below
 		(with ``market``, the Nasdaq-100 heat map in the holdings table's place).
@@ -3358,7 +3377,6 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				sorted_by_day=smart,
 				keep_symbols=self._symbols_setting(holdings_pin_symbols) if smart else None,
 				today=(updated_at or datetime.now()).date(),
-				signals_first=page_turn == SIGNALS_FIRST_TURN,
 			)
 
 			return img

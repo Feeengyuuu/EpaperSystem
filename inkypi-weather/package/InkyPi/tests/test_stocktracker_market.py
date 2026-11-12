@@ -157,25 +157,39 @@ def test_the_title_row_notes_insider_trading_and_short_interest():
         ("内部人3月", "accent_orange", [("NVDA", "买2卖40"), ("AAPL", "卖25")]),
         ("空头", "cinnabar", [("MSFT", "-12%"), ("AAPL", "+10%")])]
 
-    def drawn(signals_first, span=(160, 790)):
-        image = Image.new("RGB", (800, 60), (255, 253, 240))
+    for item in metrics:
+        item.update({"day_percent": 1.0, "value": 100.0})
+
+    def title_row(rows):
+        """(texts with their x, where the status on the right begins) of the HOLDINGS title row."""
+        image = Image.new("RGB", (800, 300), (255, 253, 240))
         draw = ImageDraw.Draw(image)
         texts = []
         original = draw.text
         draw.text = lambda xy, text, **kwargs: texts.append((round(xy[0]), text)) or original(xy, text, **kwargs)
-        plugin._draw_holding_events(image, draw, span, 30, metrics, date(2026, 11, 11), signals_first)
-        return texts
+        status_left = plugin._draw_holdings_status(draw, (770, 30), rows, "1M RETURN", brief=bool(plugin._holding_signals(rows)))
+        plugin._draw_holding_events(image, draw, (158, status_left - 18), 30, rows, date(2026, 11, 11))
+        return texts, status_left
 
-    usual = [text for _x, text in drawn(False)]
-    # The dates keep their place; the two new pills follow where there is room.
-    assert usual.index("除息") < usual.index("内部人3月") < usual.index("空头")
-    assert {"买2卖40", "卖25", "-12%", "+10%", "11/19"} <= set(usual)
-    first = [text for _x, text in drawn(True)]
-    assert first.index("空头") < first.index("内部人3月") < first.index("除息")
-    # In a row too short for all, the turn decides which are seen.
-    assert "内部人3月" not in [text for _x, text in drawn(False, (160, 290))]
-    tight = [text for _x, text in drawn(True, (160, 330))]
-    assert "空头" in tight and "除息" not in tight
+    texts, status_left = title_row(metrics)
+    words = [text for _x, text in texts]
+    # The dates keep their place and the two new pills follow, every time: with notes to show, the
+    # status on the right is cut to its figures (the window is named on the trend card and column).
+    assert words.index("除息") < words.index("内部人3月") < words.index("空头")
+    # Each pill shows its first holding before either shows a second, so both are always seen.
+    assert {"买2卖40", "-12%", "11/19", "3 POS", "3", "0"} <= set(words)
+    assert ("卖25" in words) >= ("+10%" in words)
+    assert not {"1M RETURN", "3 POSITIONS", "3 UP"} & set(words)
+    # With the row to themselves the pills list two holdings each.
+    for item in metrics:
+        item["data"].pop("ex_dividend_date", None)
+    assert {"买2卖40", "卖25", "-12%", "+10%"} <= {text for _x, text in title_row(metrics)[0]}
+    assert all(x < status_left for x, text in texts if text in ("买2卖40", "卖25", "-12%", "+10%", "空头"))
+    # Without a note the title row is the one it was.
+    plain = [{"data": {"symbol": "MSFT", "ex_dividend_date": "2026-11-19"}, "is_cash": False, "day_percent": 1.0}]
+    plain_texts, plain_left = title_row(plain)
+    assert {"1 POSITIONS", "1 UP", "0 DOWN", "1M RETURN", "除息"} <= {text for _x, text in plain_texts}
+    assert plain_left < status_left
 
 
 def test_the_nasdaq_100_list_is_cut_down_to_symbol_value_and_change():
@@ -294,20 +308,20 @@ def test_the_page_shows_the_map_only_on_its_turn_and_only_with_a_list(monkeypatc
     shown, fetched = [], []
     original = plugin._create_dashboard
     monkeypatch.setattr(plugin, "_create_dashboard", lambda *args, **kwargs: shown.append(
-        (bool(kwargs.get("market")), kwargs.get("page_turn"))) or original(*args, **kwargs))
+        bool(kwargs.get("market"))) or original(*args, **kwargs))
     monkeypatch.setattr(market_map, "fetch", lambda _context: fetched.append(1) or market_map.members(_listing()))
 
     # A refresh on another turn still renews the list, and draws the holdings.
     monkeypatch.setattr(market_map, "turn", lambda _now: 1)
     plugin.generate_image(settings, FakeDeviceConfig())
-    assert shown == [(False, 1)] and fetched == [1]
+    assert shown == [False] and fetched == [1]
     # On the map's turn a redraw from cache shows it without asking anybody.
     monkeypatch.setattr(market_map, "turn", lambda _now: market_map.MAP_TURN)
     monkeypatch.setattr(market_map, "fetch", lambda _context: pytest.fail("a redraw fetched the list"))
     plugin.generate_image({**settings, "_theme_render_only": True}, FakeDeviceConfig())
-    assert shown[-1] == (True, market_map.MAP_TURN)
+    assert shown[-1] is True
     # Without a list the holdings keep their place on that turn too.
     for path in (tmp_path / "cache").rglob(market_map.CACHE_FILE):
         path.unlink()
     plugin.generate_image({**settings, "_theme_render_only": True}, FakeDeviceConfig())
-    assert shown[-1] == (False, market_map.MAP_TURN)
+    assert shown[-1] is False
