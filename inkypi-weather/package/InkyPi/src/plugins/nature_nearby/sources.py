@@ -34,6 +34,9 @@ ESTABLISHMENT = {"native": "加州本土", "endemic": "加州特有", "introduce
 DEFAULT_HOME = (37.5485, -121.9886)  # Fremont
 PREFERRED_PLACE = 14  # California, for regional common names
 MAX_RECENT = 12
+# How many of them the page shows as picture tiles: the week's species, and the newest
+# observations after the first (the newest find has its own card).
+SPECIES_TILES, RECENT_TILES = 4, 4
 MAX_SPECIES = 12
 # Life groups: Chinese label, icon, colour role (four native panel inks, then ink).
 GROUPS = {

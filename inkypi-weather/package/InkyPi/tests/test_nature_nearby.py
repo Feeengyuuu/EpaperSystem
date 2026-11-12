@@ -139,8 +139,8 @@ def test_the_hero_shows_the_species_line_and_the_sources_logos():
     shown = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, {})
 
     green = tuple(int(sources.IUCN_CATEGORIES["LC"][1][index:index + 2], 16) for index in (1, 3, 5))
-    assert green in set(shown.crop((150, 260, 300, 330)).get_flattened_data())
-    assert green not in set(plain.crop((150, 260, 300, 330)).get_flattened_data())
+    assert green in set(shown.crop((150, 290, 325, 345)).get_flattened_data())
+    assert green not in set(plain.crop((150, 290, 325, 345)).get_flattened_data())
     # iNaturalist's logo (its green "i") heads the page and the hero card.
     assert any(r < 140 and g > 150 and b < 90 for r, g, b in plain.crop((200, 10, 330, 50)).get_flattened_data())
 
@@ -180,8 +180,8 @@ def test_page_shows_notable_birds_under_the_groups(mode):
     without = render_page((800, 480), _payload(), {"_inkypi_theme": {"mode": mode}}, NOW, {})
 
     assert with_birds.size == (800, 480)
-    assert with_birds.crop((12, 400, 300, 468)).tobytes() != without.crop((12, 400, 300, 468)).tobytes()
-    assert with_birds.crop((310, 58, 788, 300)).tobytes() == without.crop((310, 58, 788, 300)).tobytes()
+    assert with_birds.crop((12, 410, 330, 468)).tobytes() != without.crop((12, 410, 330, 468)).tobytes()
+    assert with_birds.crop((340, 58, 788, 256)).tobytes() == without.crop((340, 58, 788, 256)).tobytes()
 
 
 def test_birds_load_only_with_an_ebird_key(monkeypatch, tmp_path):
@@ -409,10 +409,12 @@ def test_the_hero_gives_the_blurb_and_months_and_the_groups_card_the_threatened(
 
     assert image.size == (800, 480)
     assert any(text.startswith("君主斑蝶是一种斑蝶。它们") for text in drawn) and "高峰 3 月" in drawn
-    assert {"受威胁物种", "本周 35 种 · 易危及以上", "VU 易危", "CR 极危", "71 次"} <= set(drawn)
+    # The monarch is already pictured in the filmstrip: the list names the next one instead.
+    assert {"受威胁物种", "本周 35 种 · 易危及以上", "CR 极危", "24 次"} <= set(drawn)
+    assert "71 次" not in drawn and "VU 易危" not in drawn
     # This month's bar in the card's green.
     green = render._palette({"_inkypi_theme": {"mode": mode}})["green"]
-    assert green in set(image.crop((200, 300, 292, 325)).get_flattened_data())
+    assert green in set(image.crop((230, 332, 325, 349)).get_flattened_data())
     # Without the blurb, a Traditional copy is not shown; without months either, the hero is as before.
     plain = {**_rich_payload(), "blurb": None, "season": {"state": "live", "data": {"months": [0] * 12}}}
     drawn.clear()
@@ -428,7 +430,7 @@ def test_with_ebirds_birds_the_threatened_species_take_the_filmstrips_foot(monke
          "time": NOW.isoformat(), "count": 1, "distance_km": 9.0, "confirmed": True}]}}
     render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, {})
 
-    assert "易危及以上 本周 35 种：君主斑蝶 71 次 · 美洲鹈鹕 24 次" in drawn
+    assert "易危及以上 本周 35 种：美洲鹈鹕 24 次" in drawn
     assert not any(text.startswith("本周最活跃") for text in drawn) and "受威胁物种" not in drawn
 
 
@@ -649,3 +651,39 @@ def test_water_retry_after_is_local_to_each_optional_source(monkeypatch, tmp_pat
     assert parent.remaining_seconds() == 120
     assert all(result[name]["error"] == "source_deadline" for name in ("water", "snow"))
     assert result["provenance"] is SourceProvenance.LIVE
+
+
+def test_the_pictures_are_large_tiles_and_the_newest_finds_photo_takes_the_room_its_text_leaves(monkeypatch):
+    from plugins.nature_nearby import render
+
+    boxes = []
+    monkeypatch.setattr(render, "_photo", lambda canvas, images, url, box, group: boxes.append(box))
+    payload = _payload()
+    payload["species"]["data"]["items"] = [
+        {"count": 140 - index, "name": f"物种{index}", "scientific": "Sci name", "group": "Aves", "photo": None}
+        for index in range(6)]
+    payload["recent"]["data"]["items"] = [dict(payload["recent"]["data"]["items"][0], id=index) for index in range(8)]
+    render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, {})
+
+    hero, species, recent = boxes[0], boxes[1:1 + sources.SPECIES_TILES], boxes[1 + sources.SPECIES_TILES:]
+    assert len(species) == sources.SPECIES_TILES == 4 and len(recent) == sources.RECENT_TILES == 4
+    # Each tile about a hundred pixels a side (they were 70 and 88 x 62), inside its card.
+    assert all(right - left >= 100 and bottom - top >= 90 for left, top, right, bottom in species + recent)
+    assert all(render.SPECIES_CARD[0] < box[0] and box[2] < render.SPECIES_CARD[2] for box in species)
+    assert all(box[3] < render.WATER_TOP for box in recent)
+    assert hero[2] - hero[0] >= 300 and hero[3] - hero[1] >= 165
+    # With the species' lead to print, the photo gives it two lines and no more.
+    boxes.clear()
+    render_page((800, 480), _rich_payload(), {"_inkypi_theme": {"mode": "day"}}, NOW, {})
+    assert 130 <= boxes[0][3] - boxes[0][1] < hero[3] - hero[1]
+
+
+def test_a_species_the_page_pictures_is_not_listed_again_among_the_threatened():
+    from plugins.nature_nearby import render
+
+    payload = _rich_payload()
+    shown = render.pictured(payload)
+    assert "Danaus plexippus" in shown
+    assert [item["name"] for item in render._unshown(THREATENED["items"], shown)] == ["美洲鹈鹕"]
+    # With nothing else to name, the list keeps what it has.
+    assert render._unshown(THREATENED["items"][:1], shown) == THREATENED["items"][:1]

@@ -15,7 +15,9 @@ from utils.local_wordmark import paste_local_wordmark
 from utils.fonts import load_font
 from utils.page_canvas import PageCanvas
 
-from .sources import ESTABLISHMENT, IUCN_CATEGORIES, group_info, is_simplified, local_now, parse_time
+from .sources import (
+    ESTABLISHMENT, IUCN_CATEGORIES, RECENT_TILES, SPECIES_TILES, group_info, is_simplified, local_now, parse_time,
+)
 
 
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -30,9 +32,11 @@ HERO_NAME_SIZE = 28
 FONT_DIR = Path(__file__).resolve().parents[2] / "static" / "fonts"
 FACES = {"serif": FONT_DIR / "NotoSerifSC-SemiBold-Nature.ttf", "latin": FONT_DIR / "Lora-Italic-VF.ttf"}
 LATIN_WEIGHT = 560
-HERO_PHOTO_HEIGHT = 132
-# With the species' blurb or its months to show, the photo gives up a third of its height.
-COMPACT_PHOTO_HEIGHT = 98
+# The newest find's photo takes the height its text leaves in the card, never less than this.
+HERO_PHOTO_MIN = 110
+# The week's species and the filmstrip are rows of picture tiles (sources.SPECIES_TILES and
+# RECENT_TILES of them, as wide as their card allows), their photos this tall.
+SPECIES_PHOTO_HEIGHT, RECENT_PHOTO_HEIGHT = 102, 90
 # The months it is seen around home: twelve bars this wide and tall, shown with at least
 # SEASON_MIN sightings in all.
 SEASON_BAR, SEASON_GAP, SEASON_HEIGHT, SEASON_MIN = 5, 2, 12, 12
@@ -50,17 +54,17 @@ NIGHT = {
     "badge_ink": "#000000",
 }
 WEEKDAYS = "一二三四五六日"
-HERO_CARD = (12, 58, 300, 330)
-SPECIES_CARD = (310, 58, 788, 300)
-GROUP_CARD = (12, 336, 300, 468)
-RECENT_CARD = (310, 306, 788, 468)
+HERO_CARD = (12, 58, 330, 340)
+SPECIES_CARD = (340, 58, 788, 256)
+GROUP_CARD = (12, 346, 330, 468)
+RECENT_CARD = (340, 262, 788, 468)
 HEADER = 28
 # California's water at the filmstrip's foot, in turn with the line the foot has (even hours the
 # water, odd hours the line): from WATER_TOP down a key, a level gauge a reservoir, three a turn (filled to its
 # share of capacity, a notch where the date's average stands, its name over its share of that
 # average) and the Sierra's snow: its depth over its water against the median for the date.
-WATER_TOP = 437
-WATER_KEY_W, WATER_CELL_W, WATER_GAUGE = 62, 100, (11, 22)
+WATER_TOP = 428
+WATER_KEY_W, WATER_CELL_W, WATER_GAUGE = 60, 92, (11, 26)
 # Three reservoirs a turn, so each has room for its name: the northern three and the southern
 # three on alternate even hours.
 WATER_PER_TURN = 3
@@ -288,37 +292,11 @@ def _season(canvas, months, right, middle, now):
     return width + 5 + label_w
 
 
-def _hero_compact(canvas, payload, images, now, item, taxon, blurb, months):
-    """The newest find with its species' blurb and months: a shorter photo, then the name, its
-    scientific name, its lineage, two lines of the Wikipedia lead, where and when, and the
-    photographer beside the months it is seen around home."""
-    left, top, right = HERO_CARD[0] + 8, HERO_CARD[1] + HEADER + 6, HERO_CARD[2] - 8
-    _photo(canvas, images, item["photo"], (left, top, right, top + COMPACT_PHOTO_HEIGHT), item["group"])
-    y = top + COMPACT_PHOTO_HEIGHT + 16
-    chip = _group_chip(canvas, right, y, item["group"], right_align=True)
-    canvas.serif.text((left, y), _display_name(item), HERO_NAME_SIZE, anchor="lm", width=right - left - chip - 8)
-    canvas.latin.text((left, y + 22), item["scientific"], 13, "muted", anchor="lm", width=right - left)
-    lineage = " · ".join(part for part in (taxon.get("order"), taxon.get("family"),
-                                           ESTABLISHMENT.get(taxon.get("establishment"), "")) if part)
-    chip_w = _iucn_chip(canvas, right, y + 38, taxon["iucn"]) + 6 if taxon.get("iucn") else 0
-    if lineage:
-        canvas.text((left, y + 38), lineage, 11, anchor="lm", width=right - left - chip_w)
-    line_y = y + 53
-    for line in canvas.wrap(blurb, 11, right - left, 2, bold=False) if blurb else []:
-        canvas.text((left, line_y), line, 11, anchor="lm", bold=False)
-        line_y += 14
-    stamp = parse_time(item["time"])
-    where = " · ".join(part for part in (item.get("place"), ago(stamp, now) if stamp else "",
-                                         f"距家 {item['distance_km']:.0f} km" if item.get("distance_km") is not None
-                                         else "") if part)
-    canvas.text((left, line_y + 2), where, 11, anchor="lm", bold=False, width=right - left)
-    bottom = HERO_CARD[3] - 14
-    used = _season(canvas, months, right, bottom, now) + 8 if months else 0
-    canvas.text((left, bottom), f"© {item['observer']}" if item.get("observer") else item.get("attribution", ""),
-                10, "muted", anchor="lm", bold=False, width=right - left - used)
-
-
 def _hero(canvas, payload, images, now):
+    """The newest find: its photo as tall as the card leaves it, then the name, its scientific
+    name, its lineage and Red List category, two lines of the Wikipedia lead when there is one,
+    where and when, and the photographer beside the months it is seen around home (or how often
+    it has been observed worldwide)."""
     items = payload["recent"]["data"].get("items", [])
     taxon = ((payload.get("taxon") or {}).get("data")) or {}
     _card(canvas, HERO_CARD, "green", "leaf", "最新发现", "研究级", logo="inaturalist")
@@ -328,29 +306,39 @@ def _hero(canvas, payload, images, now):
         return
     item = items[0]
     blurb, months = blurb_text(payload), season_months(payload)
-    if blurb or months:
-        _hero_compact(canvas, payload, images, now, item, taxon, blurb, months)
-        return
-    _photo(canvas, images, item["photo"], (left, top, right, top + HERO_PHOTO_HEIGHT), item["group"])
-    y = top + HERO_PHOTO_HEIGHT + 18
-    chip = _group_chip(canvas, right, y, item["group"], right_align=True)
-    canvas.serif.text((left, y), _display_name(item), HERO_NAME_SIZE, anchor="lm", width=right - left - chip - 8)
-    canvas.latin.text((left, y + 23), item["scientific"], 13, "muted", anchor="lm", width=right - left)
-    # The species in more depth: its order and family, its Red List category and standing here.
+    lines = canvas.wrap(blurb, 11, right - left, 2, bold=False) if blurb else []
     lineage = " · ".join(part for part in (taxon.get("order"), taxon.get("family"),
                                            ESTABLISHMENT.get(taxon.get("establishment"), "")) if part)
-    chip_w = _iucn_chip(canvas, right, y + 40, taxon["iucn"]) + 6 if taxon.get("iucn") else 0
+    # From the card's foot up: the photographer's line, where and when, the lead, the lineage,
+    # the scientific name and the name; the photo has the rest.
+    foot = HERO_CARD[3] - 11
+    where_y = foot - 14
+    blurb_y = where_y - 14 * len(lines)
+    lineage_y = blurb_y - (15 if lineage or taxon.get("iucn") else 0)
+    science_y = lineage_y - 16
+    name_y = science_y - 21
+    photo_bottom = max(top + HERO_PHOTO_MIN, name_y - 19)
+    _photo(canvas, images, item["photo"], (left, top, right, photo_bottom), item["group"])
+    chip = _group_chip(canvas, right, name_y, item["group"], right_align=True)
+    canvas.serif.text((left, name_y), _display_name(item), HERO_NAME_SIZE, anchor="lm", width=right - left - chip - 8)
+    canvas.latin.text((left, science_y), item["scientific"], 13, "muted", anchor="lm", width=right - left)
+    chip_w = _iucn_chip(canvas, right, lineage_y, taxon["iucn"]) + 6 if taxon.get("iucn") else 0
     if lineage:
-        canvas.text((left, y + 40), lineage, 11, anchor="lm", width=right - left - chip_w)
+        canvas.text((left, lineage_y), lineage, 11, anchor="lm", width=right - left - chip_w)
+    for index, line in enumerate(lines):
+        canvas.text((left, blurb_y + 14 * index), line, 11, anchor="lm", bold=False)
     stamp = parse_time(item["time"])
     where = " · ".join(part for part in (item.get("place"), ago(stamp, now) if stamp else "",
                                          f"距家 {item['distance_km']:.0f} km" if item.get("distance_km") is not None
                                          else "") if part)
-    canvas.text((left, y + 57), where, 11, anchor="lm", bold=False, width=right - left)
-    reach = _reach_text(taxon["observations"]) if taxon.get("observations") else ""
-    reach_w = canvas.text((right, y + 72), reach, 10, "muted", anchor="rm", bold=False) + 8 if reach else 0
-    canvas.text((left, y + 72), f"© {item['observer']}" if item.get("observer") else item.get("attribution", ""),
-                10, "muted", anchor="lm", bold=False, width=right - left - reach_w)
+    canvas.text((left, where_y), where, 11, anchor="lm", bold=False, width=right - left)
+    if months:
+        used = _season(canvas, months, right, foot, now) + 8
+    else:
+        reach = _reach_text(taxon["observations"]) if taxon.get("observations") else ""
+        used = canvas.text((right, foot), reach, 10, "muted", anchor="rm", bold=False) + 8 if reach else 0
+    canvas.text((left, foot), f"© {item['observer']}" if item.get("observer") else item.get("attribution", ""),
+                10, "muted", anchor="lm", bold=False, width=right - left - used)
 
 
 def _species(canvas, payload, images):
@@ -362,31 +350,23 @@ def _species(canvas, payload, images):
     if not items:
         canvas.text((left, 180), "物种统计暂不可用", 15, "muted", anchor="lm")
         return
-    columns, gap = 3, 8
-    width = (right - left - gap * (columns - 1)) // columns
+    # A row of picture tiles: the photo, its place in the week on it, then the name, the
+    # scientific name and the week's count under it.
+    gap = 8
+    width = (right - left - gap * (SPECIES_TILES - 1)) // SPECIES_TILES
     top = SPECIES_CARD[1] + HEADER + 6
-    height = (SPECIES_CARD[3] - 8 - top - gap) // 2
-    for index, item in enumerate(items[:6]):
-        x = left + (index % columns) * (width + gap)
-        y = top + (index // columns) * (height + gap)
-        side = 70
-        _photo(canvas, images, item.get("photo"), (x, y + 6, x + side, y + 6 + side), item["group"])
+    bottom = top + SPECIES_PHOTO_HEIGHT
+    for index, item in enumerate(items[:SPECIES_TILES]):
+        x = left + index * (width + gap)
+        _photo(canvas, images, item.get("photo"), (x, top, x + width, bottom), item["group"])
         badge_fill = canvas.color("yellow" if index == 0 else "ink")
-        canvas.draw.ellipse((x - 4, y + 2, x + 14, y + 20), fill=badge_fill, outline=canvas.color("paper"))
-        canvas.text((x + 5, y + 11), str(index + 1), 11, (20, 20, 20) if index == 0 else "paper", anchor="mm")
-        text_left = x + side + 7
-        text_width = x + width - text_left
-        # The Chinese name, the scientific name under it (on two lines when the name takes one),
-        # and the week's count at the foot, level with the photo's bottom.
-        names = canvas.serif.wrap(_display_name(item), 13, text_width, 2)
-        for line_index, line in enumerate(names):
-            canvas.serif.text((text_left, y + 6 + line_index * 16), line, 13, anchor="la")
-        science_top = y + 8 + len(names) * 16
-        for line_index, line in enumerate(canvas.latin.wrap(item["scientific"], 11, text_width, 3 - len(names))):
-            canvas.latin.text((text_left, science_top + line_index * 12), line, 11, "muted", anchor="la")
+        canvas.draw.ellipse((x - 4, top - 4, x + 16, top + 16), fill=badge_fill, outline=canvas.color("paper"))
+        canvas.text((x + 6, top + 6), str(index + 1), 12, (20, 20, 20) if index == 0 else "paper", anchor="mm")
+        canvas.serif.text((x, bottom + 12), _display_name(item), 14, anchor="lm", width=width)
+        canvas.latin.text((x, bottom + 28), item["scientific"], 11, "muted", anchor="lm", width=width)
         _label, icon, tone = group_info(item["group"])
-        draw_icon(canvas.draw, icon, (text_left, y + 59), 15, canvas.color(tone), canvas.color("paper"))
-        canvas.text((text_left + 19, y + 67), f"{item['count']} 次", 18, anchor="lm")
+        draw_icon(canvas.draw, icon, (x, bottom + 39), 15, canvas.color(tone), canvas.color("paper"))
+        canvas.text((x + 19, bottom + 47), f"{item['count']} 次", 16, anchor="lm")
 
 
 def _groups(canvas, payload, now):
@@ -403,25 +383,32 @@ def _groups(canvas, payload, now):
         return
     threatened = threatened_data(payload)
     if threatened:
-        _groups_with_threatened(canvas, groups, total, threatened)
+        _groups_with_threatened(canvas, groups, total, threatened, pictured(payload))
         return
-    bar_top, x = GROUP_CARD[1] + HEADER + 10, float(left)
+    bar_top, x = GROUP_CARD[1] + HEADER + 7, float(left)
     for group in groups:
         _label, _icon, tone = group_info(group["group"])
         width = (right - left) * group["count"] / total
         fill = canvas.color(tone) if tone != "ink" else canvas.color("panel")
-        canvas.draw.rectangle((x, bar_top, x + width, bar_top + 16), fill=fill)
+        canvas.draw.rectangle((x, bar_top, x + width, bar_top + 12), fill=fill)
         x += width
-    canvas.draw.rectangle((left, bar_top, right, bar_top + 16), outline=canvas.color("ink"), width=1)
-    column_width = (right - left) / 2
+    canvas.draw.rectangle((left, bar_top, right, bar_top + 12), outline=canvas.color("ink"), width=1)
+    column_width = (right - left) / 3
     for index, group in enumerate(groups[:6]):
         label, icon, tone = group_info(group["group"])
-        cx = left + (index % 2) * column_width
-        cy = bar_top + 35 + (index // 2) * 22
+        cx = left + (index % 3) * column_width
+        cy = bar_top + 28 + (index // 3) * 20
         draw_icon(canvas.draw, icon, (cx, cy - 8), 16, canvas.color(tone if tone != "ink" else "ink"),
                   canvas.color("paper"))
-        canvas.text((cx + 22, cy), label, 13, anchor="lm")
-        canvas.text((cx + column_width - 10, cy), f"{group['count']} 种", 13, anchor="rm")
+        canvas.text((cx + 20, cy), f"{label} {group['count']}", 12, anchor="lm", width=column_width - 22)
+
+
+def pictured(payload):
+    """The scientific names of the species the page shows as pictures: the newest find, the
+    week's species and the filmstrip."""
+    recent = payload["recent"]["data"].get("items", [])[:1 + RECENT_TILES]
+    species = payload["species"]["data"].get("items", [])[:SPECIES_TILES]
+    return {item.get("scientific") for item in recent + species if item.get("scientific")}
 
 
 def threatened_data(payload):
@@ -443,24 +430,31 @@ def _thin_groups(canvas, groups, total):
     """The life groups as a thin bar and their top three in a row under it; returns the row's
     bottom."""
     left, right = GROUP_CARD[0] + 10, GROUP_CARD[2] - 10
-    bar_top, x = GROUP_CARD[1] + HEADER + 7, float(left)
+    bar_top, x = GROUP_CARD[1] + HEADER + 6, float(left)
     for group in groups:
         _label, _icon, tone = group_info(group["group"])
         width = (right - left) * group["count"] / total
-        canvas.draw.rectangle((x, bar_top, x + width, bar_top + 9),
+        canvas.draw.rectangle((x, bar_top, x + width, bar_top + 8),
                               fill=canvas.color(tone) if tone != "ink" else canvas.color("panel"))
         x += width
-    canvas.draw.rectangle((left, bar_top, right, bar_top + 9), outline=canvas.color("ink"), width=1)
+    canvas.draw.rectangle((left, bar_top, right, bar_top + 8), outline=canvas.color("ink"), width=1)
     column = (right - left) / 3
     for index, group in enumerate(groups[:3]):
         label, icon, tone = group_info(group["group"])
-        cx, cy = left + index * column, bar_top + 22
+        cx, cy = left + index * column, bar_top + 20
         draw_icon(canvas.draw, icon, (cx, cy - 7), 14, canvas.color(tone), canvas.color("paper"))
         canvas.text((cx + 17, cy), f"{label} {group['count']}", 11, anchor="lm", width=column - 19)
-    return bar_top + 34
+    return bar_top + 32
 
 
-def _groups_with_threatened(canvas, groups, total, threatened):
+def _unshown(items, shown):
+    """``items`` without the species the page already pictures (``shown`` scientific names), as
+    long as that leaves any: a species is not listed twice on one page."""
+    fresh = [item for item in items if item.get("scientific") not in shown]
+    return fresh or items
+
+
+def _groups_with_threatened(canvas, groups, total, threatened, shown=()):
     """The life groups as a thin bar and their top three, then this week's species at vulnerable
     or worse: how many, and the most observed with their Red List category (as their local status
     stands for one) and how often they were seen; one quiet line in a week without any."""
@@ -470,12 +464,12 @@ def _groups_with_threatened(canvas, groups, total, threatened):
     draw_icon(canvas.draw, "alert", (left, y + 4), 14, canvas.color("red"), canvas.color("paper"))
     canvas.text((left + 18, y + 11), "受威胁物种", 11, anchor="lm")
     if not threatened["items"]:
-        canvas.text((left, y + 28), "本周无易危及以上物种", 11, "muted", anchor="lm", bold=False)
+        canvas.text((left, y + 29), "本周无易危及以上物种", 11, "muted", anchor="lm", bold=False)
         return
     canvas.text((right, y + 11), f"本周 {threatened_count(threatened)} · 易危及以上", 10, "muted", anchor="rm",
                 bold=False)
-    for index, item in enumerate(threatened["items"][:2]):
-        row = y + 28 + index * 17
+    for index, item in enumerate(_unshown(threatened["items"], shown)[:2]):
+        row = y + 29 + index * 17
         count_w = canvas.text((right, row), f"{item['count']} 次", 11, anchor="rm")
         chip_w = _iucn_chip(canvas, right - count_w - 6, row, item["iucn"]) + 6 if item.get("iucn") in IUCN_CATEGORIES \
             else 0
@@ -495,7 +489,7 @@ def _groups_with_birds(canvas, groups, total, birds, now):
                 anchor="lm")
     canvas.text((right, y + 11), f"7 天 · {birds.get('species', 0)} 种", 10, "muted", anchor="rm", bold=False)
     for index, bird in enumerate(birds["items"][:2]):
-        row = y + 28 + index * 17
+        row = y + 29 + index * 17
         stamp = parse_time(bird.get("time"))
         meta = " · ".join(part for part in (bird.get("place"), ago(stamp, now).replace(" ", "") if stamp else "")
                           if part)
@@ -535,8 +529,9 @@ def _water(canvas, payload, now):
     items = (water or {}).get("items") or []
     if not items:
         return False
-    left, top = RECENT_CARD[0] + 8, WATER_TOP + 4
-    upper, lower = top + 5, top + 17
+    left, top = RECENT_CARD[0] + 8, WATER_TOP + 8
+    upper, lower = top + 4, top + 19
+    canvas.rule((left, WATER_TOP, RECENT_CARD[2] - 8, WATER_TOP))
     canvas.text((left, upper), "加州水库", 11, anchor="lm")
     canvas.text((left, lower), "占常年", 11, anchor="lm", bold=False)
     x = left + WATER_KEY_W
@@ -570,7 +565,7 @@ def _water(canvas, payload, now):
 
 
 def _recent(canvas, payload, images, now):
-    items = payload["recent"]["data"].get("items", [])[1:6]
+    items = payload["recent"]["data"].get("items", [])[1:1 + RECENT_TILES]
     stats = payload["stats"]["data"]
     _card(canvas, RECENT_CARD, "red", "clock", "刚刚观察到",
           f"本周 {stats.get('observations', 0):,} 条观察 · {stats.get('observers', 0):,} 位观察者" if stats else "")
@@ -578,26 +573,27 @@ def _recent(canvas, payload, images, now):
     if not items:
         canvas.text((left, 400), "暂无新的观察", 14, "muted", anchor="lm")
         return
-    gap, count = 8, 5
-    width = (right - left - gap * (count - 1)) // count
+    gap = 8
+    width = (right - left - gap * (RECENT_TILES - 1)) // RECENT_TILES
     top = RECENT_CARD[1] + HEADER + 6
-    for index, item in enumerate(items[:count]):
+    for index, item in enumerate(items):
         x = left + index * (width + gap)
-        _photo(canvas, images, item["photo"], (x, top, x + width, top + 62), item["group"])
+        _photo(canvas, images, item["photo"], (x, top, x + width, top + RECENT_PHOTO_HEIGHT), item["group"])
         _label, icon, tone = group_info(item["group"])
         canvas.draw.ellipse((x + 3, top + 3, x + 21, top + 21), fill=canvas.color("paper"))
         draw_icon(canvas.draw, icon, (x + 5, top + 5), 14, canvas.color(tone), canvas.color("paper"))
-        canvas.serif.text((x, top + 74), _display_name(item), 12, anchor="lm", width=width)
+        canvas.serif.text((x, top + RECENT_PHOTO_HEIGHT + 12), _display_name(item), 13, anchor="lm", width=width)
         stamp = parse_time(item["time"])
         meta = " · ".join(part for part in (ago(stamp, now).replace(" ", "") if stamp else "", item.get("place"))
                           if part)
-        canvas.text((x, top + 89), meta, 10, "muted", anchor="lm", bold=False, width=width)
+        canvas.text((x, top + RECENT_PHOTO_HEIGHT + 27), meta, 10, "muted", anchor="lm", bold=False, width=width)
     if water_turn(now) and _water(canvas, payload, now):
         return
     threatened = threatened_data(payload)
     if threatened and threatened["items"] and ((payload.get("birds") or {}).get("data") or {}).get("items"):
         # With eBird's birds in the groups card, the week's vulnerable-or-worse species take this line.
-        names = " · ".join(f"{_display_name(item)} {item['count']} 次" for item in threatened["items"][:3])
+        names = " · ".join(f"{_display_name(item)} {item['count']} 次"
+                           for item in _unshown(threatened["items"], pictured(payload))[:3])
         canvas.text((left, RECENT_CARD[3] - 11), f"易危及以上 本周 {threatened_count(threatened)}：{names}", 11,
                     "muted", anchor="lm", bold=False, width=right - left)
     elif stats.get("top_observer"):

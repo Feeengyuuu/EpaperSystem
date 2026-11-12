@@ -111,7 +111,8 @@ class NatureNearby(BasePlugin):
                                       validate=sources.valid_snow, timeout_seconds=8))
         species = payload["species"]["data"].get("items", [])
         urls = [recent[0]["photo"]] if recent else []
-        urls += [item.get("photo") for item in species[:6]] + [item.get("photo") for item in recent[1:6]]
+        urls += [item.get("photo") for item in species[:sources.SPECIES_TILES]]
+        urls += [item.get("photo") for item in recent[1:1 + sources.RECENT_TILES]]
         images = load_thumbnails(urls, self._cache("photos"), http=get_http_client(), context=context,
                                  cached_only=not allow_network, safe_url=sources.safe_photo_url,
                                  user_agent=sources.USER_AGENT, size=(420, 320))
