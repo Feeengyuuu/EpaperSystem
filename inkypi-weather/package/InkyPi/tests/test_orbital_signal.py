@@ -1541,6 +1541,59 @@ def test_night_matchup_crests_go_on_as_they_are_without_a_ring(monkeypatch):
     assert image.getpixel((left - 1, row)) != tuple(night["ink"][:3])
 
 
+def _event_art(tmp_path, art):
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    plugin._cache_dir = lambda create=True: tmp_path / "cache"
+    buffer = BytesIO()
+    art.save(buffer, format="PNG")
+    key = launch_photo_module.photo_cache_key("https://example.test/event.png")
+    plugin._mark_namespace().put_bytes(key, buffer.getvalue(), suffix=".png")
+    return plugin, key
+
+
+def test_event_art_on_a_flat_ground_stands_on_the_page_without_it(tmp_path):
+    # A logo or a studio portrait on one colour: the ground goes, so no light block sits on the
+    # night page; what stands on it keeps its colours.
+    art = Image.new("RGBA", (220, 220), (255, 255, 255, 255))
+    ImageDraw.Draw(art).ellipse((50, 20, 170, 140), fill=(200, 30, 40, 255))
+    plugin, key = _event_art(tmp_path, art)
+    night = (12, 18, 30)
+    image = Image.new("RGB", (200, 200), night)
+    box = (10, 20, 110, 20 + ART_H)
+
+    plugin._paste_event_art(image, key, box, {**DAY_PALETTE, "paper": night})
+
+    colours = set(image.crop(box).get_flattened_data())
+    assert (200, 30, 40) in colours and (255, 255, 255) not in colours
+    # Nothing as light as the old ground is left anywhere in the box, and its corners are the page.
+    assert max(sum(colour) for colour in colours) < 600
+    assert image.getpixel((11, 21)) == night and image.getpixel((109, 21)) == night
+    # The figure is contained whole and centred, not cover-cropped: it clears both sides.
+    reds = [x for x in range(box[0], box[2]) if image.getpixel((x, 50)) == (200, 30, 40)]
+    assert reds and box[0] + 4 <= min(reds) and max(reds) <= box[2] - 4
+    assert abs((min(reds) + max(reds)) / 2 - (box[0] + box[2]) / 2) <= 2
+
+
+def test_event_art_that_is_a_photograph_melts_into_the_page_at_its_sides_too(tmp_path):
+    # A photo's edge is not one colour: it keeps its frame, and its sides thin out like its foot.
+    art = Image.new("RGBA", (220, 220))
+    art.putdata([(x * 255 // 219, y * 255 // 219, 120, 255) for y in range(220) for x in range(220)])
+    plugin, key = _event_art(tmp_path, art)
+    paper = DAY_PALETTE["paper"]
+    image = Image.new("RGB", (200, 200), paper)
+    box = (10, 20, 110, 20 + ART_H)
+
+    plugin._paste_event_art(image, key, box, DAY_PALETTE)
+
+    def distance(point):
+        return sum(abs(a - b) for a, b in zip(image.getpixel(point), paper))
+
+    # Full strength in the middle, nearly paper at either side's first pixel, a ramp between.
+    assert distance((10, 30)) < distance((16, 30)) < distance((40, 30))
+    assert distance((109, 30)) < distance((103, 30)) < distance((80, 30))
+    assert distance((10, 30)) < 40 and distance((109, 30)) < 60
+
+
 def test_event_art_fades_into_the_paper_at_its_foot(tmp_path):
     plugin = OrbitalSignal({"id": PLUGIN_ID})
     plugin._cache_dir = lambda create=True: tmp_path / "cache"

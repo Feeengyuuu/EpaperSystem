@@ -21,6 +21,7 @@ from plugins.base_plugin.render_provenance import (
 )
 from runtime.refresh_contracts import TaskCancelled
 from utils.doodle_backdrop import paint_doodles
+from utils.picture_grounds import cut_flat_ground
 from utils.space_typography import MixedDraw, space_font, space_type_scope, scoped_space_font
 from utils.cache_manager import CacheBudget
 from utils.http_client import get_http_session
@@ -73,10 +74,14 @@ MATCHUP_ROW, MATCHUP_DIVIDER, MATCHUP_CREST, MATCHUP_BAR = 17, 11, 15, 3
 # A team name too long for its row first drops a generic word ("Bilibili Gaming" -> "BILIBILI").
 TEAM_NAME_GENERIC_WORDS = frozenset({"GAMING", "ESPORTS", "E-SPORTS", "TEAM", "CLUB", "FC", "CF", "SC"})
 # Each market column is themed by its event's art: kept at EVENT_ART_SIDE px, laid ART_H px tall
-# across the column's top, its lowest ART_FADE share fading into the paper; the question is printed
-# over the fade, haloed in the paper colour. The leading option shows its picture (Polymarket's own,
+# across the column's top without its own ground, its lowest ART_FADE share fading into the paper;
+# the question is printed over the fade, haloed in the paper colour. The leading option shows its picture (Polymarket's own,
 # its team's logo, or for a person their Wikipedia portrait) in a LEADER_AVATAR px disc by its name.
 EVENT_ART_SIDE, ART_H, ART_FADE = 220, 120, 0.55
+# Art whose edge is at least ART_GROUND_SHARE one colour stands on a flat ground, which is cut away
+# (the figure then keeps ART_FIGURE_PAD px clear of the column's sides); a photograph instead thins
+# out into the paper over ART_SIDE_FADE px at either side.
+ART_GROUND_SHARE, ART_FIGURE_PAD, ART_SIDE_FADE = 0.8, 5, 18
 LEADER_AVATAR = 26
 WIKI_SUMMARY_URL = "https://en.wikipedia.org/api/rest_v1/page/summary/{title}"
 WIKI_USER_AGENT = "InkyPi OrbitalSignal/1.0 (https://github.com/Feeengyuuu/EpaperSystem)"
@@ -1768,24 +1773,38 @@ class OrbitalSignal(BasePlugin):
             y += MARKET_FACT_ROW
 
     def _paste_event_art(self, image, key, box, palette):
-        """The event's art cover-cropped to ``box``, its sides cut straight and its foot fading into
-        the paper over its lowest ART_FADE, so the column's top takes its theme without a frame and
-        the question below starts on clean paper."""
+        """The event's art across the top of ``box`` with nothing of its own ground left on the
+        page. Art on a flat ground (a logo, a studio portrait) loses that ground and stands whole
+        and centred on the paper; a photograph is cover-cropped and thins out into the paper at
+        both sides. Either way its foot fades into the paper over its lowest ART_FADE, so the
+        question below starts on clean paper."""
         mark = launch_photo.load_cached_mark(self._mark_namespace(), key) if key else None
         if mark is None:
             return
         x0, y0, x1, y1 = box
-        flat = Image.new("RGBA", mark.size, (*palette["paper"], 255))
-        flat.alpha_composite(mark)
-        art = ImageOps.fit(flat.convert("RGB"), (x1 - x0, y1 - y0), method=Image.Resampling.LANCZOS,
-                           centering=(0.5, 0.4))
-        fade = max(1, round(art.height * ART_FADE))
-        solid = art.height - fade
+        width, height = x1 - x0, y1 - y0
+        fade = max(1, round(height * ART_FADE))
+        solid = height - fade
         # An eased ramp: the art holds its strength into the fade, then thins out to the paper.
         ramp = [255] * solid + [round(255 * (1 - (step / fade)) ** 1.6) for step in range(1, fade + 1)]
-        mask = Image.new("L", (1, art.height))
-        mask.putdata(ramp)
-        image.paste(art, (x0, y0), mask.resize(art.size))
+        foot = Image.new("L", (1, height))
+        foot.putdata(ramp)
+        foot = foot.resize((width, height))
+        figure = cut_flat_ground(mark, EVENT_ART_SIDE, share=ART_GROUND_SHARE)
+        if figure is not None:
+            figure = ImageOps.contain(figure, (width - 2 * ART_FIGURE_PAD, height), method=Image.Resampling.LANCZOS)
+            layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+            layer.paste(figure, ((width - figure.width) // 2, 0))
+            image.paste(layer.convert("RGB"), (x0, y0), ImageChops.multiply(layer.getchannel("A"), foot))
+            return
+        flat = Image.new("RGBA", mark.size, (*palette["paper"], 255))
+        flat.alpha_composite(mark)
+        art = ImageOps.fit(flat.convert("RGB"), (width, height), method=Image.Resampling.LANCZOS, centering=(0.5, 0.4))
+        side = min(ART_SIDE_FADE, width // 3)
+        across = [round(255 * ((step + 1) / (side + 1)) ** 1.3) for step in range(side)]
+        sides = Image.new("L", (width, 1))
+        sides.putdata(across + [255] * (width - 2 * side) + across[::-1])
+        image.paste(art, (x0, y0), ImageChops.multiply(foot, sides.resize((width, height))))
 
     def _draw_league_tag(self, draw, market, cx, width, tag_top, palette, family, image):
         """The league (its icon on a paper square, its name on the category colour) and the day's move."""
