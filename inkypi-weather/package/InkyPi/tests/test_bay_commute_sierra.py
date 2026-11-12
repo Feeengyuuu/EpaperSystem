@@ -366,8 +366,11 @@ def page_payload(sierra_summary, sign=True):
     return payload
 
 
-def draw(monkeypatch, payload, mode="day"):
-    """The page and where each text went: {text: (x, y, width)}."""
+BOARD_HOUR = NOW.replace(hour=14)
+
+
+def draw(monkeypatch, payload, mode="day", at=NOW):
+    """The page drawn ``at`` and where each text went: {text: (x, y, width)}."""
     placed = {}
     original = Page.text
 
@@ -378,7 +381,7 @@ def draw(monkeypatch, payload, mode="day"):
 
     monkeypatch.setattr(Page, "text", capture)
     try:
-        return render_page((800, 480), payload, {"_inkypi_theme": {"mode": mode}}, NOW), placed
+        return render_page((800, 480), payload, {"_inkypi_theme": {"mode": mode}}, at), placed
     finally:
         monkeypatch.setattr(Page, "text", original)
 
@@ -419,10 +422,11 @@ def test_chains_or_a_closed_pass_take_the_headers_sign(monkeypatch, mode):
     from plugins.bay_commute.command_render import DAY, NIGHT
     from PIL import ImageColor
 
-    plain, _ = draw(monkeypatch, page_payload("absent"), mode)
-    storm, placed = draw(monkeypatch, page_payload(storm_summary()), mode)
+    plain, _ = draw(monkeypatch, page_payload("absent"), mode, BOARD_HOUR)
+    storm, placed = draw(monkeypatch, page_payload(storm_summary()), mode, BOARD_HOUR)
 
-    # The three routes with what holds on each, in the sign's place; the travel times give way.
+    # An even hour is the Sierra's in the header: the three routes with what holds on each, in the
+    # sign's place; the travel times have the odd hours.
     assert "MILPITAS" not in placed and "雪山路况" in placed
     assert {"I-80", "US-50", "SR-120", "R2 两驱装链", "封闭", "冬季封闭", "Kingvale–Truckee"} <= set(placed)
     for text in ("I-80", "封闭", "Kingvale–Truckee"):
@@ -441,7 +445,29 @@ def test_chains_or_a_closed_pass_take_the_headers_sign(monkeypatch, mode):
 def test_a_long_stretch_is_cut_short_inside_the_sign(monkeypatch):
     summary = storm_summary()
     summary["routes"][0].update({"from": "7.5 mi east of the Emigrant Gap Overcrossing", "to": "Donner Lake Interchange"})
-    image, _placed = draw(monkeypatch, page_payload(summary))
+    image, _placed = draw(monkeypatch, page_payload(summary), at=BOARD_HOUR)
 
     cut, box = next((text, box) for text, box in image.info["bay_text_bounds"] if text.startswith("7.5 mi"))
     assert cut.endswith("...") and SIGN_BOX[0] < box[0] and box[2] <= SIGN_BOX[2]
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_on_the_travel_times_turn_the_footer_still_says_what_is_in_force(monkeypatch, mode):
+    from plugins.bay_commute.command_render import DAY, NIGHT
+    from PIL import ImageColor
+
+    plain, _ = draw(monkeypatch, page_payload("absent"), mode)
+    storm, placed = draw(monkeypatch, page_payload(storm_summary()), mode)
+
+    # 13:00, an odd hour: the travel-time sign has the header, exactly as without the Sierra.
+    assert "MILPITAS" in placed and "雪山路况" not in placed
+    assert storm.crop((0, 0, 800, 456)).tobytes() == plain.crop((0, 0, 800, 456)).tobytes()
+    # The warning is in the footer's line instead, the closed pass first, led by a red dot.
+    line = next(text for text in placed if text.startswith("雪山 "))
+    assert line.startswith("雪山 US-50 封闭 · I-80 R2 两驱装链") and "Palisades 开放" in line
+    palette = NIGHT if mode == "night" else DAY
+    assert ImageColor.getrgb(palette["crimson"]) in {colour for _n, colour in storm.crop((0, 456, 800, 480)).getcolors(8192)}
+    # Without a travel-time sign to show, the Sierra's board keeps the header on any hour.
+    _image, alone = draw(monkeypatch, page_payload(storm_summary(), sign=False), mode)
+    assert "雪山路况" in alone and "I-80" in alone
+    assert not next(text for text in alone if text.startswith("雪山 ")).startswith("雪山 US-50")

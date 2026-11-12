@@ -66,9 +66,11 @@ LEVEL_EVEN_FT = 0.1
 SIGN_BOX = (250, 7, 512, 58)
 SIGN_SHIELDS = {"I-680", "I-880", "SR-84"}
 # The drive to Tahoe and Yosemite. While chains are required or a pass is closed the header's sign
-# gives its place to the three routes, each with what holds on it (a solid mark in the state's
-# colour, the words in ink) and where; otherwise the Sierra is one line in the footer, between the
-# roads' stamp and the tides', this far clear of both.
+# takes turns with the three routes (the even hours theirs, the odd hours the travel times'; theirs
+# on any hour without a travel-time sign), each route with what holds on it (a solid mark in the
+# state's colour, the words in ink) and where. The Sierra is always one line in the footer too,
+# between the roads' stamp and the tides', this far clear of both: with nothing in force the
+# routes and the resort, and what is in force whenever the header is not saying it.
 SIERRA_LABELS = {"clear": "无管制", "seasonal": "冬季封闭", "r1": "R1 雪胎可行", "r2": "R2 两驱装链",
                  "chains": "防滑链管制", "r3": "R3 一律装链", "closed": "封闭"}
 SIERRA_TONES = {"clear": "emerald", "seasonal": "planned", "r1": "orange", "r2": "orange", "chains": "orange",
@@ -333,12 +335,23 @@ def sierra_sign(page, sierra, box=SIGN_BOX):
             page.text((span_x, y + 1), stretch, 9, "ink", role="number", bold=False, width=right - span_x)
 
 
-def sierra_words(sierra, now):
-    """The footer line's parts: the routes with nothing in force (the sign carries the rest),
-    then the resort (open with its lifts, else the opening day it announces), its base
-    temperature and, with the lifts turning, the base area's new snow."""
+def sierra_board_turn(sierra, sign, now):
+    """Whether the header shows the Sierra's routes: chains required or a pass closed, and either
+    their turn (the even hours) or no travel-time sign to give the header to."""
+    return bool(sierra.get("alert") and sierra.get("routes") and (now.hour % 2 == 0 or not sign))
+
+
+def sierra_words(sierra, now, board=False):
+    """The footer line's parts: what is in force on the routes, worst first, unless the header's
+    ``board`` is saying it; else the routes with nothing in force; then the resort (open with its
+    lifts, else the opening day it announces), its base temperature and, with the lifts turning,
+    the base area's new snow."""
     parts = []
-    if not sierra.get("alert"):
+    if sierra.get("alert") and not board:
+        held = [row for row in sierra.get("routes") or [] if SIERRA_RANK.get(row.get("level"), 0) >= SIERRA_RANK["r1"]]
+        parts += [f"{row['route']} {SIERRA_LABELS[row['level']]}"
+                  for row in sorted(held, key=lambda row: -SIERRA_RANK[row["level"]])]
+    elif not sierra.get("alert"):
         for level in ("seasonal", "clear"):
             routes = [row["route"] for row in sierra.get("routes") or [] if row.get("level") == level]
             if routes:
@@ -362,13 +375,13 @@ def sierra_words(sierra, now):
     return parts
 
 
-def sierra_line(page, sierra, now, left, right):
+def sierra_line(page, sierra, now, left, right, board=False):
     """The Sierra as one quiet line centred between ``left`` and ``right`` in the footer, led by a
     dot in the colour of the worst state on its routes; its last parts dropped until it fits,
     nothing when none does."""
     if not sierra:
         return
-    parts = sierra_words(sierra, now)
+    parts = sierra_words(sierra, now, board)
     face = font(10, bold=False)
     while parts and 10 + page.draw.textlength("雪山 " + " · ".join(parts), font=face) > right - left:
         parts.pop()
@@ -1070,7 +1083,7 @@ def station_ring(page, x, middle, colours):
     return size
 
 
-def footer(page, payload, now):
+def footer(page, payload, now, sierra_board=False):
     page.rule((16, 455, 784, 455), "ink")
     roads = payload["roads"]
     recorded = parse_time(roads.get("data", {}).get("source_updated_at"))
@@ -1090,7 +1103,8 @@ def footer(page, payload, now):
         prefix = "潮汐暂不可用 "
     right = page.text((784, 464), prefix + prediction + " · 获取 " + stamp + " " + (now.tzname() or ""),
                       10, "muted", align="right", width=280, bold=False)
-    sierra_line(page, payload.get("sierra"), now, 16 + left + SIERRA_LINE_GAP, 784 - right - SIERRA_LINE_GAP)
+    sierra_line(page, payload.get("sierra"), now, 16 + left + SIERRA_LINE_GAP, 784 - right - SIERRA_LINE_GAP,
+                sierra_board)
 
 
 def render_page(dimensions, payload, settings, now):
@@ -1098,7 +1112,8 @@ def render_page(dimensions, payload, settings, now):
     page = Page(settings)
     header(page, now)
     sierra = payload.get("sierra") or {}
-    if sierra.get("alert") and sierra.get("routes"):
+    board = sierra_board_turn(sierra, payload.get("sign"), now)
+    if board:
         sierra_sign(page, sierra)
     else:
         sign_plate(page, payload.get("sign"))
@@ -1106,7 +1121,7 @@ def render_page(dimensions, payload, settings, now):
     roads(page, payload, now)
     tides(page, payload, settings, now)
     section_titles(page)
-    footer(page, payload, now)
+    footer(page, payload, now, board)
     page.image.info["bay_text_bounds"] = page.text_bounds
     result = page.image
     if tuple(dimensions) != (800, 480):
