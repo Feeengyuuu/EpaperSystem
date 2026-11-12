@@ -6,25 +6,25 @@
 
 **把天气、日程、赛事、新闻和你在意的一切，装进一块会自己换页的彩色墨水屏。**
 
-Raspberry Pi + 六色墨水屏 · 73 个插件自动轮播 · 局域网网页管理 · **一行命令安装** · 可选字体 DLC
+Raspberry Pi + 六色墨水屏 · 76 个插件自动轮播 · 局域网网页管理 · **一行命令安装** · 可选字体 DLC
 
 </div>
 
-![设备在 2026 年 11 月 1 日的实机画面：体育看板（意甲、NFL LIVE NOW 比分墙、英雄联盟世界赛）、现代天气、技术圈与 AI 脉搏、轨道信号、AI 论文日报、世界赔率榜、今日热榜、环球此刻、LiveRadar 直播雷达、Sky Radar 航班雷达、电竞职业选手追踪、游戏优惠、全球票房双城榜、NASA 天文图、每日名画。](docs/images/epaper-system-screens-20261101.jpg)
+![设备在 2026 年 11 月 12 日的实机画面：体育看板（美职联、ATP / WTA 网球、CS2 赛程）、现代天气、整点新闻（头条与要闻配文章图片）、技术圈与 AI 脉搏、轨道信号、世界赔率榜、万象速览、环球此刻、LiveRadar 直播雷达、Steam Charts 在线榜、打印灵感、游戏优惠、AI 论文日报、Sky Radar 航班雷达、电竞职业选手追踪、全球票房双城榜、NASA 天文图、每日名画。](docs/images/epaper-system-screens-20261112.jpg)
 
-<p align="center"><sub>以上都是设备 2026 年 11 月 1 日刚刷新的实机画面（800 × 480，六色墨水屏），个人信息已打码。</sub></p>
+<p align="center"><sub>以上都是设备 2026 年 11 月 12 日刚刷新的实机画面（800 × 480，六色墨水屏），个人信息已打码。</sub></p>
 
 ## 它会显示什么
 
 | 主题 | 内容 |
 |---|---|
 | 🌤 **天气与日历** | 现代天气页：插画随天气和昼夜变化，夜里换成星空，每张卡片有自己的底纹，“明天”的时间直接写明天；节假日、个人日程与发布会日历 |
-| ⚽ **体育与电竞** | 足球、NFL、MLB、NBA / WNBA、NHL、F1、PGA 各有专属版式和球场插画，直播优先、多场同时进行时变成比分墙；比赛场馆用官方 logo（200 余座），季后赛和总决赛有系列赛进度；LoL / CS2 / Dota 赛事与赔率，LoL / CS2 职业选手轮播 |
-| 📰 **资讯与科技** | 整点新闻（AI 摘要，国内 / 国际双栏）、全网热搜（百度 / 头条 / 知乎 / 抖音，可加微博）、Hacker News 与 AI 榜单（含 OpenRouter 新模型）、AI 论文日报（Hugging Face 每日论文）、Telegram 精选、科技与游戏、今日热榜（B 站 / 新番 / 维基 / 热歌 / 棋题 / NASA 地球）、万象速览（一言诗词、DW / 纽约时报中文网 / 少数派、网易云与豆瓣榜、实时太阳与韦布 / 哈勃本月图、国债 / 加州油价 / 恐惧贪婪、Wordle 昨日答案） |
-| 🎮 **游戏与影视** | Steam 资料与好友（好友在玩的游戏截图）、Steam 排行与每日美图、游戏优惠（Steam 简体中文名）、直播雷达、全球票房双城榜 |
+| ⚽ **体育与电竞** | 足球（俱乐部联赛带排名和积分）、NFL、MLB、NBA / WNBA、NHL、F1、PGA、网球、UFC、MotoGP 各有专属版式和球场插画，直播优先、多场同时进行时变成比分墙；比赛场馆用官方 logo（200 余座），季后赛和总决赛有系列赛进度；LoL / CS2 / Dota 赛事与赔率，LoL / CS2 职业选手轮播 |
+| 📰 **资讯与科技** | 整点新闻（AI 摘要，国内 / 国际双栏，头条和要闻配文章自己的图片）、全网热搜（百度 / 头条 / 知乎 / 抖音，可加微博）、Hacker News 与 AI 榜单（含 OpenRouter 新模型）、AI 论文日报（Hugging Face 每日论文）、Telegram 精选、科技与游戏、今日热榜（B 站 / 新番 / 维基 / 热歌 / 棋题 / NASA 地球）、万象速览（一言诗词、DW / 纽约时报中文网 / 少数派、网易云与豆瓣榜、实时太阳与韦布 / 哈勃本月图、国债 / 加州油价 / 恐惧贪婪、Wordle 昨日答案） |
+| 🎮 **游戏与影视** | Steam 资料与好友（好友在玩的游戏截图）、Steam Charts 在线榜与热门飙升（工作室官方 logo）、Steam 每日美图、游戏优惠（Steam 简体中文名）、直播雷达、全球票房双城榜 |
 | 🚀 **太空与天空** | NASA 每日天文图、空间天气与近地小行星（JPL）、今夜可见行星、火箭发射倒计时、预测市场与航天新闻、环球此刻（卫星云图、加州电网、火星照片、空间站与在轨航天员、JPL 火流星）、机场航班雷达 |
 | 🎨 **艺术与知识** | 每日名画、历史海报、杂志与漫画封面、今日报纸头版、维基每日、每日一词 |
-| 📍 **生活与本地** | 湾区预警地图、路况摄像头、出行与潮汐（含 BART 实时到站）、身边物种、本地活动、3D 打印监控、车辆状态、资金雷达（含 CNN 恐惧贪婪指数）与持仓看板、世界赔率榜（Polymarket / Kalshi 预测市场） |
+| 📍 **生活与本地** | 湾区预警地图、路况摄像头、出行与潮汐（含 BART 实时到站）、湾区德鲁伊（身边物种大图、本周热门与受威胁物种、加州水库与积雪）、本地活动、3D 打印监控、打印灵感（MakerWorld 当前热门与历史名作轮换）、车辆状态、资金雷达（含 CNN 恐惧贪婪指数、A 股与港股指数、Reddit 散户热议榜）与持仓看板、世界赔率榜（Polymarket / Kalshi 预测市场） |
 
 ## 为什么好用
 
@@ -216,4 +216,4 @@ sudo bash install.sh --lang zh-CN
 
 基于开源项目 [InkyPi](https://github.com/fatihak/InkyPi) 构建，感谢原作者与社区。InkyPi 部分以 **GPL-3.0** 发布，见 [LICENSE](inkypi-weather/package/InkyPi/LICENSE)。字体 DLC 中的字体版权归各自所有者，开源字体按各自许可（SIL OFL 1.1）使用。
 
-<sub>An open-source Raspberry Pi colour e-paper dashboard: 73 plugins for weather, calendars, sports, news, games, space and local life, auto-rotating with a web UI. Install with the one command above (`--lang en` for English). Optional fonts install as a font DLC: `sudo inkypi fonts list`.</sub>
+<sub>An open-source Raspberry Pi colour e-paper dashboard: 76 plugins for weather, calendars, sports, news, games, space and local life, auto-rotating with a web UI. Install with the one command above (`--lang en` for English). Optional fonts install as a font DLC: `sudo inkypi fonts list`.</sub>
