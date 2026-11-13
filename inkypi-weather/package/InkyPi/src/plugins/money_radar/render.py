@@ -20,7 +20,7 @@ from utils.theme_utils import relative_luminance
 from . import extras
 from .sources import (
     CURVE_POINTS, EARNINGS_HOURS, FORM_NAMES, ITEM_NAMES, days_until, fear_greed_band, local_now, parse_time,
-    upcoming_earnings,
+    newest_news, upcoming_earnings,
 )
 from .trend_lines import delta, direction as _direction, draw_segments, finite
 
@@ -842,7 +842,8 @@ def _holdings(canvas, payload, now):
         x += width + HEADER_HOLDING_GAP
     canvas.rule((left + 8, top + 28, right - 8, top + 28))
     body, rows = top + 42, 5
-    news = payload["news"]["data"].get("items", [])
+    # Sort before splitting columns so old interleaved caches also read newest to oldest.
+    news = newest_news(payload["news"]["data"].get("items", []))
     middle = (left + right) // 2
     # Where the right half only carries the news on, it takes turns with the retail chatter list.
     chatter = extras.shown_list(payload.get("extras"), now) == "chatter"

@@ -2,6 +2,7 @@
 retail chatter list."""
 
 import sys
+from copy import deepcopy
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -531,6 +532,37 @@ def test_the_china_card_lists_five_indices_and_the_parity(monkeypatch, mode):
     card = set(canvas.image.crop((left, top + 28, right, bottom - 22)).convert("RGB").get_flattened_data())
     assert canvas.color("up") in card and canvas.color("down") in card
     assert set(canvas.tones) <= {"ink", "muted"}
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+@pytest.mark.parametrize("report_count,left_capacity", [(None, 5), (0, 4), (1, 4), (3, 3)])
+def test_cached_news_reads_newest_first_down_left_then_down_right(monkeypatch, mode, report_count, left_capacity):
+    canvas, drawn = _recording_canvas(monkeypatch, mode)
+    payload = _core_payload()
+    # An older cache may still interleave holdings. Offset timestamps must sort by their actual
+    # instant; equal timestamps keep their input order, and undated items come last.
+    stamps = ["2026-11-11T19:55:00+00:00", "2026-11-11T12:50:00-08:00", "2026-11-11T20:20:00Z",
+              "2026-11-11T21:30:00+01:00", None, "2026-11-11T20:10:00Z", "invalid", "2026-11-11T20:50:00Z"]
+    payload["news"]["data"]["items"] = [
+        {"symbol": "AAPL", "title": f"Story {index}", **({"time": stamp} if stamp is not None else {})}
+        for index, stamp in enumerate(stamps)
+    ]
+    if report_count is None:
+        payload["earnings"]["state"] = "disabled"
+    else:
+        payload["earnings"]["data"]["items"] = [
+            {"symbol": symbol, "date": "2026-11-12"} for symbol in ("AAPL", "NVDA", "MSFT")[:report_count]
+        ]
+    cached_payload = deepcopy(payload)
+
+    money_render._holdings(canvas, payload, NOW)
+
+    stories = [(x, y, text) for x, y, text in drawn if text.startswith("Story ")]
+    reading_order = sorted(stories, key=lambda item: (item[0] >= 400, item[1]))
+    assert [text for _x, _y, text in reading_order] == [f"Story {index}" for index in (1, 7, 3, 2, 5, 0, 4, 6)]
+    assert sum(x < 400 for x, _y, _text in stories) == left_capacity
+    assert len({(x, y) for x, y, _text in stories}) == len(stamps)
+    assert payload == cached_payload
 
 
 def test_the_holdings_right_half_takes_turns_between_the_news_and_the_chatter_list(monkeypatch):

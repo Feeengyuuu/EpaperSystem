@@ -219,7 +219,7 @@ def test_news_rss_and_sec_submissions_normalize():
     assert insider == 1
 
 
-def test_news_is_fetched_per_holding_and_interleaved(monkeypatch):
+def test_news_is_fetched_per_holding_and_sorted_newest_first(monkeypatch):
     feeds = {
         "TSLA": "<rss><channel><item><title>Tesla A</title><pubDate>Wed, 21 Oct 2026 20:00:00 +0000</pubDate></item>"
                 "<item><title>Tesla B</title><pubDate>Wed, 21 Oct 2026 19:00:00 +0000</pubDate></item></channel></rss>",
@@ -237,7 +237,7 @@ def test_news_is_fetched_per_holding_and_interleaved(monkeypatch):
     items = sources.fetch_news(("TSLA", "FAIL", "AAPL"), None)["items"]
 
     assert [(item["symbol"], item["title"]) for item in items] == [
-        ("TSLA", "Tesla A"), ("AAPL", "Apple A"), ("TSLA", "Tesla B")]
+        ("TSLA", "Tesla A"), ("TSLA", "Tesla B"), ("AAPL", "Apple A")]
 
 
 def test_symbols_follow_the_stock_page_unless_set(monkeypatch):

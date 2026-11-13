@@ -455,22 +455,22 @@ def normalize_news(text, symbol=None):
     return {"items": items[:MAX_NEWS]}
 
 
-def interleave_news(feeds):
-    """Newest headline of each holding first, then the next round.
+def newest_news(items):
+    """Newest first across holdings; undated items last, without changing cached input."""
+    return sorted(items, key=lambda item: parse_time(item.get("time")) or datetime.min.replace(tzinfo=timezone.utc),
+                  reverse=True)
 
-    A story carried by several holdings stays with the first one, and is removed from the
-    others before interleaving so every holding keeps its own first-round slot.
-    """
-    seen, unique_feeds = set(), []
+
+def merge_news(feeds):
+    """Deduplicate across holdings, then keep the newest headlines regardless of their ticker."""
+    seen, merged = set(), []
     for items in feeds:
-        unique = [item for item in items if item["title"].lower() not in seen]
-        seen.update(item["title"].lower() for item in unique)
-        unique_feeds.append(unique)
-    merged = []
-    for depth in range(max((len(items) for items in unique_feeds), default=0)):
-        round_items = [items[depth] for items in unique_feeds if depth < len(items)]
-        merged.extend(sorted(round_items, key=lambda entry: entry["time"], reverse=True))
-    return merged[:MAX_NEWS]
+        for item in items:
+            title = item["title"].lower()
+            if title not in seen:
+                seen.add(title)
+                merged.append(item)
+    return newest_news(merged)[:MAX_NEWS]
 
 
 def fetch_news(symbols, context):
@@ -483,7 +483,7 @@ def fetch_news(symbols, context):
             feeds.append(normalize_news(text, symbol)["items"][:4])
         except (HttpClientError, ValueError):
             continue
-    items = interleave_news(feeds)
+    items = merge_news(feeds)
     if not items:
         raise ValueError("Yahoo RSS returned no headlines for any holding")
     return {"items": items}
