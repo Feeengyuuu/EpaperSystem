@@ -410,3 +410,16 @@ def test_the_page_shows_week_moves_money_and_month_sparklines(mode):
     # The sparklines land on the Kalshi board and nowhere else.
     box = ImageChops.difference(full.convert("RGB"), bare.convert("RGB")).getbbox()
     assert box is not None and box[0] >= 528
+
+
+def test_every_board_row_finds_its_mark_whether_the_page_owns_it_or_shares_it():
+    from plugins.world_odds import render
+
+    # The Fed's seal and Bitcoin's logo live with the shared source logos; the rest are the page's own.
+    for name in set(render.ROW_MARKS.values()):
+        art = render._mark_art(name, render.ICON, False)
+        assert art is not None and max(art.size) == render.ICON, name
+        assert render._logo_file(name).is_file(), name
+    assert render.SHARED_MARKS <= set(render.ROW_MARKS.values())
+    assert all(render._logo_file(name).parent == render.SOURCE_LOGO_DIR for name in render.SHARED_MARKS)
+    assert render._logo_file("kalshi").parent == render.ASSETS / "logos"

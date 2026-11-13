@@ -1,3 +1,4 @@
+import hashlib
 import inspect
 import json
 import sys
@@ -1073,7 +1074,8 @@ def test_up_next_rows_keep_representative_names_complete():
     )
 
     rendered = "".join(call["text"] for call in draw.text_calls)
-    assert "FALCON 9 BLOCK 5" in rendered
+    # The timeline names a rocket by its family (the headline keeps the block number).
+    assert "FALCON 9" in rendered and "BLOCK 5" not in rendered
     assert "STARLINK GROUP 17-10" in rendered
     assert "STARSHIP V3" in rendered
     assert "FLIGHT 13" in rendered
@@ -1091,9 +1093,8 @@ def test_a_rocket_launch_badge_carries_the_date_and_official_marks_stand_in_for_
     launch_day = datetime.fromisoformat(launches[0]["net"].replace("Z", "+00:00"))
     assert "GO" not in texts
     assert f"{launch_day.day:02d}" in texts and f"{launch_day:%b}".upper() in texts
-    # The F9 mark spells "Falcon 9", so the headline prints only the variant after it (the
-    # small timeline below keeps names as text); the Starlink emblem does not spell its name,
-    # so the whole mission name stays beside it.
+    # The F9 mark spells "Falcon 9", so the headline prints only the variant after it; the
+    # Starlink emblem does not spell its name, so the whole mission name stays beside it.
     headline = [call["text"] for call in draw.text_calls if call["bbox"][3] - call["bbox"][1] >= 16]
     assert "BLOCK 5" in headline and not any("FALCON 9" in text for text in headline)
     assert "STARLINK GROUP 15-16" in texts
@@ -1120,13 +1121,179 @@ def test_a_small_mark_that_spells_the_whole_name_still_names_it():
     ("FALCON 9 BLOCK 5", "rocket", ("falcon9", "BLOCK 5")),
     ("FALCON HEAVY", "rocket", ("falcon_heavy", "")),
     ("ELECTRON", "rocket", ("electron", "")),
+    ("NEUTRON", "rocket", ("neutron", "")),
+    ("SLS BLOCK 1", "rocket", ("sls", "BLOCK 1")),
     ("VULCAN VC4S", "rocket", ("vulcan", "VULCAN VC4S")),
-    ("KUIPER KA-03", "mission", ("kuiper", "KA-03")),
+    ("ATLAS V N22", "rocket", ("atlas", "ATLAS V N22")),
+    ("H3-22", "rocket", ("h3", "H3-22")),
     ("LONG MARCH 6A", "rocket", (None, "LONG MARCH 6A")),
+    ("STARSHIP V3", "rocket", (None, "STARSHIP V3")),
+    ("AMAZON LEO (LV-01)", "mission", ("amazon_leo", "(LV-01)")),
+    # The constellation's former name takes its present logo.
+    ("PROJECT KUIPER (KA-03)", "mission", ("amazon_leo", "(KA-03)")),
+    ("STARLINK GROUP 15-21", "mission", ("starlink", "STARLINK GROUP 15-21")),
+    ("USSF-317", "mission", ("ussf", "USSF-317")),
+    ("SILENTBARKER 2/NROL-118", "mission", ("nro", "SILENTBARKER 2/NROL-118")),
+    ("RIVADA 1", "mission", ("rivada", "1")),
+    ("STARLINER-1", "mission", ("starliner", "1")),
+    ("ARTEMIS II", "mission", ("artemis", "ARTEMIS II")),
+    # The Space Development Agency's mark does not hold at these sizes: its missions stay text.
+    ("SDA TRANCHE 2 TRANSPORT LAYER D", "mission", (None, "SDA TRANCHE 2 TRANSPORT LAYER D")),
 ])
 def test_marks_replace_only_the_words_they_spell(name, marks, expected):
     table = ROCKET_MARKS if marks == "rocket" else MISSION_MARKS
     assert _name_mark(name, table) == expected
+
+
+def test_a_mark_spells_its_words_only_where_its_lettering_reads():
+    # The F9 mark's own "F9" reads at the headline's height, not on the small rows: there it
+    # leads the whole name.
+    assert _name_mark("FALCON 9", ROCKET_MARKS, 34) == ("falcon9", "")
+    assert _name_mark("FALCON 9", ROCKET_MARKS, 11) == ("falcon9", "FALCON 9")
+    assert _name_mark("AMAZON LEO (LV-01)", MISSION_MARKS, 13) == ("amazon_leo", "(LV-01)")
+    assert _name_mark("AMAZON LEO (LV-01)", MISSION_MARKS, 8) == ("amazon_leo", "AMAZON LEO (LV-01)")
+
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    # A compact mark too small to spell still stands before the name; a wordmark too small to
+    # read is left out, and the name stays text.
+    logo, words = plugin._row_mark("FALCON 9", ROCKET_MARKS, 11, 100, DAY_PALETTE)
+    assert logo is not None and logo.height == 11 and words == "FALCON 9"
+    assert plugin._row_mark("ELECTRON", ROCKET_MARKS, 11, 100, DAY_PALETTE) == (None, "ELECTRON")
+    logo, words = plugin._row_mark("ELECTRON", ROCKET_MARKS, 34, 220, DAY_PALETTE)
+    assert logo is not None and logo.width == 220 and words == ""
+    assert plugin._row_mark("LONG MARCH 2D", ROCKET_MARKS, 34, 220, DAY_PALETTE) == (None, "LONG MARCH 2D")
+
+
+def test_every_mark_has_its_logo_and_its_record_and_no_retired_logo_is_left():
+    from plugins.orbital_signal import orbital_signal as module
+
+    keys = {key for _pattern, key, _spells_from in (*ROCKET_MARKS, *MISSION_MARKS)}
+    record = json.loads((module.ROCKET_LOGO_DIR / "rockets.source.json").read_text(encoding="utf-8"))["logos"]
+    files = {path.stem for path in module.ROCKET_LOGO_DIR.glob("*.png")}
+    assert keys == files == set(record)
+    assert all(module._rocket_logo(key) is not None for key in keys)
+    # Each file is the one its record describes, with where it came from and why it may be shown.
+    for key, entry in record.items():
+        data = (module.ROCKET_LOGO_DIR / f"{key}.png").read_bytes()
+        assert hashlib.sha256(data).hexdigest() == entry["sha256"], key
+        assert entry["page"].startswith("https://") and entry["licence"], key
+    assert set(module.MARK_ROW_SHARE) <= keys and module.NIGHT_OWN_COLOURS <= keys
+
+
+def test_the_headline_names_amazon_leo_by_its_logo():
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    launches = _representative_launches()
+    launches[0].update(rocket="Vulcan VC6L", mission="Amazon Leo (LV-01)")
+    fitted = []
+    original = plugin._fitted_logo
+    plugin._fitted_logo = lambda key, *args: fitted.append((key, original(key, *args))) or fitted[-1][1]
+    draw = RecordingDraw()
+
+    plugin._draw_launch(draw.image, draw, (0, 58, 440, 448), launches, NOW, DAY_PALETTE, None)
+
+    headline = [call["text"] for call in draw.text_calls if call["bbox"][3] - call["bbox"][1] >= 12]
+    # The logo stands for the words "AMAZON LEO"; the launch's number is printed after it.
+    assert "(LV-01)" in headline and not any("AMAZON" in text for text in headline)
+    leo = next(logo for key, logo in fitted if key == "amazon_leo")
+    # It stands taller than the mission row's line so its lower-case letters match the number's.
+    assert leo is not None and leo.height == 24
+    assert any(key == "vulcan" and logo is not None for key, logo in fitted)
+
+
+def _caption(plugin, name, marks, width, monkeypatch):
+    """A timeline name drawn into ``width``: (the texts printed, the logos pasted)."""
+    draw = RecordingDraw()
+    pasted = []
+    original = Image.Image.paste
+
+    def paste(target, im, box=None, mask=None):
+        if target is draw.image and mask is not None:
+            pasted.append(im)
+        return original(target, im, box, mask)
+
+    monkeypatch.setattr(Image.Image, "paste", paste)
+    plugin._draw_caption_name(draw.image, draw, name, marks, 200, 100, width, 9, 11, (0, 400),
+                              DAY_PALETTE["ink"], DAY_PALETTE, None)
+    monkeypatch.setattr(Image.Image, "paste", original)
+    return [call["text"] for call in draw.text_calls], pasted
+
+
+def test_a_timeline_mark_never_costs_a_name_its_size_or_its_last_letters(monkeypatch):
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    need = RecordingDraw().textbbox((0, 0), "STARLINK GROUP 15-21", font=plugin._font(9, True))[2]
+    # Room for the emblem and the whole name: both are drawn.
+    texts, pasted = _caption(plugin, "STARLINK GROUP 15-21", MISSION_MARKS, need + 30, monkeypatch)
+    assert texts == ["STARLINK GROUP 15-21"] and len(pasted) == 1
+    # Room for the name alone: it is printed whole at its size, without the emblem.
+    texts, pasted = _caption(plugin, "STARLINK GROUP 15-21", MISSION_MARKS, need + 5, monkeypatch)
+    assert texts == ["STARLINK GROUP 15-21"] and not pasted
+    # A name already cut short is not cut shorter for a mark.
+    texts, pasted = _caption(plugin, "STARLINK GROUP 31-2 (STARSHIP FLIGHT 15)", MISSION_MARKS, 100, monkeypatch)
+    assert texts[0].endswith("...") and not pasted
+    # A logo that spells the name's words leaves the rest more room.
+    texts, pasted = _caption(plugin, "AMAZON LEO (LV-01)", MISSION_MARKS, 100, monkeypatch)
+    assert texts == ["(LV-01)"] and len(pasted) == 1
+    # A name without a mark is drawn as before.
+    texts, pasted = _caption(plugin, "MKA KINOSPUTNIK", MISSION_MARKS, 100, monkeypatch)
+    assert texts == ["MKA KINOSPUTNIK"] and not pasted
+
+
+def test_the_timeline_leads_each_rocket_family_with_its_mark(monkeypatch):
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    launches = [{"net": (NOW + timedelta(hours=8 * index)).isoformat(), "rocket": rocket, "mission": mission}
+                for index, (rocket, mission) in enumerate([
+                    ("Falcon 9 Block 5", "Starlink Group 15-21"), ("Vulcan VC6L", "Amazon Leo (LV-01)"),
+                    ("Soyuz 2.1b Fregat-M", "Glonass-K2 No. 3"), ("Falcon Heavy", "USSF-70")], start=1)]
+    draw = RecordingDraw()
+    pasted = []
+    original = Image.Image.paste
+    monkeypatch.setattr(Image.Image, "paste", lambda target, im, box=None, mask=None: (
+        pasted.append(im) if target is draw.image and mask is not None else None, original(target, im, box, mask))[1])
+
+    plugin._draw_timeline(draw, (16, 356, 444, 442), launches, NOW, DAY_PALETTE, None, image=draw.image)
+
+    texts = [call["text"] for call in draw.text_calls]
+    # Falcon 9 and Falcon Heavy by their marks and family names, Vulcan by its emblem; Amazon Leo's
+    # logo spells its name; the Space Force's delta leads its mission; Soyuz has no mark.
+    assert {"FALCON 9", "VULCAN VC6L", "FALCON HEAVY", "(LV-01)", "USSF-70", "SOYUZ 2.1B FREGAT-M"} <= set(texts)
+    assert not any("BLOCK 5" in text or "AMAZON" in text for text in texts)
+    assert len(pasted) == 5
+
+
+def test_latest_results_take_their_marks_only_where_no_result_loses_its_place():
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+
+    def strip(results):
+        draw = RecordingDraw()
+        assert plugin._draw_results(draw, results, NOW, 279, 528, 21, DAY_PALETTE, None, image=draw.image)
+        texts = [call["text"] for call in draw.text_calls]
+        colours = {colour for _count, colour in draw.image.crop((279, 12, 528, 46)).getcolors(100_000)}
+        return texts, colours
+
+    def result(rocket, hours):
+        return {"rocket": rocket, "result": "success", "net": (NOW - timedelta(hours=hours)).isoformat()}
+
+    # One result: the Falcon Heavy mark leads its name (its red is on the strip).
+    texts, colours = strip([result("Falcon Heavy", 12)])
+    assert texts == ["LAST", "FALCON HEAVY 12H"] and any(red > 150 and green < 80 for red, green, _blue in colours)
+    # Two results that only fit as text stay text: the mark does not cost the second its place.
+    texts, colours = strip([result("Falcon 9 Block 5", 5), result("Electron", 31)])
+    assert texts == ["LAST", "FALCON 9 5H", "ELECTRON 31H"]
+    assert not any(red > 150 and green < 80 for red, green, _blue in colours)
+
+
+def test_emblems_on_their_own_ground_keep_their_colours_by_night():
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    for key in ("h3", "nro", "ussf", "artemis"):
+        day, night = (plugin._fitted_logo(key, 34, 200, palette) for palette in (DAY_PALETTE, NIGHT_PALETTE))
+        assert ImageChops.difference(day, night).getbbox() is None, key
+    # A black wordmark takes the night ink instead of vanishing into the paper.
+    day, night = (plugin._fitted_logo("amazon_leo", 20, 200, palette) for palette in (DAY_PALETTE, NIGHT_PALETTE))
+    solid = [night.getpixel((x, y)) for x in range(night.width) for y in range(night.height)
+             if night.getpixel((x, y))[3] == 255]
+    assert solid and all(sum(pixel[:3]) > 600 for pixel in solid)
+    assert any(day.getpixel((x, y))[3] == 255 and sum(day.getpixel((x, y))[:3]) < 90
+               for x in range(day.width) for y in range(day.height))
 
 
 def test_primary_launch_keeps_full_rocket_name_inside_panel():
@@ -1220,7 +1387,7 @@ def test_timeline_spaces_launches_evenly_and_labels_the_real_gaps():
     assert "+1D 16H" in rendered and "+1D 0H" in rendered
     assert OrbitalSignal._gap_label(NOW, NOW + timedelta(hours=3, minutes=5)) == "+3H 05M"
     assert OrbitalSignal._gap_label(NOW, NOW + timedelta(minutes=45)) == "+45M"
-    names = [call for call in draw.text_calls if call["text"] in {"VIKRAM-I", "FALCON 9 BLOCK 5", "STARSHIP V3"}]
+    names = [call for call in draw.text_calls if call["text"] in {"VIKRAM-I", "FALCON 9", "STARSHIP V3"}]
     assert len(names) == 3
     centres = sorted((call["bbox"][0] + call["bbox"][2]) / 2 for call in names)
     assert abs((centres[1] - centres[0]) - (centres[2] - centres[1])) <= 2
@@ -1489,6 +1656,77 @@ def test_dark_source_league_mark_keeps_its_colour_on_a_light_backplate(monkeypat
     # A coloured provider icon stays readable in both themes, without tinting its original ink.
     assert min(image.getpixel((left + 1, 21))) >= 230
     assert image.getpixel((left + 9, 29)) == source_colour
+
+
+@pytest.mark.parametrize(("title", "name"), [
+    ("Fed Decision in December?", "FED"),
+    ("Who will Trump nominate as Fed Chair?", "FED"),
+    ("FOMC cuts rates in January?", "FED"),
+    ("What price will Bitcoin hit in November?", "BTC"),
+    ("What price will Ethereum hit in November?", "ETH"),
+    ("Republican Presidential Nominee 2028", "GOP"),
+    ("Democratic Presidential Nominee 2028", "DEM"),
+    # A word that only starts like a subject's name is not it.
+    ("FedEx beats earnings?", None),
+    # A title that names two subjects, or none, takes no mark.
+    ("Will Democrats or Republicans win the House?", None),
+    ("Presidential Election Winner 2028", None),
+    ("", None),
+])
+def test_a_market_takes_the_mark_of_the_one_subject_its_title_names(title, name):
+    from plugins.orbital_signal import orbital_signal as module
+
+    mark, found = module._topic_mark(title, 14)
+    assert found == name and (mark is None) == (name is None)
+    if mark is not None:
+        assert max(mark.size) == 14 and mark.getchannel("A").getextrema()[1] == 255
+
+
+def test_every_topic_mark_is_at_hand_with_its_record():
+    from plugins.orbital_signal import orbital_signal as module
+
+    own = json.loads((module.TOPIC_MARK_DIR / "topics.source.json").read_text(encoding="utf-8"))["logos"]
+    shared = json.loads((module.SOURCE_LOGO_DIR / "source_logos.source.json").read_text(encoding="utf-8"))["logos"]
+    keys = {key for _pattern, key, _name in module.TOPIC_MARKS}
+    assert module.SHARED_TOPIC_MARKS <= keys
+    for key in keys:
+        folder, record = ((module.SOURCE_LOGO_DIR, shared) if key in module.SHARED_TOPIC_MARKS
+                          else (module.TOPIC_MARK_DIR, own))
+        data = (folder / f"{key}.png").read_bytes()
+        assert hashlib.sha256(data).hexdigest() == record[key]["sha256"], key
+    # The page's own folder holds only the marks its table names.
+    assert {path.stem for path in module.TOPIC_MARK_DIR.glob("*.png")} == keys - module.SHARED_TOPIC_MARKS == set(own)
+
+
+@pytest.mark.parametrize("palette", [DAY_PALETTE, NIGHT_PALETTE], ids=["day", "night"])
+def test_a_market_without_a_league_is_tagged_by_its_subjects_mark_and_short_name(palette):
+    from plugins.orbital_signal.market_style import market_palette
+
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    palette = market_palette(palette)
+    column = (800 - LAUNCH_SPLIT_X - 24) / 3
+
+    def tag(market):
+        draw = RecordingDraw()
+        draw.image.paste(palette["paper"], (0, 0, 800, 480))
+        plugin._draw_league_tag(draw, market, 400, column - 8, 246, palette, DEFAULT_FONT, draw.image)
+        bounds = ImageChops.difference(draw.image, Image.new("RGB", draw.image.size, palette["paper"])).getbbox()
+        return [call["text"] for call in draw.text_calls], bounds, draw.image
+
+    # The Fed's seal leads the tag and names it FED, as a league's icon and name would.
+    texts, bounds, image = tag({"title": "Fed Decision in December?", "category": "ECONOMY", "change_24h": 0.03})
+    assert texts == ["FED", "+3.0%"]
+    assert bounds[0] >= round(400 - (column - 8) / 2) and bounds[2] <= round(400 + (column - 8) / 2) + 1
+    # The seal sits on the light square every tag icon gets, in its own greys.
+    assert image.getpixel((bounds[0] + 1, 247)) == (255, 252, 244)
+    # A market that names no subject keeps its category alone, in full.
+    texts, plain_bounds, _image = tag({"title": "Presidential Election Winner 2028", "category": "POLITICS",
+                                       "change_24h": 0.0})
+    assert texts == ["POLITICS", "+0.0%"]
+    # A game keeps its league's name even when its icon is not at hand: no subject mark stands in.
+    texts, _bounds, _image = tag({"title": "Republican Open: Final", "category": "SPORT", "league": "ATP",
+                                  "league_mark": "missing", "change_24h": 0.1})
+    assert texts == ["ATP", "+10.0%"]
 
 
 def _matchup_texts(monkeypatch, teams, palette):

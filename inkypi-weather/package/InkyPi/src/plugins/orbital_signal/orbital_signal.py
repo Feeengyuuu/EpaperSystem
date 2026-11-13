@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from PIL import Image, ImageChops, ImageDraw, ImageOps
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.cover_gallery import SOURCE_LOGO_DIR
 from plugins.base_plugin.presentation import PresentationMode
 from plugins.base_plugin.render_provenance import (
     SourceProvenance,
@@ -21,6 +22,7 @@ from plugins.base_plugin.render_provenance import (
 )
 from runtime.refresh_contracts import TaskCancelled
 from utils.doodle_backdrop import paint_doodles
+from utils.local_wordmark import load_source_logo
 from utils.picture_grounds import cut_flat_ground
 from utils.space_typography import MixedDraw, space_font, space_type_scope, scoped_space_font
 from utils.cache_manager import CacheBudget
@@ -66,6 +68,20 @@ MARKET_MARK_CACHE_BUDGET = CacheBudget(30 * 24 * 60 * 60, 96, 8 * 1024 * 1024)
 # its name. The matchup stands mid-art, MATCHUP_PAD round each logo.
 MATCHUP_LOGO, LEAGUE_ICON, LEADER_LOGO = 38, 14, 14
 LEAGUE_ICON_PAPER = (255, 252, 244)
+# A market without a league takes its subject's own mark on its tag, with the subject's short
+# name where a game has its league's: (the words in the market's title, mark, name). The marks
+# are the Federal Reserve's seal and Bitcoin's logo (the shared source logos, which the odds
+# page prints too), Ethereum's, and a party's for a market that names it (assets/topics,
+# tools/build_source_logos.py). A title that names two of them takes none.
+TOPIC_MARK_DIR = Path(__file__).with_name("assets") / "topics"
+SHARED_TOPIC_MARKS = frozenset({"fed", "bitcoin"})
+TOPIC_MARKS = (
+    (re.compile(r"\bfed\b|\bfomc\b|\bfederal reserve\b", re.IGNORECASE), "fed", "FED"),
+    (re.compile(r"\bbitcoin\b|\bbtc\b", re.IGNORECASE), "bitcoin", "BTC"),
+    (re.compile(r"\bethereum\b|\beth\b", re.IGNORECASE), "ethereum", "ETH"),
+    (re.compile(r"\brepublicans?\b|\bgop\b", re.IGNORECASE), "gop", "GOP"),
+    (re.compile(r"\bdemocrat(?:ic|s)?\b", re.IGNORECASE), "democratic_party", "DEM"),
+)
 MATCHUP_PAD = 4
 # Under the art a matchup reads like a scoreboard in the question's band: one row per team (its
 # colour bar, crest and name, the names flush left as a centred block), a hairline between them
@@ -154,23 +170,48 @@ ICON_DIR = Path(__file__).with_name("assets") / "icons"
 PROVIDER_LOGO_DIR = Path(__file__).with_name("assets") / "providers"
 FLAG_DIR = Path(__file__).with_name("assets") / "flags"
 ROCKET_LOGO_DIR = Path(__file__).with_name("assets") / "rockets"
-# Official rocket and mission marks (Wikimedia Commons, tools/build_orbital_rocket_logos.py):
-# (the words in the name, logo key, whether the logo spells those words). A mark that spells
-# them stands in for them and only the rest is printed (F9 + "BLOCK 5"); an emblem goes before
-# the whole name (V + "VULCAN VC4S"). A launch without a mark keeps its name as text.
+# Official rocket and mission marks (assets/rockets, tools/build_orbital_rocket_logos.py):
+# (the words in the name, logo key, the height from which the logo's own lettering reads).
+# Drawn at least that tall, a mark stands in for those words and only the rest is printed
+# (F9 + "BLOCK 5", amazon leo + "(LV-01)"). An emblem that spells nothing (None), or a compact
+# mark drawn smaller than that, goes before the whole name (V + "VULCAN VC4S"). A launch
+# without a mark keeps its name as text. The same marks serve the headline rows, the header's
+# latest results and the timeline.
 ROCKET_MARKS = (
-    (re.compile(r"\bfalcon heavy\b", re.IGNORECASE), "falcon_heavy", True),
-    (re.compile(r"\bfalcon 9\b", re.IGNORECASE), "falcon9", True),
-    (re.compile(r"\belectron\b", re.IGNORECASE), "electron", True),
-    (re.compile(r"\bvulcan\b", re.IGNORECASE), "vulcan", False),
+    (re.compile(r"\bfalcon heavy\b", re.IGNORECASE), "falcon_heavy", 24),
+    (re.compile(r"\bfalcon 9\b", re.IGNORECASE), "falcon9", 24),
+    (re.compile(r"\belectron\b", re.IGNORECASE), "electron", 9),
+    (re.compile(r"\bneutron\b", re.IGNORECASE), "neutron", 9),
+    (re.compile(r"\bvulcan\b", re.IGNORECASE), "vulcan", None),
+    (re.compile(r"\batlas v\b", re.IGNORECASE), "atlas", None),
+    (re.compile(r"\b(?:sls|space launch system)\b", re.IGNORECASE), "sls", 8),
+    (re.compile(r"\bh3\b", re.IGNORECASE), "h3", None),
 )
 MISSION_MARKS = (
-    (re.compile(r"\bstarlink\b", re.IGNORECASE), "starlink", False),
-    (re.compile(r"\b(?:project )?kuiper\b", re.IGNORECASE), "kuiper", True),
+    (re.compile(r"\bstarlink\b", re.IGNORECASE), "starlink", None),
+    # Amazon's constellation under its present name and its former one.
+    (re.compile(r"\b(?:amazon leo|(?:project )?kuiper)\b", re.IGNORECASE), "amazon_leo", 11),
+    (re.compile(r"\bussf\b", re.IGNORECASE), "ussf", None),
+    (re.compile(r"\bnrol\b", re.IGNORECASE), "nro", None),
+    (re.compile(r"\brivada\b", re.IGNORECASE), "rivada", 8),
+    (re.compile(r"\bartemis\b", re.IGNORECASE), "artemis", None),
+    (re.compile(r"\bstarliner\b", re.IGNORECASE), "starliner", 9),
 )
+# A mark wider than this many times its height is a wordmark: too small to read, it is left out
+# and the name stays text. A narrower one can still stand before the name as an emblem.
+EMBLEM_ASPECT = 1.6
+# Emblems drawn on their own ground keep their colours by night (the others' dark parts take the ink).
+NIGHT_OWN_COLOURS = frozenset({"h3", "nro", "ussf", "artemis"})
+# The share of its row a mark stands, where the row's whole height would set its lettering
+# against the words beside it: a wordmark of capitals alone stands lower, so its letters match
+# theirs; Amazon Leo's lower-case letters (a smile under them) stand taller.
+MARK_ROW_SHARE = {"sls": 0.72, "rivada": 0.7, "starliner": 0.85, "amazon_leo": 1.2}
 # Line boxes for the rocket and mission rows, and the widest a wordmark may grow on them.
 ROCKET_LINE, MISSION_LINE = 34, 20
 WORDMARK_MAX_WIDTH = 220
+# On the small rows a mark stands this tall: beside the header's latest results, then on the
+# timeline's rocket and mission rows. CAPTION_MARK_GAP separates it from the words.
+RESULT_MARK, TIMELINE_MARKS, CAPTION_MARK_GAP = 15, (11, 11), 3
 # Below this brightness a logo's dark parts would vanish on the night paper; they take the ink.
 NIGHT_LOGO_INK_BELOW = 90
 FACT_ICON = 22
@@ -247,7 +288,7 @@ def _provider_logo(provider_id):
         return None
 
 
-@lru_cache(maxsize=16)
+@lru_cache(maxsize=32)
 def _rocket_logo(key):
     """An official rocket or mission logo by key, in its own colours."""
     try:
@@ -257,13 +298,34 @@ def _rocket_logo(key):
         return None
 
 
-def _name_mark(name, marks):
-    """(logo key, text still to print) for a name, or (None, name) when no official mark fits."""
-    for pattern, key, spells in marks:
+def _name_mark(name, marks, height=None):
+    """(logo key, text still to print) for a name whose mark is drawn ``height`` px tall (None:
+    tall enough for its lettering to read), or (None, name) when no official mark fits."""
+    for pattern, key, spells_from in marks:
         if pattern.search(name):
+            spells = spells_from is not None and (height is None or height >= spells_from)
             rest = " ".join(pattern.sub(" ", name).replace("|", " ").split()).strip(" -/") if spells else name
             return key, rest
     return None, name
+
+
+def _topic_mark(title, size):
+    """(official mark contained in ``size`` px, short name) of the one subject a market's title
+    names; (None, None) for a title that names none or several, or whose mark is not at hand."""
+    found = [(key, name) for pattern, key, name in TOPIC_MARKS if pattern.search(str(title or ""))]
+    if len(found) != 1:
+        return None, None
+    key, name = found[0]
+    mark = load_source_logo((SOURCE_LOGO_DIR if key in SHARED_TOPIC_MARKS else TOPIC_MARK_DIR) / f"{key}.png", 64)
+    if mark is None:
+        return None, None
+    return ImageOps.contain(mark, (size, size), method=Image.Resampling.LANCZOS), name
+
+
+def _short_rocket(name):
+    """A rocket's name without its block number (every Falcon 9 flying is a Block 5): the small
+    rows name the family, the headline keeps the whole name."""
+    return re.sub(r"\s+Block\s+\d+.*$", "", str(name or ""), flags=re.I).strip()
 
 
 @lru_cache(maxsize=32)
@@ -915,7 +977,7 @@ class OrbitalSignal(BasePlugin):
             title_font = self._font(29, bold=True, family=family)
             draw.text((16, 10), "ORBITAL SIGNAL", font=title_font, fill=palette["ink"])
         results = getattr(self, "_results", ())
-        if not (results and self._draw_results(draw, results, now, 279, 528, 21, palette, family)):
+        if not (results and self._draw_results(draw, results, now, 279, 528, 21, palette, family, image=image)):
             draw.text((279, 22), "GLOBAL LAUNCHES / CROWD ODDS", font=subtitle_font, fill=palette["ink"])
 
         aggregate = str((payload.get("status") or {}).get("aggregate") or "fixture").upper()
@@ -1164,15 +1226,15 @@ class OrbitalSignal(BasePlugin):
         The mark and the text share the row's centre line; without a mark the name is plain text,
         and beside a small mark that spells it all the full name still fills the row.
         """
-        key, rest = _name_mark(name, marks)
-        logo = self._fitted_logo(key, line, min(WORDMARK_MAX_WIDTH, right - left), palette)
+        logo, rest = self._row_mark(name, marks, line, min(WORDMARK_MAX_WIDTH, right - left), palette)
         if logo is None:
             font = self._fit_font(draw, name, right - left, max_size, min_size, family)
             draw.text((left, top + 2), self._fit_text(draw, name, font, right - left), font=font,
                       fill=palette["ink"])
             return
         middle = top + line / 2
-        image.paste(logo, (int(left), round(middle - logo.height / 2)), logo)
+        # A mark taller than its row hangs below it: it never rises into the row above.
+        image.paste(logo, (int(left), max(int(top), round(middle - logo.height / 2))), logo)
         if not rest and logo.width < (right - left) / 2:
             # A small mark that spells the whole name (FH) would leave the row empty: name it.
             rest = name
@@ -1184,16 +1246,30 @@ class OrbitalSignal(BasePlugin):
         glyph_top, glyph_bottom = draw.textbbox((0, 0), shown, font=font)[1::2]
         draw.text((text_x, round(middle - (glyph_top + glyph_bottom) / 2)), shown, font=font, fill=palette["ink"])
 
+    def _row_mark(self, name, marks, height, max_width, palette):
+        """(logo, words still to print) for a name on a row ``height`` px tall: its official mark
+        fitted to the row, and the name without the words the mark spells at that size. (None,
+        name) for a name without a mark, or whose wordmark would be too small to read there."""
+        key, _rest = _name_mark(name, marks)
+        logo = self._fitted_logo(key, height, max_width, palette)
+        if logo is None:
+            return None, name
+        _key, rest = _name_mark(name, marks, logo.height)
+        if rest == name and logo.width > logo.height * EMBLEM_ASPECT:
+            return None, name
+        return logo, rest
+
     def _fitted_logo(self, key, height, max_width, palette):
         """The logo ``key`` at ``height`` px (narrower wordmarks shrink to ``max_width``), or None."""
         logo = _rocket_logo(key) if key else None
-        if logo is None:
+        if logo is None or max_width < 1:
             return None
+        height = max(1, round(height * MARK_ROW_SHARE.get(key, 1)))
         width = max(1, round(logo.width * height / logo.height))
         if width > max_width:
             width, height = int(max_width), max(1, round(logo.height * max_width / logo.width))
         fitted = logo.resize((width, height), Image.Resampling.LANCZOS)
-        if sum(palette["paper"]) < 300:
+        if sum(palette["paper"]) < 300 and key not in NIGHT_OWN_COLOURS:
             # Night paper: the logo's black parts take the ink so they do not vanish.
             ink = Image.new("RGBA", fitted.size, (*palette["ink"], 255))
             dark = fitted.convert("L").point(lambda value: 255 if value < NIGHT_LOGO_INK_BELOW else 0)
@@ -1359,33 +1435,54 @@ class OrbitalSignal(BasePlugin):
         return {"event": True, "rocket": event.get("label"), "mission": event.get("name"),
                 "place": EVENT_PLACES.get(place.casefold(), place), "precision": event.get("precision")}
 
-    def _draw_results(self, draw, results, now, left, right, y, palette, family):
+    def _draw_results(self, draw, results, now, left, right, y, palette, family, image=None):
         """The latest launch results in the header, in the subtitle's place: LAST, then for each a dot
-        in its result's colour (green success, red failure, orange partial) before the rocket and how
-        long ago. False when none fits."""
+        in its result's colour (green success, red failure, orange partial) before the rocket (its
+        official mark leading or spelling its name, on ``image``) and how long ago. False when none
+        fits."""
         font, label_font = self._font(12, True, family), self._font(10, True, family)
-        parts = []
+        label_w = draw.textbbox((0, 0), "LAST", font=label_font)[2] + 6
+        plain, marked = [], []
         for result in results[:3]:
             when = _parse_time(result.get("net"))
-            rocket = re.sub(r"\s+Block\s+\d+.*$", "", str(result.get("rocket") or ""), flags=re.I).strip().upper()
+            rocket = _short_rocket(result.get("rocket")).upper()
             if when is None or not rocket:
                 continue
             hours = max(0, int((_utc(now) - when).total_seconds() // 3600))
-            parts.append((rocket, f"{hours}H" if hours < 48 else f"{hours // 24}D", RESULT_COLORS[result["result"]]))
-        while parts:
-            widths = [draw.textbbox((0, 0), f"{rocket} {age}", font=font)[2] + 13 for rocket, age, _c in parts]
-            label_w = draw.textbbox((0, 0), "LAST", font=label_font)[2] + 6
-            if right - left >= label_w + sum(widths) + 6 * (len(parts) - 1):
-                break
-            parts.pop()
+            age, color = f"{hours}H" if hours < 48 else f"{hours // 24}D", RESULT_COLORS[result["result"]]
+            logo, words = (self._row_mark(rocket, ROCKET_MARKS, RESULT_MARK, RESULT_MARK * 6, palette)
+                           if image is not None else (None, rocket))
+            plain.append((None, f"{rocket} {age}", color))
+            marked.append((logo, " ".join(filter(None, (words, age))), color))
+
+        def fitted(parts):
+            """The leading parts that fit the strip, and their widths."""
+            parts = list(parts)
+            while parts:
+                widths = [draw.textbbox((0, 0), words, font=font)[2] + 13
+                          + (logo.width + CAPTION_MARK_GAP + 1 if logo is not None else 0) for logo, words, _c in parts]
+                if right - left >= label_w + sum(widths) + 6 * (len(parts) - 1):
+                    return parts, widths
+                parts.pop()
+            return [], []
+
+        # The marks are drawn where they cost no result its place on the strip.
+        parts, widths = fitted(marked)
+        if len(parts) < len(fitted(plain)[0]):
+            parts, widths = fitted(plain)
         if not parts:
             return False
         x = left
         draw.text((x, y + 3), "LAST", font=label_font, fill=palette["muted"])
         x += label_w
-        for (rocket, age, color), width in zip(parts, widths):
+        for (logo, words, color), width in zip(parts, widths):
             draw.ellipse((x, y + 4, x + 9, y + 13), fill=palette[color], outline=palette["ink"])
-            draw.text((x + 13, y), f"{rocket} {age}", font=font, fill=palette["ink"])
+            text_x = x + 13
+            if logo is not None:
+                # The mark stands on the dot's centre line, the words after it.
+                image.paste(logo, (text_x, round(y + 8.5 - logo.height / 2)), logo)
+                text_x += logo.width + CAPTION_MARK_GAP + 1
+            draw.text((text_x, y), words, font=font, fill=palette["ink"])
             x += width + 6
         return True
 
@@ -1457,14 +1554,43 @@ class OrbitalSignal(BasePlugin):
                 continue
             centered(stamp, x, line_y - 22, self._font(11, True, family), color)
             draw.ellipse((x - 6, line_y - 6, x + 6, line_y + 6), fill=color, outline=palette["ink"], width=1)
-            for row, (text, size) in enumerate(((launch.get("rocket"), 10), (launch.get("mission"), 9))):
+            for row, (text, size, marks) in enumerate(((_short_rocket(launch.get("rocket")), 10, ROCKET_MARKS),
+                                                       (launch.get("mission"), 9, MISSION_MARKS))):
                 text = str(text or "").strip().upper()
                 if text:
-                    font = self._fit_font(draw, text, slot, size, 8, family)
-                    centered(self._fit_text(draw, text, font, slot), x, line_y + 9 + row * 13, font,
-                             palette["ink"] if row == 0 else palette["muted"])
+                    self._draw_caption_name(image, draw, text, marks, x, line_y + 9 + row * 13, slot, size,
+                                            TIMELINE_MARKS[row], (left, right),
+                                            palette["ink"] if row == 0 else palette["muted"], palette, family)
             if image is not None and bottom - (line_y + 35) >= TIMELINE_BADGE_HEIGHT:
                 self._paste_timeline_logo(image, draw, launch, x, line_y + 35, slot - 10, palette, family)
+
+    def _draw_caption_name(self, image, draw, name, marks, x, y, width, size, mark_height, bounds, fill,
+                           palette, family):
+        """A timeline stop's rocket or mission centred on ``x``: its official mark with the words it
+        leaves, when they fit the stop's ``width`` whole and no smaller than the plain name would be
+        printed; else the plain name (a mark never costs a name its size or its last letters)."""
+        left, right = bounds
+        plain = self._fit_font(draw, name, width, size, 8, family)
+        logo, rest = self._row_mark(name, marks, mark_height, width, palette) if image is not None else (None, name)
+        font = plain
+        if logo is not None and rest:
+            room = width - logo.width - CAPTION_MARK_GAP
+            font = self._fit_font(draw, rest, room, size, 8, family)
+            if font.size < plain.size or draw.textbbox((0, 0), rest, font=font)[2] > room:
+                logo = None
+        if logo is None:
+            shown = self._fit_text(draw, name, plain, width)
+            text_w = draw.textbbox((0, 0), shown, font=plain)[2]
+            draw.text((min(max(left, x - text_w / 2), right - text_w), y), shown, font=plain, fill=fill)
+            return
+        text_w = draw.textbbox((0, 0), rest, font=font)[2] if rest else 0
+        total = logo.width + (CAPTION_MARK_GAP + text_w if rest else 0)
+        start = round(min(max(left, x - total / 2), right - total))
+        # The mark stands on the centre line of the row's capitals.
+        capitals = draw.textbbox((0, 0), "H", font=plain)
+        image.paste(logo, (start, round(y + (capitals[1] + capitals[3]) / 2 - logo.height / 2)), logo)
+        if rest:
+            draw.text((start + logo.width + CAPTION_MARK_GAP, y), rest, font=font, fill=fill)
 
     def _paste_timeline_logo(self, image, draw, launch, x, top, width, palette, family):
         """The launch's provider logo centred on ``x`` under its stop, as the provider cell shows it."""
@@ -1810,11 +1936,16 @@ class OrbitalSignal(BasePlugin):
         image.paste(art, (x0, y0), ImageChops.multiply(foot, sides.resize((width, height))))
 
     def _draw_league_tag(self, draw, market, cx, width, tag_top, palette, family, image):
-        """The league (its icon on a paper square, its name on the category colour) and the day's move."""
+        """The league (its icon on a paper square, its name on the category colour) and the day's move.
+        A market without a league is led by its subject's official mark and short name where it
+        has one (the Fed's seal and FED), else by its category alone."""
         category = str(market.get("category") or "MARKET").upper()
         tag_color = palette[CATEGORY_COLORS.get(category, "blue")]
         label = str(market.get("league") or "").upper() or category
         league_icon = self._market_mark(market.get("league_mark"), LEAGUE_ICON) if image is not None else None
+        if league_icon is None and image is not None and not market.get("league"):
+            league_icon, topic = _topic_mark(market.get("title"), LEAGUE_ICON)
+            label = topic or label
         change = float(market.get("change_24h") or 0.0) * 100
         change_text = f"{change:+.1f}%"
         icon_w = 18 if league_icon is not None else 0

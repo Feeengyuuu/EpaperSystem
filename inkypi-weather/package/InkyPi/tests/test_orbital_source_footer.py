@@ -111,7 +111,15 @@ def test_the_latest_space_story_runs_between_the_sources_and_the_notice(monkeypa
     headline = next((value, box) for value, box in drawn if value.startswith("As it happened"))
     notice = next(box for value, box in drawn if value == "CROWD PROBABILITY")
     assert headline[0].endswith("…") and headline[1][2] < notice[0]
-    assert footer.news_mark("Spaceflight Now", None)[0] is not None
-    # A site without its own mark is named, behind the Spaceflight News API's logo.
-    logo, say_site = footer.news_mark("Space Scout", None)
+    # A site with its own mark is named by it alone.
+    for site in ("Spaceflight Now", "Space Scout", "SpaceDaily"):
+        logo, say_site = footer.news_mark(site, None)
+        assert logo is not None and logo.height == footer.NEWS_MARK_HEIGHT and not say_site, site
+    # A site without one (SpacePolicyOnline.com sets its name in type) is named, behind the
+    # Spaceflight News API's logo.
+    logo, say_site = footer.news_mark("SpacePolicyOnline.com", None)
     assert logo is not None and say_site
+    # Every mark the footer names is at hand, with its record.
+    record = json.loads((footer.ASSETS / "news" / "news.source.json").read_text(encoding="utf-8"))["logos"]
+    for key in (*footer.NEWS_SITES.values(), "snapi"):
+        assert (footer.ASSETS / "news" / f"{key}.png").is_file() and key in record, key

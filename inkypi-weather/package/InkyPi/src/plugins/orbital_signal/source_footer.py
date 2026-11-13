@@ -15,7 +15,8 @@ SOURCE_LOGOS = {"space_devs": "the-space-devs-logo.png", "polymarket": "polymark
 # News API gives them; another site's story is led by the API's own logo and the site's name.
 NEWS_SITES = {"NASA": "news-nasa", "ESA": "news-esa", "SpaceNews": "news-spacenews",
               "NASASpaceflight": "news-nasaspaceflight", "Spaceflight Now": "news-spaceflight_now",
-              "Arstechnica": "news-arstechnica", "European Spaceflight": "news-european_spaceflight"}
+              "Arstechnica": "news-arstechnica", "European Spaceflight": "news-european_spaceflight",
+              "Space Scout": "news-space_scout", "SpaceDaily": "news-spacedaily"}
 NEWS_MARK_HEIGHT = 14
 # Marks whose dark parts (ESA's navy) would vanish on the night ground take its ink there.
 NEWS_DARK_PARTS = {"news-esa"}

@@ -282,6 +282,12 @@ def test_the_pages_name_their_sources_by_logo():
         assert (shared / f"{name}.png").is_file() and f'"{name}"' in record
         assert not (money / f"{name}.png").exists()
     assert not list((plugins / "stocktracker" / "assets").glob("sources/*.png"))
+    # So are the Fed's seal and Bitcoin's logo, which the odds page and the launch page's markets print.
+    odds = plugins / "world_odds" / "assets" / "logos"
+    odds_record = (odds / "logos.source.json").read_text(encoding="utf-8")
+    for name in ("fed", "bitcoin"):
+        assert (shared / f"{name}.png").is_file() and f'"{name}"' in record
+        assert not (odds / f"{name}.png").exists() and f'"{name}"' not in odds_record
 
 
 @pytest.mark.parametrize("plugin", ["nature_nearby", "tech_play", "planet_now"])

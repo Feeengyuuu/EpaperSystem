@@ -109,7 +109,8 @@ HEADERS = {"User-Agent": "Mozilla/5.0 InkyPi asset build (https://github.com/Fee
 COMMONS = "https://upload.wikimedia.org/wikipedia/commons/thumb/{path}/500px-{name}.png"
 PUBLIC_DOMAIN = "Public domain (Wikimedia Commons)"
 COVERS = PLUGINS / "base_plugin" / "assets" / "source_logos"
-# The same folder holds the logos more than one page prints (the SEC's, Yahoo Finance's, Nasdaq's).
+# The same folder holds the logos more than one page prints (the SEC's, Yahoo Finance's, Nasdaq's,
+# the Fed's seal and Bitcoin's).
 SHARED = COVERS
 MONEY = PLUGINS / "money_radar" / "assets" / "logos"
 BOX_OFFICE = PLUGINS / "box_office_top_movies" / "assets" / "logos"
@@ -122,6 +123,7 @@ ORGANISERS = PLUGINS / "lol_info" / "assets" / "cs2_organisers"
 PAPERS = PLUGINS / "ai_papers" / "assets" / "logos"
 PLATFORM_LOGOS = PLUGINS / "live_radar" / "platform_logos"
 SPACE_NEWS = PLUGINS / "orbital_signal" / "assets" / "news"
+SPACE_TOPICS = PLUGINS / "orbital_signal" / "assets" / "topics"
 DIGEST = PLUGINS / "daily_digest" / "assets" / "logos"
 COMMONS_FILE = "https://commons.wikimedia.org/wiki/File:{name}"
 CALTRANS = ("https://dot.ca.gov/-/media/dot-media/images/logos/caltrans/caltranslogo.png", "https://dot.ca.gov/",
@@ -248,9 +250,10 @@ LOGOS = {
     "polymarket": ((COMMONS.format(path="e/ec/Polymarket.svg", name="Polymarket.svg"),
                     COMMONS_FILE.format(name="Polymarket.svg"), PUBLIC_DOMAIN), [ODDS], 1.0),
     # The marks of the sources Kalshi's US-economy markets settle on, one beside each board row.
+    # The Fed's seal and Bitcoin's logo also lead the launch page's market tags: kept with the shared logos.
     "fed": ((COMMONS.format(path="1/1a/Seal_of_the_United_States_Federal_Reserve_System.svg",
                             name="Seal_of_the_United_States_Federal_Reserve_System.svg"),
-             COMMONS_FILE.format(name="Seal_of_the_United_States_Federal_Reserve_System.svg"), PUBLIC_DOMAIN), [ODDS], 1.0),
+             COMMONS_FILE.format(name="Seal_of_the_United_States_Federal_Reserve_System.svg"), PUBLIC_DOMAIN), [SHARED], 1.0),
     "nber": (("https://upload.wikimedia.org/wikipedia/commons/2/2f/NBER_Logo.gif",
               COMMONS_FILE.format(name="NBER_Logo.gif"), PUBLIC_DOMAIN), [ODDS], "white_ground"),
     "bls": ((COMMONS.format(path="7/76/Bureau_of_Labor_Statistics_logo.svg", name="Bureau_of_Labor_Statistics_logo.svg"),
@@ -263,7 +266,14 @@ LOGOS = {
     "spdji": ((COMMONS.format(path="c/c4/S%26P_Dow_Jones_Indices_logo.svg", name="S%26P_Dow_Jones_Indices_logo.svg"),
                COMMONS_FILE.format(name="S&P_Dow_Jones_Indices_logo.svg"), PUBLIC_DOMAIN), [ODDS], 1.0),
     "bitcoin": ((COMMONS.format(path="4/46/Bitcoin.svg", name="Bitcoin.svg"),
-                 COMMONS_FILE.format(name="Bitcoin.svg"), PUBLIC_DOMAIN), [ODDS], 1.0),
+                 COMMONS_FILE.format(name="Bitcoin.svg"), PUBLIC_DOMAIN), [SHARED], 1.0),
+    # The launch page's markets: a market's subject by its own mark on its tag.
+    "ethereum": ((COMMONS.format(path="7/70/Ethereum_logo.svg", name="Ethereum_logo.svg"),
+                  COMMONS_FILE.format(name="Ethereum_logo.svg"), PUBLIC_DOMAIN), [SPACE_TOPICS], 1.0),
+    "gop": ((COMMONS.format(path="9/9b/Republicanlogo.svg", name="Republicanlogo.svg"),
+             COMMONS_FILE.format(name="Republicanlogo.svg"), PUBLIC_DOMAIN), [SPACE_TOPICS], 1.0),
+    "democratic_party": ((COMMONS.format(path="7/73/US_Democratic_Party_Logo.svg", name="US_Democratic_Party_Logo.svg"),
+                          COMMONS_FILE.format(name="US_Democratic_Party_Logo.svg"), PUBLIC_DOMAIN), [SPACE_TOPICS], 1.0),
     "nhl": ((COMMONS.format(path="e/e5/National_Hockey_League_shield.svg", name="National_Hockey_League_shield.svg"),
              COMMONS_FILE.format(name="National_Hockey_League_shield.svg"), PUBLIC_DOMAIN),
             [PLUGINS / "sports_dashboard" / "assets" / "logos"], 1.0),
@@ -460,6 +470,11 @@ LOGOS = {
     "news-european_spaceflight": (("https://europeanspaceflight.com/wp-content/uploads/2021/12/"
                                    "cropped-European-Spaceflight-logo-192x192.png", "https://europeanspaceflight.com/",
                                    "European Spaceflight's site icon, shown to name the story's source"), [SPACE_NEWS], 1.0),
+    "news-space_scout": (("https://i0.wp.com/www.spacescout.info/wp-content/uploads/2023/08/"
+                          "cropped-Space-Scout-Logo_FAVICON-_BG.png?fit=192%2C192&ssl=1", "https://www.spacescout.info/",
+                          "Space Scout's site icon, shown to name the story's source"), [SPACE_NEWS], "white_ground"),
+    "news-spacedaily": (("https://spacedaily.com/wp-content/uploads/2024/01/icon.png", "https://spacedaily.com/",
+                         "SpaceDaily's site icon, shown to name the story's source"), [SPACE_NEWS], "white_ground"),
     "snapi": (("https://www.spaceflightnewsapi.net/img/SNAPI_logo.png", "https://www.spaceflightnewsapi.net/",
                "The Spaceflight News API's logo from its own site, shown to name the source"), [SPACE_NEWS], 1.0),
     # 万象速览 (daily_digest): each card's source.

@@ -87,6 +87,30 @@
         64
       ],
       "sha256": "97eb6d47a2c65de5184a04e2d381e7a3e51de78ee0634d0714b62abe29bd3f44"
+    },
+    "news-space_scout": {
+      "source": "https://i0.wp.com/www.spacescout.info/wp-content/uploads/2023/08/cropped-Space-Scout-Logo_FAVICON-_BG.png?fit=192%2C192&ssl=1",
+      "page": "https://www.spacescout.info/",
+      "licence": "Space Scout's site icon, shown to name the story's source",
+      "source_sha256": "add1e92b7527509b3dad9c2f1a7922df06d58bd61838083b702b0dc975706d87",
+      "processing": "the white ground cleared",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "a4996e6113094ac51efc2d0805f17e76a368a290c01d1455217774c59e507aeb"
+    },
+    "news-spacedaily": {
+      "source": "https://spacedaily.com/wp-content/uploads/2024/01/icon.png",
+      "page": "https://spacedaily.com/",
+      "licence": "SpaceDaily's site icon, shown to name the story's source",
+      "source_sha256": "85d0c17b58a0490832fcac87772f905e0e4a59c115bef94fb5e2b268bdd86ead",
+      "processing": "the white ground cleared",
+      "size": [
+        86,
+        64
+      ],
+      "sha256": "095756967e1cd1bd92f9a075f32a35213a891542583dee03e9c0106be26bd395"
     }
   }
 }

@@ -19,6 +19,7 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
+from plugins.base_plugin.cover_gallery import SOURCE_LOGO_DIR
 from utils.doodle_backdrop import paint_doodles
 from utils.local_wordmark import load_source_logo, paste_local_wordmark
 from utils.page_canvas import PageCanvas
@@ -57,6 +58,9 @@ LADDER_W, LADDER_H = 96, 12
 # Each row's mark: the source its market settles on (assets/logos), in an ICON square before its label.
 ROW_MARKS = {"KXFEDDECISION": "fed", "KXRECSSNBER": "nber", "KXCPIYOY": "bls", "KXGDP": "bea",
              "KXPAYROLLS": "bls", "KXAAAGASM": "aaa", "KXINXY": "spdji", "KXBTCD": "bitcoin"}
+# The Fed's seal and Bitcoin's logo also lead the launch page's market tags: they live with the
+# shared source logos (base_plugin/assets/source_logos), the rest in this page's assets/logos.
+SHARED_MARKS = frozenset({"fed", "bitcoin"})
 # The part of a wide logo that stands for it at icon size (left, top, right, bottom shares):
 # BEA's chart mark, and the "S&P" of S&P Dow Jones Indices' wordmark.
 MARK_CROPS = {"bea": (0.0, 0.0, 0.27, 0.72), "spdji": (0.0, 0.0, 0.35, 0.44)}
@@ -147,15 +151,19 @@ def _night(canvas):
     return sum(canvas.color("paper")) < 200
 
 
+def _logo_file(name):
+    return (SOURCE_LOGO_DIR if name in SHARED_MARKS else ASSETS / "logos") / f"{name}.png"
+
+
 @lru_cache(maxsize=8)
 def _logo_art(name, height, night):
-    return load_source_logo(ASSETS / "logos" / f"{name}.png", height, (237, 241, 234) if night else None)
+    return load_source_logo(_logo_file(name), height, (237, 241, 234) if night else None)
 
 
 @lru_cache(maxsize=16)
 def _mark_art(name, side, night):
     """A row's settle-source mark fitted inside a ``side`` square (its wide logos cut to their mark)."""
-    art = load_source_logo(ASSETS / "logos" / f"{name}.png", 64, (237, 241, 234) if night else None)
+    art = load_source_logo(_logo_file(name), 64, (237, 241, 234) if night else None)
     if art is None:
         return None
     crop = MARK_CROPS.get(name)

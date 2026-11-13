@@ -1,5 +1,5 @@
 {
- "fetched_from": "Wikimedia Commons (file rendered to PNG by Commons)",
+ "fetched_from": "Wikimedia Commons (file rendered to PNG by Commons); an operator's own site where named",
  "logos": {
   "falcon9": {
    "role": "rocket",
@@ -71,17 +71,142 @@
     96
    ]
   },
-  "kuiper": {
+  "neutron": {
+   "role": "rocket",
+   "keep": "whole",
+   "file": "File:Neutron rocket logo.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:Neutron_rocket_logo.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/02/Neutron_rocket_logo.svg/960px-Neutron_rocket_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "9ca6084813d28fa25a69571a00e3dae5b62d63e1a945110b9102102c811386fe",
+   "sha256": "cfc652a7c372f40f921c368f9fc976c604853d9e81e29af12ce391b0fd27d10b",
+   "size": [
+    960,
+    57
+   ]
+  },
+  "atlas": {
+   "role": "rocket",
+   "keep": "emblem",
+   "file": "File:Atlas V logo.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:Atlas_V_logo.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2d/Atlas_V_logo.svg/960px-Atlas_V_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "4dedee3c1fbd8c4a4d77f3c2dbc9d0c50475b5e4ecab7cd4d843b4298b49669d",
+   "sha256": "adf3914f987428387457f7b45bc8010442c497e2aa32e82b4bac43def6619c7c",
+   "size": [
+    119,
+    96
+   ]
+  },
+  "sls": {
+   "role": "rocket",
+   "keep": "whole",
+   "file": "File:SLS-black (1079346706222).png",
+   "page": "https://commons.wikimedia.org/wiki/File:SLS-black_(1079346706222).png",
+   "rendered": "https://upload.wikimedia.org/wikipedia/commons/3/3e/SLS-black_%281079346706222%29.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+   "licence": "Public domain",
+   "source_sha256": "3f6e5ba1dd1794126e29fed1463ab83ccfd0a9fb38fd0d2c26ce985d78270124",
+   "sha256": "cdf3374b2d7de046a6b0009c8aadd99f8aaa60ed27cdc9de33e26f885d668b10",
+   "size": [
+    253,
+    96
+   ]
+  },
+  "h3": {
+   "role": "rocket",
+   "keep": "whole",
+   "file": "File:H3 logo.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:H3_logo.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7e/H3_logo.svg/960px-H3_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "b90eb655f0f820b49768c798f1bd6ba43deaaf33b646447db1a10bdb5aa2c18e",
+   "sha256": "0f67eef9439a53788e1535cf8be16fc42815a68cc4268f4b91e084383bdba1d6",
+   "size": [
+    96,
+    96
+   ]
+  },
+  "amazon_leo": {
    "role": "mission",
    "keep": "whole",
-   "file": "File:Kuiper Systems logo.svg",
-   "page": "https://commons.wikimedia.org/wiki/File:Kuiper_Systems_logo.svg",
-   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5a/Kuiper_Systems_logo.svg/960px-Kuiper_Systems_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "file": "File:Amazon Leo logo.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:Amazon_Leo_logo.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/55/Amazon_Leo_logo.svg/960px-Amazon_Leo_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
    "licence": "Public domain",
-   "source_sha256": "9b8ace138a525c817cce0e9d198a6e2d87451cb751a70b6dcac80c02b60ddff1",
-   "sha256": "ce043a21c76e78a49d507f1010d9fae5c18198145d0bd887251ee28c1461c3b0",
+   "source_sha256": "8bfcf056fc4f29af3e4bba9a5018696a56601a0f412dd615eedbd70c6dc4a7ad",
+   "sha256": "afaa9e8cd13f911e3d6d3bba18e5a34cbc3634fc13d142a9e0d50632a94d01c7",
    "size": [
-    733,
+    423,
+    96
+   ]
+  },
+  "ussf": {
+   "role": "mission",
+   "keep": "emblem",
+   "file": "File:United States Space Force logo.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:United_States_Space_Force_logo.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d1/United_States_Space_Force_logo.svg/960px-United_States_Space_Force_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "3f3a0a519c7b5375cd324c934f55183680502482af1ad0de16c1cb855db2d017",
+   "sha256": "0e06e97b61b786d98b11b6749e29d82f884d6972af89e50fde7e7935e668fe2e",
+   "size": [
+    64,
+    96
+   ]
+  },
+  "nro": {
+   "role": "mission",
+   "keep": "whole",
+   "file": "File:NRO.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:NRO.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5f/NRO.svg/960px-NRO.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "68b2faf65b31fa2290931f3354324f5d143e90788f096fbd1ec5b928fc0497ab",
+   "sha256": "625f1ec44568e10df1b4e0644aa0e7a5fe0e20374612e2bc87f34bdad61adb06",
+   "size": [
+    96,
+    96
+   ]
+  },
+  "artemis": {
+   "role": "mission",
+   "keep": "whole",
+   "file": "File:Artemis program (original without wordmark).svg",
+   "page": "https://commons.wikimedia.org/wiki/File:Artemis_program_(original_without_wordmark).svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2d/Artemis_program_%28original_without_wordmark%29.svg/960px-Artemis_program_%28original_without_wordmark%29.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "8676d4036c5987ebfd163ffefc2161f91f3f32a924956c734f9be3321e9d1a8a",
+   "sha256": "8c9014e7f74da3cb149944b0a2cb3d2fadf69322bb3d9cf9708037f05355a670",
+   "size": [
+    119,
+    96
+   ]
+  },
+  "starliner": {
+   "role": "mission",
+   "keep": "whole",
+   "file": "File:Boeing Starliner logo.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:Boeing_Starliner_logo.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f3/Boeing_Starliner_logo.svg/960px-Boeing_Starliner_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "e448f0396b8081356de55cd1543437c20e3a4d13700d0ce500d2ae45e545add2",
+   "sha256": "df5b416dd8763299d95f9fd0a672a85d3149d8a7111b8408862467884eb42041",
+   "size": [
+    679,
+    96
+   ]
+  },
+  "rivada": {
+   "role": "mission",
+   "keep": "emblem",
+   "source": "https://rivadaspace.com/wp-content/uploads/2025/01/logo-dark.svg",
+   "page": "https://rivadaspace.com/",
+   "licence": "Rivada Space Networks' logo from its own site header, shown to name its missions",
+   "source_sha256": "14960440289695c2ae5c64998dd70ea775c57ff44641ae612fef687c56abd5fb",
+   "sha256": "7a00f068a6f9cea266116321d1206f18e208a31164ae42c2e9d6f8d1f46d674c",
+   "size": [
+    671,
     96
    ]
   }

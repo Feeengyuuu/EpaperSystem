@@ -1,0 +1,37 @@
+{
+  "logos": {
+    "ethereum": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/70/Ethereum_logo.svg/500px-Ethereum_logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Ethereum_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "1d92dec8a5666721bbf54bded208559f02568fafad4f689f8f5c05b065eeb45e",
+      "size": [
+        39,
+        64
+      ],
+      "sha256": "8247fb73ad16ed097cff59d3dc7b2e48cfc645c18ba1646b0b148b134bc480ef"
+    },
+    "gop": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/9/9b/Republicanlogo.svg/500px-Republicanlogo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Republicanlogo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "37d0e7d0234968b319f1f361a37564567166dd81496b8c82007a75a8eec2ab55",
+      "size": [
+        73,
+        64
+      ],
+      "sha256": "5b1909db8f136a1bd9fa804e9a5f1292f7397b7d5434534c698dd2bcc24e6023"
+    },
+    "democratic_party": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/73/US_Democratic_Party_Logo.svg/500px-US_Democratic_Party_Logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:US_Democratic_Party_Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "de96da79cfb90c60e8477c55183621fa29118245b19a498b87268c28278efa1b",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "11e3b9b0663c6f90e643d77df693e4e07c4293f820921d37bbc658cb0570a0a9"
+    }
+  }
+}
