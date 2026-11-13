@@ -11,7 +11,8 @@ its top (titles and small text stay pure ink):
   thin line round it, quiet doodles behind its headlines.
 - 数字 (emerald), right, a 2 x 2 of tiles: the US public debt with its day's change and who holds
   it; California's regular gasoline with its weekly change and six weeks' line; the crypto Fear &
-  Greed Index on a half dial with its last seven days. 游戏 (violet): yesterday's Wordle answer.
+  Greed Index on a half dial with its last seven days. 游戏 (violet): yesterday's Wordle answer,
+  and on odd hours today's xkcd in its place.
 - 影音 (crimson), the foot: a NetEase chart's top three with their album covers (soaring, new,
   original and hot songs take turns by the hour), and the first three of Douban's films now showing
   and of its American series, as posters with their ratings.
@@ -23,8 +24,8 @@ and the cards beside it take the room.
 from __future__ import annotations
 
 import math
-from functools import lru_cache
 from datetime import date, datetime, timezone
+from functools import partial
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
@@ -36,7 +37,6 @@ from utils.page_canvas import PageCanvas
 from utils.picture_grounds import light_on_dark
 from utils.theme_utils import contrast_ratio
 
-from . import sources
 
 ASSETS = Path(__file__).resolve().parent / "assets"
 LOGOS = ASSETS / "logos"
@@ -541,27 +541,10 @@ def _wordle_tile(canvas, night, box, wordle):
     canvas.text(((left + right) / 2, bottom - 12), "今天的题不剧透", 10, "muted", anchor="mm", bold=False)
 
 
-# --- 每日一题: the day's chess puzzle or xkcd, in the Wordle tile's turn ------------------------------
+# --- xkcd: today's comic, in the Wordle tile's turn -------------------------------------------------
 
-# The board is a printed diagram, the same on either page: twelve-pixel squares, white or screened
-# with ink dots, and the standard diagram pieces (assets/chess, Cburnett's set) in pure black and white.
-CHESS_SQUARE = 12
-CHESS_BODY_TOP = BAND + 18
-CHESS_LIGHT, CHESS_INK = (255, 255, 255), (0, 0, 0)
-# A scaled figure's greys are stretched over these ranges: a white piece's thin outline to ink,
-# a black piece's body to ink with its light drawing kept.
-CHESS_TONE_RANGE = {"white": (110, 215), "black": (50, 190)}
-CHESS_ASSETS = Path(__file__).resolve().parent / "assets" / "chess"
-PUZZLE_BODY_TOP = BAND + 24
+COMIC_BODY_TOP = BAND + 24
 COMIC_WIDE = 2.2
-
-
-def chess_squares(box):
-    """{(row, column): its box} of the board as drawn in the tile ``box``, the top row first."""
-    left, top = box[0] + 8, box[1] + CHESS_BODY_TOP
-    return {(row, column): (left + column * CHESS_SQUARE, top + row * CHESS_SQUARE,
-                            left + (column + 1) * CHESS_SQUARE, top + (row + 1) * CHESS_SQUARE)
-            for row in range(8) for column in range(8)}
 
 
 def comic_view(picture, size):
@@ -573,100 +556,34 @@ def comic_view(picture, size):
     return ImageOps.contain(picture, size, method=Image.Resampling.LANCZOS)
 
 
-@lru_cache(maxsize=32)
-def chess_piece(piece, size):
-    """The diagram icon of a FEN piece letter (upper case white, lower case black), ``size`` square:
-    the figure as drawn, its lines pushed toward pure ink and its faces toward pure white so a
-    figure a dozen pixels tall still reads on the panel. None for a letter without an icon."""
-    path = CHESS_ASSETS / f"{piece.lower()}{'l' if piece.isupper() else 'd'}.png"
-    try:
-        with Image.open(path) as source:
-            art = source.convert("RGBA").resize((size, size), Image.Resampling.LANCZOS)
-    except OSError:
-        return None
-    low, high = CHESS_TONE_RANGE["white" if piece.isupper() else "black"]
-    tone = art.convert("L").point(lambda value: max(0, min(255, round((value - low) * 255 / (high - low)))))
-    icon = Image.merge("RGBA", (tone, tone, tone, art.getchannel("A").point(lambda value: min(255, value * 2))))
-    return icon
-
-
-def _puzzle_head(canvas, box, title, note="", middle=12):
-    """The tile's frame and its title in type (neither source's logo ships with the page)."""
-    left, top, right, _bottom = box
-    _card(canvas, box, "游戏")
-    middle = top + BAND + middle
-    x = left + 8 + canvas.text((left + 8, middle), title, 12, anchor="lm") + 6
-    if note and right - 8 - x > 20:
-        canvas.text((right - 8, middle), note, 10, "muted", anchor="rm", bold=False, width=right - 8 - x)
-
-
-def _chess_tile(canvas, box, puzzle):
-    """The position drawn from its FEN as a diagram, the side to move at the bottom: the board's
-    own light and dark squares and the standard piece icons, the same by day and by night."""
-    _puzzle_head(canvas, box, "每日棋题", puzzle.get("title") or "", middle=8)
-    board, side = puzzle["_board"], puzzle["_side"]
-    if side == "b":
-        board = [list(reversed(rank)) for rank in reversed(board)]
-    squares = chess_squares(box)
-    for (row, column), (x0, y0, x1, y1) in squares.items():
-        canvas.draw.rectangle((x0, y0, x1 - 1, y1 - 1), fill=CHESS_LIGHT)
-        if (row + column) % 2:
-            # A dark square is a fine screen of ink dots, as in a printed diagram: no grey to dither.
-            canvas.draw.point([(x, y) for x in range(x0, x1) for y in range(y0, y1) if (x + y) % 2 == 0 and y % 2 == 0],
-                              fill=CHESS_INK)
-        icon = chess_piece(board[row][column], CHESS_SQUARE) if board[row][column] else None
-        if icon is not None:
-            canvas.image.paste(icon, (x0, y0), icon)
-    first, last = squares[(0, 0)], squares[(7, 7)]
-    canvas.draw.rectangle((first[0] - 1, first[1] - 1, last[2], last[3]), outline=CHESS_INK)
-    # Who moves, beside the board: that side's king on a light square, and its word.
-    centre = round((last[2] + box[2]) / 2)
-    king = chess_piece("K" if side == "w" else "k", 20)
-    canvas.draw.rectangle((centre - 11, first[1] + 8, centre + 10, first[1] + 29), fill=CHESS_LIGHT, outline=CHESS_INK)
-    if king is not None:
-        canvas.image.paste(king, (centre - 10, first[1] + 9), king)
-    canvas.text((centre, first[1] + 42), "白先" if side == "w" else "黑先", 11, anchor="mm")
-
-
-def _xkcd_tile(canvas, night, box, puzzle, picture):
+def _xkcd_tile(canvas, night, box, comic, picture):
+    """Today's xkcd: the tile's frame and its title in type (xkcd's logo does not ship with the
+    page), the comic in the room below, its number and title along the foot."""
     left, top, right, bottom = box
-    _puzzle_head(canvas, box, "xkcd", "今日漫画")
-    room = (left + 8, top + PUZZLE_BODY_TOP, right - 8, bottom - 20)
+    canvas.image.info["daily_digest_xkcd"] = {"box": list(box)}
+    _card(canvas, box, "游戏")
+    middle = top + BAND + 12
+    x = left + 8 + canvas.text((left + 8, middle), "xkcd", 12, anchor="lm") + 6
+    canvas.text((right - 8, middle), "今日漫画", 10, "muted", anchor="rm", bold=False, width=right - 8 - x)
+    room = (left + 8, top + COMIC_BODY_TOP, right - 8, bottom - 20)
     view = comic_view(picture, (room[2] - room[0], room[3] - room[1]))
     if night:
         view = light_on_dark(view)
     canvas.image.paste(view, (round((room[0] + room[2] - view.width) / 2), round((room[1] + room[3] - view.height) / 2)))
-    canvas.text(((left + right) / 2, bottom - 10), f"#{puzzle['num']} {puzzle['title']}", 10, anchor="mm", bold=False,
+    canvas.text(((left + right) / 2, bottom - 10), f"#{comic['num']} {comic['title']}", 10, anchor="mm", bold=False,
                 width=right - left - 12)
 
 
-def _puzzle_ready(payload):
-    """The day's puzzle when the tile can draw it (xkcd needs its picture at hand), else None."""
-    data = ((payload.get("puzzle") or {}).get("data")) or {}
-    kind = data.get("kind")
-    try:
-        if kind == "chess":
-            return {**data, "_board": sources.fen_board(data.get("fen")), "_side": sources.fen_side(data.get("fen"))}
-        if kind == "xkcd" and payload.get("_puzzle_image") is not None and data.get("num"):
-            return data
-    except ValueError:
-        return None
-    return None
+def _xkcd_ready(payload):
+    """Whether the tile can draw today's xkcd: its reading and its picture are both at hand."""
+    comic = (payload.get("xkcd") or {}).get("data") or {}
+    return comic.get("kind") == "xkcd" and bool(comic.get("num")) and payload.get("_xkcd_image") is not None
 
 
-def _puzzle_tile(canvas, night, box, payload):
-    puzzle = _puzzle_ready(payload)
-    canvas.image.info["daily_digest_puzzle"] = {"kind": puzzle["kind"], "box": list(box)}
-    if puzzle["kind"] == "chess":
-        _chess_tile(canvas, box, puzzle)
-    else:
-        _xkcd_tile(canvas, night, box, puzzle, payload["_puzzle_image"])
-
-
-def _puzzle_turn(payload):
-    """Whether 每日一题 has the game tile now: on odd hours when Wordle is at hand too, always when
+def _xkcd_turn(payload):
+    """Whether xkcd has the game tile now: on odd hours when Wordle is at hand too, always when
     it is not."""
-    if _puzzle_ready(payload) is None:
+    if not _xkcd_ready(payload):
         return False
     wordle = _tile_ready("wordle", (payload.get("wordle") or {}).get("data"))
     return not wordle or payload["_now"].hour % 2 == 1
@@ -678,10 +595,10 @@ TILE_DRAWERS = (("debt", _debt_tile), ("gas", _gas_tile), ("fear_greed", _fear_g
 def _tiles(canvas, night, box, payload):
     left, top, right, bottom = box
     present = [(key, draw) for key, draw in TILE_DRAWERS if _tile_ready(key, (payload.get(key) or {}).get("data"))]
-    if _puzzle_turn(payload):
-        # 每日一题 takes Wordle's place (the last tile when Wordle is missing).
+    if _xkcd_turn(payload):
+        # xkcd takes Wordle's place (the last tile when Wordle is missing).
         present = [(key, draw) for key, draw in present if key != "wordle"][:3]
-        present.append(("puzzle", lambda canvas, night, tile, _data, whole=payload: _puzzle_tile(canvas, night, tile, whole)))
+        present.append(("xkcd", partial(_xkcd_tile, picture=payload["_xkcd_image"])))
     width = (right - left - TILE_GAP) / 2
     height = (bottom - top - TILE_GAP) / 2
     for index, (key, draw) in enumerate(present[:4]):
@@ -925,13 +842,13 @@ def _media(canvas, night, box, payload, images):
 def render_page(dimensions, payload, settings, now, images):
     palette, night = _palette(settings)
     canvas = PageCanvas(palette, family=(settings or {}).get("fontFamily") or "Microsoft YaHei")
-    payload = {**payload, "_now": now, "_zone": now.tzinfo, "_puzzle_image": images.get("puzzle")}
+    payload = {**payload, "_now": now, "_zone": now.tzinfo, "_xkcd_image": images.get("xkcd")}
     _header(canvas, night, payload, now)
     sky_ready = images.get("sun") is not None or (images.get("space") is not None and payload.get("space"))
     has_news = any(((payload.get("news") or {}).get(name) or {}).get("data", {}).get("items")
                    for name, _label in NEWS_SOURCES)
     has_tiles = any(_tile_ready(key, (payload.get(key) or {}).get("data")) for key, _draw in TILE_DRAWERS) \
-        or _puzzle_ready(payload) is not None
+        or _xkcd_ready(payload)
     has_media = bool(music_charts(payload.get("music"))) or any(
         ((payload.get(key) or {}).get("data") or {}).get("items") for key in ("showing", "us_tv"))
     grid_bottom = GRID_BOTTOM if has_media else MEDIA[3]

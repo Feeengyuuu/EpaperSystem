@@ -315,6 +315,8 @@ def _fake_fetchers(monkeypatch, failing=()):
     monkeypatch.setattr(sources, "fetch_debt", fake("debt", sources.normalize_debt(DEBT)))
     monkeypatch.setattr(sources, "fetch_fear_greed", fake("fear_greed", sources.normalize_fear_greed(FEAR_GREED)))
     monkeypatch.setattr(sources, "fetch_wordle", fake("wordle", {"day": "2026-11-01", "solution": "VIPER", "number": 1961}))
+    monkeypatch.setattr(sources, "fetch_xkcd", fake("xkcd", {"kind": "xkcd", "num": 3323, "title": "Meteor Fear",
+                                                             "image": "https://imgs.xkcd.com/comics/meteor_fear.png"}))
     return calls
 
 

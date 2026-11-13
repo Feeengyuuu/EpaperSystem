@@ -528,46 +528,10 @@ def valid_wordle(data):
     return isinstance(data, dict) and bool(re.fullmatch(r"[A-Z]{5}", str(data.get("solution") or "")))
 
 
-# --- 每日一题: the chess.com puzzle or today's xkcd ---------------------------------------------------
+# --- xkcd: today's comic ----------------------------------------------------------------------------
 
-CHESS_PUZZLE = "https://api.chess.com/pub/puzzle"
 XKCD = "https://xkcd.com/info.0.json"
 XKCD_IMAGE_HOST = "imgs.xkcd.com"
-PUZZLES = ("chess", "xkcd")
-_FEN_RANK = re.compile(r"[pnbrqkPNBRQK1-8]{1,8}")
-
-
-def puzzle_kind(now):
-    """The day's puzzle: the two take turns, one a day."""
-    return PUZZLES[now.date().toordinal() % len(PUZZLES)]
-
-
-def fen_board(fen):
-    """Eight ranks of eight squares from a FEN's placement, rank 8 first: a piece letter or None."""
-    ranks = str(fen or "").split(" ")[0].split("/")
-    board = []
-    for rank in ranks:
-        if not _FEN_RANK.fullmatch(rank):
-            raise ValueError("not a FEN rank")
-        squares = [square for char in rank for square in ([None] * int(char) if char.isdigit() else [char])]
-        board.append(squares)
-    if len(board) != 8 or any(len(squares) != 8 for squares in board):
-        raise ValueError("not a FEN board")
-    return board
-
-
-def fen_side(fen):
-    parts = str(fen or "").split(" ")
-    return "b" if len(parts) > 1 and parts[1] == "b" else "w"
-
-
-def normalize_chess(payload):
-    """chess.com's daily puzzle: its title and position (placement and side to move). The moves
-    that solve it are not kept."""
-    payload = payload if isinstance(payload, dict) else {}
-    fen = " ".join(str(payload.get("fen") or "").split())
-    fen_board(fen)
-    return {"kind": "chess", "title": _clean(payload.get("title"), 40), "fen": f"{fen.split(' ')[0]} {fen_side(fen)}"}
 
 
 def safe_xkcd_image(value):
@@ -585,15 +549,12 @@ def normalize_xkcd(payload):
     return {"kind": "xkcd", "num": payload["num"], "title": title, "image": image}
 
 
-def fetch_puzzle(kind, now, context):
-    """One request for the day's puzzle of ``kind``."""
-    if kind == "chess":
-        return normalize_chess(_get(CHESS_PUZZLE, context))
+def fetch_xkcd(context):
     return normalize_xkcd(_get(XKCD, context))
 
 
-def valid_puzzle(data):
-    return isinstance(data, dict) and data.get("kind") in PUZZLES and bool(data.get("fen") or data.get("image"))
+def valid_xkcd(data):
+    return isinstance(data, dict) and data.get("kind") == "xkcd" and bool(data.get("image"))
 
 
 # --- The sun ----------------------------------------------------------------------------------------
