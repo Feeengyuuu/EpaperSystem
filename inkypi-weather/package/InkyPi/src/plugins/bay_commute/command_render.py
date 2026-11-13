@@ -76,6 +76,11 @@ SIERRA_LABELS = {"clear": "无管制", "seasonal": "冬季封闭", "r1": "R1 雪
 SIERRA_TONES = {"clear": "emerald", "seasonal": "planned", "r1": "orange", "r2": "orange", "chains": "orange",
                 "r3": "crimson", "closed": "crimson"}
 SIERRA_LINE_GAP = 14
+# Each Sierra route is named by its own marker (assets/<route>.png, the standard designs from
+# Wikimedia Commons like the travel-time sign's): the Interstate shield, the US route shield and
+# California's green spade, this tall in the sign's rows.
+SIERRA_SHIELDS = {"I-80", "US-50", "SR-120"}
+SIERRA_SHIELD_HEIGHT = 16
 # A destination's leader to its times is drawn only with at least this much room (px); the
 # station's stop ring before its name is this wide.
 BART_LEADER_MIN = 14
@@ -306,10 +311,22 @@ def _sierra_mark(page, x, middle, level):
         draw.polygon([(x + 4, middle - 5), (x + 9, middle), (x + 4, middle + 5), (x - 1, middle)], fill=tone)
 
 
+def _route_marker(route, height):
+    """The route's marker ``height`` px tall (RGBA), or None for a route without the art."""
+    if route not in SIERRA_SHIELDS:  # an explicit list, never a provider-controlled path
+        return None
+    try:
+        with Image.open(ASSETS / f"{route}.png") as source:
+            return ImageOps.contain(source.convert("RGBA"), (height * 2, height), Image.Resampling.LANCZOS)
+    except OSError:
+        return None
+
+
 def sierra_sign(page, sierra, box=SIGN_BOX):
     """The Sierra's routes in the header's sign while chains are required or a pass is closed:
     a snowflake, 雪山路况 and Caltrans' report time at the left (where the travel-time sign has
-    its shield), then a row a route in three columns: the route, its state, the stretch."""
+    its shield), then a row a route in three columns: the route's own marker (its number in text
+    for a route without the art), its state, the stretch."""
     left, top, right, bottom = box
     strip = left + 40
     middle = (left + strip) / 2
@@ -321,13 +338,21 @@ def sierra_sign(page, sierra, box=SIGN_BOX):
                   bold=False, align="center", width=40)
     page.draw.line((strip, top + 6, strip, bottom - 6), fill=page.palette["muted"], width=1)
     rows = [row for row in sierra.get("routes") or [] if row.get("level") in SIERRA_LABELS][:3]
-    pitch = (bottom - top - 8) / 3
-    mark_x = round(strip + 7 + max(page.draw.textlength(row["route"], font=font(11, "number")) for row in rows) + 6)
+    pitch = (bottom - top) / 3
+    markers = {row["route"]: _route_marker(row["route"], SIERRA_SHIELD_HEIGHT) for row in rows}
+    lead = max(markers[row["route"]].width if markers[row["route"]] is not None
+               else page.draw.textlength(row["route"], font=font(11, "number")) for row in rows)
+    mark_x = round(strip + 7 + lead + 7)
     span_x = round(mark_x + 14 + max(page.draw.textlength(SIERRA_LABELS[row["level"]], font=font(10))
                                      for row in rows) + 7)
     for index, row in enumerate(rows):
-        y = round(top + 5 + index * pitch + (pitch - 11) / 2)
-        page.text((strip + 7, y - 1), row["route"], 11, "ink", role="number")
+        y = round(top + index * pitch + (pitch - 11) / 2)
+        marker = markers[row["route"]]
+        if marker is not None:
+            page.image.paste(marker, (round(strip + 7 + (lead - marker.width) / 2), round(y + 5 - marker.height / 2)),
+                             marker)
+        else:
+            page.text((strip + 7, y - 1), row["route"], 11, "ink", role="number")
         _sierra_mark(page, mark_x, y + 5, row["level"])
         page.text((mark_x + 14, y), SIERRA_LABELS[row["level"]], 10, "ink")
         stretch = "–".join(part for part in (row.get("from"), row.get("to")) if part)

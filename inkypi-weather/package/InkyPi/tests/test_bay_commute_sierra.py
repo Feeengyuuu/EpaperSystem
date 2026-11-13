@@ -458,8 +458,10 @@ def test_chains_or_a_closed_pass_take_the_headers_sign(monkeypatch, mode):
     # An even hour is the Sierra's in the header: the three routes with what holds on each, in the
     # sign's place; the travel times have the odd hours.
     assert "MILPITAS" not in placed and "雪山路况" in placed
-    assert {"I-80", "US-50", "SR-120", "R2 两驱装链", "封闭", "冬季封闭", "Kingvale–Truckee"} <= set(placed)
-    for text in ("I-80", "封闭", "Kingvale–Truckee"):
+    assert {"R2 两驱装链", "封闭", "冬季封闭", "Kingvale–Truckee"} <= set(placed)
+    # Each route is named by its own marker, not by its number in text.
+    assert not {"I-80", "US-50", "SR-120"} & set(placed)
+    for text in ("封闭", "Kingvale–Truckee"):
         x, y, width = placed[text]
         assert SIGN_BOX[0] <= x and x + width <= SIGN_BOX[2] and SIGN_BOX[1] <= y <= SIGN_BOX[3] - 10
     # Each state's colour is a solid mark beside ink text: red for the closed pass, orange for chains.
@@ -499,5 +501,34 @@ def test_on_the_travel_times_turn_the_footer_still_says_what_is_in_force(monkeyp
     assert ImageColor.getrgb(palette["crimson"]) in {colour for _n, colour in storm.crop((0, 456, 800, 480)).getcolors(8192)}
     # Without a travel-time sign to show, the Sierra's board keeps the header on any hour.
     _image, alone = draw(monkeypatch, page_payload(storm_summary(), sign=False), mode)
-    assert "雪山路况" in alone and "I-80" in alone
+    assert "雪山路况" in alone and "R2 两驱装链" in alone
     assert not next(text for text in alone if text.startswith("雪山 ")).startswith("雪山 US-50")
+
+
+def test_the_signs_routes_are_named_by_their_own_markers(monkeypatch):
+    from plugins.bay_commute import command_render
+
+    pasted = []
+    marker = command_render._route_marker
+    monkeypatch.setattr(command_render, "_route_marker",
+                        lambda route, height: pasted.append((route, height)) or marker(route, height))
+    storm, placed = draw(monkeypatch, page_payload(storm_summary()), at=BOARD_HOUR)
+
+    assert pasted == [(route, command_render.SIERRA_SHIELD_HEIGHT) for route in ("I-80", "US-50", "SR-120")]
+    for route in command_render.SIERRA_SHIELDS:
+        art = marker(route, command_render.SIERRA_SHIELD_HEIGHT)
+        assert art is not None and art.height == command_render.SIERRA_SHIELD_HEIGHT and art.width <= 20
+    # The Interstate's blue and the state route's green stand in the rows' lead, left of the states.
+    lead = storm.crop((SIGN_BOX[0] + 44, SIGN_BOX[1], placed["封闭"][0] - 12, SIGN_BOX[3])).convert("RGB")
+    colours = [colour for _count, colour in lead.getcolors(8192)]
+    assert any(blue > 120 and red < 60 and green < 110 for red, green, blue in colours)
+    assert any(green > 110 and red < 60 and blue < 110 for red, green, blue in colours)
+    # The three rows keep inside the sign.
+    rows = sorted(placed[text][1] for text in ("R2 两驱装链", "封闭", "冬季封闭"))
+    assert SIGN_BOX[1] <= rows[0] and rows[-1] + 11 <= SIGN_BOX[3] and rows[1] - rows[0] == rows[2] - rows[1]
+    # A route without the art (or a name the page does not know) is written as before.
+    assert marker("SR-88", 16) is None and marker("../x", 16) is None
+    summary = storm_summary()
+    summary["routes"][0]["route"] = "SR-88"
+    _image, written = draw(monkeypatch, page_payload(summary), at=BOARD_HOUR)
+    assert "SR-88" in written and "US-50" not in written
