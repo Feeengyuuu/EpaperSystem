@@ -445,11 +445,12 @@ def _boards_strip(canvas, boards, box):
         cx, end = x + index * cell_w, x + (index + 1) * cell_w - 6
         if index:
             canvas.rule((cx - 4, top + 5, cx - 4, bottom - 5))
-        icon, day_fill, night_fill = BOARD_STYLES[tab]
-        fill = night_fill if night else day_fill
-        canvas.draw.rounded_rectangle((cx, middle - 7, cx + 15, middle + 7), radius=3,
-                                      fill=fill)
-        draw_icon(canvas.draw, icon, (round(cx + 2), round(middle - 6)), 11, (255, 255, 255), fill)
+        icon, day_ink, night_ink = BOARD_STYLES[tab]
+        ink = night_ink if night else day_ink
+        # Transparent cutouts preserve the strip beneath the coloured pictogram.
+        art = Image.new("RGBA", (12, 12), (0, 0, 0, 0))
+        draw_icon(ImageDraw.Draw(art), icon, (0, 0), 11, (*ink, 255), (0, 0, 0, 0))
+        canvas.image.paste(art, (round(cx + 2), round(middle - 6)), art)
         tx = cx + 20
         tx += canvas.text((tx, middle), row["title"], 12, anchor="lm", width=end - tx) + 3
         tx += _arrow(canvas, tx, middle, row.get("change"))
