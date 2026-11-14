@@ -20,7 +20,7 @@ from PIL import Image, ImageDraw, ImageOps
 from utils.doodle_backdrop import paint_doodles
 from utils.flat_icons import draw_icon
 from utils.local_wordmark import load_source_logo, paste_local_wordmark
-from utils.page_canvas import PageCanvas
+from utils.page_canvas import NO_LINE_START, PageCanvas, re_tokens
 
 
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -440,6 +440,26 @@ def _card_tags(canvas, x, middle, model, right):
         _stat(canvas, x, middle, "star", rating, size=10, icon=10)
 
 
+def _card_title_lines(canvas, name, width, room):
+    """Only the first title line shares its width with the rank beside it."""
+    first_width = width - CARD_RANK_WIDTH
+    if room <= 1:
+        return canvas.wrap(name, 12, first_width, 1)
+    tokens = re_tokens(" ".join(str(name or "").split()))
+    if not tokens:
+        return []
+    split = 1
+    while split < len(tokens) and canvas.width("".join(tokens[:split + 1]), 12) <= first_width:
+        split += 1
+    # Carry the last word/character along when the next token is closing punctuation,
+    # matching PageCanvas.wrap's line-break rule.
+    if (split > 1 and split < len(tokens) and tokens[split].lstrip()[:1] in NO_LINE_START
+            and tokens[split - 1].lstrip()[:1] not in NO_LINE_START):
+        split -= 1
+    first = canvas.fit("".join(tokens[:split]), 12, first_width)
+    return [first, *canvas.wrap("".join(tokens[split:]).lstrip(), 12, width, room - 1)]
+
+
 def _card(canvas, box, model, rank, images, chinese):
     x1, y1, x2, y2 = box
     canvas.draw.rounded_rectangle(box, radius=7, fill=canvas.color("card"), outline=canvas.color("rule"), width=1)
@@ -456,12 +476,12 @@ def _card(canvas, box, model, rank, images, chinese):
     y = picture_bottom + 5
     bottom = (detail_middle - 8) if detail else (stats_middle - 9)
     room = max(1, int((bottom - y) // CARD_TITLE_LINE))
-    lines = canvas.wrap(name, 12, width - CARD_RANK_WIDTH, room)
+    lines = _card_title_lines(canvas, name, width, room)
     has_maker = bool(model.get("maker") or images.get(model.get("avatar")))
     maker_line = has_maker and len(lines) < room
     canvas.text((x1 + 5, y + 6), str(rank), 12, BRAND, anchor="lm")
-    for line in lines:
-        canvas.text((x1 + 5 + CARD_RANK_WIDTH, y), line, 12)
+    for index, line in enumerate(lines):
+        canvas.text((x1 + 5 + (CARD_RANK_WIDTH if index == 0 else 0), y), line, 12)
         y += CARD_TITLE_LINE
     # A line still to spare (a short name) carries its category, else a tag, and its rating.
     if room - len(lines) - (1 if maker_line else 0) >= 1:

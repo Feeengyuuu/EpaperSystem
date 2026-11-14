@@ -282,6 +282,39 @@ def test_a_cards_title_runs_on_into_the_room_under_it(monkeypatch):
     assert any(text.rstrip().endswith("Place") for text in shown)
 
 
+@pytest.mark.parametrize("theme", ["day", "night"])
+def test_card_continuation_uses_full_width_with_the_bundled_font(monkeypatch, theme):
+    # Clean archives have the bundled UI font, without a user's local YaHei files.
+    monkeypatch.delenv("INKYPI_DATA_DIR", raising=False)
+    canvas = render.PageCanvas(render._palette({"themeMode": theme}), family="unavailable-local-font")
+    assert Path(canvas.font(12).path).name == "NotoSansSC-VF.ttf"
+    drawn = []
+    original = canvas.text
+
+    def text(xy, value, size=14, *args, **kwargs):
+        if size == 12:
+            bounds = canvas.draw.textbbox(xy, str(value), font=canvas.font(size),
+                                          anchor=kwargs.get("anchor", "la"))
+            drawn.append((str(value), bounds))
+        return original(xy, value, size, *args, **kwargs)
+
+    monkeypatch.setattr(canvas, "text", text)
+    title = "Articulated Baby Dragon Printed In Place"
+    model = {**_payload()["week"][1], "name": title}
+    box = (10, 286, 132, 472)
+    render._card(canvas, box, model, 2, {}, {})
+
+    rank, *lines = drawn
+    assert rank[0] == "2"
+    assert " ".join(value for value, _bounds in lines) == title
+    assert len(lines) == 3
+    assert rank[1][2] < lines[0][1][0]
+    assert all(bounds[0] == box[0] + 5 for _value, bounds in lines[1:])
+    assert all(box[0] + 5 <= bounds[0] < bounds[2] <= box[2] - 5
+               and 380 <= bounds[1] < bounds[3] <= box[3] - 38 for _value, bounds in lines)
+    assert all(left[1][3] <= right[1][1] for left, right in zip(lines, lines[1:]))
+
+
 def _with_avatar(model, index):
     return {**model, "maker": f"Maker {index}",
             "avatar": f"https://makerworld.bblmw.com/makerworld/user/{index}/a.jpg?x-oss-process=image/resize,w_64"}
