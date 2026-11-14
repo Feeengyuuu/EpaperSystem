@@ -38,15 +38,15 @@ matched to the old UI face using `8H`; nominal font size alone is misleading.
 | --- | --- | --- |
 | `cn_hot_search` | Restored the existing Microsoft YaHei chain through `PageCanvas` at the owner's request | Source logos, rank geometry, story selection and explicit nondefault `fontFamily` |
 | `daily_digest` | News pair through `ContentCanvas` | Content cards, image area, poem text and explicit nondefault `fontFamily` |
-| `ai_papers` | Research pair through `ContentCanvas` | Original English, Chinese translation, abstract, figures and explicit nondefault `fontFamily` |
+| `ai_papers` | Restored the existing Microsoft YaHei regular/bold chain through `PageCanvas` at the owner's request | Original English, Chinese translation, abstract, figures, image ranks and explicit nondefault `fontFamily` |
 | `tech_play` | Restored the existing Microsoft YaHei chain through `PageCanvas` at the owner's request; body and small labels retain bold | Service state, game/paper blocks, image ranks and explicit nondefault `fontFamily` |
 | `telegram_digest` | News pair at the existing `_font` boundary | Curation, source/age fields, lead/list wrapping and picture placement |
 | `bambu_monitor` | News labels plus instrument face for large readings | Status semantics, fitted percentage, job filename, camera and AMS cards |
 | `vehicle_status` | News labels plus instrument face for large readings | Vehicle art, existing model badge, battery/range geometry and units |
 | `steam_charts` | Steam pair in native overview/fallback; equivalent local faces in HTML | Installed Motiva priority, original logos, game data, tables and old UI fallback |
 
-The two `ContentCanvas` pages treat the normal `Microsoft YaHei` family as
-their default role. A different explicitly selected family still uses the
+The remaining `ContentCanvas` page, `daily_digest`, treats the normal `Microsoft YaHei` family as
+its default role. A different explicitly selected family still uses the
 original `PageCanvas.font` resolver. These changes do not rewrite a saved
 selection. The other four plugins did not expose a font-family selector at
 their changed rendering boundary.
