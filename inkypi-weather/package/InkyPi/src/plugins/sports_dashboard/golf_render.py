@@ -13,6 +13,8 @@ from .card_backdrops import card_backdrop_box, paint_card_backdrop, paint_list_b
 from .icon_marks import espn_flag_url, place_parts
 from .scorebug_kit import ScorebugSpec
 
+from .sport_type import sport_panel
+
 SportsDashboard = None
 
 PGA_BANNER_HEIGHT = 42
@@ -20,6 +22,7 @@ PGA_ROWS_PER_COLUMN = 4
 
 
 class GolfRenderMixin:
+    @sport_panel("PGA")
     def _draw_pga_standalone_panel(self, image, draw, bounds, card, source_state, now):
         spec = ScorebugSpec("PGA", "pga_accent", "pga_live", "pga_tag", "pga_course_tint")
         x1, y1, x2, y2 = [int(value) for value in bounds]

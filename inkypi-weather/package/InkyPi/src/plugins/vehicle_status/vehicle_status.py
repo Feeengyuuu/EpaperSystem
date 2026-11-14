@@ -27,7 +27,8 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from security.ssrf import get_ssrf_policy
-from utils.app_utils import get_base_ui_font, get_font
+from utils.app_utils import get_font
+from utils.content_fonts import content_font
 from utils.atomic_file import atomic_write_json
 from utils.http_client import HttpStatusError, get_http_client
 from utils.local_wordmark import load_source_logo
@@ -2559,7 +2560,7 @@ def _int_setting(settings, key, default, minimum, maximum):
 
 
 def _font(size, bold=False):
-    return get_base_ui_font(size, bold=bold)
+    return content_font(size, bold=bold, profile="instrument" if size >= 22 else "news")
 
 
 def _ellipsize_text(draw, text, font, max_width):

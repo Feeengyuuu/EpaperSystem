@@ -1740,13 +1740,13 @@ def test_generate_image_without_token_renders_sample_digest(tmp_path):
     assert len(image.getcolors(maxcolors=1_000_000)) > 20
 
 
-def test_telegram_digest_base_font_uses_shared_resolver(monkeypatch, tmp_path):
+def test_telegram_digest_base_font_uses_the_readable_content_pair(monkeypatch, tmp_path):
     plugin = _plugin(tmp_path)
     sentinel = object()
     calls = []
     monkeypatch.setattr(
         telegram_mod,
-        "get_base_ui_font",
+        "content_font",
         lambda size, bold=False: calls.append((size, bold)) or sentinel,
         raising=False,
     )
@@ -1755,12 +1755,18 @@ def test_telegram_digest_base_font_uses_shared_resolver(monkeypatch, tmp_path):
     assert calls == [(15, True)]
 
 
-def test_telegram_digest_preserves_shared_bold_fallback_raster(monkeypatch, tmp_path):
+def test_telegram_digest_preserves_shared_bold_raster_when_content_fonts_are_unavailable(monkeypatch, tmp_path):
+    from utils import content_fonts
+    from utils.app_utils import get_base_ui_font
+
     plugin = _plugin(tmp_path)
-    shared = telegram_mod.get_base_ui_font(48, bold=True)
+    shared = get_base_ui_font(48, bold=True)
     expected = bytes(shared.getmask("Readable UI"))
+    absent = tmp_path / "absent-font.ttf"
+    monkeypatch.setattr(content_fonts, "CJK_PATH", absent)
+    monkeypatch.setattr(content_fonts, "LATIN_PATHS", {"news": (absent, absent)})
     monkeypatch.setattr(
-        telegram_mod,
+        content_fonts,
         "get_base_ui_font",
         lambda size, bold=False: shared,
     )

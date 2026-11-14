@@ -5,7 +5,7 @@ from plugins.base_plugin.render_provenance import (
 )
 
 from PIL import Image, ImageDraw, ImageOps
-from utils.app_utils import get_base_ui_font
+from utils.content_fonts import content_font
 from utils.doodle_backdrop import paint_doodles
 from utils.image_utils import text_width
 from utils.safe_image import ImageLimits, safe_open_image
@@ -1740,7 +1740,7 @@ class BambuMonitor(BasePlugin):
         return img
 
     def _font(self, size, bold=False):
-        return get_base_ui_font(int(size), bold=bool(bold))
+        return content_font(int(size), bold=bool(bold), profile="instrument" if size >= 22 else "news")
 
     @staticmethod
     def _text_width(draw, text, font):

@@ -12,7 +12,9 @@ licence is in `../../static/fonts/NotoSansSC-OFL.txt`. No private font download
 or installation is required.
 
 `readable_fonts.py` uses the existing sports renderer's weak font cache. The
-dashboard and error-page render methods own its scope, so each native font
-lasts only while a draw still uses it; there is no persistent strong cache of
-large CJK font instances. If a bundled face is unavailable or unreadable, the
+dashboard and error-page render methods own its scope. Per-size font pairs are
+weakly shared; this introduces no persistent strong cache. The shared glyph
+loader can retain its existing per-file probe and rasterization caches, so the
+scope does not promise the lifetime of every underlying native font. If a
+bundled face is unavailable or unreadable, the
 loader keeps the available CJK face or the normal UI fallback.

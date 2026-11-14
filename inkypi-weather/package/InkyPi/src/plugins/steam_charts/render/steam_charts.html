@@ -1,6 +1,24 @@
 {% extends "plugin.html" %}
 
 {% block content %}
+<style>
+{% if content_steam_uri %}
+@font-face { font-family: "InkySteamBrand"; src: url("{{ content_steam_uri }}"); font-weight: 100 599; }
+{% endif %}
+{% if content_steam_bold_uri %}
+@font-face { font-family: "InkySteamBrand"; src: url("{{ content_steam_bold_uri }}"); font-weight: 600 900; }
+{% endif %}
+{% if content_latin_uri %}
+@font-face { font-family: "InkySteamLatin"; src: url("{{ content_latin_uri }}"); font-weight: 100 599; }
+@font-face { font-family: "InkySteamLatin"; src: url("{{ content_latin_bold_uri }}"); font-weight: 600 900; }
+{% endif %}
+{% if content_cjk_uri %}
+@font-face { font-family: "InkySteamCJK"; src: url("{{ content_cjk_uri }}"); font-weight: 100 599;
+    font-variation-settings: "wght" 500; }
+@font-face { font-family: "InkySteamCJK"; src: url("{{ content_cjk_uri }}"); font-weight: 600 900;
+    font-variation-settings: "wght" 600; }
+{% endif %}
+</style>
 {% if yahei_font_uri %}
 <style>
 @font-face {

@@ -14,6 +14,8 @@ from .common import (
 )
 
 
+from .sport_type import sport_panel
+
 SportsDashboard = None
 
 FOCUS_BOX = (4, 4, 294, 235)
@@ -898,6 +900,7 @@ class ClubFootballRenderMixin:
                 ):
                     self._draw_right_aligned(draw, (right - 5, source_top), source_short, source_font, COLORS["muted"])
 
+    @sport_panel("SOCCER", selection="selected")
     def _render_club_football_panel(self, dimensions, selected, source_state, fetched_at, now):
         if (
             isinstance(selected, Mapping)

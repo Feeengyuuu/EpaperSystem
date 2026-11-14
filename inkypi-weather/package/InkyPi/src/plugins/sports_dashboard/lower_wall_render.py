@@ -16,6 +16,8 @@ from PIL import ImageStat
 from .common import *
 from .scorebug_kit import KIT_NOTE_MARK_GAP, _kit_luminance
 
+from .sport_type import sport_panel
+
 SportsDashboard = None
 
 WALL_HEADER_HEIGHT = 57
@@ -186,6 +188,7 @@ class LowerWallRenderMixin:
             left = x1 + index * (width + WALL_COLUMN_GAP)
             self._draw_wall_card(image, draw, (left, y1, left + width, y2), game, now)
 
+    @sport_panel(game="game")
     def _draw_wall_card(self, image, draw, box, game, now):
         x1, y1, x2, y2 = box
         sport, event = game["sport"], game["event"]
@@ -502,6 +505,7 @@ class LowerWallRenderMixin:
             return
         image.paste(art, (x1 + (x2 - x1 - art.width) // 2, y1 + (y2 - y1 - art.height) // 2), art)
 
+    @sport_panel(game="game")
     def _draw_wall_tile(self, image, draw, box, game, now):
         x1, y1, x2, y2 = box
         sport, event = game["sport"], game["event"]
@@ -556,6 +560,7 @@ class LowerWallRenderMixin:
         if colour is not None:
             self._draw_wall_stripe(draw, x1 - 7, score_left - 6, y2 if foot is None else foot, colour)
 
+    @sport_panel(game="game")
     def _draw_wall_row(self, image, draw, box, game, now, last):
         x1, y1, x2, y2 = box
         sport, event = game["sport"], game["event"]
@@ -574,6 +579,7 @@ class LowerWallRenderMixin:
         if not last:
             draw.line((x1, y2, x2, y2), fill=COLORS["line"], width=1)
 
+    @sport_panel(game="game")
     def _draw_wall_feature(self, image, draw, box, game, now):
         x1, y1, x2, y2 = box
         sport, event = game["sport"], game["event"]

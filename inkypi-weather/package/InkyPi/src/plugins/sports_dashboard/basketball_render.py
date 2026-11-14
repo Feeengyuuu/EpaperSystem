@@ -21,6 +21,8 @@ from .card_backdrops import card_backdrop_box, paint_card_backdrop, paint_list_b
 from .scorebug_kit import KIT_TILE_HEIGHT, ScorebugSpec, _kit_ink_on, _kit_inked_where_faint, _kit_result_ink, stat_icon_path
 from . import hockey
 
+from .sport_type import sport_panel
+
 SportsDashboard = None
 
 BASKETBALL_SPEC_KEYS = {
@@ -81,6 +83,7 @@ GAME_JERSEY_SLOT_SIZE, GAME_JERSEY_ROW_SIZE = (13, 14), (18, 17)
 class BasketballRenderMixin:
     # Panels ------------------------------------------------------------------
 
+    @sport_panel("NBA")
     def _draw_nba_compact_panel(self, image, draw, bounds, selected, source_state, now):
         selected = selected or {}
         spec = self._basketball_spec("NBA")
@@ -99,6 +102,7 @@ class BasketballRenderMixin:
         others = SportsDashboard._kit_scoreboard_order(events, main)
         self._draw_basketball_faceoff(image, draw, (x1 + 12, y1 + 57, x2 - 12, y2 - 7), main, others, now, spec)
 
+    @sport_panel("WNBA")
     def _draw_wnba_standalone_panel(self, image, draw, bounds, card, source_state, now):
         spec = self._basketball_spec("WNBA")
         x1, y1, x2, y2 = [int(value) for value in bounds]
@@ -116,6 +120,7 @@ class BasketballRenderMixin:
         others = SportsDashboard._kit_scoreboard_order(card.get("events"), main)
         self._draw_basketball_faceoff(image, draw, content, main, others, now, spec)
 
+    @sport_panel("NHL")
     def _draw_nhl_standalone_panel(self, image, draw, bounds, card, source_state, now):
         """The NHL's game in the face-off layout, the other games of these days in its ticker."""
         spec = self._basketball_spec("NHL")

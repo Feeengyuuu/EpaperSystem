@@ -28,6 +28,7 @@ from plugins.sports_dashboard.render_fonts import render_font, render_font_scope
 from plugins.sports_dashboard.score_fonts import fit_score, score_font, stat_font
 from plugins.sports_dashboard.source_credits import draw_source_credit
 from plugins.sports_dashboard.esports_fonts import active as esports_type_active, active_font, esports_role
+from plugins.sports_dashboard.sport_type import active_sport_font
 from runtime.sports_asset_metrics import record_asset_metric
 from utils.app_utils import get_base_ui_font, resolve_path
 from utils.cache_manager import (
@@ -4721,7 +4722,7 @@ class SportsDashboardCommonMixin:
 
     @staticmethod
     def _font(size, bold=False):
-        return active_font(size, bold) or render_font(get_base_ui_font, size, bold)
+        return active_font(size, bold) or active_sport_font(size, bold) or render_font(get_base_ui_font, size, bold)
 
     _score_font = staticmethod(score_font)
     _stat_font = staticmethod(stat_font)

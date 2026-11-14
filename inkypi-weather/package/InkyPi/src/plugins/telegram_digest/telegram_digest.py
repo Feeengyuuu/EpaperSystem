@@ -24,7 +24,8 @@ from plugins.telegram_digest.briefing_page import DAY_TAG_COLOURS, NIGHT_TAG_COL
 from plugins.telegram_digest.curation import VISIBLE_COUNT, Curator, feature_picture, split_lead
 from runtime.long_task_executor import current_task_context
 from runtime.refresh_contracts import TaskCancelled
-from utils.app_utils import bounded_int, coerce_bool, get_base_ui_font
+from utils.app_utils import bounded_int, coerce_bool
+from utils.content_fonts import content_font
 from utils.http_client import get_http_session, provider_io_lease
 from utils.page_canvas import NO_LINE_START, re_tokens
 from utils.safe_image import ImageLimits, safe_open_image
@@ -1909,7 +1910,7 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
             return bbox[2] - bbox[0]
 
     def _font(self, size, weight="normal"):
-        return get_base_ui_font(int(size), bold=weight == "bold")
+        return content_font(int(size), bold=weight == "bold")
 
     def _enabled(self, value, default=False):
         return coerce_bool(value, default=default, truthy=("1", "true", "yes", "on"))

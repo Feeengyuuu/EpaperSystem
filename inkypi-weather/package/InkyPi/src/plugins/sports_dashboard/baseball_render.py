@@ -14,6 +14,8 @@ from .common import *
 from .card_backdrops import paint_list_backdrop
 from .scorebug_kit import ScorebugSpec
 
+from .sport_type import sport_panel
+
 SportsDashboard = None
 
 MLB_CARD_WIDTH = 340
@@ -29,6 +31,7 @@ MLB_RACE_ROW_HEIGHT = 18
 
 
 class BaseballRenderMixin:
+    @sport_panel("MLB")
     def _draw_mlb_standalone_panel(self, image, draw, bounds, card, source_state, now):
         spec = self._mlb_spec()
         x1, y1, x2, y2 = [int(value) for value in bounds]

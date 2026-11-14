@@ -190,7 +190,8 @@ def _drawn_text_boxes(monkeypatch):
     def record(self, xy, text, *args, **kwargs):
         font = kwargs.get("font")
         anchor = kwargs.get("anchor")
-        boxes.append((str(text), self.textbbox(xy, str(text), font=font, anchor=anchor)))
+        if self._image.mode in {"RGB", "RGBA"}:
+            boxes.append((str(text), self.textbbox(xy, str(text), font=font, anchor=anchor)))
         return original(self, xy, text, *args, **kwargs)
 
     monkeypatch.setattr(ImageDraw.ImageDraw, "text", record)
@@ -263,8 +264,9 @@ def test_resting_printer_leads_with_its_state_not_a_percentage(
     original = ImageDraw.ImageDraw.text
 
     def record(self, xy, text, *args, **kwargs):
-        drawn.append((str(text), kwargs.get("fill"), self.textbbox(xy, str(text), font=kwargs.get("font"),
-                                                                   anchor=kwargs.get("anchor"))))
+        if self._image.mode in {"RGB", "RGBA"}:
+            drawn.append((str(text), kwargs.get("fill"), self.textbbox(xy, str(text), font=kwargs.get("font"),
+                                                                       anchor=kwargs.get("anchor"))))
         return original(self, xy, text, *args, **kwargs)
 
     monkeypatch.setattr(ImageDraw.ImageDraw, "text", record)
@@ -564,7 +566,8 @@ def _all_drawn_text(monkeypatch):
     original = ImageDraw.ImageDraw.text
 
     def record(self, xy, text, *args, **kwargs):
-        drawn.append(str(text))
+        if self._image.mode in {"RGB", "RGBA"}:
+            drawn.append(str(text))
         return original(self, xy, text, *args, **kwargs)
 
     monkeypatch.setattr(ImageDraw.ImageDraw, "text", record)

@@ -12,6 +12,7 @@ from .common import *
 from . import tennis, tennis_events
 from .icon_marks import espn_flag_url
 from utils.tennis_font import tour_font
+from .sport_type import sport_panel
 
 SportsDashboard = None
 
@@ -54,6 +55,7 @@ def match_state_label(match, now):
 
 
 class TennisRenderMixin:
+    @sport_panel("TENNIS")
     def _draw_tennis_panel(self, image, draw, bounds, card, source_state, now):
         x1, y1, x2, y2 = [int(value) for value in bounds]
         accent = COLORS["blue"]
@@ -144,8 +146,10 @@ class TennisRenderMixin:
             # A match to come by the page's clock icon and its local start.
             font = self._tennis_font(tour, 9)
             width = self._text_width(draw, state, font)
-            self._draw_icon_text(draw, "CLOCK", (x2 - 6 - width - 12, y1 + 2, x2 - 4, y1 + 15), state, font, COLORS["muted"],
-                                 accent=accent)
+            # The generic icon helper refits in the base UI face. Keep the tour
+            # face used for measuring this clock, so its minutes stay complete.
+            self._draw_sport_info_icon(draw, "CLOCK", x2 - 6 - width - 12, y1 + 4, accent)
+            self._draw_text_in_box(draw, (x2 - 6 - width, y1 + 2, x2 - 4, y1 + 15), state, font, COLORS["muted"])
         else:
             self._draw_text_in_box(draw, (x2 - 58, y1 + 2, x2 - 6, y1 + 15), state, self._tennis_font(tour, 9, live),
                                    COLORS["red"] if live else COLORS["muted"], align="right")

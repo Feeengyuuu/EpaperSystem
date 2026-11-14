@@ -410,7 +410,8 @@ def test_steam_charts_css_prefers_embedded_yahei_font():
         / "steam_charts.css"
     ).read_text(encoding="utf-8")
 
-    assert 'font-family: "InkySteamYaHei", "Microsoft YaHei", Arial, sans-serif;' in css
+    assert ('font-family: "InkySteamBrand", "InkySteamLatin", "InkySteamCJK", '
+            '"InkySteamYaHei", "Microsoft YaHei", Arial, sans-serif;') in css
 
 
 def test_steam_charts_css_overrides_base_plugin_page_shell():
@@ -856,6 +857,42 @@ def test_font_file_uri_exports_yahei_file_uri(monkeypatch, tmp_path):
     assert SteamCharts._font_file_uri("normal") == yahei.resolve().as_uri()
 
 
+def test_content_font_uris_and_html_keep_public_faces_without_private_install(monkeypatch):
+    from jinja2 import DictLoader, Environment
+
+    monkeypatch.delenv("INKYPI_DATA_DIR", raising=False)
+    params = SteamCharts._content_font_uris()
+    assert params["content_cjk_uri"].endswith("NotoSansSC-VF.ttf")
+    assert params["content_latin_uri"].endswith("Inter-SemiBold.ttf")
+    assert params["content_latin_bold_uri"].endswith("Inter-Bold.ttf")
+    assert params["content_steam_uri"] == params["content_steam_bold_uri"] == ""
+    template = (Path(__file__).resolve().parents[1] /
+                "src/plugins/steam_charts/render/steam_charts.html").read_text(encoding="utf-8")
+    env = Environment(loader=DictLoader({"page.html": template, "plugin.html": "{% block content %}{% endblock %}"}))
+    rendered = env.get_template("page.html").render(**params, games=[])
+    assert 'font-family: "InkySteamBrand"' not in rendered
+    assert all(uri in rendered for key, uri in params.items() if uri)
+    assert 'font-variation-settings: "wght" 500' in rendered
+    assert 'font-variation-settings: "wght" 600' in rendered
+
+
+def test_content_font_uris_keep_each_installed_steam_weight_and_the_public_fallback(tmp_path, monkeypatch):
+    from utils.steam_font import FILES
+
+    paths = {}
+    for bold in (False, True):
+        path = tmp_path / "fonts" / FILES[bold]
+        path.parent.mkdir(exist_ok=True)
+        path.write_bytes(b"browser falls back if these private bytes cannot load")
+        paths[bold] = path
+    monkeypatch.setenv("INKYPI_DATA_DIR", str(tmp_path))
+    params = SteamCharts._content_font_uris()
+    assert params["content_steam_uri"] == paths[False].resolve().as_uri()
+    assert params["content_steam_bold_uri"] == paths[True].resolve().as_uri()
+    assert params["content_latin_uri"].endswith("Inter-SemiBold.ttf")
+    assert params["content_cjk_uri"].endswith("NotoSansSC-VF.ttf")
+
+
 def test_font_file_uri_uses_shared_durable_font_path(monkeypatch, tmp_path):
     yahei = tmp_path / "msyhbd.ttc"
     yahei.write_bytes(b"yahei")
@@ -1010,24 +1047,31 @@ def test_header_bar_asset_is_exact_transparent_slot():
     assert image.getchannel("A").getbbox() is not None
 
 
-def test_steam_charts_base_font_uses_shared_resolver(monkeypatch):
+def test_steam_charts_base_font_uses_the_steam_content_profile(monkeypatch):
     sentinel = object()
     calls = []
     monkeypatch.setattr(
         steam_charts_module,
-        "get_base_ui_font",
-        lambda size, bold=False: calls.append((size, bold)) or sentinel,
+        "content_font",
+        lambda size, bold=False, profile=None: calls.append((size, bold, profile)) or sentinel,
         raising=False,
     )
 
     assert SteamCharts._font(20, "bold") is sentinel
-    assert calls == [(20, True)]
+    assert calls == [(20, True, "steam")]
 
 
-def test_steam_charts_preserves_shared_resolver_weight_instance(monkeypatch):
-    shared = steam_charts_module.get_base_ui_font(32, bold=False)
+def test_steam_charts_preserves_shared_fallback_when_content_fonts_are_unavailable(monkeypatch, tmp_path):
+    from utils import content_fonts
+    from utils.app_utils import get_base_ui_font
+
+    shared = get_base_ui_font(32, bold=False)
+    absent = tmp_path / "absent-font.ttf"
+    monkeypatch.setenv("INKYPI_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(content_fonts, "CJK_PATH", absent)
+    monkeypatch.setattr(content_fonts, "LATIN_PATHS", {"news": (absent, absent)})
     monkeypatch.setattr(
-        steam_charts_module,
+        content_fonts,
         "get_base_ui_font",
         lambda size, bold=False: shared,
     )

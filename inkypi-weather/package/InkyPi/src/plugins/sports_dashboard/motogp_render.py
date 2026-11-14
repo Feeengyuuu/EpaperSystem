@@ -17,6 +17,8 @@ from . import motogp, motogp_bikes, motogp_riders
 from .icon_marks import iso2_flag_url
 from .scorebug_kit import _kit_inked_where_faint
 
+from .sport_type import sport_panel
+
 SportsDashboard = None
 
 WEEKDAYS_ZH = "一二三四五六日"
@@ -189,6 +191,7 @@ class MotoGPRenderMixin:
             image.paste(art, (left, top), art)
         return True
 
+    @sport_panel("MOTOGP")
     def _draw_motogp_panel(self, image, draw, bounds, card, source_state, now):
         x1, y1, x2, y2 = [int(value) for value in bounds]
         accent = COLORS["orange"]

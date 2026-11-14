@@ -33,7 +33,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 from utils.doodle_backdrop import paint_doodles
 from utils.flat_icons import draw_icon
 from utils.local_wordmark import load_source_logo
-from utils.page_canvas import PageCanvas
+from utils.content_fonts import ContentCanvas as PageCanvas
 from utils.picture_grounds import light_on_dark
 from utils.theme_utils import contrast_ratio
 

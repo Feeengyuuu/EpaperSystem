@@ -1012,9 +1012,10 @@ def test_packaged_noto_font_covers_all_simplified_chinese_copy(monkeypatch, bold
     monkeypatch.delenv("INKYPI_DATA_DIR", raising=False)
     expected = Path(__file__).resolve().parents[1] / "src/static/fonts/NotoSansSC-VF.ttf"
 
-    font = vehicle_module.get_base_ui_font(14, bold=bold)
+    font = vehicle_module._font(14, bold=bold)
 
-    assert Path(font.path).resolve() == expected.resolve()
+    assert Path(font.fallback.path).resolve() == expected.resolve()
+    assert font.covers("".join(vehicle_module._fixed_ui_characters("zh-CN")))
     notdef = _font_mask_signature(font, "\U0010ffff")
     missing = [
         character

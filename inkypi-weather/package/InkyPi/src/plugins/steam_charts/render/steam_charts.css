@@ -32,7 +32,7 @@ body {
     --chart-ink: #064e3b;
     display: flex;
     flex-direction: column;
-    font-family: "InkySteamYaHei", "Microsoft YaHei", Arial, sans-serif;
+    font-family: "InkySteamBrand", "InkySteamLatin", "InkySteamCJK", "InkySteamYaHei", "Microsoft YaHei", Arial, sans-serif;
     height: calc(100% + 4.2dvh);
     width: 100%;
     overflow: hidden;

@@ -5,6 +5,8 @@ from .scorebug_kit import KIT_RESULT_EXTRA, _kit_inked_where_faint, _kit_result_
 from .score_fonts import football_score_league
 from .tv_networks import tv_logo_width_ratio, tv_network_parts, tv_watch_rank
 
+from .sport_type import sport_panel
+
 SportsDashboard = None
 LOCAL_CLUB_TEAM_LOGO_SCHEME = "local-club://"
 # The networks' logos on a card's top row (beside its status pill) and on a schedule row (after
@@ -139,6 +141,7 @@ class WorldCupRenderMixin:
             COLORS["muted"],
         )
 
+    @sport_panel("SOCCER", selection="selected")
     def _draw_worldcup_compact_panel(self, image, draw, bounds, selected, source_state, fetched_at, now):
         x1, y1, x2, y2 = [int(value) for value in bounds]
         panel_w = x2 - x1 + 1

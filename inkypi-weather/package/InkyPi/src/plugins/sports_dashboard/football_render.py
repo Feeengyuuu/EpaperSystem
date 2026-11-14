@@ -15,6 +15,8 @@ from .common import *
 from .card_backdrops import paint_list_backdrop
 from .scorebug_kit import KIT_SCOREBOARD_ROW_HEIGHT, KIT_TILE_HEIGHT, ScorebugSpec
 
+from .sport_type import sport_panel
+
 SportsDashboard = None
 
 FOOTBALL_TIMEOUTS_PER_HALF = 3
@@ -37,9 +39,11 @@ FOOTBALL_SPEC_KEYS = {
 
 
 class FootballRenderMixin:
+    @sport_panel("NFL")
     def _draw_nfl_standalone_panel(self, image, draw, bounds, card, source_state, now):
         self._draw_football_scorebug_panel(image, draw, bounds, card, source_state, now, "NFL")
 
+    @sport_panel("NCAA")
     def _draw_ncaa_standalone_panel(self, image, draw, bounds, card, source_state, now):
         """College layout: the ranked slate on the left, the featured ranked
         matchup (rank badges, school names, drive) on the right."""
@@ -121,7 +125,8 @@ class FootballRenderMixin:
                 self._draw_text_in_box(draw, score_box, line, self._font(13, True), COLORS["text"], align="right")
             return
         score = event.get(f"wins_{side}")
-        text, font = self._fit_text(draw, "-" if score is None else str(score), score_w, 24, bold=not dimmed, min_size=14)
+        text, font = self._fit_score(draw, "-" if score is None else str(score), score_w, 24, bold=not dimmed,
+                                     min_size=14, sport="NCAA", max_height=y2 - y1 - 4)
         self._draw_text_in_box(draw, score_box, text, font, COLORS["text"], align="right")
         if winner == side:
             middle = (y1 + y2) // 2

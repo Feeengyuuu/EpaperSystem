@@ -7,9 +7,10 @@ from plugins.steam_charts.overview_page import LiveOverviewMixin
 from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import (
     font_file_uri,
-    get_base_ui_font,
     resolve_base_ui_font_path,
 )
+from utils.content_fonts import CJK_PATH, LATIN_PATHS, content_font
+from utils.steam_font import private_path as steam_private_path
 from utils.atomic_file import atomic_write_json
 from utils.http_client import get_http_client
 from utils.draw_utils import fit_text as fit_text_to_width
@@ -275,6 +276,7 @@ class SteamCharts(LiveOverviewMixin, BasePlugin):
             "pixel_kaiju_uri": self._pixel_kaiju_data_uri(),
             "yahei_font_uri": self._font_file_uri("normal"),
             "yahei_bold_font_uri": self._font_file_uri("bold"),
+            **self._content_font_uris(),
             "updated_at_text": updated_at_text,
             "plugin_settings": settings,
         }
@@ -1092,8 +1094,22 @@ class SteamCharts(LiveOverviewMixin, BasePlugin):
         return name.startswith("msyh") or "yahei" in name
 
     @staticmethod
+    def _content_font_uris():
+        def uri(path):
+            return font_file_uri(path) if path and Path(path).is_file() else ""
+
+        regular, bold = steam_private_path(False), steam_private_path(True)
+        return {
+            "content_cjk_uri": uri(CJK_PATH),
+            "content_latin_uri": uri(LATIN_PATHS["news"][0]),
+            "content_latin_bold_uri": uri(LATIN_PATHS["news"][1]),
+            "content_steam_uri": uri(regular[0] if regular else None),
+            "content_steam_bold_uri": uri(bold[0] if bold else None),
+        }
+
+    @staticmethod
     def _font(size, weight="normal"):
-        return get_base_ui_font(int(size), bold=weight == "bold")
+        return content_font(int(size), bold=weight == "bold", profile="steam")
 
     @staticmethod
     @lru_cache(maxsize=4)

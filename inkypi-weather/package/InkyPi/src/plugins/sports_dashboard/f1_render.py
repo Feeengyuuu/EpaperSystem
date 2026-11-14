@@ -26,6 +26,8 @@ from .common import COLORS, LOCAL_DECOR_DIR, LOCAL_F1_TITLE_WORDMARK_PATH, LOCAL
 from .f1_digest import lap_label
 from .scorebug_kit import ScorebugSpec
 
+from .sport_type import sport_panel
+
 SportsDashboard = None
 
 F1_BAND_HEIGHT = 52
@@ -169,6 +171,7 @@ class F1RenderMixin:
             return self._fit_text(draw, text, width, size, bold=bold, min_size=7)
         return self._fit_score(draw, text, width, size, bold=bold, sport="F1", max_height=max_height)
 
+    @sport_panel("F1")
     def _draw_f1_compact_panel(self, image, draw, bounds, selected, source_state, now):
         selected = selected or {}
         spec = ScorebugSpec("F1", "f1_accent", "f1_live", "f1_tag", "panel_blue")

@@ -24,7 +24,7 @@ from PIL import Image, ImageDraw, ImageOps
 from utils.doodle_backdrop import paint_doodles
 from utils.flat_icons import draw_icon
 from utils.local_wordmark import load_source_logo, paste_local_wordmark
-from utils.page_canvas import PageCanvas
+from utils.content_fonts import ContentCanvas as PageCanvas
 from utils.picture_grounds import (
     blend_drawing, cut_flat_ground, drawn_on_white, light_on_dark, readable_on, trim_white,
 )
@@ -523,7 +523,8 @@ def days_label(days, now):
 
 
 def render_page(dimensions, payload, settings, now, images):
-    canvas = PageCanvas(_palette(settings), family=(settings or {}).get("fontFamily") or "Microsoft YaHei")
+    canvas = PageCanvas(_palette(settings), family=(settings or {}).get("fontFamily") or "Microsoft YaHei",
+                        profile="science")
     placed = paste_local_wordmark(canvas.image, ASSETS / "title_wordmark.png", (10, 4, 236, 50), align="left")
     if placed:
         x = placed[2] + 16
