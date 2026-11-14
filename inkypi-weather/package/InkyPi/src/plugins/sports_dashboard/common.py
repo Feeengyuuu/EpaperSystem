@@ -4018,15 +4018,11 @@ class SportsDashboardCommonMixin:
             image, self._sport_stage_mark_path(sport, (card or {}).get("main")),
             (x2 - 98 - SPORT_STAGE_MARK_W, header_y - 6, x2 - 98, header_y + 34), align="right",
         )
-        strip_drawn = self._draw_standalone_sport_header_cutout(
-            image,
-            sport,
-            max(title_x + SPORT_HEADER_CUTOUT_TITLE_GAP, title_end + 6),
-            header_y - 6,
-            stage[0] - 8 if stage else x2 - 92,
-            y1 + 48,
-            accent,
-        )
+        strip_box = (max(title_x + SPORT_HEADER_CUTOUT_TITLE_GAP, title_end + 6), header_y - 6,
+                     stage[0] - 8 if stage else x2 - 92, y1 + 48)
+        strip_drawn = (sport == "MOTOGP" and self._draw_motogp_starting_grid(image, draw, strip_box, card))
+        if not strip_drawn:
+            strip_drawn = self._draw_standalone_sport_header_cutout(image, sport, *strip_box, accent)
         self._draw_status_pill(draw, x2 - 84, header_y + 3, status, status == "LIVE")
         if not strip_drawn:
             draw.rectangle((x2 - 120, header_y + 13, x2 - 112, header_y + 21), fill=accent, outline=COLORS["border"], width=1)

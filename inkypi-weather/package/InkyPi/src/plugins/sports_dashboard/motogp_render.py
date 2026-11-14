@@ -39,6 +39,12 @@ MAKER_COLOURS = {"ducati": (204, 0, 0), "ktm": (255, 102, 0), "aprilia": (64, 64
                  "yamaha": (0, 61, 165)}
 # The least contrast a team colour keeps against the panel before the bar takes the page's ink.
 TEAM_COLOUR_CONTRAST = 1.8
+# Three lanes, as on the F1 header: the front row is nearest the chequered line.
+GRID_LANES = 3
+GRID_LABEL_HEIGHT = 10
+GRID_SLOT_WIDTH = 31
+GRID_SLOT_MIN_WIDTH = 23
+GRID_SLOT_GAP = 2
 
 
 def maker_mark(constructor):
@@ -95,6 +101,108 @@ class MotoGPRenderMixin:
             return self._fit_text(draw, text, width, size, bold=True, min_size=min_size)
         return self._fit_score(draw, text, width, size, bold=True, min_size=min_size,
                                sport="MOTOGP" if display else "MOTOGP_TEXT", max_height=size + 3)
+
+    def _draw_motogp_starting_grid(self, image, draw, box, card):
+        """The current race's official grid: a small starting place and a larger #bike number.
+
+        The provider owns completeness and race identity. A missing/ambiguous grid keeps
+        the normal header art; official gaps stay gaps, never renumbered to close them.
+        """
+        grid = (card or {}).get("grid") or {}
+        weekend = (card or {}).get("weekend") or {}
+        if (not isinstance(grid, dict) or grid.get("complete") is not True or grid.get("kind") != "official"
+                or grid.get("target_type") != "RAC" or not grid.get("session_id")
+                or not weekend.get("id") or grid.get("event_id") != weekend["id"]):
+            return False
+        if not any(session.get("id") == grid.get("session_id") and session.get("type") == "RAC"
+                   for session in (card or {}).get("sessions") or [] if isinstance(session, dict)):
+            return False
+        rows = grid.get("rows") or []
+        if not rows:
+            return False
+        placed, pit, places, numbers = [], [], set(), set()
+        for row in rows:
+            if not isinstance(row, dict):
+                return False
+            number = row.get("number")
+            if isinstance(number, bool) or not isinstance(number, int) or number <= 0 or number in numbers:
+                return False
+            numbers.add(number)
+            if row.get("pit_lane"):
+                pit.append(row)
+                continue
+            position = row.get("pos")
+            if isinstance(position, bool) or not isinstance(position, int) or position <= 0 or position in places:
+                return False
+            places.add(position)
+            placed.append(row)
+        if not placed:
+            return False
+        x1, y1, x2, y2 = [int(value) for value in box]
+        if y2 - y1 < 43:
+            return False
+        slots = max(places)
+        line_x = x2 - 6
+        available = line_x - 5 - x1
+        # Consecutive grid places advance one third of a car-length. Reserve a gap
+        # between places three apart, which share a lane. Size for every position.
+        slot_w = min(GRID_SLOT_WIDTH, int((GRID_LANES * available - (slots - 1) * GRID_SLOT_GAP)
+                                          / (slots + GRID_LANES - 1)))
+        if slot_w < GRID_SLOT_MIN_WIDTH:
+            return False
+        positions_font = self._motogp_type(draw, "99", 100, 7, display=True)[1]
+        for number_size in (11, 10, 9, 7):
+            number_font = self._motogp_type(draw, "#99", 100, number_size, display=True)[1]
+            if all(self._text_width(draw, str(row["pos"]), positions_font)
+                   + self._text_width(draw, f"#{row['number']}", number_font) + 3 <= slot_w for row in placed):
+                break
+        else:
+            return False
+        labels = []
+        for row in placed:
+            position, number = str(row["pos"]), f"#{row['number']}"
+            position_w = self._text_width(draw, position, positions_font)
+            number_w = self._text_width(draw, number, number_font)
+            labels.append((row, position, number, position_w, number_w))
+        title = "正赛发车位 / 车号 #"
+        title_font = self._font(8, False)
+        pit_label = "维修区 " + " ".join(f"#{row['number']}" for row in pit) if pit else ""
+        pole_label = "杆位 →"
+        title_w = self._text_width(draw, title, title_font)
+        pole_w = self._text_width(draw, pole_label, title_font)
+        if title_w + self._text_width(draw, pit_label, title_font) + pole_w + 16 > x2 - x1:
+            return False
+        self._draw_text_in_box(draw, (x1, y1, x2, y1 + GRID_LABEL_HEIGHT), title, title_font, COLORS["muted"])
+        if pit_label:
+            self._draw_text_in_box(draw, (x1 + title_w + 8, y1, x2 - pole_w - 8, y1 + GRID_LABEL_HEIGHT),
+                                   pit_label, title_font, COLORS["text"])
+        self._draw_text_in_box(draw, (x2 - pole_w, y1, x2, y1 + GRID_LABEL_HEIGHT), pole_label, title_font,
+                               COLORS["muted"], align="right")
+        top = y1 + GRID_LABEL_HEIGHT
+        lane_h = (y2 - top) / GRID_LANES
+        step = (available - slot_w) / max(1, slots - 1)
+        for row_index in range(int((y2 - top) // 3)):
+            for column in range(2):
+                fill = COLORS["text"] if (row_index + column) % 2 == 0 else COLORS["panel"]
+                left, tile_top = line_x + column * 3, top + row_index * 3
+                draw.rectangle((left, tile_top, left + 2, tile_top + 2), fill=fill)
+        for row, position, number, position_w, number_w in labels:
+            index = row["pos"] - 1
+            right = round(line_x - 5 - index * step)
+            left = right - slot_w
+            row_top = round(top + (index % GRID_LANES) * lane_h)
+            row_bottom = round(top + (index % GRID_LANES + 1) * lane_h) - 1
+            # The forward bracket is the occupied starting box; a coloured foot
+            # identifies the constructor without making the numbers rely on colour.
+            draw.line((right - 3, row_top, right, row_top, right, row_bottom, right - 3, row_bottom),
+                      fill=COLORS["muted"], width=1)
+            self._draw_text_in_box(draw, (left, row_top, left + position_w, row_bottom), position,
+                                   positions_font, COLORS["muted"])
+            self._draw_text_in_box(draw, (right - number_w - 2, row_top, right - 2, row_bottom), number,
+                                   number_font, COLORS["text"], align="right")
+            colour = team_colour(row, ((card or {}).get("riders") or {}).get(row.get("uuid")))
+            draw.line((left, row_bottom, left + 4, row_bottom), fill=colour, width=1)
+        return True
 
     def _draw_motogp_panel(self, image, draw, bounds, card, source_state, now):
         x1, y1, x2, y2 = [int(value) for value in bounds]
