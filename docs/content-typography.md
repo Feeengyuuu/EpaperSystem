@@ -2,7 +2,8 @@
 
 This audit covers all 74 plugins other than `sports_dashboard` and `live_radar`,
 at source baseline `23662e14` (2026-11-14). Sports has its own league/game roles;
-LiveRadar retains its separately accepted Inter/Noto pairing. This document
+LiveRadar restores its original Microsoft YaHei regular/bold UI chain at the
+owner's request, retaining the existing fallback when private fonts are absent. This document
 records deliberate retention as well as changes: content matching does not
 require a different family for every plugin.
 
@@ -35,16 +36,16 @@ matched to the old UI face using `8H`; nominal font size alone is misleading.
 
 | Plugin | Change | Preserved boundaries |
 | --- | --- | --- |
-| `cn_hot_search` | News pair through `ContentCanvas` | Source logos, rank geometry, story selection and explicit nondefault `fontFamily` |
+| `cn_hot_search` | Restored the existing Microsoft YaHei chain through `PageCanvas` at the owner's request | Source logos, rank geometry, story selection and explicit nondefault `fontFamily` |
 | `daily_digest` | News pair through `ContentCanvas` | Content cards, image area, poem text and explicit nondefault `fontFamily` |
 | `ai_papers` | Research pair through `ContentCanvas` | Original English, Chinese translation, abstract, figures and explicit nondefault `fontFamily` |
-| `tech_play` | Research pair through `ContentCanvas` | Service state, game/paper blocks and explicit nondefault `fontFamily` |
+| `tech_play` | Restored the existing Microsoft YaHei chain through `PageCanvas` at the owner's request; body and small labels retain bold | Service state, game/paper blocks, image ranks and explicit nondefault `fontFamily` |
 | `telegram_digest` | News pair at the existing `_font` boundary | Curation, source/age fields, lead/list wrapping and picture placement |
 | `bambu_monitor` | News labels plus instrument face for large readings | Status semantics, fitted percentage, job filename, camera and AMS cards |
 | `vehicle_status` | News labels plus instrument face for large readings | Vehicle art, existing model badge, battery/range geometry and units |
 | `steam_charts` | Steam pair in native overview/fallback; equivalent local faces in HTML | Installed Motiva priority, original logos, game data, tables and old UI fallback |
 
-The four `ContentCanvas` pages treat the normal `Microsoft YaHei` family as
+The two `ContentCanvas` pages treat the normal `Microsoft YaHei` family as
 their default role. A different explicitly selected family still uses the
 original `PageCanvas.font` resolver. These changes do not rewrite a saved
 selection. The other four plugins did not expose a font-family selector at

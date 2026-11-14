@@ -17,7 +17,7 @@ from PIL import Image, ImageDraw, ImageOps
 from utils.flat_icons import draw_icon
 from utils.image_badges import draw_image_badge
 from utils.local_wordmark import paste_header_logo_row, paste_local_wordmark
-from utils.content_fonts import ContentCanvas as PageCanvas
+from utils.page_canvas import PageCanvas
 from utils.picture_grounds import (
     blend_drawing, cut_flat_ground, drawn_on_white, light_on_dark, readable_on, trim_white, white_share,
 )
@@ -791,8 +791,7 @@ def _speedruns(canvas, payload, images, now):
 
 def render_page(dimensions, payload, settings, now, images):
     now = local_now(now)
-    canvas = PageCanvas(_palette(settings), family=settings.get("fontFamily") or "Microsoft YaHei",
-                        profile="science", small_bold=True)
+    canvas = PageCanvas(_palette(settings), family=settings.get("fontFamily") or "Microsoft YaHei")
     pasted = paste_local_wordmark(canvas.image, ASSETS / "title_wordmark.png", (12, 6, 212, 50), align="left")
     if pasted:
         title_right = pasted[2]

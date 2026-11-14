@@ -25,7 +25,7 @@ from utils.doodle_backdrop import paint_doodles
 from utils.flat_icons import draw_icon
 from utils.image_badges import draw_image_badge
 from utils.local_wordmark import load_source_logo, paste_local_wordmark
-from utils.content_fonts import ContentCanvas as PageCanvas
+from utils.page_canvas import PageCanvas
 
 from . import sources, topic_art
 from .cn_hot_search import ROWS_SHOWN, list_moves
