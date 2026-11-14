@@ -28,6 +28,9 @@ def _render(monkeypatch, card, colours=DAY_COLORS, box=BOX):
     original = plugin._draw_text_in_box
 
     def text(draw, bounds, label, *args, **kwargs):
+        glyph = draw.textbbox((0, 0), str(label), font=args[0])
+        assert glyph[2] - glyph[0] <= bounds[2] - bounds[0]
+        assert glyph[3] - glyph[1] <= bounds[3] - bounds[1]
         texts.append((str(label), bounds))
         return original(draw, bounds, label, *args, **kwargs)
 
@@ -60,19 +63,30 @@ def _render(monkeypatch, card, colours=DAY_COLORS, box=BOX):
 
 
 @pytest.mark.parametrize("colours", [DAY_COLORS, DEEP_NIGHT_COLORS], ids=["day", "night"])
-@pytest.mark.parametrize("count", [21, 22, 24, 27, 30])
-def test_every_bike_fits_without_overlap_or_numeric_labels(monkeypatch, colours, count):
+@pytest.mark.parametrize("count", [21, 22, 24, 27])
+def test_every_starting_position_is_beside_its_bike_without_covering_any_art(monkeypatch, colours, count):
     card = _card(count)
     shown, texts, bikes, bounds = _render(monkeypatch, card, colours)
-    assert shown and not texts
+    assert shown
+    assert {label for label, _box in texts} == {str(row["pos"]) for row in card["grid"]["rows"]}
+    assert len(texts) == count and not any(label.startswith("#") for label, _box in texts)
     assert {number for number, _box, _season in bikes} == {row['number'] for row in card["grid"]["rows"]}
     assert len(bikes) == count
     assert {season for _number, _box, season in bikes} == {2026}
+    assert len({box[2] - box[0] for _label, box in texts}) == 1
+    assert len({(box[2] - box[0], box[3] - box[1]) for _number, box, _season in bikes}) == 1
     for _number, box, _season in bikes:
         assert BOX[0] <= box[0] < box[2] <= BOX[2]
         assert BOX[1] <= box[1] < box[3] <= BOX[3]
         assert box[3] - box[1] == 14
-    boxes = [box for _number, box, _season in bikes]
+    labels = dict(texts)
+    for number, box, _season in bikes:
+        label_box = labels[str(number - 9)]
+        assert label_box[2] + 1 <= box[0]
+        assert label_box[1] == box[1] and label_box[3] == box[3]
+    # Each measured glyph fits its reserved box; those boxes cannot intersect
+    # any bike's image rectangle, including neighbouring slots.
+    boxes = [box for _number, box, _season in bikes] + [box for _label, box in texts]
     for index, one in enumerate(boxes):
         for other in boxes[index + 1:]:
             assert one[2] <= other[0] or other[2] <= one[0] or one[3] <= other[1] or other[3] <= one[1]
@@ -85,7 +99,9 @@ def test_official_empty_places_stay_empty_and_input_order_does_not_reorder_them(
     shown, texts, bikes, _bounds = _render(monkeypatch, card)
     assert shown
     labels = {number: box for number, box, _season in bikes}
-    assert not texts and 11 not in labels and 20 not in labels
+    assert 11 not in labels and 20 not in labels
+    assert "2" not in dict(texts) and "11" not in dict(texts)
+    assert set(dict(texts)) == {str(row["pos"]) for row in card["grid"]["rows"]}
     assert 33 in labels
     assert labels[10][0] > labels[13][0] > labels[16][0]
     assert labels[10][1] == labels[13][1] == labels[16][1]
@@ -116,8 +132,9 @@ def test_unknown_partial_wrong_event_or_wrong_session_leaves_the_art_untouched(m
     assert not shown and not texts and not bikes and bounds is None
 
 
-def test_a_field_beyond_readable_space_is_not_silently_cut_to_a_top_n(monkeypatch):
-    shown, texts, bikes, bounds = _render(monkeypatch, _card(40))
+@pytest.mark.parametrize("count", [30, 40])
+def test_a_field_beyond_readable_space_is_not_silently_cut_to_a_top_n(monkeypatch, count):
+    shown, texts, bikes, bounds = _render(monkeypatch, _card(count))
     assert not shown and not texts and not bikes and bounds is None
 
 
@@ -140,7 +157,7 @@ def test_livery_year_comes_from_the_event_not_the_current_clock(monkeypatch, sea
     else:
         card["grid"]["season"] = season
     shown, texts, bikes, _bounds = _render(monkeypatch, card)
-    assert shown and not texts and len(bikes) == 22
+    assert shown and len(texts) == len(bikes) == 22
     assert {year for _number, _box, year in bikes} == {expected}
 
 

@@ -41,9 +41,10 @@ MAKER_COLOURS = {"ducati": (204, 0, 0), "ktm": (255, 102, 0), "aprilia": (64, 64
 TEAM_COLOUR_CONTRAST = 1.8
 # Three lanes, as on the F1 header: the front row is nearest the chequered line.
 GRID_LANES = 3
-GRID_SLOT_WIDTH = 31
+GRID_SLOT_WIDTH = 40
 GRID_SLOT_MIN_WIDTH = 23
 GRID_SLOT_GAP = 2
+GRID_NUMBER_GAP = 1
 
 
 def maker_mark(constructor):
@@ -102,7 +103,7 @@ class MotoGPRenderMixin:
                                sport="MOTOGP" if display else "MOTOGP_TEXT", max_height=size + 3)
 
     def _draw_motogp_starting_grid(self, image, draw, box, card):
-        """The official grid's positions, shown by generated side-view team-livery schematics.
+        """Official starting positions beside generated side-view team-livery schematics.
 
         The provider owns completeness and race identity. A missing/ambiguous grid keeps
         the normal header art; official gaps stay gaps, never renumbered to close them.
@@ -156,24 +157,35 @@ class MotoGPRenderMixin:
             season = None
         lane_h = (y2 - y1) / GRID_LANES
         bike_h = min(14, int(lane_h) - 1)
+        position_font = self._font(8, True)
+        number_w = max(self._text_width(draw, str(row["pos"]), position_font) for row in placed)
         step = (available - slot_w) / max(1, slots - 1)
         bikes = []
         for row in placed:
             index = row["pos"] - 1
             nose = round(line_x - 5 - index * step)
-            art = motogp_bikes.load_bike(row, season, (slot_w, bike_h), COLORS["panel"])
+            position = str(row["pos"])
+            # Reserve the complete number (including double digits) at the tail. Only
+            # the remaining width belongs to the bike. Every rider gets the same box,
+            # so a two-digit place cannot make only the rear bikes smaller.
+            art = motogp_bikes.load_bike(row, season, (slot_w - number_w - GRID_NUMBER_GAP, bike_h), COLORS["panel"])
+            if art.width < 16 or art.height < 10:
+                return False
             top = round(y1 + (index % GRID_LANES) * lane_h + (lane_h - art.height) / 2)
-            bikes.append((art, nose - art.width, top, nose))
+            number_box = (nose - art.width - GRID_NUMBER_GAP - number_w, top,
+                          nose - art.width - GRID_NUMBER_GAP, top + art.height)
+            bikes.append((art, nose - art.width, top, nose, position, number_box))
         for row_index in range(int((y2 - y1) // 3)):
             for column in range(2):
                 fill = COLORS["text"] if (row_index + column) % 2 == 0 else COLORS["panel"]
                 left, tile_top = line_x + column * 3, y1 + row_index * 3
                 draw.rectangle((left, tile_top, left + 2, tile_top + 2), fill=fill)
-        for art, left, top, nose in bikes:
+        for art, left, top, nose, position, number_box in bikes:
             # A right-facing starting bracket and the chequered line show pole direction.
             right, bottom = nose + 2, top + art.height - 1
             draw.line((right - 2, top, right, top, right, bottom, right - 2, bottom),
                       fill=COLORS["muted"], width=1)
+            self._draw_text_in_box(draw, number_box, position, position_font, COLORS["text"], align="right")
             image.paste(art, (left, top), art)
         return True
 
