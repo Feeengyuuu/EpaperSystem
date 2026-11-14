@@ -179,6 +179,133 @@
         64
       ],
       "sha256": "30413059e0f699d5d0a8002b5f51832ff231004b53a03362a2268a0d78848b23"
+    },
+    "bbc": {
+      "source": "https://www.bbc.com/ (inline svg[icon=\"bbc\"])",
+      "page": "https://www.bbc.com/",
+      "licence": "The broadcaster's official logo (trademark), used to identify the news source",
+      "source_sha256": "ef0c26c9c76475d2d49470ac6ed8667e4db60d5c5ae488f40680ee7e8bf0858a",
+      "official_identity_verified": "https://www.bbc.com/",
+      "processing": "Official current BBC blocks extracted unchanged from the header SVG; rasterized, cropped and scaled. Near-black blocks use page ink at render time.",
+      "size": [
+        224,
+        64
+      ],
+      "sha256": "7cb3bb3f881ef4a66490a3741b90a14668e7e3c24aadbbe72caf128c84b3275d"
+    },
+    "ktla": {
+      "source": "https://ktla.com/wp-content/uploads/sites/4/2023/04/ktla-logo.png",
+      "page": "https://ktla.com/wp-json/wp/v2/media?search=KTLA%20logo&per_page=30",
+      "licence": "The broadcaster's official logo (trademark), used to identify the news source",
+      "source_sha256": "7a4fe7701f9ac30e2ecf9eec768f21888f8581856d91014f9bbc8604b7070a4c",
+      "official_identity_verified": "https://ktla.com/wp-json/wp/v2/media?search=KTLA%20logo&per_page=30",
+      "processing": "Official blue square and white 5 station icon, cropped and scaled only; original colours and badge background retained in both themes.",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "f51867970c297f644278f06edc02ec61ce51e012b79d6431ef8dd225ce88308e"
+    },
+    "rte": {
+      "source": "https://www.rte.ie/djstatic/dotie/img/logo-rte-hh-primary.svg",
+      "page": "https://www.rte.ie/",
+      "licence": "The broadcaster's official logo (trademark), used to identify the news source",
+      "source_sha256": "d330df70f818cf9141e2e2e5d4ddc38846a0b08bcddd64a27bdc8c3f35c2c12f",
+      "official_identity_verified": "https://www.rte.ie/",
+      "processing": "First four original paths form the RTÉ wordmark; the separate centenary divider and 100 are omitted. Rasterized, cropped and scaled; near-black lettering uses page ink at render time.",
+      "size": [
+        120,
+        64
+      ],
+      "sha256": "a73baeba9085973737e8cb39001967f0fffacc096a96f019b3afc13a7a7081a3"
+    },
+    "rtp": {
+      "source": "https://media.rtp.pt/empresa/wp-content/uploads/sites/31/2015/07/Institutional_RTP_Horizontal_PositivoCor_web-1.png",
+      "page": "https://media.rtp.pt/empresa/identidade-grafica/rtp/",
+      "licence": "The broadcaster's official logo (trademark), used to identify the news source",
+      "source_sha256": "3c244041eb79f74eeff6c3889c1facbd38ccd910d9caee78555c8c23123cfffa",
+      "official_identity_verified": "https://media.rtp.pt/empresa/identidade-grafica/rtp/",
+      "processing": "Current 2026 blue RTP wordmark cropped to (446,485,1382,767), excluding the separate corporate descriptor; scaled only, published colour retained.",
+      "size": [
+        212,
+        64
+      ],
+      "sha256": "bb572390c59b261e908c4f67f7fa181398563787eadc7a62738afa701cab2967"
+    },
+    "rtp_night": {
+      "source": "https://cdn-images.rtp.pt/common/img/channels/logos/gray-negative/horizontal/rtp_2026.png",
+      "page": "https://www.rtp.pt/",
+      "licence": "The broadcaster's official logo (trademark), used to identify the news source",
+      "source_sha256": "eefe7974701edb83c8469cfe729321b0f9834f34b85943e54392da0225249450",
+      "official_identity_verified": "https://www.rtp.pt/",
+      "processing": "Official 2026 white wordmark linked by the homepage; alpha crop and scaling only for dark backgrounds.",
+      "size": [
+        212,
+        64
+      ],
+      "sha256": "50a5386aa55ba84a1238e4249a774b69896d836e719d76b4c434c57bdafaa6e7"
+    },
+    "yahoo_sports": {
+      "source": "https://sports.yahoo.com/",
+      "page": "https://sports.yahoo.com/",
+      "licence": "The publisher's official mark (trademark), used to identify the news source",
+      "official_identity_verified": "https://sports.yahoo.com/",
+      "processing": "Official inline SVG aria-label Yahoo Sports; path geometry unchanged, viewBox case restored; CSS fill-uh-purple #7d2eff and fill-ymp-uh-batcave #232a31 from official stylesheet; alpha trimmed and proportionally rasterized to height64.",
+      "size": [
+        438,
+        64
+      ],
+      "sha256": "1704a9c6d8af7c399a3914455afc80fcaeb37c34f7a2f54ec0cdb600bb2432a3",
+      "kind": "wordmark",
+      "homepage_sha256": "4b332a3a6cccd93c6048afedaff8cba6ea71c402b3a89f4c8e2f7aefbfcef69a",
+      "extracted_svg_sha256": "98d4c346ff87f9f801fb6e9782e97789b4f528f20990846ec3ff0a1e7ea541bb",
+      "css_url": "https://s.yimg.com/xe/next-app-sports/_next/static/css/363b14cf4ef8.css",
+      "css_sha256": "a78d7c84b7142a3ddaa6a124711be1cb1f2d1f4768cea7cce95a54ce0bae419f"
+    },
+    "hbcu_sports": {
+      "source": "https://hbcusports.com/wp-content/uploads/sites/50/2026/09/hbcu-sports-site-logo.png",
+      "page": "https://hbcusports.com/",
+      "licence": "The publisher's official mark (trademark), used to identify the news source",
+      "official_identity_verified": "https://hbcusports.com/",
+      "processing": "Official current header img branding-logo; alpha trimmed and proportionally resized to height64.",
+      "size": [
+        195,
+        64
+      ],
+      "sha256": "24063fd45bf62d0eb57499b72f581d0e3eb91b37186f8de3371ff5e6e8ba2d7a",
+      "kind": "wordmark",
+      "source_sha256": "21456b85f7963240fd15d5dedfb783e0bdcae587fc49833f2f23b925ddf8c87a"
+    },
+    "lol_esports": {
+      "source": "https://lolesports.com/-/lolesports/icon.png?icon.12wuvyb-udn4w.png",
+      "page": "https://lolesports.com/",
+      "licence": "The publisher's official mark (trademark), used to identify the news source",
+      "official_identity_verified": "https://lolesports.com/",
+      "processing": "Official homepage rel=icon 48x48; original transparent pixels preserved, to be accompanied by publisher name.",
+      "size": [
+        48,
+        48
+      ],
+      "sha256": "c2777c06c16544d841efd8e7d1ce07b0bbcc044440bac170768b0467744e124b",
+      "kind": "icon",
+      "source_sha256": "895bfa78c79ce3f3c9b91152a261d7e32851d0b07d6d9c9dc404c42a363227ff"
+    },
+    "yahoo_sports_night": {
+      "source": "https://sports.yahoo.com/",
+      "page": "https://sports.yahoo.com/",
+      "licence": "The publisher's official mark (trademark), used to identify the news source",
+      "official_identity_verified": "https://sports.yahoo.com/",
+      "processing": "Official inline SVG dark:fill-white rule applied to both original paths; Sports path uses official dark:opacity-70. Original geometry retained; alpha cropped and scaled to height64.",
+      "size": [
+        438,
+        64
+      ],
+      "sha256": "59454c4e1f126d3c305bdeca5fa6057d8c2201192730b2a9966ff63028e60106",
+      "kind": "wordmark",
+      "homepage_sha256": "4b332a3a6cccd93c6048afedaff8cba6ea71c402b3a89f4c8e2f7aefbfcef69a",
+      "extracted_svg_sha256": "98d4c346ff87f9f801fb6e9782e97789b4f528f20990846ec3ff0a1e7ea541bb",
+      "css_url": "https://s.yimg.com/xe/next-app-sports/_next/static/css/363b14cf4ef8.css",
+      "css_sha256": "a78d7c84b7142a3ddaa6a124711be1cb1f2d1f4768cea7cce95a54ce0bae419f"
     }
   }
 }

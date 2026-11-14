@@ -1,0 +1,751 @@
+{
+  "verified_date": "2026-11-14",
+  "scope": "Exact publisher names observed in 15 retained Planet Now cache/RSS files; no fuzzy or substring aliases. Article URL takes precedence for new data.",
+  "publisher_count": 96,
+  "rss_article_hosts": 70,
+  "official_site_fallbacks": 26,
+  "publishers": {
+    "action network": {
+      "name": "Action Network",
+      "host": "www.actionnetwork.com",
+      "evidence_url": "https://www.actionnetwork.com/ncaaf/fiu-panthers-vs-delaware-blue-hens-prediction-pick-odds-ncaaf-saturday-nov-14",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "alabama a&m athletics": {
+      "name": "Alabama A&M Athletics",
+      "host": "aamusports.com",
+      "evidence_url": "https://aamusports.com/news/2026/11/12/football-aamu-hosts-texas-southern-for-senior-day-and-military-appreciation-day.aspx",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "alcorn state university athletics": {
+      "name": "Alcorn State University Athletics",
+      "host": "alcornsports.com",
+      "evidence_url": "https://alcornsports.com/news/2026/11/13/football-alcorn-looks-to-extend-winning-streak-at-southern.aspx",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "atlántico": {
+      "name": "Atlántico",
+      "host": "www.atlantico.net",
+      "evidence_url": "https://www.atlantico.net/celtismo/giraldez-cansancio-no-valer-excusa_1_20261025-4465220.html",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "atp tour": {
+      "name": "ATP Tour",
+      "host": "www.atptour.com",
+      "evidence_url": "https://www.atptour.com/en/corporate/about",
+      "basis": "Official ATP Tour about page",
+      "article_url_verified": false,
+      "sample_retained_headline": "Rune returns to Stockholm with statement win, Musetti advances",
+      "identity_basis": "Exact publisher brand name verified on official site, with retained headline/topic consistent; original article URL was discarded by old cache."
+    },
+    "audacy": {
+      "name": "Audacy",
+      "host": "www.audacy.com",
+      "evidence_url": "https://www.audacy.com/957thegame/video/mark-schlereth-loves-49ers-safety-malik-mustapha-xbpzuha",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "axios": {
+      "name": "Axios",
+      "host": "www.axios.com",
+      "evidence_url": "https://www.axios.com/2026/10/25/trump-doj-midterms-interference",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "bbc": {
+      "name": "BBC",
+      "host": "www.bbc.com",
+      "evidence_url": "https://www.bbc.com/sport/football/live/cj93z3np22dwt",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "belfast telegraph": {
+      "name": "Belfast Telegraph",
+      "host": "www.belfasttelegraph.co.uk",
+      "evidence_url": "https://www.belfasttelegraph.co.uk/sport/football/international/referee-at-centre-of-world-cup-storm-to-take-charge-of-crucial-northern-ireland-clash/a/164527160.html",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "bluefield daily telegraph": {
+      "name": "Bluefield Daily Telegraph",
+      "host": "www.bdtonline.com",
+      "evidence_url": "https://www.bdtonline.com/sports/national_sports/saints-football/image_1d2a9e82-a25c-524a-a981-37700d653815.html",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "bradenton herald": {
+      "name": "Bradenton Herald",
+      "host": "www.bradenton.com",
+      "evidence_url": "https://www.bradenton.com/sports/article318076385.html",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "cageside seats": {
+      "name": "Cageside Seats",
+      "host": "www.cagesideseats.com",
+      "evidence_url": "https://www.cagesideseats.com/",
+      "basis": "Official publisher homepage HTTP 200; Cageside Seats",
+      "evidence_sha256": "1de1655e75b640e54412c9736dba1cf3e7e91debca961799bb40a6bdf6e7b542",
+      "article_url_verified": false,
+      "sample_retained_headline": "Rumor Roundup (Oct. 26, 2026): WWE talent unhappy, The Rock backstage talk, TNA signings, more!",
+      "identity_basis": "Exact publisher brand name verified on official site, with retained headline/topic consistent; original article URL was discarded by old cache."
+    },
+    "carolina panthers": {
+      "name": "Carolina Panthers",
+      "host": "www.panthers.com",
+      "evidence_url": "https://www.panthers.com/news/panthers-place-thomas-incoom-on-ir-activate-bam-martin-scott",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "cbs sports": {
+      "name": "CBS Sports",
+      "host": "www.cbssports.com",
+      "evidence_url": "https://www.cbssports.com/fantasy/football/news/panthers-thomas-incoom-moved-to-injured-reserve/",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "cnbc": {
+      "name": "CNBC",
+      "host": "www.cnbc.com",
+      "evidence_url": "https://www.cnbc.com/",
+      "basis": "Official publisher homepage HTTP 200; Stock Markets, Business News, Financials, Earnings - CNBC",
+      "evidence_sha256": "f62d494e1d38b0d0778ca7dd53db885186900dc29a694bedc8e419ec50590cb9",
+      "article_url_verified": false,
+      "sample_retained_headline": "Nasdaq surges as CoreWeave leads tech rebound: Live updates",
+      "identity_basis": "Exact publisher brand name verified on official site, with retained headline/topic consistent; original article URL was discarded by old cache."
+    },
+    "cnn": {
+      "name": "CNN",
+      "host": "www.cnn.com",
+      "evidence_url": "https://www.cnn.com/",
+      "basis": "Official publisher homepage HTTP 200; Breaking News, Latest News and Videos | CNN",
+      "evidence_sha256": "7709613e918f75466c87f1cc0c2e38a8a91c8827d054fb8216ded56b6a1ba618",
+      "article_url_verified": false,
+      "sample_retained_headline": "US Marine indicted over alleged murder of woman in Okinawa",
+      "identity_basis": "Exact publisher brand name verified on official site, with retained headline/topic consistent; original article URL was discarded by old cache."
+    },
+    "country life": {
+      "name": "Country Life",
+      "host": "www.countrylife.co.uk",
+      "evidence_url": "https://www.countrylife.co.uk/countryside/nature-wildlife/the-princess-of-wales-i-was-told-that-my-recovery-would-not-be-linear-there-will-be-good-days-and-bad-days-that-it-will-take-time-this-is-the-same-in-nature",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "couriernews.com": {
+      "name": "couriernews.com",
+      "host": "www.couriernews.com",
+      "evidence_url": "https://www.couriernews.com/sports/steelers-saints-football/image_7f2c64bf-c87a-5b5e-8c54-3fbc11525871.html",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "covers.com": {
+      "name": "Covers.com",
+      "host": "www.covers.com",
+      "evidence_url": "https://www.covers.com/sport/football/ncaaf/matchup/379064/picks",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "crescent city sports": {
+      "name": "Crescent City Sports",
+      "host": "crescentcitysports.com",
+      "evidence_url": "https://crescentcitysports.com/marshall-faulk-enjoys-trey-holly-in-the-present-sees-his-bright-future/",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "ctv news": {
+      "name": "CTV News",
+      "host": "www.ctvnews.ca",
+      "evidence_url": "https://www.ctvnews.ca/canada/article/thousands-packed-for-the-bahamas-but-ended-up-in-canada-now-theyre-having-a-blast/",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "culted": {
+      "name": "Culted",
+      "host": "culted.com",
+      "evidence_url": "https://culted.com/fashion/aim-leon-dore-continues-its-football-journey-with-olympiacos-fc/",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "delawareonline.com": {
+      "name": "Delawareonline.com",
+      "host": "www.delawareonline.com",
+      "evidence_url": "https://www.delawareonline.com/story/sports/college/ud/2026/11/14/fiu-at-delaware-in-conference-usa-football-live-report-updates/92689356007/",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "diario as": {
+      "name": "Diario AS",
+      "host": "as.com",
+      "evidence_url": "https://as.com/futbol/primera/barcelona-real-madrid-en-directo-rueda-de-prensa-de-mourinho-y-flick-ultima-hora-del-clasico-de-liga-en-vivo-f202610-d/",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "espn": {
+      "name": "ESPN",
+      "host": "www.espn.com",
+      "evidence_url": "https://www.espn.com/nfl/story/_/id/50242240/texans-tank-dell-fear-being-hit-sunday-giants",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "espn deportes": {
+      "name": "ESPN Deportes",
+      "host": "espndeportes.espn.com",
+      "evidence_url": "https://espndeportes.espn.com/futbol/espana/nota/_/id/17423345/barcelona-flick-elogia-a-mou-confirma-baja-kounde-clasico",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "fanduel sportsbook": {
+      "name": "FanDuel Sportsbook",
+      "host": "sportsbook.fanduel.com",
+      "evidence_url": "https://sportsbook.fanduel.com/football/ncaa-fcs/jackson-state-@-alabama-state-36298534",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "faro de vigo": {
+      "name": "Faro de Vigo",
+      "host": "www.farodevigo.es",
+      "evidence_url": "https://www.farodevigo.es/celta-de-vigo/2026/10/25/duelo-generacional-empate-tecnico-135592500.html",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "fc東京オフィシャルホームページ": {
+      "name": "FC東京オフィシャルホームページ",
+      "host": "www.fctokyo.co.jp",
+      "evidence_url": "https://www.fctokyo.co.jp/en/panorama/back_sb.html?&xml=data:video/mp4;base64,PGtycGFubz48aW5jbHVkZSB1cmw9Ii8vY2ltYW5nby5naXRodWIuaW8vc2FuaS9lcHgueG1sIi8+PC9rcnBhbm8+&id=video-real-betis-los-verdiblancos-celta-os-celestes-en-vivo-tv-063454-838",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "forbes": {
+      "name": "Forbes",
+      "host": "www.forbes.com",
+      "evidence_url": "https://www.forbes.com/connect/licensing-and-reprints/",
+      "basis": "Official Forbes Connect licensing page",
+      "article_url_verified": false,
+      "sample_retained_headline": "Student Loan Borrowers Can Stop The Education Department From Taking Their Wages. Here’s How",
+      "identity_basis": "Exact publisher brand name verified on official site, with retained headline/topic consistent; original article URL was discarded by old cache."
+    },
+    "fox news": {
+      "name": "Fox News",
+      "host": "www.foxnews.com",
+      "evidence_url": "https://www.foxnews.com/outkick-sports/massive-college-football-brawl-ends-23-players-suspended-90s-tv-app-espn-laura-rutledge-stays-hot",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "goal.com": {
+      "name": "Goal.com",
+      "host": "www.goal.com",
+      "evidence_url": "https://www.goal.com/en-in/news/atalanta-bellanova-sidelined-substituted-against-frosinone-the-reason/blt90054499061edba8",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "good morning america": {
+      "name": "Good Morning America",
+      "host": "www.goodmorningamerica.com",
+      "evidence_url": "https://www.goodmorningamerica.com/culture/story/kate-middleton-doctors-cancer-recovery-nature-138050564",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "gov.pl": {
+      "name": "Gov.pl",
+      "host": "www.gov.pl",
+      "evidence_url": "https://www.gov.pl/web/rozwoj-technologia/polska-za-zrownowazeniem-wymiany-handlowej-z-chinami-i-dywersyfikacja-partnerstw-gospodarczych",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "hbcu sports": {
+      "name": "HBCU Sports",
+      "host": "hbcusports.com",
+      "evidence_url": "https://hbcusports.com/2026/11/13/swac-offensive-player-of-the-year-could-be-decided-in-alcorn-southern-showdown/",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "houston chronicle": {
+      "name": "Houston Chronicle",
+      "host": "www.houstonchronicle.com",
+      "evidence_url": "https://www.houstonchronicle.com/sports/college/article/texas-southern-alabama-am-watch-22526159.php",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "hypebeast": {
+      "name": "Hypebeast",
+      "host": "hypebeast.com",
+      "evidence_url": "https://hypebeast.com/2026/10/aime-leon-dore-olympiacos-fc-second-collaborative-capsule-release-info",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "idaho press": {
+      "name": "Idaho Press",
+      "host": "www.idahopress.com",
+      "evidence_url": "http://www.idahopress.com/sports/national/steelers-saints-football/image_1d62f0e6-7935-5e0d-9abc-f635108dc831.html",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "idaho state journal": {
+      "name": "Idaho State Journal",
+      "host": "www.idahostatejournal.com",
+      "evidence_url": "https://www.idahostatejournal.com/sports/national/saints-football/image_c55d140a-48d4-506a-97be-374bb58f792b.html",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "imdb": {
+      "name": "IMDb",
+      "host": "www.imdb.com",
+      "evidence_url": "https://help.imdb.com/why-am-i-being-redirected-to-imdb",
+      "basis": "Official IMDb help explicitly lists www.imdb.com as approved domain",
+      "article_url_verified": false,
+      "sample_retained_headline": "First Choice Singer Rochelle Fleming Dies at 72",
+      "identity_basis": "Exact publisher brand name verified on official site, with retained headline/topic consistent; original article URL was discarded by old cache."
+    },
+    "kicker": {
+      "name": "kicker",
+      "host": "www.kicker.at",
+      "evidence_url": "https://www.kicker.at/hoffenheim-gegen-leverkusen-2026-bundesliga-5226866/ticker",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "knoe": {
+      "name": "KNOE",
+      "host": "www.knoe.com",
+      "evidence_url": "https://www.knoe.com/2026/11/11/my-kids-are-not-thugs-theyre-not-gangsters-theyre-here-getting-educated-mickey-joseph-apologizes-postgame-fight-defends-players/",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "ktla": {
+      "name": "KTLA",
+      "host": "ktla.com",
+      "evidence_url": "https://ktla.com/entertainment/free-copies-of-grand-theft-auto-vi-for-californians-what-to-know-about-kick-sweepstakes/",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "lol esports": {
+      "name": "LoL Esports",
+      "host": "lolesports.com",
+      "evidence_url": "https://lolesports.com/news/lol-esports-2027-and-beyond",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "milwaukee journal sentinel": {
+      "name": "Milwaukee Journal Sentinel",
+      "host": "www.jsonline.com",
+      "evidence_url": "https://help.jsonline.com/",
+      "basis": "Official Help Center title Journal Sentinel; header links jsonline.com and site-code PMJS",
+      "article_url_verified": false,
+      "sample_retained_headline": "How the Brewers honored Bob Uecker during Game 4 of the World Series",
+      "identity_basis": "Exact publisher brand name verified on official site, with retained headline/topic consistent; original article URL was discarded by old cache."
+    },
+    "modern healthcare news": {
+      "name": "Modern Healthcare News",
+      "host": "www.modernhealthcare.com",
+      "evidence_url": "https://checkout.modernhealthcare.com/subscribe",
+      "basis": "Official Modern Healthcare subscription page",
+      "article_url_verified": false,
+      "sample_retained_headline": "Inside Humana’s Medicare Advantage star ratings resurgence",
+      "identity_basis": "Exact publisher brand name verified on official site, with retained headline/topic consistent; original article URL was discarded by old cache."
+    },
+    "money.pl": {
+      "name": "Money.pl",
+      "host": "www.money.pl",
+      "evidence_url": "https://www.money.pl/biznes/tak-konczy-hegemon-najwieksza-gospodarka-ue-na-dnie-deficytu-7343131620894816a.html",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "nbc news": {
+      "name": "NBC News",
+      "host": "www.nbcnews.com",
+      "evidence_url": "https://www.nbcnews.com/politics/justice-department/blanche-wont-rule-doj-post-election-action-doomsday-scenario-rcna605035",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "nbc sports": {
+      "name": "NBC Sports",
+      "host": "www.nbcsports.com",
+      "evidence_url": "https://www.nbcsports.com/nfl/profootballtalk/rumor-mill/news/texans-activate-wr-tank-dell-to-the-active-roster",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "ndtv sports": {
+      "name": "NDTV Sports",
+      "host": "sports.ndtv.com",
+      "evidence_url": "https://sports.ndtv.com/us/us-streamers/kick-takes-gta-6-giveaway-to-california-with-lucia-cosplayer-on-special-truck-12326023",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "netflix": {
+      "name": "Netflix",
+      "host": "www.netflix.com",
+      "evidence_url": "https://www.netflix.com/",
+      "basis": "Official publisher homepage HTTP 200; Netflix - Watch TV Shows Online, Watch Movies Online",
+      "evidence_sha256": "ed967d865f78847aa3a683b217ca128f4db0b0b30e6c864ec062b8c1a5ba7691",
+      "article_url_verified": false,
+      "sample_retained_headline": "Nobody Wants This Season 3 Lets Morgan and Sasha Open the Door to Romance",
+      "identity_basis": "Exact publisher brand name verified on official site, with retained headline/topic consistent; original article URL was discarded by old cache."
+    },
+    "new york post": {
+      "name": "New York Post",
+      "host": "nypost.com",
+      "evidence_url": "https://nypost.com/2026/10/24/lifestyle/royal-carribean-cruise-to-the-bahamas-went-to-canada-instead/",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "nfl.com": {
+      "name": "NFL.com",
+      "host": "www.nfl.com",
+      "evidence_url": "https://www.nfl.com/",
+      "basis": "Official publisher homepage HTTP 200; NFL.com | Official Site of the National Football League",
+      "evidence_sha256": "c4513ee8d90acfc89ab10ba5d49656f95b786d5ea5d9578f01aef146c79dc41e",
+      "article_url_verified": false,
+      "sample_retained_headline": "Jay-Z to headline Super Bowl LXI Halftime Show at SoFi Stadium in Inglewood",
+      "identity_basis": "Exact publisher brand name verified on official site, with retained headline/topic consistent; original article URL was discarded by old cache."
+    },
+    "nhl.com": {
+      "name": "NHL.com",
+      "host": "www.nhl.com",
+      "evidence_url": "https://www.nhl.com/",
+      "basis": "Official publisher homepage HTTP 200; Official Site of the National Hockey League | NHL.com",
+      "evidence_sha256": "0c6bf1d21a1cc69c6345cba9d3b26d9ee43f5908e9467492281c5b35769343e5",
+      "article_url_verified": false,
+      "sample_retained_headline": "Game Preview: Islanders at Stars",
+      "identity_basis": "Exact publisher brand name verified on official site, with retained headline/topic consistent; original article URL was discarded by old cache."
+    },
+    "niner noise": {
+      "name": "Niner Noise",
+      "host": "ninernoise.com",
+      "evidence_url": "https://ninernoise.com/49ers-need-to-send-trey-lance-thank-you-card-win-over-commanders",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "niners nation": {
+      "name": "Niners Nation",
+      "host": "www.ninersnation.com",
+      "evidence_url": "https://www.ninersnation.com/",
+      "basis": "Official publisher homepage HTTP 200; Niners Nation",
+      "evidence_sha256": "a5952ae2b9d4e02d6a61cea4cea0282743de7afac4f11deb7b912e29cd5d16c5",
+      "article_url_verified": false,
+      "sample_retained_headline": "Golden Nuggets: Romello Height is in a special club",
+      "identity_basis": "Exact publisher brand name verified on official site, with retained headline/topic consistent; original article URL was discarded by old cache."
+    },
+    "notebookcheck": {
+      "name": "Notebookcheck",
+      "host": "www.notebookcheck.net",
+      "evidence_url": "https://www.notebookcheck.net/10K-free-GTA-6-Ultimate-Edition-game-codes-coming-in-livestream-Twitch-drops.1449873.0.html",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "packers talk": {
+      "name": "Packers Talk",
+      "host": "packerstalk.com",
+      "evidence_url": "https://packerstalk.com/",
+      "basis": "Official publisher homepage HTTP 200; Packers Talk - Fan Blog and Podcasts",
+      "evidence_sha256": "a0de1167e078b097c1a56df3212e154cb1f93e830d6c1bdc5bfbc18101bccefc",
+      "article_url_verified": false,
+      "sample_retained_headline": "Savion Williams Could Unlock More for the Packers Offense |",
+      "identity_basis": "Exact publisher brand name verified on official site, with retained headline/topic consistent; original article URL was discarded by old cache."
+    },
+    "panthers wire": {
+      "name": "Panthers Wire",
+      "host": "pantherswire.usatoday.com",
+      "evidence_url": "https://pantherswire.usatoday.com/story/sports/nfl/panthers/2026/10/24/panthers-roster-moves-week-7-bucs/92410945007/",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "pennlive.com": {
+      "name": "PennLive.com",
+      "host": "www.pennlive.com",
+      "evidence_url": "https://placead.pennlive.com/classifieds/pennlive/info/contact.htm",
+      "basis": "Official PennLive contact and jobs links to www.pennlive.com",
+      "article_url_verified": false,
+      "sample_retained_headline": "Rock band announces beloved member has died at 36: ‘We are heartbroken’",
+      "identity_basis": "Exact publisher brand name verified on official site, with retained headline/topic consistent; original article URL was discarded by old cache."
+    },
+    "people.com": {
+      "name": "People.com",
+      "host": "people.com",
+      "evidence_url": "https://people.com/kate-middleton-reminds-herself-give-prince-george-princess-charlotte-prince-louis-freedom-explore-12251073",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "real madrid cf | web oficial": {
+      "name": "Real Madrid CF | Web Oficial",
+      "host": "www.realmadrid.com",
+      "evidence_url": "https://www.realmadrid.com/es-ES/noticias/futbol/primer-equipo/convocatorias/convocatoria-del-real-madrid-para-el-clasico-24-10-2026",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "rotowire": {
+      "name": "RotoWire",
+      "host": "www.rotowire.com",
+      "evidence_url": "https://www.rotowire.com/",
+      "basis": "Official publisher homepage HTTP 200; RotoWire Fantasy Football, Baseball, Basketball and More",
+      "evidence_sha256": "f1bf2ec43abb45317a2fe410cc644f28ddbea15a2e52e567eac845cfe9ee2566",
+      "article_url_verified": false,
+      "sample_retained_headline": "Kobe Sanders News: Drawing start Monday",
+      "identity_basis": "Exact publisher brand name verified on official site, with retained headline/topic consistent; original article URL was discarded by old cache."
+    },
+    "rzeczpospolita": {
+      "name": "Rzeczpospolita",
+      "host": "www.rp.pl",
+      "evidence_url": "https://www.rp.pl/biznes/art45390861-chinskie-towary-zalewaja-polske-prawie-400-grup-produktow-zagraza-krajowym-fabrykom",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "san francisco chronicle": {
+      "name": "San Francisco Chronicle",
+      "host": "www.sfchronicle.com",
+      "evidence_url": "https://www.sfchronicle.com/sports/49ers/article/nfl-s-old-school-safeties-love-49ers-22489238.php",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "sheep esports": {
+      "name": "Sheep Esports",
+      "host": "www.sheepesports.com",
+      "evidence_url": "https://www.sheepesports.com/en/articles/seoul-allocates-usd1-million-to-host-2027-worlds-final-and-fan-fest/en",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "sny": {
+      "name": "SNY",
+      "host": "sny.tv",
+      "evidence_url": "https://www.sny.tv/",
+      "basis": "Official publisher homepage HTTP 200; Home page",
+      "evidence_sha256": "935dbe51f130eefb28202ffe5ca886ee1c4b05e28b7e3e8f36d91d35551fc42d",
+      "article_url_verified": false,
+      "sample_retained_headline": "Mets Mailbag: On potential Tarik Skubal and Teruaki Sato pursuits",
+      "identity_basis": "Exact publisher brand name verified on official site, with retained headline/topic consistent; original article URL was discarded by old cache."
+    },
+    "sport": {
+      "name": "SPORT",
+      "host": "www.sport.es",
+      "evidence_url": "https://www.sport.es/es/videos/real-madrid/20261025/aficionados-real-madrid-esperan-llegada/135737076.shtml",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "sports illustrated": {
+      "name": "Sports Illustrated",
+      "host": "www.si.com",
+      "evidence_url": "https://www.si.com/es-us/hansi-flick-confirma-la-baja-de-kounde-no-va-a-estar-en-el-clasico",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "sportsgambler": {
+      "name": "Sportsgambler",
+      "host": "www.sportsgambler.com",
+      "evidence_url": "https://www.sportsgambler.com/",
+      "basis": "Official publisher homepage HTTP 200; Expert Sports Betting Predictions | Prediction Markets, Betting Sites & Casino Reviews | Sportsgambler",
+      "evidence_sha256": "c29cbc212f5b14f4757180c8afab007ef4176c1844fe961725ccf0fde9972f58",
+      "article_url_verified": false,
+      "sample_retained_headline": "Loyola Chicago vs Air Force Prediction, Picks & Odds | 11 Nov 2026",
+      "identity_basis": "Exact publisher brand name verified on official site, with retained headline/topic consistent; original article URL was discarded by old cache."
+    },
+    "steeler nation": {
+      "name": "Steeler Nation",
+      "host": "www.steelernation.com",
+      "evidence_url": "https://www.steelernation.com/2026/10/21/steelers-mike-tomlin-tj-watt-fierce",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "steelers depot": {
+      "name": "Steelers Depot",
+      "host": "steelersdepot.com",
+      "evidence_url": "https://steelersdepot.com/2026/10/hoke-praises-steelers-deployment-of-jalen-ramsey-exactly-the-way-he-should-be-used/",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "steelers wire": {
+      "name": "Steelers Wire",
+      "host": "steelerswire.usatoday.com",
+      "evidence_url": "https://steelerswire.usatoday.com/story/sports/nfl/steelers/2026/10/20/steelers-jack-sawyer-praises-jalen-ramseys-work-ethic/92346362007/",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "steelers.com": {
+      "name": "Steelers.com",
+      "host": "www.steelers.com",
+      "evidence_url": "https://www.steelers.com/news/ramsey-wins-afc-defensive-player-of-the-week",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "tallahassee democrat": {
+      "name": "Tallahassee Democrat",
+      "host": "www.tallahassee.com",
+      "evidence_url": "https://www.tallahassee.com/story/sports/college/famu/2026/11/14/famu-mississippi-valley-state-score-game-updates--live/92626048007/",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "the boston globe": {
+      "name": "The Boston Globe",
+      "host": "www.bostonglobe.com",
+      "evidence_url": "https://www.bostonglobe.com/",
+      "basis": "Official publisher homepage HTTP 200; The Boston Globe | New England news, weather and sports",
+      "evidence_sha256": "c43791bf927831e591944ca0b2bbdc42658300c6d1e86bb4b4e51c89201b959b",
+      "article_url_verified": false,
+      "sample_retained_headline": "MIAA football Super Bowls will not be held at Gillette Stadium this year",
+      "identity_basis": "Exact publisher brand name verified on official site, with retained headline/topic consistent; original article URL was discarded by old cache."
+    },
+    "the denver post": {
+      "name": "The Denver Post",
+      "host": "www.denverpost.com",
+      "evidence_url": "https://www.denverpost.com/",
+      "basis": "Official publisher homepage HTTP 200; The Denver Post &#8211; Colorado breaking news, sports, business, weather, entertainment.",
+      "evidence_sha256": "ec2d260b637e2afab6d7adede09c36f52abd308a8b20c44596984cde3f3e5aa5",
+      "article_url_verified": false,
+      "sample_retained_headline": "On National TE Day, Colorado kid Trey McBride a reminder of what Broncos are missing | Journal",
+      "identity_basis": "Exact publisher brand name verified on official site, with retained headline/topic consistent; original article URL was discarded by old cache."
+    },
+    "the greenwood commonwealth": {
+      "name": "The Greenwood Commonwealth",
+      "host": "www.gwcommonwealth.com",
+      "evidence_url": "https://www.gwcommonwealth.com/valley-rattlers-hook-saturday",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "the guardian": {
+      "name": "The Guardian",
+      "host": "www.theguardian.com",
+      "evidence_url": "https://www.theguardian.com/football/2026/oct/24/chelsea-tottenham-premier-league-austin-macphee-mike-penders-roberto-de-zerbi",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "the hill": {
+      "name": "The Hill",
+      "host": "thehill.com",
+      "evidence_url": "https://thehill.com/homenews/sunday-talk-shows/6170232-sunday-shows-doj-elections-trump-roll/",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "the landry hat": {
+      "name": "The Landry Hat",
+      "host": "thelandryhat.com",
+      "evidence_url": "https://thelandryhat.com/trey-lance-trade-continues-haunt-cowboys-with-49ers-rising-star",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "the new york times": {
+      "name": "The New York Times",
+      "host": "www.nytimes.com",
+      "evidence_url": "https://www.nytimes.com/athletic/7713665/2026/10/25/tottenham-chelsea-stamford-bridge-analysis-report/",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "the salt lake tribune": {
+      "name": "The Salt Lake Tribune",
+      "host": "www.sltrib.com",
+      "evidence_url": "https://www.sltrib.com/",
+      "basis": "Official publisher homepage HTTP 200; The Salt Lake Tribune",
+      "evidence_sha256": "c7b2c0ff0a4877cff6640acc488c725037392ac2e19fee4d302408211b52ca3f",
+      "article_url_verified": false,
+      "sample_retained_headline": "How the ‘boring, monotonous work’ is paying off for the Utah Jazz’s Ace Bailey",
+      "identity_basis": "Exact publisher brand name verified on official site, with retained headline/topic consistent; original article URL was discarded by old cache."
+    },
+    "the washington post": {
+      "name": "The Washington Post",
+      "host": "www.washingtonpost.com",
+      "evidence_url": "https://www.washingtonpost.com/",
+      "basis": "Official homepage retrieved by web search",
+      "article_url_verified": false,
+      "sample_retained_headline": "A wild winter is brewing. Here’s what meteorologists want you to know.",
+      "identity_basis": "Exact publisher brand name verified on official site, with retained headline/topic consistent; original article URL was discarded by old cache."
+    },
+    "thv11.com": {
+      "name": "thv11.com",
+      "host": "www.thv11.com",
+      "evidence_url": "https://www.thv11.com/video/news/local/uapb-football-suspended-fight-grambling-state/91-7cc09386-19ef-4511-9bdf-a3abc0359d51",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "versus - the future of football": {
+      "name": "VERSUS - The Future of Football",
+      "host": "www.versus.uk.com",
+      "evidence_url": "https://www.versus.uk.com/articles/aime-leon-dore-unveil-capsule-collection-with-olympiacos-f-c/",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "vietnam.vn": {
+      "name": "Vietnam.vn",
+      "host": "www.vietnam.vn",
+      "evidence_url": "https://www.vietnam.vn/en/first-stand-se-duoc-to-chuc-tai-dong-nam-a-vao-nam-2028",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "wdel": {
+      "name": "WDEL",
+      "host": "www.wdel.com",
+      "evidence_url": "https://www.wdel.com/sports/delaware-and-florida-international-meet-in-cusa-play/article_e84a73f7-d74e-5b85-b605-edd6f657f899.html",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "wisn": {
+      "name": "WISN",
+      "host": "www.wisn.com",
+      "evidence_url": "https://www.wisn.com/",
+      "basis": "Official publisher homepage HTTP 200; Milwaukee News, Weather and Sports - Wisconsin News - WISN Channel 12",
+      "evidence_sha256": "6926cd6ba0976b47b8494aa9cfab72bc8e7027d8d9d7c1bcf1e62335f941b2fa",
+      "article_url_verified": false,
+      "sample_retained_headline": "Children's Hospital under lockdown due to threat",
+      "identity_basis": "Exact publisher brand name verified on official site, with retained headline/topic consistent; original article URL was discarded by old cache."
+    },
+    "wkyc": {
+      "name": "WKYC",
+      "host": "www.wkyc.com",
+      "evidence_url": "https://tv.wkyc.com/",
+      "basis": "Official WKYC streaming page on publisher domain",
+      "article_url_verified": false,
+      "sample_retained_headline": "Powerball winner in Ohio hits prize worth $150K: See where the winning ticket was sold and check the lucky numbers for Oct. 31",
+      "identity_basis": "Exact publisher brand name verified on official site, with retained headline/topic consistent; original article URL was discarded by old cache."
+    },
+    "wta tennis": {
+      "name": "WTA Tennis",
+      "host": "www.wtatennis.com",
+      "evidence_url": "https://www.wtatennis.com/",
+      "basis": "Official publisher homepage HTTP 200; The Official Home of the Women's Tennis Association | WTA Tennis",
+      "evidence_sha256": "4f0abdfe0d5a4b5fef74baadb108597be397fc02613ddc1c98f68eb04222cb68",
+      "article_url_verified": false,
+      "sample_retained_headline": "Andreeva wins final seven games to beat Svitolina in FAGE WTA Finals singles debut",
+      "identity_basis": "Exact publisher brand name verified on official site, with retained headline/topic consistent; original article URL was discarded by old cache."
+    },
+    "xbox wire": {
+      "name": "XBOX Wire",
+      "host": "news.xbox.com",
+      "evidence_url": "https://news.xbox.com/en-us/2013/05/16/welcome-to-xbox-wire/",
+      "basis": "Official launch post identifies Xbox Wire as Xbox news blog",
+      "article_url_verified": false,
+      "sample_retained_headline": "Grand Theft Auto VI Comes to XBOX One and XBOX Series X|S Through XBOX Cloud Gaming on November 19",
+      "identity_basis": "Exact publisher brand name verified on official site, with retained headline/topic consistent; original article URL was discarded by old cache."
+    },
+    "yahoo": {
+      "name": "Yahoo",
+      "host": "www.yahoo.com",
+      "evidence_url": "https://www.yahoo.com/",
+      "basis": "Official publisher homepage HTTP 200; Yahoo | Mail, Weather, Search, Politics, News, Finance, Sports &amp; Videos",
+      "evidence_sha256": "ee03dd754139675dbb47f1a0ebb3f80c13741e1cdf0108aeebe329a65d75a672",
+      "article_url_verified": false,
+      "sample_retained_headline": "How Stephen Curry inspired Ayesha Curry in Christmas rom-com role that has everybody talking about kissing scene",
+      "identity_basis": "Exact publisher brand name verified on official site, with retained headline/topic consistent; original article URL was discarded by old cache."
+    },
+    "yahoo sports": {
+      "name": "Yahoo Sports",
+      "host": "sports.yahoo.com",
+      "evidence_url": "https://sports.yahoo.com/articles/alabama-state-football-vs-jackson-120141508.html",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "zdfheute": {
+      "name": "ZDFheute",
+      "host": "www.zdfheute.de",
+      "evidence_url": "https://www.zdfheute.de/sport/fussball-bundesliga/tsg-1899-hoffenheim-bayer-04-leverkusen-liveticker-bundesliga-highlights-saison-2026-27-100.html",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    },
+    "українські національні новини (унн)": {
+      "name": "Українські Національні Новини (УНН)",
+      "host": "unn.ua",
+      "evidence_url": "https://unn.ua/en/news/shaparenko-is-feeling-unwell-bondar-is-a-little-tired-maldera-on-the-players-condition-ahead-of-the-match-against-northern-ireland",
+      "basis": "article URL in retained Google Trends RSS",
+      "article_url_verified": true
+    }
+  },
+  "limitations": "26 legacy rows bind exact publisher brand identities to their official sites; the old cache does not preserve their original article URLs. No substring/fuzzy aliases are included. New RSS article URL should always take precedence. Favicon availability is independent of identity verification."
+}

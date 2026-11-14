@@ -16,7 +16,7 @@ from utils.cache_manager import CacheBudget
 from utils.http_client import get_http_client
 from utils.remote_thumbnails import load_thumbnails
 
-from . import sources
+from . import publisher_icons, sources
 
 
 logger = logging.getLogger(__name__)
@@ -136,6 +136,14 @@ class PlanetNow(BasePlugin):
                 for picture in images.values():
                     picture.close()
                 raise
+        try:
+            images.update(publisher_icons.load(
+                trends, self.cache_dir(env_var="PLANET_NOW_CACHE_DIR", create=False, strip=True) / "publisher-icons",
+                http=get_http_client(), context=context, allow_network=allow_network, now=now))
+        except TaskCancelled:
+            for picture in images.values():
+                picture.close()
+            raise
         payload["provenance"] = combined_provenance([payload[name] for name in CORE_FEEDS])
         available = [photo for photo in photos[:3] if isinstance(photo, dict) and photo.get("image") in images]
         # The Earth image of the day shares the photo slot with Mars, one turn in the rotation, once

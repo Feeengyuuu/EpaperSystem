@@ -29,6 +29,8 @@ from utils.safe_image import ImageLimits, safe_open_image
 from utils.space_typography import SpaceCanvas
 from utils.theme_utils import relative_luminance
 
+from . import publisher_icons
+from .publisher_icons import NEWS_OUTLET_LOGOS
 from .sources import (
     HOME, ISS_PERIOD_MIN, LIGHT_KM_S, PACIFIC, RAIN_RADIUS_KM, decode_image, iss_ascending, iss_ground_track,
     iss_next_switch, local_now, mars_distance_km, ocean_name, sky_pixels, sky_position, subsolar_point, sun_elevation,
@@ -632,14 +634,37 @@ def _trends(canvas, payload, images):
         source, headline = item.get("source") or "", item.get("news") or ""
         line_x = text_x
         if source:
-            # Exact outlet names only: a truncated or unfamiliar name remains text.
-            outlet = {"cnn": "cnn", "espn": "espn", "goal": "goal", "goal.com": "goal"}.get(source.strip().casefold())
-            mark = load_source_logo(ASSETS / "logos" / f"{outlet}.png", 11, canvas.color("ink")) if outlet else None
+            # Official wordmarks stand alone; compact site symbols keep the publisher's name.
+            outlet = NEWS_OUTLET_LOGOS.get(source.strip().casefold())
+            if outlet in ("rtp", "yahoo_sports") and canvas.palette["night"]:
+                outlet += "_night"
+            # HBCU publishes one blue mark for white paper; retain its colors on a tiny white
+            # field at night rather than inventing a recolored version of its lettering.
+            mark_ink = None if outlet == "hbcu_sports" else canvas.color("ink")
+            mark = load_source_logo(ASSETS / "logos" / f"{outlet}.png", 11, mark_ink) if outlet else None
             if mark is not None:
+                mark.thumbnail((72, 11), Image.Resampling.LANCZOS)
+                if outlet == "hbcu_sports" and canvas.palette["night"]:
+                    field = Image.new("RGBA", mark.size, "white")
+                    field.alpha_composite(mark)
+                    mark = field
                 canvas.image.paste(mark, (round(line_x), round(y + 20 - mark.height / 2)), mark)
                 line_x += mark.width + 4
             else:
-                line_x += canvas.text((line_x, y + 20), canvas.fit(source, 9, 72), 9, "trends", anchor="lm") + 4
+                icon = images.get(publisher_icons.icon_key(item))
+                if icon is None:
+                    icon = publisher_icons.bundled_icon(item)
+                local_icon = publisher_icons.LOCAL_ICONS.get(source.strip().casefold())
+                if local_icon:
+                    icon = load_source_logo(ASSETS / "logos" / f"{local_icon}.png", 11) or icon
+                source_width = 72
+                if icon is not None:
+                    mark = publisher_icons.on_page(icon, 11)
+                    canvas.image.paste(mark, (round(line_x), round(y + 20 - mark.height / 2)), mark)
+                    line_x += mark.width + 3
+                    source_width -= mark.width + 3
+                line_x += canvas.text((line_x, y + 20), canvas.fit(source, 9, source_width), 9,
+                                      "trends", anchor="lm") + 4
         if headline:
             canvas.text((line_x, y + 20), headline, 10, "muted", anchor="lm", bold=False, width=column - line_x)
     if wiki:

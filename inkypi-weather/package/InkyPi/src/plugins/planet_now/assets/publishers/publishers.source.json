@@ -1,0 +1,1415 @@
+{
+  "verified_date": "2026-11-14",
+  "description": "Public publisher-site favicons retrieved through Google faviconV2, distinct from the directly sourced official wordmarks in ../logos. Each represents the exact verified news-site hostname. Generic default globes and empty images are excluded.",
+  "source_service": "https://t3.gstatic.com/faviconV2",
+  "publishers": {
+    "www.actionnetwork.com": {
+      "names": [
+        "Action Network"
+      ],
+      "file": "www.actionnetwork.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.actionnetwork.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "4a4e1feec87841b0c78c382255952456d346259919e21c907b6a32155a55a24f",
+      "sha256": "921dd7a8cdd4f78f844f29fe96901929c482c5fa3567e831c3a00e3e58ff6b7b",
+      "pixel_sha256": "2758ac3fa9f9e178c75d76704e89e0fbe8f57bf7094cdd6d342d3b923e939880",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "aamusports.com": {
+      "names": [
+        "Alabama A&M Athletics"
+      ],
+      "file": "aamusports.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://aamusports.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "faded1849d088425cb02cae2c6600989db0f948324c757ab3537981b67ae2dab",
+      "sha256": "7c05dfb45289a289109df2db1c8ef4a9ec770fcfb9f338dec09f5feece1d72c5",
+      "pixel_sha256": "7df5586c907341d24ae3c83798ef4f9dfca461d55ba2e10c0d0bf73543ed446b",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "alcornsports.com": {
+      "names": [
+        "Alcorn State University Athletics"
+      ],
+      "file": "alcornsports.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://alcornsports.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "3bd276c48ebd9b53f19af01ef293899b638a65ad5f3a886143c9b79c48bfcb5b",
+      "sha256": "ab286807934288dda2760fab5fb4140b4874507149ee3cd1e7534ed0530ca3a4",
+      "pixel_sha256": "a28439571450a2ab0bb0d0ff14a95333d0e8004347ee1725189e31ba5585f75f",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.atlantico.net": {
+      "names": [
+        "Atlántico"
+      ],
+      "file": "www.atlantico.net.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.atlantico.net&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "10d358e5d938293b810f3c72b1ac55d2ad9b088aca4e452257df33d579890402",
+      "sha256": "bd467fc10f98c2eacca8597fc471b7f482b5ea73436af270e4994492a5844015",
+      "pixel_sha256": "66eb280ca87d0d7616d2f140dd413a4cb17f14b62a6ccef9ee7b4dbe90357d20",
+      "size": [
+        48,
+        48
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.atptour.com": {
+      "names": [
+        "ATP Tour"
+      ],
+      "file": "www.atptour.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.atptour.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "4927ac97b16ba4ce8c7c3eb70958dbac2d57d9e962cc3b5ff87e331cb179836c",
+      "sha256": "d8aceec8b9993d669a7cac3b46246e3abddf36d9bfe674ea5325220cd39060c1",
+      "pixel_sha256": "fc9e6bae45be4bc431ad8807bb7da19a59a448804df1167b84073f7f4900b13e",
+      "size": [
+        32,
+        32
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.audacy.com": {
+      "names": [
+        "Audacy"
+      ],
+      "file": "www.audacy.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.audacy.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "743662bb6e590c0a7e7c1047e78fb4e0aad699d44c5b568166d6c18e2c7cfccd",
+      "sha256": "43b660e1005e90a79b4161feaa7d507d3c3b8112d8507b0c200577fe40397357",
+      "pixel_sha256": "98e1fbcf1706118ebe88bb49c1246c4365feb061b1dd5e1bcdff15d7a8c77eaa",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.axios.com": {
+      "names": [
+        "Axios"
+      ],
+      "file": "www.axios.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.axios.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "e0b3fff94ef1a326a82f0ed73d0910a238c2b2a67f8450a4d0011ced31f9d3ec",
+      "sha256": "78b1bf639b89298c86e7864ce45337ad4014fd2b96c27dca2ebb73804d1f4cb7",
+      "pixel_sha256": "37f6264c51f6ca9701eb652993727b042f215b958886157ed958d3c8c3da3942",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.belfasttelegraph.co.uk": {
+      "names": [
+        "Belfast Telegraph"
+      ],
+      "file": "www.belfasttelegraph.co.uk.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.belfasttelegraph.co.uk&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "f539be209bd411a5eb13927e9f2588e3fd6c2711ff5d6abee0299ed0b844cc87",
+      "sha256": "dbba8b4d36d39126677251cb5d54b785a0c5ee46cfd6d083465296aa8b1b5a85",
+      "pixel_sha256": "3720fa25e794c538726f9770e9d115f1642ae0e2685bf575034018d0534b8b5b",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.bdtonline.com": {
+      "names": [
+        "Bluefield Daily Telegraph"
+      ],
+      "file": "www.bdtonline.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.bdtonline.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "2a4a47eae057eb9f3391c3e02a3ad6b774145c65b52a45d66228577ce31a93e7",
+      "sha256": "65205a4cb87fffa68871fe0bd572124eeb41081a16dce47c0af6ad0727d4fec4",
+      "pixel_sha256": "fc8842b286812732248501def5a47f66dc71ea8c800f0755fbdef4b1e0506757",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.bradenton.com": {
+      "names": [
+        "Bradenton Herald"
+      ],
+      "file": "www.bradenton.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.bradenton.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "b79ace73117fb5618b21bf90b1cd0d67a7d49852327a483236702115a83c6e52",
+      "sha256": "3c7479159c4a4e176dcad18e4de6ab29cfa1226a695c07a89f2070b9fd421c87",
+      "pixel_sha256": "52ed3297c4b701e6a93e6926d1fc1ee24c74f952bf13d03ac0c9901b8336233e",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.cagesideseats.com": {
+      "names": [
+        "Cageside Seats"
+      ],
+      "file": "www.cagesideseats.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.cagesideseats.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "ab2cb3554653261d83d6913530f697f3bf2e01439bbaa76541d71452affbd4b8",
+      "sha256": "484d4b912d53f81d9903cee43dca6edf030adc267d58e97d4e2172818b434ca8",
+      "pixel_sha256": "7e58f61b1f6e5a0bdd9f36046c2b86f5584f867c50bf91e8b2befd8230741780",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.panthers.com": {
+      "names": [
+        "Carolina Panthers"
+      ],
+      "file": "www.panthers.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.panthers.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "965c7eac7a18b8edab0105dc80d4092a14095e5d66f33eb8c4591b971ea39d68",
+      "sha256": "fcfd85a4b8e7dbe2d5cbd9bd36c88f15fb04bb71611cd9f8583712144b856f62",
+      "pixel_sha256": "e87ae4ca8fcd5c47bff01cae7819a6b0ae325fb9c98e182a6e85a2a192ad3eb4",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.cbssports.com": {
+      "names": [
+        "CBS Sports"
+      ],
+      "file": "www.cbssports.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.cbssports.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "60c1f2bc740ae0a9105c0a4c25d815a41acdc3861e27cfc756c15486ccd7e5f3",
+      "sha256": "241ade4ec45eaea16b445bb1985cd148672d95b6057f8d835acfdbc2998d0d8b",
+      "pixel_sha256": "9020ba3ebe9574720201e2bf89b46cb0889137673aed1084d838493395676e01",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.cnbc.com": {
+      "names": [
+        "CNBC"
+      ],
+      "file": "www.cnbc.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.cnbc.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "847c71be279b5843c71f4c2d4d75a7bdc80134e7b68aa48ebccef0add0e00416",
+      "sha256": "db53567184ea515183fdf24557d054858c148dff9592ff73e04f1a2afd65f145",
+      "pixel_sha256": "f4cd136bf35cf7dc40e315399abbee21522dda791e6a61dffd75c13a79497c5c",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.countrylife.co.uk": {
+      "names": [
+        "Country Life"
+      ],
+      "file": "www.countrylife.co.uk.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.countrylife.co.uk&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "0d6fc652ff4869a3a6718f06dc7f3c5a6c4c51b231aaabf141fb9b907ff14758",
+      "sha256": "0995a3c1094ab470522a15f663f89bd493dec6c0dbc0b2ea36c1c356bd553de6",
+      "pixel_sha256": "23694cbf5adfe24f11c847b7bdc705389fb61967c20ca3257ede907386d0a2ef",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.couriernews.com": {
+      "names": [
+        "couriernews.com"
+      ],
+      "file": "www.couriernews.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.couriernews.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "5d1f4b36795de5deebb1a4d199951f114390928a8b8a6abbb1373908890c1d24",
+      "sha256": "6f6e1e45891a977c210b40c482faaa49726bd5c20320d099ba2251fdd22e3c9b",
+      "pixel_sha256": "d5376eb52589b9a2220936665e360e429549e066ba7f052046b6eb697980aae5",
+      "size": [
+        16,
+        16
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.covers.com": {
+      "names": [
+        "Covers.com"
+      ],
+      "file": "www.covers.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.covers.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "f6e3bd0021cccd8c8761c95bb5e019f0c32fc7576ab417636f6d7bf753f504eb",
+      "sha256": "9fe8bbd99836334481493492497929862935d4e04378a6ee8293b9390274858d",
+      "pixel_sha256": "6bd9dce8c8896789e1169e15eb461b199944f44eb490f454b42945e3488dd6c1",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "crescentcitysports.com": {
+      "names": [
+        "Crescent City Sports"
+      ],
+      "file": "crescentcitysports.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://crescentcitysports.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "7a34f530d1091c295e8702bde836fede796c5d61d6fe4c428ccfe552e43a6f57",
+      "sha256": "7bcfc7bfb630a2b28d02314967b2ce16e4e6ccbbd9ac81b73f20e7fc1c1612a4",
+      "pixel_sha256": "da3cbba66bc2644f8da6a8cd0da1d70c7c14d95932fdc81dfdd0cce621ea921a",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.ctvnews.ca": {
+      "names": [
+        "CTV News"
+      ],
+      "file": "www.ctvnews.ca.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.ctvnews.ca&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "eeac3453e16596e0634a48b327fad4c0d4296f1378e6cdd8b6814209fcc226a8",
+      "sha256": "45a4ea86e636300718c7b9a299b565fd0b47a0ab5b86545bbec95865e07cdfa4",
+      "pixel_sha256": "d7e1967389d884f4356b1aa75ee36e122adf58291cb3e18b12d1bf800382f35a",
+      "size": [
+        48,
+        48
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "culted.com": {
+      "names": [
+        "Culted"
+      ],
+      "file": "culted.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://culted.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "c63aaf4f1cb1f65de57e695c10483e861d50f320babee2a43fd52a5db92a4b11",
+      "sha256": "82c2be9c83c525f469f9fbbeba0b0fd3fe7d41c942965b1c4eef3fa0ca062f62",
+      "pixel_sha256": "a1c71183f05833c1425d7d23823968a4e0c12bda491f9ce4deebef39436d0b94",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.delawareonline.com": {
+      "names": [
+        "Delawareonline.com"
+      ],
+      "file": "www.delawareonline.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.delawareonline.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "0617ef7ab0f83ee27897c601eadf99b1071ed189398fb21ef62c8fb9d317f65d",
+      "sha256": "d94f57ca8b05fdfb3addcbc4c8efd918a667ecbda2bc997a378edf5164fbcb81",
+      "pixel_sha256": "b2210b2bc16adc3a69ff0d420177219e05e63308084859f165455bc32b0eff99",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "as.com": {
+      "names": [
+        "Diario AS"
+      ],
+      "file": "as.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://as.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "6e467e72cbeaa42cf576ff562ac32d46761b204b0a387571f259b8bdb4239dfa",
+      "sha256": "084209058b896d3e598477488c92904fc89a7b6d9f7ae5f7210076d6b738ab5c",
+      "pixel_sha256": "b7f77c00f6ec42f1446f87327bbe6af7cc9aace433a8341f475197ac809765a7",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "espndeportes.espn.com": {
+      "names": [
+        "ESPN Deportes"
+      ],
+      "file": "espndeportes.espn.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://espndeportes.espn.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "41ab428edad0cd0cb25676abd4444f475d55eca64e16d3992cbe8f74233c039f",
+      "sha256": "8c76aa30123bdc746482704b3c6c6253a2a5dd4a3b712f48b0ee188a1b378706",
+      "pixel_sha256": "88598587dabd278a43237a1a70ddcf441f19a91c9329166270f502e69fe34a58",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "sportsbook.fanduel.com": {
+      "names": [
+        "FanDuel Sportsbook"
+      ],
+      "file": "sportsbook.fanduel.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://sportsbook.fanduel.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "38cacfa8e32338cbff1d0148836278f064644dd67c2917689871fdb15e0eed87",
+      "sha256": "507ccdc10e3faf732ab3ba0aff334ed5337ca6cac434945192c69e5b1ff55c79",
+      "pixel_sha256": "efef09c53fdfdfc49637bb4774f4aadbbb2f2c3aaf1fe49bd619721a1809566e",
+      "size": [
+        48,
+        48
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.farodevigo.es": {
+      "names": [
+        "Faro de Vigo"
+      ],
+      "file": "www.farodevigo.es.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.farodevigo.es&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "5f1d0841bec2878917ea3b50a663ff3448714991b3056dab21d01401104e8c94",
+      "sha256": "f497343bcd823ba7440537377617d8f18a7581b67c9da49a201af0f3790fcd56",
+      "pixel_sha256": "44157a54d3e8f9dbf5d208428c4cd9d2d04985b8e57061b10c92272468bcbca9",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.fctokyo.co.jp": {
+      "names": [
+        "FC東京オフィシャルホームページ"
+      ],
+      "file": "www.fctokyo.co.jp.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.fctokyo.co.jp&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "bb1c119c8bfa8257542411071db1b9437daf50c52225c05e9a8f2c316b392bee",
+      "sha256": "d0c172e88c2635a6023f2efaabd5f0e04ed7579dde0041987657a76c7567c115",
+      "pixel_sha256": "13e1102bd27674fbbf5209774de697490b6bc19318778e03d9fbb9bbe9b3b833",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.forbes.com": {
+      "names": [
+        "Forbes"
+      ],
+      "file": "www.forbes.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.forbes.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "8e3b8b2bd8dbc95b555ec1b14b3f9af95c542e3887bc5276eb8185d47d9e97e5",
+      "sha256": "c39aa0c2fac6ebb733c6c4aa672671a68b9fa19b358e94b69d917a3d01e51526",
+      "pixel_sha256": "b822f197f760b8858c91ce0160ee5202a4bd46ecaf37433aba22ede8d9d3cb49",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.foxnews.com": {
+      "names": [
+        "Fox News"
+      ],
+      "file": "www.foxnews.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.foxnews.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "28c7ef14d7338b1f83b2b9828b05cf700c3a1d2734b9cdea142dd6b86960473d",
+      "sha256": "fdf8fb539c11d824843af028721bf9b95837f9610e6ca4d92eeddd6e4e529b0b",
+      "pixel_sha256": "ada576496f53197f7330ad839f86fc54e3e58aabca4438aa5d73ea98611b8156",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.goodmorningamerica.com": {
+      "names": [
+        "Good Morning America"
+      ],
+      "file": "www.goodmorningamerica.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.goodmorningamerica.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "42fb17c6eb504425fa8e187880047f4e023f3a8350feea058efa2d8df5e46e0d",
+      "sha256": "03b59501916c102d83a97ebb6aaab9f2471ad6c0ed7967646cab2ea0d98913f1",
+      "pixel_sha256": "9943e1a45c2062a34558ec25726410c4da41f9989382bbcd04974772c03730da",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.gov.pl": {
+      "names": [
+        "Gov.pl"
+      ],
+      "file": "www.gov.pl.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.gov.pl&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "b2ca76737c4925ae81b5c0594602c5e53236e1e124cd7b0684019cc0bac98e10",
+      "sha256": "e8ab25d27b18ea934bfeffdc8880543b4f8e660895a3a7c81d2410be1976431c",
+      "pixel_sha256": "b0614fbe722ec01183a4ab65024fc0b0ab5ff64e7d7b4d0ce5079746a0164946",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.houstonchronicle.com": {
+      "names": [
+        "Houston Chronicle"
+      ],
+      "file": "www.houstonchronicle.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.houstonchronicle.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "89cd81a5df5345294237f5a62ff9f50c9239c5e9d53d4034d78d1bf51c156bb8",
+      "sha256": "db6ed3badc2b203f8d6368c2753ba9508ebe58f76d6481b658af00025e4c7b51",
+      "pixel_sha256": "d09396b1535863e0708c43631e0232ecaf26bed2937dc3ac94e7b6ac26d19111",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "hypebeast.com": {
+      "names": [
+        "Hypebeast"
+      ],
+      "file": "hypebeast.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://hypebeast.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "17e46c9038588ad588cdf151b022c3f624f3169107fa648eb42451c8ef53f31b",
+      "sha256": "664d8e2826929475b29ec5bb79235ff47c2e6dce0f6ee853b096c5e3da12999a",
+      "pixel_sha256": "0548637f925336214c312b3b2983aa2481969d92ec24398d90c7b87e490f8a4b",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.idahopress.com": {
+      "names": [
+        "Idaho Press"
+      ],
+      "file": "www.idahopress.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.idahopress.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "12958aa8183a254e461ee6575b201757e18e4d2ec2fb974daa17be5b5e61474c",
+      "sha256": "49573c167a198fb7000753378ff4fb39948dd6342a64698dc9a91891ae2098d4",
+      "pixel_sha256": "cef4fc7b4ae896011d54d0eddc6436d750d72d2ed8a195a9d65578e16f14d4b9",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.idahostatejournal.com": {
+      "names": [
+        "Idaho State Journal"
+      ],
+      "file": "www.idahostatejournal.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.idahostatejournal.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "cc0a62f30e7853ec410c4849db2be50f5ad663dddd9dee005cf90524b9aff423",
+      "sha256": "fdd8e789210102cd970324891b3178849948d8276a965459cc43623eb58872c9",
+      "pixel_sha256": "79558a726f7c5b1e192cfe0e6a388f7df4ce486023aea119689ab8604672b59d",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.imdb.com": {
+      "names": [
+        "IMDb"
+      ],
+      "file": "www.imdb.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.imdb.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "b3214d01ec6a1c8b7d7ecf7bd37a2fd6b1d6ad21753d3bcc9c156afa4c6b8fbb",
+      "sha256": "9e2782db90dbf64d14776daea79ce971dc2f6bd56ded9cdf354a364627c3dec4",
+      "pixel_sha256": "df22708d8251ec5dba0f6fab5f9f323a14482112b674331165056a831e5dd708",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.kicker.at": {
+      "names": [
+        "kicker"
+      ],
+      "file": "www.kicker.at.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.kicker.at&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "2187da9061fc59a6e8e5941624961e93f751178eb33101b2199edfee1a6ce72f",
+      "sha256": "dd4ddc2d6fac294c2c236bd076bd723bcb456d574c80ad75c585fa187053f333",
+      "pixel_sha256": "0bf3bac7f1dfca9c77d164401399a323978e98eb903d3dad266487c4729fb9de",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.knoe.com": {
+      "names": [
+        "KNOE"
+      ],
+      "file": "www.knoe.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.knoe.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "c3b7ab6ad9071dcc7a8a4d4ac0ccf98a14ef50c0279005745a3830037174ea86",
+      "sha256": "1552e54a54af50cf707dc36a23aba24fd3b8eb294aa8b466208d871dc5a7ec85",
+      "pixel_sha256": "7e23381682d86948bd6e70af5a323e11b7ab09288214f208814e82169d93a00b",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.jsonline.com": {
+      "names": [
+        "Milwaukee Journal Sentinel"
+      ],
+      "file": "www.jsonline.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.jsonline.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "bf84c4bfcb5fe701453145402abefdfebe915adb44e139af252f833a5f65e2de",
+      "sha256": "dc8b0af2b16aa548fa57dbba2e515a49e857f9748edfe2c9006c74ba5ca0a957",
+      "pixel_sha256": "ed7d4fb55773511f609bf4daf5db4429125bfe9750b887d4e76518766956cc2e",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.modernhealthcare.com": {
+      "names": [
+        "Modern Healthcare News"
+      ],
+      "file": "www.modernhealthcare.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.modernhealthcare.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "141c1d9bc5a2615c2b27cef74210e337dce8f772f9361a2eb353e31caf9b726c",
+      "sha256": "3f8d733f27e8d04bb6b5c1ffbe4f2e66497d45ad87a7a2a08af2cb9fadb28d7e",
+      "pixel_sha256": "1a5b7f61a1ce35afe1d339af7da50e524746efd94e5e58a56c944689f3aa9ba2",
+      "size": [
+        32,
+        32
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.money.pl": {
+      "names": [
+        "Money.pl"
+      ],
+      "file": "www.money.pl.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.money.pl&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "c3e7b636c82c34802ccffae89ec35d909631a555d0caa20148b6b159bdb34680",
+      "sha256": "efb48663c38120963732341466c8c6c5fe6b98caa27b50fe219037afac773dbe",
+      "pixel_sha256": "929fe8c13fe06c77a321c46620e74035b19fcfea0222137b721a1010f1c07f3a",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.nbcnews.com": {
+      "names": [
+        "NBC News"
+      ],
+      "file": "www.nbcnews.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.nbcnews.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "0a0ee7f1908b8fe1a36ae62c23eb2c671e3d713a63a7c96e4864cd9465ce5eb5",
+      "sha256": "9c88132eccb651a256610b04015ebcaa493877be0da28f9f45bdb6358c4798c4",
+      "pixel_sha256": "2971446b8e644b0eef241466f554dae83c23481caf4e0662aebca30f35716d43",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.nbcsports.com": {
+      "names": [
+        "NBC Sports"
+      ],
+      "file": "www.nbcsports.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.nbcsports.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "e6378426e94e73a1388087d9f5746dc3793c05f9c86b08e972607d93ec649931",
+      "sha256": "5a8e64b9df2c6f1f7c45ca68f4cac052b591979ce3a3d70fb0f3358414ebba8c",
+      "pixel_sha256": "ca51a65e989a93a3fadf7875056e958df3893c9a49f789c24908727f879a4bc9",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "sports.ndtv.com": {
+      "names": [
+        "NDTV Sports"
+      ],
+      "file": "sports.ndtv.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://sports.ndtv.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "564dbd9f818e3af1b0b32d614b32b979b318588f3cd99e439fc603f7ba96e5f3",
+      "sha256": "8a474fca15b78ada88ade8259abc650a1c6eaffcf787aecb3f77f1dbe830dfaa",
+      "pixel_sha256": "9bb481fc2815430fe908f118035143733225adafce800ce50b72c65a4209e528",
+      "size": [
+        16,
+        16
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.netflix.com": {
+      "names": [
+        "Netflix"
+      ],
+      "file": "www.netflix.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.netflix.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "330ddc5f685c74123ddaab4f2640f41df8ff65e58f8c374640e2aea5ec16b7dd",
+      "sha256": "3bc2916a6ad344cf70092cbedfbc536fb69767032128c3d894ebfcad33b750d7",
+      "pixel_sha256": "b48e2d58ccd818f3b4d508c74249274f96d2344cf06afc545ad16eb76ed46ace",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "nypost.com": {
+      "names": [
+        "New York Post"
+      ],
+      "file": "nypost.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://nypost.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "ed26fc7e585a98c4d2d150ca554d78633f33b88e377103f9fe7b52faff864e92",
+      "sha256": "fc24621d05521a71817d708c93bf020a3f78e7b744f367919edc8c98ddd35255",
+      "pixel_sha256": "c16a89c6ad3fb1a1c5c249d3f7d1c3f583ab5493ca843047ddfbfce8f334e384",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.nfl.com": {
+      "names": [
+        "NFL.com"
+      ],
+      "file": "www.nfl.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.nfl.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "baf0a4752f1f66f91ce53757d4a92563fa7bac5e2295cdcabb4d61e9f59b8064",
+      "sha256": "136bd4d84c4178feab7a9fba3ef1ddd62d8464960bd9f7f24d9d8ba8066effef",
+      "pixel_sha256": "6f148390cb453257e40bc6200c0de461f4e2637ae81017d1cdc94e7fed8ea533",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.nhl.com": {
+      "names": [
+        "NHL.com"
+      ],
+      "file": "www.nhl.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.nhl.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "480659a492126d57f1ee998371a125640e99391087523be7f8c5396b395669e0",
+      "sha256": "aaf2c91b7a65f5a4b3d844728e8702ab5f8d0f27d306d1cd2f5f49d41bf96623",
+      "pixel_sha256": "8d414f5a1c95cfdb1adb5d2e38a5ef5877ea4b0b7d62a8241468ed3d7844614d",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "ninernoise.com": {
+      "names": [
+        "Niner Noise"
+      ],
+      "file": "ninernoise.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://ninernoise.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "168d2587b17db710e609aa079269292fb22b33e499d9b0ad52934f6d4acb6a65",
+      "sha256": "90f34a823ea7fc06deebf2e769e7b98eaf6e8422f1675a4676b20f2363ca63a3",
+      "pixel_sha256": "c79117b817efa1de0992e44d6d7d929a985ca2c44c7e7749ae58fe9b39aebf1d",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.ninersnation.com": {
+      "names": [
+        "Niners Nation"
+      ],
+      "file": "www.ninersnation.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.ninersnation.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "9a4f8b5cde7fcaacb98dbc3bdda1afee4854b1835219d73564fca4426a849bf7",
+      "sha256": "88ecb569d049b66f7561296193f659aa66615215aa38d69a83abe043068681ab",
+      "pixel_sha256": "6938166e723d5f31d46e5083b6783fca2e4801337f53423f78f021f096927a37",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.notebookcheck.net": {
+      "names": [
+        "Notebookcheck"
+      ],
+      "file": "www.notebookcheck.net.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.notebookcheck.net&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "9a2e1bede762c2d55e389d5c06fceac6bf01812b023222325ed9c904c76ea446",
+      "sha256": "718e84a92d15723336f6bc7f4b9b3530d6605beb69b6875a10b770ce8d144dab",
+      "pixel_sha256": "78182501daacb071d47722302438f49bb590443e116101715bc49a24ee14876f",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "packerstalk.com": {
+      "names": [
+        "Packers Talk"
+      ],
+      "file": "packerstalk.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://packerstalk.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "156bc3d8e879f892b9cde3e3875e00e03365a942924e8582555449e9e04ca916",
+      "sha256": "b1583528e90705710621f4f4e7040f2aa72628f7e10a2eab5c5ad54b6955aa45",
+      "pixel_sha256": "77a156979f6f9ffc1caa3e3634ed945cd1c2bf9c5d5a9b75aa3272a3a7c3bdaa",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "pantherswire.usatoday.com": {
+      "names": [
+        "Panthers Wire"
+      ],
+      "file": "pantherswire.usatoday.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://pantherswire.usatoday.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "a23714c909e5ac88d6029d7e4cb6bb2aab9175d3d8ef5621e2cafd0d373d1675",
+      "sha256": "d2398702c1a159d0738fced49b5c0fdc8e18464cbe5c04d4383d38ed5432b321",
+      "pixel_sha256": "1d68495cd86e38d7e4db6214f0881d8e5c590339baadede2a77461531b9ff602",
+      "size": [
+        48,
+        48
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.pennlive.com": {
+      "names": [
+        "PennLive.com"
+      ],
+      "file": "www.pennlive.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.pennlive.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "95223e40a09d2e82a88f83c2f7f7e50504e6bbf1373a6d99a77191a33856f406",
+      "sha256": "ae275949f3f4bcf993384c753dbc7092d0e0562a14096434db1601b074d2ae30",
+      "pixel_sha256": "949f01f15e91414d7141532efca4d5d4f5846b8b9814df0c2adefe3d7a5445df",
+      "size": [
+        16,
+        16
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "people.com": {
+      "names": [
+        "People.com"
+      ],
+      "file": "people.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://people.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "7cd472903dbdbaad79bc808dc72b59637865ce2fcf8c00bbedf2a3ae086846f0",
+      "sha256": "8041218214ceb9a006b9f558207c02bb76fc8772f181c0c4f9b6e174f56376fc",
+      "pixel_sha256": "228b5920ae15be1363f1eeb29e00dd1ffbcab6654dc06174307c05bdad427c6f",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.realmadrid.com": {
+      "names": [
+        "Real Madrid CF | Web Oficial"
+      ],
+      "file": "www.realmadrid.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.realmadrid.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "89ab56ec94236688b623eae800a324b43e270e3ae63bd1e82eb7d5a163f8879a",
+      "sha256": "8db13cbdeda5ba663fb073f66e2d1467b74470ca56a39801a6631b9accb7d0fa",
+      "pixel_sha256": "726e1c733b32b06a0138f8cee5cc3442d05d8842f8d3c6a0739677c0dbb94ae5",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.rotowire.com": {
+      "names": [
+        "RotoWire"
+      ],
+      "file": "www.rotowire.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.rotowire.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "41f28ad2d88f39cd586e23cee4bfae89b2279144f4a015c8170f7e79f66f4ed9",
+      "sha256": "d9a847c24d86eb25ba46624b3d77049bbe5a86818ae3e75fabd4d3cc4d1d35f9",
+      "pixel_sha256": "0fb8b25162a79f62daffa8166dbcf97c4edbbccbff1fbe0b9b2bd419a28de6bd",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.rp.pl": {
+      "names": [
+        "Rzeczpospolita"
+      ],
+      "file": "www.rp.pl.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.rp.pl&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "771a9680e929058f019a69805a63ba57725a5eeb24b2c8270d8cab831291f32a",
+      "sha256": "8f6ec483b6fe54d213a83cd1a04eb381cbf633eda8b92350cbb3ecfef07f9aa1",
+      "pixel_sha256": "64a66365adfd4c3d15e38ef710c2bc7e9d40b58ee9840bb7c1e0f1f6fa17ce4f",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.sfchronicle.com": {
+      "names": [
+        "San Francisco Chronicle"
+      ],
+      "file": "www.sfchronicle.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.sfchronicle.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "b3165bf2f4707788251f35e7e485383a96a28dae16c78d31e348c7c8890aed1d",
+      "sha256": "9f80aa91b4ba37d5095b4b85c3b39844b25eaa42995878577640a1cd8c4ad84c",
+      "pixel_sha256": "cb39165e387d479bbb5495e68da241d1fc18d6c1dbd0dfd5b6151360d3e78a0e",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.sheepesports.com": {
+      "names": [
+        "Sheep Esports"
+      ],
+      "file": "www.sheepesports.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.sheepesports.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "15bb62bf74c6c623602e49f6662457234f79a9eeef31b1c3e8f38f47610623f1",
+      "sha256": "a7d3a39d2862d7eb8f0768de80a769bdb125d4f0b3e0f6aa84bb4d91dea449c2",
+      "pixel_sha256": "e4f71729574958a3549fc140cbf64afb7a0f5838d59c2ab0df9a3c9862add062",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "sny.tv": {
+      "names": [
+        "SNY"
+      ],
+      "file": "sny.tv.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://sny.tv&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "0d4db73dd82e48204101e826f939ffffe82c13ff4212a675406d52a604d304b8",
+      "sha256": "80fa07392006a176ce29e714bd67acb1dfd00e23ff025069b8bc92357f70d2a8",
+      "pixel_sha256": "ffb79d07ec95ee2ce7c68c1ff186cfea5c1a67116cf38b0c11a29b2af579c81d",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.sport.es": {
+      "names": [
+        "SPORT"
+      ],
+      "file": "www.sport.es.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.sport.es&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "e20cd5fb0b96de82667ed769b1ad97a7b09d0c9746d5858fc51ebefcf41334c1",
+      "sha256": "41da285c7a77098b8dede0bca5c1a67548721284831f2a062169a33c39c0e9e7",
+      "pixel_sha256": "2d21fea3a5175a440de3d46f964747cc12ef33f2e6ed1036ec49288ae43986f0",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.si.com": {
+      "names": [
+        "Sports Illustrated"
+      ],
+      "file": "www.si.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.si.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "25a02fe1aa3770cce5835252e2a421fd538fb37cbe789fbb4fed3b9d5615a41c",
+      "sha256": "baa10526a5daa089ae58afec5259ec41d1856854f84854101c5168d28ab1a138",
+      "pixel_sha256": "3129f55a4538ad51e075223000d07ac327d377726e28371377b6739a7ec07877",
+      "size": [
+        48,
+        48
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.sportsgambler.com": {
+      "names": [
+        "Sportsgambler"
+      ],
+      "file": "www.sportsgambler.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.sportsgambler.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "4728efd10b7eb2d62a404c52f02fa17e8788d9146189cbf7a26f7e3b51a715e2",
+      "sha256": "8cb6c9169ecff67406ddc5d5de625c4e17e9eac071da24deb669cce1757e87da",
+      "pixel_sha256": "af2ed4a23f46d5e087356a5bbf34f0e2def61f93d6d34e5b84dfdad13c94d6f0",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.steelernation.com": {
+      "names": [
+        "Steeler Nation"
+      ],
+      "file": "www.steelernation.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.steelernation.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "36ba62ab929089c867cf421b81f8f36b70be302ce3f1ad676fad67ca3dc02b4f",
+      "sha256": "4fa9fe4d7bd4e169450f80bd0d9f25930ae08cd158e6828f90a2bc2c2a1b1b41",
+      "pixel_sha256": "4199d2511b93894729025e88f0237c05f11c45c24be885512d7f7b886a5d7d5b",
+      "size": [
+        48,
+        48
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "steelersdepot.com": {
+      "names": [
+        "Steelers Depot"
+      ],
+      "file": "steelersdepot.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://steelersdepot.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "3a3e2d06918d6b3aa6ff4e12736fd892c24904a1266ea8854ba9433545d506dc",
+      "sha256": "bc6d3512f60ba005409d66ad1d651e4bb67d22b1f6b75b6f19a182c74992a3d4",
+      "pixel_sha256": "c7958fbf57caa7cc81823ec376ffdf2cc1ada33871e0906c9114a099f8e74fa4",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "steelerswire.usatoday.com": {
+      "names": [
+        "Steelers Wire"
+      ],
+      "file": "steelerswire.usatoday.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://steelerswire.usatoday.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "e7273bea18d50aa9d1c231110a27f7df8dec8e59df29345a9400330208adc86c",
+      "sha256": "db4a7818ed20d634f867288337d5c6c13959e5fee519c6d1185ad9f6b41589a0",
+      "pixel_sha256": "2023dba3d6780ad17740b315ffbbeebed74780c4a6cd715d1feb375a45d6a110",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.steelers.com": {
+      "names": [
+        "Steelers.com"
+      ],
+      "file": "www.steelers.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.steelers.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "e99c4d6d1f031700e7d20b4c830d158f055ffb6e0e62c3c199f20690c1b29d7f",
+      "sha256": "bf4e924750a00c57c8e0c15a8699fd948ac5dc1456915584f3b04d9a36c0248b",
+      "pixel_sha256": "3485e378f5aefad9c09a376e47a517ab93de4c66c3ae73a4f01563a9b8437db8",
+      "size": [
+        32,
+        32
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.tallahassee.com": {
+      "names": [
+        "Tallahassee Democrat"
+      ],
+      "file": "www.tallahassee.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.tallahassee.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "acc3eae961f20cf34474962e2f398eb09f84a63d4035541831ec4caf463946ac",
+      "sha256": "a7b045761bba7949ef7c3627f361165ddd72d505c247a8c8def7b17581e86840",
+      "pixel_sha256": "d46e900d88379c807c4c58d99df63b14628277f268c6db3e77753b53262242f2",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.bostonglobe.com": {
+      "names": [
+        "The Boston Globe"
+      ],
+      "file": "www.bostonglobe.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.bostonglobe.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "eb6f695a28e27a6d4b224199e214a8ce51aff8405070f61f1e4b0da5dde9e5e7",
+      "sha256": "52e3c82aaa8ff354b363cc739729c11b29fcb0cc789c7ba0d48cc786c1cb9126",
+      "pixel_sha256": "06f8022c48425127eede308877a44e77ea587dcb23a5079a20ac15a36e59bc71",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.denverpost.com": {
+      "names": [
+        "The Denver Post"
+      ],
+      "file": "www.denverpost.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.denverpost.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "d44843d61fca97d2c47f75e2f22edb28ee8fe4b733b9028de6f2e16b1274f515",
+      "sha256": "c17dc48c191b0cca478c5dd6e5217cd59b472d7da27311c5dc7a247384ccea29",
+      "pixel_sha256": "e556dbc498289af4357d83485d1dacf7a867d5a9dd1dfafdedbed88c720885f2",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.gwcommonwealth.com": {
+      "names": [
+        "The Greenwood Commonwealth"
+      ],
+      "file": "www.gwcommonwealth.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.gwcommonwealth.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "ff4e3beca4338b8e5fee4c077863be204a6cb1acc4be89aa7c4c032a36380bb7",
+      "sha256": "39b2c8bf110639c90e6926fe95d86e5f40c27d333a9450c607e64cd0e7c737dc",
+      "pixel_sha256": "01f170dd2fded3254af2d80459b8a8939c8a4483793a2ab571ace1ab920678be",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.theguardian.com": {
+      "names": [
+        "The Guardian"
+      ],
+      "file": "www.theguardian.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.theguardian.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "e7d10edf4c2df22ef0e2517264b200ac1db420ffe0b87ae077b6b945aa2344a1",
+      "sha256": "350b5d830b21a78bf6836b1f9d51e8516e84e1b5876bd8818920a75cac3c3b1b",
+      "pixel_sha256": "7f9e32dc563e486557b9a5025b42898c00976fad375853bfb0da124f34b48825",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "thehill.com": {
+      "names": [
+        "The Hill"
+      ],
+      "file": "thehill.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://thehill.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "5c441d68f9302f1078022ea4108fe34f9d09809b7c0537ffda0dfb7e6dda5c09",
+      "sha256": "1441a5c31f3351cf28dd2ba70538ff7ae9b0e0b0f7e5113c23a40c11a435e255",
+      "pixel_sha256": "805f3596b462f6e35163f312ffe6af04e6bbde11eff1a574fa78c569b7604e4c",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "thelandryhat.com": {
+      "names": [
+        "The Landry Hat"
+      ],
+      "file": "thelandryhat.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://thelandryhat.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "168d2587b17db710e609aa079269292fb22b33e499d9b0ad52934f6d4acb6a65",
+      "sha256": "90f34a823ea7fc06deebf2e769e7b98eaf6e8422f1675a4676b20f2363ca63a3",
+      "pixel_sha256": "c79117b817efa1de0992e44d6d7d929a985ca2c44c7e7749ae58fe9b39aebf1d",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.nytimes.com": {
+      "names": [
+        "The New York Times"
+      ],
+      "file": "www.nytimes.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.nytimes.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "27e4cc8cd9e8f4d51544ad38456e1a8c58b36e24fe4d3548e3968da150f3b380",
+      "sha256": "20ac56e55d99e990df41faedab3e5d3512232707946b04768aff7d816a1c9005",
+      "pixel_sha256": "bf4452b237eefa61bd8d599089ce58a25a0154f337a0b98ccd9d2b3d08ca6841",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.sltrib.com": {
+      "names": [
+        "The Salt Lake Tribune"
+      ],
+      "file": "www.sltrib.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.sltrib.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "644d41561245a23e2ebe753e5de05313cffe528540f2f4b051647841331372e6",
+      "sha256": "7f0305a2be02b2379e79c78881c8205feb03a06c55b7c9b685f11162dbf04ced",
+      "pixel_sha256": "6126cdd5c1b71bbf57a1a51d2ea22c5665fdd1ed7d3e5f4374bd9a2deda33d0d",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.washingtonpost.com": {
+      "names": [
+        "The Washington Post"
+      ],
+      "file": "www.washingtonpost.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.washingtonpost.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "7dd42d8dd818ed371563647709848f9b0d8055aaf2244f8f83cc3c79fe4b1db8",
+      "sha256": "8b83b28167dfb85667cf77f5018c5b2d4ddad01ef47ebf91fcb0ccdbe71a0f29",
+      "pixel_sha256": "e424528b0680ba2a276ed7b6c081cff137740e2e929e7b501a00434f967f747a",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.thv11.com": {
+      "names": [
+        "thv11.com"
+      ],
+      "file": "www.thv11.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.thv11.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "a554d186e1dc2cec85f0c8a916a15c49291cc3023f162f74c8c9579e990f8013",
+      "sha256": "3b8cb6b76b7404c952cbbbbebdddacfbbe47e933a04a5bc5c1ea27564ee0a5a8",
+      "pixel_sha256": "824a5797ee03bf4a0dcd29e6bb6a2389be53a2809b36aab9150b9b6fc24ed8c9",
+      "size": [
+        16,
+        16
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.versus.uk.com": {
+      "names": [
+        "VERSUS - The Future of Football"
+      ],
+      "file": "www.versus.uk.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.versus.uk.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "4cd82ab1bc635a9f81e4e187afe49a6075dc69abaa39f6812de70f764fc461c6",
+      "sha256": "176f5ee9cef4310841403dc6c89ce3662b4f03e18f5391f6ee8d839576a93ac5",
+      "pixel_sha256": "35acbe0744157d509f49f8a2d27cdf91bbe3e84e82c8b705bc10cd7125ccd236",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.vietnam.vn": {
+      "names": [
+        "Vietnam.vn"
+      ],
+      "file": "www.vietnam.vn.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.vietnam.vn&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "e7417bd3a73c1599ec8dcd3ecd45a4be2a36f7b792e88d39d75fa44d638ad479",
+      "sha256": "40bc37a157420de417a2fdd95095ae54363809530d13c901c52ab313a25da54d",
+      "pixel_sha256": "d7b3b1381918b924ca91eade1aff848af861f4b1185e1075ee58ecd9f6f92ec5",
+      "size": [
+        32,
+        32
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.wdel.com": {
+      "names": [
+        "WDEL"
+      ],
+      "file": "www.wdel.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.wdel.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "598619fadf8f769ef1c5fc905488d59feec5e22f470f272f147e0077bdf7a5fc",
+      "sha256": "e76251ceec1de5dd7bae772533e6e9ca9b50128c6ed2d4e32a3e9ddd8dd61ad1",
+      "pixel_sha256": "ecc0cc63d2a0b6d2b7b9508b10c832ecd674bb6450eb55c411f7af074f7762bf",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.wisn.com": {
+      "names": [
+        "WISN"
+      ],
+      "file": "www.wisn.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.wisn.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "405f04d0e9793d129b3a78b3a8d00e9ab9ffd86945e0350c2d4fb6e64605bd93",
+      "sha256": "4b0ef06d4dba2a69981a62851c0daf14bd3c7c6b27c08716d0c5037087dc1064",
+      "pixel_sha256": "3ecc4b38641ce454e259f6dc5a0c2261dc6e056e4a35fe65b29c5c419c40e5ac",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.wkyc.com": {
+      "names": [
+        "WKYC"
+      ],
+      "file": "www.wkyc.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.wkyc.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "9ba6371b468cb706fe64c530fe556a3dd7dc863acdd77b573ca1ab6bb35630e7",
+      "sha256": "4cbaad2141444c71da7b9d37604a8762c7976854b1ccb414e9f6c3bbbb5e6b83",
+      "pixel_sha256": "a5df7797b43c3428b20349562b2074cdf0e59e58fd05016c41211afd7292c9f5",
+      "size": [
+        16,
+        16
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.wtatennis.com": {
+      "names": [
+        "WTA Tennis"
+      ],
+      "file": "www.wtatennis.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.wtatennis.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "26575b90ff1b0edacc877f4771506cdbbac7e96d25f2fdbc2934e3df5f2accbd",
+      "sha256": "5c373ef2d34202f432537edafc350986de41b38622a4acf6e327c2c9825bc089",
+      "pixel_sha256": "0f17da52874380519717b4acdd747bec1e30812574bd69a69f3c0ee7dc6a29c1",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "news.xbox.com": {
+      "names": [
+        "XBOX Wire"
+      ],
+      "file": "news.xbox.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://news.xbox.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "9d74df05514a30e00c2eb4017900e2582894c514f46ebea5e975bc3166859f2e",
+      "sha256": "13fa82d5af0e617c82c56edbd9e833e1422e6016d28cdfb596a1637290a1518d",
+      "pixel_sha256": "16a3c37e83bebaefd72e30af07529bbff34ef4f5ac67e33818b589f24bdcd969",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.yahoo.com": {
+      "names": [
+        "Yahoo"
+      ],
+      "file": "www.yahoo.com.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.yahoo.com&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "e801340fa71400eb398d1f4d2caf7cdea692cbbbb83ea1cca6534b9c1e42ca16",
+      "sha256": "393237626d62e5d59161fa0d2667c4e7e203ab8e8501c573e49e8270f2b34325",
+      "pixel_sha256": "557c584cf4796e6aa6a7d9fb699a0fce07931952dbc3e94f46d3249dc7483525",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "www.zdfheute.de": {
+      "names": [
+        "ZDFheute"
+      ],
+      "file": "www.zdfheute.de.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://www.zdfheute.de&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "207e7fb073568a4c9badf3327a40a4f9cef49de4d0aa4da99668777eec752701",
+      "sha256": "73ddb49ddf495404e53456fee90728e434e54ce7eb15cdc84d0e2b2e8de13aa4",
+      "pixel_sha256": "69d119cd340ced496ccada26450c9086ac1941dee114b9884309ca7673d29e65",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    },
+    "unn.ua": {
+      "names": [
+        "Українські Національні Новини (УНН)"
+      ],
+      "file": "unn.ua.png",
+      "source": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://unn.ua&size=64",
+      "identity": "Publisher-site favicon delivered by Google cache; not a directly hosted official wordmark",
+      "response_sha256": "fe31803b1986b2ef0606b558b97cc59611e9069b78dd8238d8acbdbb49bfdb2a",
+      "sha256": "f1a2ba12b48ff4762211fcf277d75f8dd5e9f2eb039929a6e391be69a201770c",
+      "pixel_sha256": "be5cfaf6fb6c92bebe83dc20e34d90df9105d63e1511a5209338229d4e55fc4d",
+      "size": [
+        64,
+        64
+      ],
+      "processing": "Decoded to RGBA PNG with original pixels and transparency, at most 64px; no generated substitute."
+    }
+  }
+}

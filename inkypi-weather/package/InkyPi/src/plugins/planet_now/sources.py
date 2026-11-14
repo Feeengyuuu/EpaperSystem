@@ -400,7 +400,7 @@ def traffic_number(text):
 
 
 def parse_trends(xml_text, limit=8):
-    """[{title, traffic, picture, news, source}] of Google Trends' daily RSS, the most searched
+    """[{title, traffic, picture, news, source, source_url}] of Google Trends' daily RSS, the most searched
     first (the feed lists them newest first), each with its leading headline and outlet."""
     root = ElementTree.fromstring(xml_text)
     items = []
@@ -415,7 +415,8 @@ def parse_trends(xml_text, limit=8):
 
         items.append({"title": title, "traffic": traffic_number(item.findtext("ht:approx_traffic", "", TRENDS_NS)),
                       "picture": (item.findtext("ht:picture", "", TRENDS_NS) or "").strip(),
-                      "news": field("ht:news_item_title"), "source": field("ht:news_item_source")})
+                      "news": field("ht:news_item_title"), "source": field("ht:news_item_source"),
+                      "source_url": field("ht:news_item_url")})
     items.sort(key=lambda item: -item["traffic"])
     return items[:limit]
 

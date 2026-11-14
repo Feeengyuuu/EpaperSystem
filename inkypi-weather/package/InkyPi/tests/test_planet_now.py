@@ -99,7 +99,8 @@ def test_feeds_pick_what_the_page_shows():
     assert [item["title"] for item in trends] == ["epl", "world series", "tank dell"]
     assert trends[0]["news"] == "Spurs win at Chelsea" and trends[0]["source"] == "ESPN"
     assert trends[1] == {"title": "world series", "traffic": 200000, "source": "",
-                         "picture": "https://encrypted-tbn0.gstatic.com/images?q=a", "news": "Game 1 & more"}
+                         "picture": "https://encrypted-tbn0.gstatic.com/images?q=a", "news": "Game 1 & more",
+                         "source_url": ""}
     assert trends[2]["traffic"] == 500 and trends[2]["picture"] == ""
 
     feed = {"mostread": {"date": "2026-10-23Z", "articles": [
@@ -211,9 +212,15 @@ def test_the_page_draws_four_cards_in_their_own_colours(mode):
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])
-def test_news_outlets_use_exact_official_marks_and_unknown_names_stay_text(monkeypatch, mode):
+@pytest.mark.parametrize("names,expected", [
+    (["CNN", "ESPN", "Goal.com", "The New York...", "CNN Sports"], ["cnn", "espn", "goal"]),
+    (["RTP", "KTLA", "BBC", "RTE", "Local paper"], ["rtp", "ktla", "bbc", "rte"]),
+    (["RTP Notícias", "KTLA 5 News", "BBC Sport", "RTÉ.ie", "RTÉ News"], ["rtp", "ktla", "bbc", "rte", "rte"]),
+    (["Yahoo Sports", "HBCU Sports", "LoL Esports", "Unknown publisher", "Another source"],
+     ["yahoo_sports", "hbcu_sports", "lol_esports"]),
+])
+def test_news_outlets_use_exact_official_marks_and_unknown_names_stay_text(monkeypatch, mode, names, expected):
     payload = _payload()
-    names = ["CNN", "ESPN", "Goal.com", "The New York...", "CNN Sports"]
     payload["trends"]["data"]["items"] = [
         {"title": f"Search {index}", "source": name, "news": "Latest report", "traffic": 1000}
         for index, name in enumerate(names)]
@@ -222,7 +229,8 @@ def test_news_outlets_use_exact_official_marks_and_unknown_names_stay_text(monke
     original_logo, original_text = render.load_source_logo, canvas.text
 
     def logo(path, *args, **kwargs):
-        if path.stem in {"cnn", "espn", "goal"}:
+        if path.stem in (set(render.NEWS_OUTLET_LOGOS.values())
+                         | set(render.publisher_icons.LOCAL_ICONS.values()) | {"rtp_night", "yahoo_sports_night"}):
             art = original_logo(path, *args, **kwargs)
             assert art is not None and art.height == 11
             marks.append(path.stem)
@@ -233,14 +241,18 @@ def test_news_outlets_use_exact_official_marks_and_unknown_names_stay_text(monke
     monkeypatch.setattr(canvas, "text", lambda xy, text, *a, **k: (
         texts.append(str(text)), original_text(xy, text, *a, **k))[1])
     render._trends(canvas, payload, {})
-    assert marks == ["cnn", "espn", "goal"]
-    assert not {"CNN", "ESPN", "Goal.com"} & set(texts)
-    assert all(canvas.fit(name, 9, 72) in texts for name in names[3:])
+    assert marks == [name + "_night" if name in ("rtp", "yahoo_sports") and mode == "night" else name
+                     for name in expected]
+    assert not {name for name in names if name.casefold() in render.NEWS_OUTLET_LOGOS} & set(texts)
+    for name in names:
+        if name.casefold() not in render.NEWS_OUTLET_LOGOS:
+            width = 58 if name.casefold() in render.publisher_icons.LOCAL_ICONS else 72
+            assert canvas.fit(name, 9, width) in texts
     # A missing local file still names the outlet and keeps the headline.
     monkeypatch.setattr(render, "load_source_logo", lambda path, *a, **k: None)
     texts.clear()
     render._trends(canvas, payload, {})
-    assert set(names[:3]) <= set(texts) and "Latest report" in texts
+    assert all(canvas.fit(name, 9, 72) in texts for name in names) and "Latest report" in texts
 
 
 def test_the_grid_table_fills_its_column_to_the_card_foot(monkeypatch):
