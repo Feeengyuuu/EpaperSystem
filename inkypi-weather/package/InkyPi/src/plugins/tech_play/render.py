@@ -251,7 +251,7 @@ def _card(canvas, box, bar, title, *, logo=None, icon=None, detail="", chip=None
     if legend:
         detail_w = _legend(canvas, right - 8, top + 16, legend)
     elif detail:
-        detail_w = canvas.text((right - 8, top + 16), detail, 11, "muted", anchor="rm", bold=False,
+        detail_w = canvas.text((right - 8, top + 16), detail, 11, "muted", anchor="rm",
                                width=right - 8 - cursor)
     strip = _strip_art(SECTION_STRIPS.get(bar, ""), right - 8 - detail_w - 14 - cursor, STRIP_H)
     if strip is not None:
@@ -279,7 +279,7 @@ def _legend(canvas, right, y, entries):
             x -= mark.width
             _paste(canvas, mark, (x, y - mark.height / 2))
             continue
-        x -= canvas.text((x, y), family, 11, "muted", anchor="rm", bold=False) + 3
+        x -= canvas.text((x, y), family, 11, "muted", anchor="rm") + 3
         canvas.draw.rounded_rectangle((x - 9, y - 4.5, x, y + 4.5), radius=2, fill=canvas.color(colour))
         x -= 9
     return right - x
@@ -318,7 +318,7 @@ def _status(canvas, payload):
         name_y = top + (8 if incident else 13)
         drawn = canvas.text((left + 34, name_y), service["name"], 13, anchor="lm", width=name_width)
         if incident:
-            canvas.text((left + 34, top + 21), incident, 11, "muted", anchor="lm", bold=False,
+            canvas.text((left + 34, top + 21), incident, 11, "muted", anchor="lm",
                         width=right - left - 34)
         # A wire from the name to its state: live current when it is up, a break when it is down.
         _status_link(canvas, left + 34 + drawn + LINK_GAP, status_left - LINK_GAP, name_y, indicator, tone)
@@ -476,7 +476,7 @@ def _papers(canvas, payload, now, images):
         middle = top + 44
         stamp = parse_time(paper.get("time"))
         when = ago(stamp, now) if stamp else ""
-        name_right = right - (canvas.text((right, middle), when, 11, "muted", anchor="rm", bold=False) + 6
+        name_right = right - (canvas.text((right, middle), when, 11, "muted", anchor="rm") + 6
                               if when else 0)
         authors = paper.get("authors") or []
         who = institution.get("name") or (
@@ -489,7 +489,7 @@ def _papers(canvas, payload, now, images):
             if art.width >= WORDMARK_RATIO * art.height and not re.search(r"[一-鿿]", who):
                 who = ""
         if who and x < name_right:
-            canvas.text((x, middle), who, 11, "muted", anchor="lm", bold=False, width=name_right - x)
+            canvas.text((x, middle), who, 11, "muted", anchor="lm", width=name_right - x)
         if index < 2:
             for dash in range(left, right, 6):
                 canvas.draw.line((dash, top + 57, dash + 2, top + 57), fill=canvas.color("rule"), width=1)
@@ -766,7 +766,7 @@ def _speedruns(canvas, payload, images, now):
             canvas.text((text_left, top + 1 + line_index * 15), line, 12, anchor="la")
         meta = " · ".join(part for part in (f"{game.get('week_runs', 0)} 次验证", str(game.get("released") or ""))
                           if part)
-        canvas.text((text_left, top + 40), meta, 11, "muted", anchor="lm", bold=False, width=width - 44)
+        canvas.text((text_left, top + 40), meta, 11, "muted", anchor="lm", width=width - 44)
         for run_index, run in enumerate(game.get("runs", [])[:2]):
             y = top + 58 + run_index * 30
             canvas.draw.ellipse((x, y + 3, x + 8, y + 11), fill=canvas.color("speed_bar"), outline=canvas.color("ink"))
@@ -784,14 +784,15 @@ def _speedruns(canvas, payload, images, now):
                 runner_x += small.width + 4
             verified = parse_time(run.get("verified"))
             when = ago(verified, now) if verified else ""
-            when_width = canvas.text((x + width, y + 20), when, 10, "muted", anchor="rm", bold=False)
-            canvas.text((runner_x, y + 20), run.get("runner") or "", 11, "muted", anchor="lm", bold=False,
+            when_width = canvas.text((x + width, y + 20), when, 10, "muted", anchor="rm")
+            canvas.text((runner_x, y + 20), run.get("runner") or "", 11, "muted", anchor="lm",
                         width=x + width - when_width - 6 - runner_x)
 
 
 def render_page(dimensions, payload, settings, now, images):
     now = local_now(now)
-    canvas = PageCanvas(_palette(settings), family=settings.get("fontFamily") or "Microsoft YaHei", profile="science")
+    canvas = PageCanvas(_palette(settings), family=settings.get("fontFamily") or "Microsoft YaHei",
+                        profile="science", small_bold=True)
     pasted = paste_local_wordmark(canvas.image, ASSETS / "title_wordmark.png", (12, 6, 212, 50), align="left")
     if pasted:
         title_right = pasted[2]

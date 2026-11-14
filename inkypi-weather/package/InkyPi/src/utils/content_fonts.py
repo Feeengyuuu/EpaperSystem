@@ -65,21 +65,22 @@ def _matched_size(identity, size, heading, profile, target_height):
     return max(1, round(size * target_height / height))
 
 
-def content_font(size, bold=False, *, profile="news"):
+def content_font(size, bold=False, *, profile="news", small_bold=False):
     """Pair readable Chinese with news, scientific, instrument or Steam Latin.
 
     Small labels use Noto 500, and headings requested bold at >=14 px use 600.
+    Pages that need heavier small print can opt into the bold faces at every size.
     An installed private Motiva Sans remains first choice for Steam; missing or
     unreadable files fall back through bundled Latin, CJK, then the shared UI.
     """
     size, bold = int(size), bool(bold)
-    heading = bold and size >= 14
+    heading = bold and (size >= 14 or small_bold)
     found = steam_private_path(bold) if profile == "steam" else None
     family = "news" if profile == "steam" else profile
     paths = LATIN_PATHS[family]
     reference_id = (id(get_base_ui_font), tuple(_identity(path) for path in base_ui_font_candidates(bold)))
     latin_ids = tuple(_identity(path) for path in paths)
-    key = (size, bold, family, _identity(CJK_PATH), latin_ids, found, reference_id)
+    key = (size, bold, heading, family, _identity(CJK_PATH), latin_ids, found, reference_id)
     with _LOCK:
         cached = _PAIRS.get(key)
         if cached is not None:
@@ -114,14 +115,15 @@ def content_font(size, bold=False, *, profile="news"):
 class ContentCanvas(PageCanvas):
     """Use a page's selected content role while respecting a custom font family."""
 
-    def __init__(self, palette, *, family="Microsoft YaHei", size=(800, 480), profile="news"):
+    def __init__(self, palette, *, family="Microsoft YaHei", size=(800, 480), profile="news", small_bold=False):
         super().__init__(palette, family=family, size=size)
         self.profile = profile
+        self.small_bold = bool(small_bold)
 
     def font(self, size, bold=True):
         if self.family != "Microsoft YaHei":
             return super().font(size, bold)
         key = (int(size), bool(bold))
         if key not in self._fonts:
-            self._fonts[key] = content_font(*key, profile=self.profile)
+            self._fonts[key] = content_font(*key, profile=self.profile, small_bold=self.small_bold)
         return self._fonts[key]

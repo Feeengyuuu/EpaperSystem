@@ -159,7 +159,7 @@ def test_existing_official_wordmarks_need_no_favicon_request(tmp_path):
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])
-def test_favicon_and_name_share_the_existing_source_width(monkeypatch, mode):
+def test_favicon_replaces_the_source_name_and_gives_its_space_to_the_headline(monkeypatch, mode):
     canvas = render.PageCanvas(render._palette({"themeMode": mode}))
     item = {**ARTICLE, "title": "A search", "news": "The original headline", "traffic": 1000}
     payload = {"trends": {"data": {"items": [item]}}}
@@ -173,12 +173,33 @@ def test_favicon_and_name_share_the_existing_source_width(monkeypatch, mode):
     monkeypatch.setattr(canvas, "text", record)
     image = Image.open(io.BytesIO(_png())).convert("RGBA")
     render._trends(canvas, payload, {icons.icon_key(item): image})
-    source = next(call for call in calls if call[1].startswith("A newly"))
     headline = next(call for call in calls if call[1] == "The original headline")
-    assert source[0][0] == 52 + 11 + 3
-    assert headline[0][0] <= 52 + 72 + 4
-    assert headline[3]["width"] > 100
+    assert not any(call[1].startswith("A newly") for call in calls)
+    assert headline[0][0] == 52 + 11 + 4
+    assert headline[3]["width"] > 180
     assert canvas.image.getpixel((57, 324))[:3] == (40, 110, 190)
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_bundled_symbols_replace_names_but_unknown_sources_still_use_text(monkeypatch, mode):
+    canvas = render.PageCanvas(render._palette({"themeMode": mode}))
+    names = ["KTLA", "LoL Esports", "Yahoo", "IMDb", "Unknown publisher"]
+    items = [{"source": name, "title": f"Search {index}", "news": f"Headline {index}"}
+             for index, name in enumerate(names)]
+    text = canvas.text
+    calls = []
+
+    def record(xy, value, *args, **kwargs):
+        calls.append((xy, str(value)))
+        return text(xy, value, *args, **kwargs)
+
+    monkeypatch.setattr(canvas, "text", record)
+    render._trends(canvas, {"trends": {"data": {"items": items}}}, {})
+    for index, name in enumerate(names[:-1]):
+        assert not any(value == name for _xy, value in calls)
+        assert next(xy for xy, value in calls if value == f"Headline {index}")[0] == 52 + 11 + 4
+    assert any(value == canvas.fit(names[-1], 9, 72) for _xy, value in calls)
+    assert next(xy for xy, value in calls if value == "Headline 4")[0] > 52 + 11 + 4
 
 
 def test_bundled_mark_still_wins_when_cached_favicon_exists(monkeypatch):

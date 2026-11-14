@@ -243,11 +243,11 @@ def test_news_outlets_use_exact_official_marks_and_unknown_names_stay_text(monke
     render._trends(canvas, payload, {})
     assert marks == [name + "_night" if name in ("rtp", "yahoo_sports") and mode == "night" else name
                      for name in expected]
-    assert not {name for name in names if name.casefold() in render.NEWS_OUTLET_LOGOS} & set(texts)
+    assert not {name for name in names if name.casefold() in
+                (render.NEWS_OUTLET_LOGOS | render.publisher_icons.LOCAL_ICONS)} & set(texts)
     for name in names:
-        if name.casefold() not in render.NEWS_OUTLET_LOGOS:
-            width = 58 if name.casefold() in render.publisher_icons.LOCAL_ICONS else 72
-            assert canvas.fit(name, 9, width) in texts
+        if name.casefold() not in (render.NEWS_OUTLET_LOGOS | render.publisher_icons.LOCAL_ICONS):
+            assert canvas.fit(name, 9, 72) in texts
     # A missing local file still names the outlet and keeps the headline.
     monkeypatch.setattr(render, "load_source_logo", lambda path, *a, **k: None)
     texts.clear()

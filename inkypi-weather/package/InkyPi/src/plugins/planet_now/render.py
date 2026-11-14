@@ -634,7 +634,7 @@ def _trends(canvas, payload, images):
         source, headline = item.get("source") or "", item.get("news") or ""
         line_x = text_x
         if source:
-            # Official wordmarks stand alone; compact site symbols keep the publisher's name.
+            # A publisher's mark replaces its name; only a missing mark falls back to text.
             outlet = NEWS_OUTLET_LOGOS.get(source.strip().casefold())
             if outlet in ("rtp", "yahoo_sports") and canvas.palette["night"]:
                 outlet += "_night"
@@ -657,14 +657,13 @@ def _trends(canvas, payload, images):
                 local_icon = publisher_icons.LOCAL_ICONS.get(source.strip().casefold())
                 if local_icon:
                     icon = load_source_logo(ASSETS / "logos" / f"{local_icon}.png", 11) or icon
-                source_width = 72
                 if icon is not None:
                     mark = publisher_icons.on_page(icon, 11)
                     canvas.image.paste(mark, (round(line_x), round(y + 20 - mark.height / 2)), mark)
-                    line_x += mark.width + 3
-                    source_width -= mark.width + 3
-                line_x += canvas.text((line_x, y + 20), canvas.fit(source, 9, source_width), 9,
-                                      "trends", anchor="lm") + 4
+                    line_x += mark.width + 4
+                else:
+                    line_x += canvas.text((line_x, y + 20), canvas.fit(source, 9, 72), 9,
+                                          "trends", anchor="lm") + 4
         if headline:
             canvas.text((line_x, y + 20), headline, 10, "muted", anchor="lm", bold=False, width=column - line_x)
     if wiki:

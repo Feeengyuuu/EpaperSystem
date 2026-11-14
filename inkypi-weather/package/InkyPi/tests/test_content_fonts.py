@@ -62,6 +62,34 @@ def test_small_labels_and_headings_keep_their_requested_weight(size, bold, cjk_w
     assert _raster(font, "科技日报") == _raster(expected_cjk, "科技日报")
 
 
+@pytest.mark.parametrize("size", [10, 11, 13, 14])
+@pytest.mark.parametrize("order", [(False, True), (True, False)])
+def test_small_bold_science_labels_use_real_heavier_faces_without_changing_other_pages(size, order):
+    canvases = {
+        opt_in: content_fonts.ContentCanvas({"paper": "white"}, profile="science", small_bold=opt_in)
+        for opt_in in order
+    }
+    fonts = {opt_in: canvas.font(size, True) for opt_in, canvas in canvases.items()}
+    bold = fonts[True]
+    regular = content_fonts.content_font(size, False, profile="science")
+    expected_cjk = load_font(SRC / "static/fonts/NotoSansSC-VF.ttf", size)
+    expected_cjk.set_variation_by_axes([600])
+
+    assert Path(bold.primary.path).name == "PublicSans-SemiBold.otf"
+    assert _raster(bold, "科技日报") == _raster(expected_cjk, "科技日报")
+    for text in ("科技日报", "Game title 2026"):
+        assert sum(_raster(bold, text)) > sum(_raster(regular, text))
+    assert content_fonts.content_font(size, True, profile="science") is fonts[False]
+    assert canvases[False].font(size, True) is fonts[False]
+    if size < 14:
+        assert fonts[False] is not bold
+        assert Path(fonts[False].primary.path).name == "PublicSans-Regular.otf"
+        expected_cjk.set_variation_by_axes([500])
+        assert _raster(fonts[False], "科技日报") == _raster(expected_cjk, "科技日报")
+    else:
+        assert fonts[False] is bold
+
+
 @pytest.mark.parametrize("payload", [None, b"not a font"])
 def test_missing_or_corrupt_cjk_uses_real_shared_ui_glyphs(tmp_path, monkeypatch, payload):
     unavailable = tmp_path / "unavailable-cjk.ttf"
