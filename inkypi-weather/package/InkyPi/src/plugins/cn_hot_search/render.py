@@ -22,6 +22,7 @@ from pathlib import Path
 from PIL import Image, ImageChops, ImageDraw, ImageOps
 
 from utils.doodle_backdrop import paint_doodles
+from utils.flat_icons import draw_icon
 from utils.local_wordmark import load_source_logo, paste_local_wordmark
 from utils.page_canvas import PageCanvas
 
@@ -68,15 +69,15 @@ LEAD_PICTURE_W = 178
 LEAD_FADE = 0.5
 GRID_TOP, GRID_BOTTOM, GRID_GAP = 164, 470, 8
 # Baidu's 分榜 strip between the lead and the cards (when its boards are at hand): each board's
-# first entry behind a chip of its own colour (day, night), the grid starting under it.
+# first entry behind a pictogram of its own colour (day, night), the grid starting under it.
 STRIP = (12, 160, 788, 181)
 STRIP_GRID_TOP = 186
 BOARD_STYLES = {
-    "teleplay": ("剧", (200, 30, 50), (240, 86, 102)),
-    "movie": ("影", (37, 84, 199), (96, 140, 245)),
-    "novel": ("书", (5, 150, 105), (52, 211, 153)),
-    "game": ("游", (124, 58, 237), (167, 139, 250)),
-    "car": ("车", (217, 119, 6), (251, 176, 59)),
+    "teleplay": ("television", (200, 30, 50), (240, 86, 102)),
+    "movie": ("clapperboard", (37, 84, 199), (96, 140, 245)),
+    "novel": ("book", (5, 150, 105), (52, 211, 153)),
+    "game": ("gamepad", (124, 58, 237), (167, 139, 250)),
+    "car": ("car", (217, 119, 6), (251, 176, 59)),
 }
 # A card row: a narrow rank column, then the full thumbnail; the title on the
 # first line, the heat, labels and the platform's own words on the second.
@@ -444,10 +445,11 @@ def _boards_strip(canvas, boards, box):
         cx, end = x + index * cell_w, x + (index + 1) * cell_w - 6
         if index:
             canvas.rule((cx - 4, top + 5, cx - 4, bottom - 5))
-        label, day_fill, night_fill = BOARD_STYLES[tab]
+        icon, day_fill, night_fill = BOARD_STYLES[tab]
+        fill = night_fill if night else day_fill
         canvas.draw.rounded_rectangle((cx, middle - 7, cx + 15, middle + 7), radius=3,
-                                      fill=night_fill if night else day_fill)
-        canvas.text((cx + 7.5, middle), label, 10, (255, 255, 255), anchor="mm")
+                                      fill=fill)
+        draw_icon(canvas.draw, icon, (round(cx + 2), round(middle - 6)), 11, (255, 255, 255), fill)
         tx = cx + 20
         tx += canvas.text((tx, middle), row["title"], 12, anchor="lm", width=end - tx) + 3
         tx += _arrow(canvas, tx, middle, row.get("change"))

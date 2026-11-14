@@ -304,8 +304,9 @@ def test_the_boards_strip_sits_under_the_lead_and_the_grid_moves_down(mode, monk
 
     payload = {"lists": lists, "topics": [], "history": {}}
     render_page((800, 480), {**payload, "boards": boards}, {"_inkypi_theme": {"mode": mode}}, NOW, {})
-    assert {"分榜", "剧", "九门", "陈伟霆", "车", "捷达VS8", "11.99万起"} <= set(drawn)
-    assert "影" not in drawn and boxes == [render.STRIP_GRID_TOP]
+    assert {"分榜", "九门", "陈伟霆", "捷达VS8", "11.99万起"} <= set(drawn)
+    assert not {"剧", "影", "书", "游", "车"} & set(drawn)
+    assert boxes == [render.STRIP_GRID_TOP]
     # Without boards the page keeps its old grid.
     render_page((800, 480), payload, {"_inkypi_theme": {"mode": mode}}, NOW, {})
     assert boxes[-1] == render.GRID_TOP

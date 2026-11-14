@@ -189,6 +189,38 @@ def _gamepad(draw, x, y, s, color, knockout):
         draw.ellipse(_p(x, y, s, [(cx - 0.05, cy - 0.05), (cx + 0.05, cy + 0.05)]), fill=knockout)
 
 
+def _television(draw, x, y, s, color, knockout):
+    draw.line(_p(x, y, s, [(0.25, 0.02), (0.5, 0.23), (0.75, 0.02)]), fill=color, width=_w(s))
+    draw.rounded_rectangle(_p(x, y, s, [(0.02, 0.24), (0.98, 0.88)]), radius=max(1, s * 0.12), fill=color)
+    draw.rectangle(_p(x, y, s, [(0.18, 0.4), (0.82, 0.72)]), fill=knockout)
+    for left in (0.22, 0.7):
+        draw.rectangle(_p(x, y, s, [(left, 0.88), (left + 0.1, 0.98)]), fill=color)
+
+
+def _clapperboard(draw, x, y, s, color, knockout):
+    draw.polygon(_p(x, y, s, [(0.04, 0.22), (0.9, 0.02), (0.96, 0.23), (0.08, 0.43)]), fill=color)
+    for left in (0.3, 0.62):
+        draw.line(_p(x, y, s, [(left, 0.18 - left * 0.2), (left + 0.08, 0.39 - left * 0.2)]),
+                  fill=knockout, width=_w(s, 0.1))
+    draw.rectangle(_p(x, y, s, [(0.08, 0.47), (0.96, 0.98)]), fill=color)
+    draw.rectangle(_p(x, y, s, [(0.24, 0.63), (0.8, 0.82)]), fill=knockout)
+
+
+def _book(draw, x, y, s, color, knockout):
+    draw.polygon(_p(x, y, s, [(0.02, 0.12), (0.28, 0.12), (0.5, 0.26), (0.72, 0.12), (0.98, 0.12),
+                              (0.98, 0.82), (0.72, 0.82), (0.5, 0.96), (0.28, 0.82), (0.02, 0.82)]), fill=color)
+    draw.line(_p(x, y, s, [(0.5, 0.28), (0.5, 0.84)]), fill=knockout, width=_w(s, 0.1))
+
+
+def _car(draw, x, y, s, color, knockout):
+    draw.polygon(_p(x, y, s, [(0.22, 0.12), (0.78, 0.12), (0.94, 0.46), (0.94, 0.8), (0.06, 0.8),
+                              (0.06, 0.46)]), fill=color)
+    draw.polygon(_p(x, y, s, [(0.3, 0.27), (0.7, 0.27), (0.78, 0.45), (0.22, 0.45)]), fill=knockout)
+    for left in (0.16, 0.68):
+        draw.rectangle(_p(x, y, s, [(left, 0.6), (left + 0.15, 0.68)]), fill=knockout)
+        draw.rectangle(_p(x, y, s, [(left, 0.8), (left + 0.15, 0.96)]), fill=color)
+
+
 def _tag(draw, x, y, s, color, knockout):
     draw.polygon(_p(x, y, s, [(0.08, 0.08), (0.52, 0.08), (0.94, 0.5), (0.5, 0.94), (0.08, 0.52)]), fill=color)
     draw.ellipse(_p(x, y, s, [(0.22, 0.22), (0.36, 0.36)]), fill=knockout)
@@ -337,6 +369,7 @@ ICONS = {
     "mushroom": _mushroom, "spider": _spider, "paw": _paw, "lizard": _lizard, "fish": _fish, "frog": _frog,
     "snail": _snail, "comment": _comment, "heart": _heart, "star": _star, "download": _download,
     "users": _users, "gamepad": _gamepad, "tag": _tag,
+    "television": _television, "clapperboard": _clapperboard, "book": _book, "car": _car,
 }
 
 
