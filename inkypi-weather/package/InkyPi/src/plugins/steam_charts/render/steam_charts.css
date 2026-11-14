@@ -47,6 +47,12 @@ body {
     --paper: #000000;
 }
 
+/* The shared page reset assigns a face to every element. Let Steam's text
+   inherit this panel's font stack instead of the reset's UI face. */
+.steam-container * {
+    font-family: inherit;
+}
+
 .steam-container.theme-day {
     --ink: #000000;
     --paper: #ffffff;
