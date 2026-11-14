@@ -155,6 +155,14 @@
       "license": "The WTA's web typeface; Indian Type Foundry Free Font License (from Fontshare)"
     },
     {
+      "key": "ufc_medium", "font": "UFC Sans Condensed Medium", "use": "Sports UFC panel text and times (original WOFF2 only)", "kind": "brand",
+      "license": "UFC brand typeface, not offered for public redistribution", "reference": "https://crescenzi.co/p/ufc-sans"
+    },
+    {
+      "key": "ufc_bold", "font": "UFC Sans Condensed Bold", "use": "Sports UFC panel fighter names, headings and records (original WOFF2 only)", "kind": "brand",
+      "license": "UFC brand typeface, not offered for public redistribution", "reference": "https://crescenzi.co/p/ufc-sans"
+    },
+    {
       "key": "esports-esl-heading", "font": "ESL Legendary Bold", "use": "ESL event headings", "kind": "brand",
       "license": "ESL FACEIT Group brand typeface, not offered for licence"
     },

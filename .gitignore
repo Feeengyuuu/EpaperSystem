@@ -129,4 +129,7 @@ inkypi-weather/package/InkyPi/src/static/images/current_image.png
 **/creato*.ttf
 **/creato*.woff2
 **/GeneralSans*
+# Owner-supplied UFC Sans: retain the original WOFF2 bytes outside source archives.
+**/ufc-sans-condensed-*.woff2
+**/UFCSans-*.woff2
 **/[Bb][Aa][Nn][Kk][Nn][Oo][Tt][Ee] [Rr][Ee][Gg][Uu][Ll][Aa][Rr].[Tt][Tt][Ff]

@@ -85,11 +85,12 @@ def is_runtime_plugin_cache(path: PurePath) -> bool:
 
 def is_device_owned_score_font(path: PurePath) -> bool:
     """Owner fonts are not redistributable package assets, even if misplaced."""
-    if path.name.casefold().startswith(("beaufortforlol", "motivasans", "creato", "generalsans")):
+    if path.name.casefold().startswith(("beaufortforlol", "motivasans", "creato", "generalsans", "ufcsans-")):
         return True
     return path.name.casefold() in {"game-deals-price.ttf", "banknote regular.ttf", "lol-beaufort-heavy.ttf",
                                     "lol-beaufort-bold.ttf", "lol-beaufort-medium.ttf",
                                     "steam-motiva-regular.ttf", "steam-motiva-bold.ttf",
+                                    "ufc-sans-condensed-medium.woff2", "ufc-sans-condensed-bold.woff2",
                                     "tennis-atp-medium.ttf", "tennis-atp-bold.ttf", "tennis-wta-medium.ttf", "tennis-wta-semibold.ttf"} | {
         f"sports-{league}-score.{extension}"
         for league in (

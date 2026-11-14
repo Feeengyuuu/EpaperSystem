@@ -25,9 +25,10 @@ from plugins.base_plugin.render_provenance import (
 )
 from plugins.context_cache import write_context
 from plugins.live_radar import comic_art, placeholder_art, stage_lights
+from plugins.live_radar.readable_fonts import readable_font
+from plugins.sports_dashboard.render_fonts import render_font_scope
 from utils.doodle_backdrop import paint_doodles
 from runtime.refresh_contracts import TaskCancelled
-from utils.app_utils import get_base_ui_font
 from utils.http_client import get_http_session
 from utils.picture_grounds import readable_on
 from utils.safe_image import ImageLimits
@@ -1670,6 +1671,7 @@ class LiveRadar(BasePlugin):
             cards.append(card)
         return cards
 
+    @render_font_scope()
     def _render_dashboard(self, cards, dimensions, theme, generated_at, from_cache, warning, layout=None):
         width, height = dimensions
         image = Image.new("RGB", dimensions, theme["bg"])
@@ -1961,6 +1963,7 @@ class LiveRadar(BasePlugin):
             image.paste(logo, (round(x), round(middle - logo.height / 2)), logo)
             x += logo.width + gap
 
+    @render_font_scope()
     def _render_failure_dashboard(self, dimensions, theme, generated_at, exc):
         width, height = dimensions
         image = Image.new("RGB", dimensions, theme["bg"])
@@ -4010,7 +4013,7 @@ class LiveRadar(BasePlugin):
 
     @staticmethod
     def _font(size, weight="normal"):
-        return get_base_ui_font(int(size), bold=weight == "bold")
+        return readable_font(size, weight)
 
     @staticmethod
     def _line_height(font):

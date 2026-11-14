@@ -20,7 +20,7 @@ from plugins.base_plugin.render_provenance import (
     SourceProvenance,
     read_source_provenance,
 )
-from plugins.live_radar import comic_art
+from plugins.live_radar import comic_art, readable_fonts
 from plugins.live_radar.live_radar import (
     DEFAULT_ROOMS_TEXT,
     HEADER_ART_FILE,
@@ -4160,25 +4160,29 @@ def test_generate_image_uses_stale_cache_on_fetch_failure():
     assert stale.size == (800, 480)
 
 
-def test_live_radar_base_font_uses_shared_resolver(monkeypatch):
+def test_live_radar_base_font_uses_readable_pair(monkeypatch):
     sentinel = object()
     calls = []
     monkeypatch.setattr(
         live_radar_module,
-        "get_base_ui_font",
-        lambda size, bold=False: calls.append((size, bold)) or sentinel,
-        raising=False,
+        "readable_font",
+        lambda size, weight="normal": calls.append((size, weight)) or sentinel,
     )
 
     assert LiveRadar._font(17, "bold") is sentinel
-    assert calls == [(17, True)]
+    assert calls == [(17, "bold")]
 
 
 def test_live_radar_preserves_shared_bold_fallback_raster(monkeypatch):
-    shared = live_radar_module.get_base_ui_font(48, bold=True)
+    shared = readable_fonts.get_base_ui_font(48, bold=True)
     expected = bytes(shared.getmask("Readable UI"))
+
+    def missing_font(*_args, **_kwargs):
+        raise OSError("bundled font is unavailable")
+
+    monkeypatch.setattr(readable_fonts, "load_font", missing_font)
     monkeypatch.setattr(
-        live_radar_module,
+        readable_fonts,
         "get_base_ui_font",
         lambda size, bold=False: shared,
     )

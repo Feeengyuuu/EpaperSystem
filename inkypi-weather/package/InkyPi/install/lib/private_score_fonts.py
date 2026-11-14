@@ -53,6 +53,11 @@ PURPOSES = {
                           "glyphs": "0123456789/:"},
     "tennis_wta_semibold": {"basename": "tennis-wta-semibold.ttf", "family": "General Sans", "style": "Semibold",
                             "glyphs": "0123456789/:"},
+    # The UFC website's display family, kept in its original WOFF2 format.
+    "ufc_medium": {"basename": "ufc-sans-condensed-medium.woff2", "family": "UFC Sans", "style": "Condensed Medium",
+                   "glyphs": "0123456789-/:"},
+    "ufc_bold": {"basename": "ufc-sans-condensed-bold.woff2", "family": "UFC Sans", "style": "Condensed Bold",
+                 "glyphs": "0123456789-/:"},
 }
 FONT_NAMES = frozenset(
     f"sports-{league}-score.{extension}"
