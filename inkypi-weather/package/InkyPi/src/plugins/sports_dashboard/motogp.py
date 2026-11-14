@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from datetime import date, datetime, time, timedelta, timezone
 
-from . import event_ranking, extra_feeds, motogp_riders
+from . import event_ranking, extra_feeds, motogp_grid, motogp_riders
 
 API = "https://api.motogp.pulselive.com/motogp/v1/results"
 VERSION = "motogp-results-v2"
@@ -90,8 +90,11 @@ def normalize_sessions(sessions):
         kind = str(raw.get("type") or "")
         number = raw.get("number") if isinstance(raw.get("number"), int) else None
         label = SESSION_LABELS.get(kind) or f"{kind}{number or ''}"
+        files = raw.get("session_files") if isinstance(raw.get("session_files"), dict) else {}
+        grid = files.get("grid") if isinstance(files.get("grid"), dict) else {}
         rows.append({"id": str(raw.get("id") or ""), "type": kind, "number": number, "label": label,
-                     "start": _when(raw.get("date")).isoformat(), "status": str(raw.get("status") or "")})
+                     "start": _when(raw.get("date")).isoformat(), "status": str(raw.get("status") or ""),
+                     "grid_url": str(grid.get("url") or "")[:512]})
     return sorted(rows, key=lambda row: row["start"])
 
 
@@ -152,7 +155,8 @@ def build_card(data, now):
     status = "LIVE" if live else ("NEXT" if upcoming or not data.get("current") else "RECENT")
     return {"sport": "MOTOGP", "status": status, "weekend": weekend, "sessions": sessions, "live_session": live,
             "next_session": upcoming, "result": data.get("result") or {}, "standings": data.get("standings") or [],
-            "next_event": data.get("next") if data.get("current") else None, "riders": {}}
+            "next_event": data.get("next") if data.get("current") else None, "riders": {},
+            "grid": motogp_grid.for_card(data.get("grid"), weekend, sessions)}
 
 
 def candidate(card, now):
@@ -222,6 +226,9 @@ def load_card(plugin, settings, now):
                                    ttl, now, label="MOTOGP")
     card = build_card(data, now)
     if card:
+        card["grid"], grid_state = motogp_grid.load(plugin, settings, data, now)
+        if grid_state:
+            state = f"{state}; {grid_state}"
         shown = ((card["result"].get("rows") or [])[:PROFILE_ROWS] + card["standings"][:PROFILE_ROWS])
         card["riders"] = motogp_riders.rider_profiles(plugin, settings, shown, now)
     return card, state
