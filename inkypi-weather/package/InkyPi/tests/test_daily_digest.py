@@ -15,7 +15,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from plugins.daily_digest import daily_digest, render, sources  # noqa: E402
 from plugins.daily_digest.daily_digest import DailyDigest  # noqa: E402
 from runtime.refresh_contracts import TaskContext  # noqa: E402
-from utils.page_canvas import PageCanvas  # noqa: E402
 
 NOW = datetime(2026, 11, 2, 16, 30, tzinfo=sources.PACIFIC)
 LRM = chr(0x200E)
@@ -473,13 +472,13 @@ def test_the_page_draws_every_card_by_day_and_night(mode):
 
 def test_a_missing_picture_keeps_its_song_or_title(monkeypatch):
     shown = []
-    original = PageCanvas.text
+    original = render.PageCanvas.text
 
     def text(self, xy, value, *args, **kwargs):
         shown.append(value)
         return original(self, xy, value, *args, **kwargs)
 
-    monkeypatch.setattr(PageCanvas, "text", text)
+    monkeypatch.setattr(render.PageCanvas, "text", text)
     ratings = []
     original_rating = render._rating_mark
     monkeypatch.setattr(render, "_rating_mark", lambda canvas, right, bottom, rating: (
@@ -538,7 +537,7 @@ def test_a_posters_rating_sits_on_the_picture_without_a_plate(monkeypatch, mode)
 @pytest.mark.parametrize("mode", ["day", "night"])
 def test_no_text_runs_past_its_card_or_the_page(monkeypatch, mode):
     records, current = [], {"box": None}
-    original_card, original_panel, original_text = render._card, render._brand_panel, PageCanvas.text
+    original_card, original_panel, original_text = render._card, render._brand_panel, render.PageCanvas.text
 
     def card(canvas, box, kind):
         current["box"] = box
@@ -556,7 +555,7 @@ def test_no_text_runs_past_its_card_or_the_page(monkeypatch, mode):
 
     monkeypatch.setattr(render, "_card", card)
     monkeypatch.setattr(render, "_brand_panel", panel)
-    monkeypatch.setattr(PageCanvas, "text", text)
+    monkeypatch.setattr(render.PageCanvas, "text", text)
 
     render.render_page((800, 480), _full_payload(), {"themeMode": mode}, NOW, _images())
 
@@ -577,7 +576,7 @@ def test_no_text_runs_past_its_card_or_the_page(monkeypatch, mode):
 @pytest.mark.parametrize("mode", ["day", "night"])
 def test_each_outlet_reads_in_a_block_lined_in_its_own_brand_colour(monkeypatch, mode):
     panels, texts = [], []
-    original_panel, original_text = render._brand_panel, PageCanvas.text
+    original_panel, original_text = render._brand_panel, render.PageCanvas.text
 
     def panel(canvas, night, box, colour):
         panels.append((box, colour))
@@ -588,7 +587,7 @@ def test_each_outlet_reads_in_a_block_lined_in_its_own_brand_colour(monkeypatch,
         return original_text(self, xy, value, size, color, **kwargs)
 
     monkeypatch.setattr(render, "_brand_panel", panel)
-    monkeypatch.setattr(PageCanvas, "text", text)
+    monkeypatch.setattr(render.PageCanvas, "text", text)
     monkeypatch.setattr(render, "paint_doodles", lambda *args, **kwargs: False)  # the page's ground alone
     page = render.render_page((800, 480), _full_payload(), {"themeMode": mode}, NOW, _images())
 

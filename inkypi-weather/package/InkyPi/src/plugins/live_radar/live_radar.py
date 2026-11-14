@@ -308,10 +308,9 @@ LIVE_QUEUE_NAME_STRIP_H = 15
 LIVE_QUEUE_BRAND_LINE_H = 3
 # The streamer's avatar sits at the start of the name strip and peeks into the snapshot.
 LIVE_QUEUE_AVATAR_SIZE = 18
-# The room title follows the name after a rule (gap on each side) when this much width is left.
+# The room title uses whatever space remains after the name and a compact divider.
 LIVE_QUEUE_TITLE_SIZE = 8
-LIVE_QUEUE_TITLE_GAP = 3
-LIVE_QUEUE_TITLE_MIN_W = 24
+LIVE_QUEUE_TITLE_GAP = 2
 LIVE_QUEUE_RADIUS = 8
 STATUS_RANK = {
     "live": 0,
@@ -2868,12 +2867,16 @@ class LiveRadar(BasePlugin):
         rule_x = name_left + int(math.ceil(draw.textlength(shown_name, font=font))) + LIVE_QUEUE_TITLE_GAP
         title_left = rule_x + 1 + LIVE_QUEUE_TITLE_GAP
         title_w = right - title_left
-        if title and title_w >= LIVE_QUEUE_TITLE_MIN_W:
+        if title and title_w > 0:
             title_font = self._font(LIVE_QUEUE_TITLE_SIZE, "bold")
             title_top, title_bottom = self._glyph_extent(title_font)
             title_y = name_y + glyph_bottom - title_bottom
             shown_title = self._fit_text(draw, title, title_font, title_w)
-            if shown_title:
+            # If only opening decoration fits, spend the narrow gap on the title's first word.
+            if not any(character.isalnum() for character in shown_title):
+                content_start = next((index for index, character in enumerate(title) if character.isalnum()), len(title))
+                shown_title = self._fit_text(draw, title[content_start:], title_font, title_w)
+            if any(character.isalnum() for character in shown_title):
                 draw.line((rule_x, title_y + title_top, rule_x, title_y + title_bottom - 1), fill=theme["ink"])
                 draw.text((title_left, title_y), shown_title, fill=theme["ink"], font=title_font)
         # The platform line goes on last so it stays a clean 3 px edge above the name.

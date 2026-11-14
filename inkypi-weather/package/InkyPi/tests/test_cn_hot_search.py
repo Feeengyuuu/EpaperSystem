@@ -177,7 +177,7 @@ def test_an_entry_without_a_picture_shows_an_illustration_of_its_topic():
     assert {path.stem for path in topic_art.TOPIC_DIR.glob("*.jpg")} == keys | {topic_art.DEFAULT_TOPIC}
 
 
-def test_a_row_title_steps_down_to_fit_and_keeps_the_move_room_only_for_a_move():
+def test_a_row_title_steps_down_to_fit_and_keeps_the_move_room_only_for_a_move(monkeypatch):
     from plugins.cn_hot_search import render
 
     assert render._has_move("new") and render._has_move(-2) and not render._has_move(0) and not render._has_move(None)
@@ -194,16 +194,13 @@ def test_a_row_title_steps_down_to_fit_and_keeps_the_move_room_only_for_a_move()
         drawn.append((str(text), size))
         return original(self, xy, text, size, color, **kwargs)
 
-    PageCanvas.text = capture
-    try:
-        render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, {})
-    finally:
-        PageCanvas.text = original
+    monkeypatch.setattr(PageCanvas, "text", capture)
+    render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, {})
     # In the narrow 3-column cards the whole title fits at a smaller size instead of being cut.
     assert ("中共中央30日上午举行新闻发布会", 12) in drawn or ("中共中央30日上午举行新闻发布会", 13) in drawn
 
 
-def test_a_rows_sentence_comes_before_its_heat_and_tags():
+def test_a_rows_sentence_comes_before_its_heat_and_tags(monkeypatch):
     lists = {platform: [{"rank": rank, "title": "某话题", "heat": 7_810_000, "tag": "新",
                          "summary": "10月29日，重庆知识产权局发布消息", "image": None} for rank in range(1, 4)]
              for platform in sources.PLATFORMS}
@@ -217,18 +214,15 @@ def test_a_rows_sentence_comes_before_its_heat_and_tags():
         drawn.append((str(text), xy[0], xy[1]))
         return original(self, xy, text, size, color, **kwargs)
 
-    PageCanvas.text = capture
-    try:
-        render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, {})
-    finally:
-        PageCanvas.text = original
+    monkeypatch.setattr(PageCanvas, "text", capture)
+    render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, {})
     # On every row the sentence starts left of the heat figure on its line.
     pairs = [(note, heat) for note in drawn if note[0].startswith("10月29日")
              for heat in drawn if heat[0] == "781万" and abs(heat[2] - note[2]) < 1 and (heat[1] < 400) == (note[1] < 400)]
     assert len(pairs) >= 4 and all(note[1] < heat[1] for note, heat in pairs)
 
 
-def test_a_row_without_a_sentence_keeps_its_heat_and_tags_first():
+def test_a_row_without_a_sentence_keeps_its_heat_and_tags_first(monkeypatch):
     lists = {platform: [{"rank": rank, "title": "某话题", "heat": 12_150_000, "tag": "热", "videos": 7, "image": None}
                         for rank in range(1, 4)] for platform in sources.PLATFORMS}
     drawn = []
@@ -240,11 +234,8 @@ def test_a_row_without_a_sentence_keeps_its_heat_and_tags_first():
         drawn.append((str(text), xy[0], xy[1]))
         return original(self, xy, text, size, color, **kwargs)
 
-    PageCanvas.text = capture
-    try:
-        render_page((800, 480), {"lists": lists, "topics": [], "history": {}}, {"_inkypi_theme": {"mode": "day"}}, NOW, {})
-    finally:
-        PageCanvas.text = original
+    monkeypatch.setattr(PageCanvas, "text", capture)
+    render_page((800, 480), {"lists": lists, "topics": [], "history": {}}, {"_inkypi_theme": {"mode": "day"}}, NOW, {})
     # Douyin's line is its videos: the heat leads it.
     pairs = [(heat, note) for note in drawn if note[0].startswith("7个视频")
              for heat in drawn if heat[0] == "1215万" and abs(heat[2] - note[2]) < 1 and (heat[1] < 400) == (note[1] < 400)]

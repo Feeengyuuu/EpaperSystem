@@ -3494,17 +3494,24 @@ def _wide_tile_texts(card, box=(10, 10, 144, 96)):
     return plugin, theme, draw, texts, image
 
 
-def test_wide_live_queue_tile_follows_the_name_with_the_room_title():
-    box = (10, 10, 144, 96)
-    title = "Just chatting about the new patch notes"
-    plugin, theme, draw, texts, image = _wide_tile_texts(_queue_row_card(owner="Emiru", title=title), box)
+@pytest.mark.parametrize("owner,title,box,min_characters", [
+    ("Emiru", "Just chatting about the new patch notes", (10, 10, 144, 96), 8),
+    ("火星包", "驴酱杯冲刺！", TILE_BOX, 3),
+    ("ywwuyw", "直播间标题", TILE_BOX, 1),
+    ("冷少icon", "7天不下播挑战", TILE_BOX, 2),
+    ("ywwuyi", "【钢之魂】勇者小队全灭了。", TILE_BOX, 2),
+    ("ywwuyw", "【钢之魂】勇者小队全灭了。", TILE_BOX, 1),
+])
+def test_live_queue_tile_follows_the_name_with_fitting_room_title(owner, title, box, min_characters):
+    plugin, theme, draw, texts, image = _wide_tile_texts(_queue_row_card(owner=owner, title=title), box)
 
-    (name_x, name_y), _name, _fill, name_font = next(item for item in texts if item[1] == "Emiru")
-    (title_x, title_y), shown, fill, title_font = next(item for item in texts if item[1] not in ("Emiru",))
-    assert shown and title.startswith(shown) and len(shown) >= 8
+    (name_x, name_y), _name, _fill, name_font = next(item for item in texts if item[1] == owner)
+    (title_x, title_y), shown, fill, title_font = next(item for item in texts if item[1] != owner)
+    assert shown and (title.startswith(shown) or title.lstrip("【").startswith(shown))
+    assert any(character.isalnum() for character in shown) and len(shown) >= min_characters
     assert fill == theme["ink"]
-    name_end = int(math.ceil(name_x + draw.textlength("Emiru", font=name_font)))
-    assert title_x >= name_end + 6
+    name_end = int(math.ceil(name_x + draw.textlength(owner, font=name_font)))
+    assert title_x >= name_end + 5
     # A one-pixel ink rule separates the name from the title.
     title_top, title_bottom = plugin._glyph_extent(title_font)
     rule = [
@@ -3520,23 +3527,32 @@ def test_wide_live_queue_tile_follows_the_name_with_the_room_title():
     assert title_y + plugin._glyph_extent(title_font)[0] >= box[1] + box[3] - live_radar_module.LIVE_QUEUE_NAME_STRIP_H
 
 
-def test_live_queue_tile_title_stops_before_the_favourite_star():
-    box = (10, 10, 144, 96)
+@pytest.mark.parametrize("owner,box", [("Emiru", (10, 10, 144, 96)), ("阿", TILE_BOX)])
+def test_live_queue_tile_title_stops_before_the_favourite_star(owner, box):
     _plugin_, _theme_, draw, texts, _image = _wide_tile_texts(
-        _queue_row_card(owner="Emiru", title="【预告】24号1点全球总决赛瑞士轮第三轮", is_fav=True), box,
+        _queue_row_card(owner=owner, title="【预告】24号1点全球总决赛瑞士轮第三轮", is_fav=True), box,
     )
 
-    (title_x, _y), shown, _fill, title_font = next(item for item in texts if item[1] != "Emiru")
+    (title_x, _y), shown, _fill, title_font = next(item for item in texts if item[1] != owner)
     assert shown.startswith("【预告】")
     assert title_x + draw.textlength(shown, font=title_font) <= box[0] + box[2] - 4 - 10 - 2
 
 
-def test_live_queue_tile_skips_the_title_when_the_name_leaves_no_room():
-    _plugin_, _theme_, _draw, texts, _image = _wide_tile_texts(
-        _queue_row_card(owner="AVeryLongStreamerName", title="Some title"), TILE_BOX,
+@pytest.mark.parametrize("owner,title", [
+    ("AVeryLongStreamerName", "Some title"),
+    ("ywwuyw", "【】"),
+    ("火星包", ""),
+])
+def test_live_queue_tile_skips_title_and_divider_without_room_for_content(owner, title):
+    _plugin_, theme, draw, texts, image = _wide_tile_texts(
+        _queue_row_card(owner=owner, title=title), TILE_BOX,
     )
 
-    assert [item[1] for item in texts] == ["AVeryLongStreamerName"[: len(texts[0][1])]]
+    assert [item[1] for item in texts] == [owner[: len(texts[0][1])]]
+    (name_x, _name_y), name, _fill, font = texts[0]
+    name_end = math.ceil(name_x + draw.textlength(name, font=font))
+    # An omitted title must not leave an orphan divider in the available strip.
+    assert set(image.crop((name_end + 1, _strip_top() + 3, 100, 61)).getdata()) <= {theme["panel"]}
 
 
 @pytest.mark.parametrize("platform", ["bilibili", "douyu", "twitch", "kick", "picarto"])
