@@ -121,11 +121,11 @@ def test_tournaments_are_named_by_their_official_marks():
     assert tennis.tournament_mark({"tour": "ATP", "name": "Swiss Indoors Basel"}) == "tennis_event_basel"
     assert tennis.tournament_mark({"tour": "ATP", "name": "Moselle Open"}) == "tennis_atp_250"
     assert tennis.tournament_mark({"tour": "WTA", "name": "Australian Open"}) == "tennis_australian_open"
-    # A WTA event with a brand of its own carries the WTA's tier tag; Wimbledon its crest, the
-    # Finals their own logos.
+    # A WTA event with a bundled brand carries its own mark; Wimbledon its crest, the
+    # Finals their own logos. An uncurated edition keeps the tier fallback.
     hong_kong = {"tour": "WTA", "name": "Prudential Hong Kong Tennis Open"}
-    assert (tennis.tournament_category(hong_kong), tennis.tournament_mark(hong_kong)) == ("250", "tennis_wta_250")
-    assert tennis.tournament_mark({"tour": "WTA", "name": "Wuhan Open"}) == "tennis_wta_1000"
+    assert (tennis.tournament_category(hong_kong), tennis.tournament_mark(hong_kong)) == ("250", "tennis_event_wta_hong_kong")
+    assert tennis.tournament_mark({"tour": "WTA", "name": "Wuhan Open"}) == "tennis_event_wta_wuhan"
     assert tennis.tournament_mark({"tour": "WTA", "name": "Wimbledon"}) == "tennis_wimbledon"
     assert tennis.tournament_mark({"tour": "ATP", "name": "Nitto ATP Finals"}) == "tennis_event_nitto_atp_finals"
     assert tennis.tournament_mark({"tour": "WTA", "name": "WTA Finals Riyadh"}) is None
@@ -159,9 +159,11 @@ def test_each_tour_level_event_finds_its_own_mark_and_venue():
     # A combined event's WTA draw shares the ATP logo; a same-city event with its own brand does not.
     assert event("WTA", "Mutua Madrid Open", "Madrid, Spain")["mark"] == "tennis_event_madrid"
     assert event("ATP", "Qatar ExxonMobil Open", "Doha, Qatar")["mark"] == "tennis_event_doha"
-    doha = event("WTA", "Qatar TotalEnergies Open", "Doha, Qatar")
-    assert (doha["mark"], doha["venue"]) == (None, "Khalifa Tennis Complex")
-    assert tennis.tournament_mark({"tour": "WTA", "name": "Qatar TotalEnergies Open"}) == "tennis_wta_1000"
+    doha_tournament = {"tour": "WTA", "name": "Qatar TotalEnergies Open", "place": "Doha, Qatar",
+                       "start": "2026-02-08T00:00:00Z"}
+    doha = tennis_events.event_for(doha_tournament)
+    assert (doha["mark"], doha["venue"]) == ("tennis_event_wta_doha", "Khalifa Tennis Complex")
+    assert tennis.tournament_mark(doha_tournament) == "tennis_event_wta_doha"
     # A Grand Slam keeps its crest and names its grounds; an unknown event finds nothing.
     assert event("ATP", "Australian Open", "Melbourne, Australia")["venue"] == "Melbourne Park"
     assert tennis.tournament_mark({"tour": "ATP", "name": "Australian Open"}) == "tennis_australian_open"

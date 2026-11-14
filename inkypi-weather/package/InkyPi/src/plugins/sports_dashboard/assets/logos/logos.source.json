@@ -1178,6 +1178,801 @@
         64
       ],
       "sha256": "2bf8104c4886032975d39700647a7c7dac94bdb1856133afa5431cc7b77af399"
+    },
+    "tennis_event_wta_hong_kong": {
+      "source": "https://www.hktennisopen.hk/wp-content/themes/hkto_2023/template/frontend/images/0_Home_page/0_PRUDENTIAL_logo.svg",
+      "page": "https://www.hktennisopen.hk/en/",
+      "licence": "Official Prudential Hong Kong Tennis Open event trademark from the tournament website, used to identify this WTA event; not an open-font or public-domain claim.",
+      "source_sha256": "acd099d072841583fc9388865dbd3253a94ff990859b44c93d8c0a546550b488",
+      "processing": "Official white SVG rasterized, transparent bounds cropped, silhouette stored in dark ink for day/night adaptation, scaled proportionally to 64 px tall.",
+      "size": [
+        119,
+        64
+      ],
+      "sha256": "5a246d9953a35fa0fc3a642d9264613d93d2516ff1aff630743f72d9285b8c2a"
+    },
+    "tennis_event_wta_hobart": {
+      "source": "https://wtafiles.wtatennis.com/pdf/matchnotes/2026/1050_Preview.pdf",
+      "page": "https://www.wtatennis.com/tournaments/1050/hobart/2026",
+      "licence": "Official Hobart International event mark published by its organizer or the WTA, reproduced solely to identify that tournament; trademark/copyright retained by its owner, not an open-license claim.",
+      "source_sha256": "676133626733f4d5c34a1072457483ee80f209eb5bc426fd80eb38508eba3b19",
+      "processing": "Extracted the tournament image at page 1 PDF xref 488 with its soft mask; stored in one dark ink so the small navy original remains visible at night; cropped to visible artwork and resized to 64 px high",
+      "size": [
+        51,
+        64
+      ],
+      "sha256": "35db4359e9d35ea639b47eb835a5f7b730ba4559c1534e155d7697db3d62d9ce",
+      "ink": "mono",
+      "title": "Hobart International"
+    },
+    "tennis_event_wta_charleston": {
+      "source": "https://wtafiles.wtatennis.com/pdf/matchnotes/2026/804_Preview.pdf",
+      "page": "https://www.wtatennis.com/tournaments/804/charleston/2026",
+      "licence": "Official Credit One Charleston Open event mark published by its organizer or the WTA, reproduced solely to identify that tournament; trademark/copyright retained by its owner, not an open-license claim.",
+      "source_sha256": "03db8320ed3088f106c9a1a73b6f0215ee06e475e109ffe1a2943768b1ea7cc8",
+      "processing": "Extracted the tournament image at page 1 PDF xref 53; retained source colors; removed white outer ground; neutral JPEG text unmatted from white into neutral ink and alpha to avoid pale edges at night; cropped to visible artwork and resized to 64 px high",
+      "size": [
+        156,
+        64
+      ],
+      "sha256": "a56c37b95f7c85018e34818f32547dd9ecaebe343a4acc0a54c5abd65464aaf9",
+      "ink": "colour",
+      "title": "Credit One Charleston Open"
+    },
+    "tennis_event_wta_doha": {
+      "source": "https://wtafiles.wtatennis.com/pdf/matchnotes/2026/21003_preview.pdf",
+      "page": "https://www.wtatennis.com/tournaments/1003/doha/2026",
+      "licence": "Official Qatar TotalEnergies Open 2026 event mark published by its organizer or the WTA, reproduced solely to identify that tournament; trademark/copyright retained by its owner, not an open-license claim.",
+      "source_sha256": "7c8856802012a7c6775d20f6091ee79aded25148cf4ea7a67746d130c90ed271",
+      "processing": "Extracted the tournament image at page 1 PDF xref 50; retained source colors; removed white outer ground only, preserving the boxed white lettering; cropped to visible artwork and resized to 64 px high",
+      "size": [
+        196,
+        64
+      ],
+      "sha256": "9f744591c660b731701bb3d35efdafb173f4065aa4c5e94b89d97290d965b6fa",
+      "ink": "boxed",
+      "title": "Qatar TotalEnergies Open 2026",
+      "edition_year": 2026
+    },
+    "tennis_event_wta_abu_dhabi": {
+      "source": "https://www.mubadalaabudhabiopen.com/_astro/mado-logo.CpNkRQgh.svg",
+      "page": "https://www.mubadalaabudhabiopen.com/",
+      "licence": "Official Mubadala Abu Dhabi Open event mark published by its organizer or the WTA, reproduced solely to identify that tournament; trademark/copyright retained by its owner, not an open-license claim.",
+      "source_sha256": "88414c19504017d61c4ae655e5402f29f9afc540eb00819f77661436e047c94f",
+      "processing": "Official site header SVG rendered by Chromium; kept the complete Mubadala Abu Dhabi Open shield in its original colours and dark ground; cropped off the separate presenting-partner column and divider; cropped to visible artwork and resized to 64 px high",
+      "size": [
+        65,
+        64
+      ],
+      "sha256": "10ddaac505b51dd97a4838afba96ed7fad8e985cb6bdfd60ebc4ac8bf0797878",
+      "ink": "boxed",
+      "title": "Mubadala Abu Dhabi Open"
+    },
+    "tennis_event_wta_linz": {
+      "source": "https://ladieslinz.at/wp-content/uploads/2023/12/Logo-UALL-2026-quer-wta500-w.png",
+      "page": "https://ladieslinz.at/",
+      "licence": "Official Upper Austria Ladies Linz event mark published by its organizer or the WTA, reproduced solely to identify that tournament; trademark/copyright retained by its owner, not an open-license claim.",
+      "source_sha256": "d5b57f5819f6ec8da30f3f9bd49a12550fa188b910bab2d6f73857707e66d586",
+      "processing": "Official white site-header event mark cropped to source rectangle (0, 0, 800, 303), excluding the separate WTA500 badge; complete Upper Austria Ladies Linz identity stored in one dark ink for day/night readability; cropped to visible artwork and resized to 64 px high",
+      "size": [
+        158,
+        64
+      ],
+      "sha256": "4f236ff6364d6ae5fef29d6e1955d2435071fe5be41693d1e50613658136b283",
+      "ink": "mono",
+      "title": "Upper Austria Ladies Linz"
+    },
+    "tennis_event_wta_stuttgart": {
+      "source": "https://photoresources.wtatennis.com/photo-resources/2026/04/16/853dd66d-3c70-40ab-9215-4a22158de24a/WTA-Tournament_Stuttgart-2017.png?width=1406",
+      "page": "https://www.wtatennis.com/tournaments/1051/stuttgart/2026/",
+      "licence": "The event organizer's official tournament logo (trademark), reproduced to identify the tournament; no open-content licence claimed.",
+      "source_sha256": "eaeb017facaf25d0c3e3e3e5466a83e1b48dcdecca47f84adc52dddb797042fb",
+      "processing": "Preserved the official rectangular black/white lockup and its background; scaled to 64 px tall.",
+      "size": [
+        225,
+        64
+      ],
+      "sha256": "6931525d2413afb5fa001386a8613d4e9bb0da93c8e5e8b822047f22fba0e6a5",
+      "ink": "boxed",
+      "crop": null
+    },
+    "tennis_event_wta_rouen": {
+      "source": "https://www.openrouen.fr/wp-content/uploads/2026/01/logo-open-cap-finance-wta-26-blanc-l.png",
+      "page": "https://www.openrouen.fr/",
+      "licence": "The event organizer's official tournament logo (trademark), reproduced to identify the tournament; no open-content licence claimed.",
+      "source_sha256": "6bef711053c2c9628457c6757d024951600b26afa89078438d1b2167202f52fc",
+      "processing": "Cropped the event identity to source rectangle (0, 0, 610, 159), excluding the separate WTA tier badge and separator. Cropped transparent margin; near-white neutral strokes made dark for daytime, native coloured strokes retained; scaled to 64 px tall. Cleared the source drop-shadow pixels outside the white event lettering.",
+      "size": [
+        302,
+        64
+      ],
+      "sha256": "9ff431df98d9bc4d30db332d2f4b90fd7f581d661bc7009af288e9f3baa5fc12",
+      "ink": "mono",
+      "crop": [
+        0,
+        0,
+        610,
+        159
+      ]
+    },
+    "tennis_event_wta_strasbourg": {
+      "source": "https://internationaux-strasbourg.fr/wp-content/uploads/2025/01/Logo-all-white-scaled.png",
+      "page": "https://internationaux-strasbourg.fr/",
+      "licence": "The event organizer's official tournament logo (trademark), reproduced to identify the tournament; no open-content licence claimed.",
+      "source_sha256": "1106d0a8bac9ffcc532ae9f97d9c4e3a31e1e431f38c9277e31bd09dbbcc8fb9",
+      "processing": "Cropped the event identity to source rectangle (0, 0, 1315, 793), excluding the separate WTA tier badge and separator. Cropped transparent margin; near-white neutral strokes made dark for daytime, native coloured strokes retained; scaled to 64 px tall.",
+      "size": [
+        183,
+        64
+      ],
+      "sha256": "2cc9b0d3bfb9eefe17b44cd20e3560918a9fa0931b4683baec71b3c6f3171cd6",
+      "ink": "mono",
+      "crop": [
+        0,
+        0,
+        1315,
+        793
+      ]
+    },
+    "tennis_event_wta_nottingham": {
+      "source": "https://www.lta.org.uk/siteassets/events/event-headers/lta_lexus_nottinghamopen_primary_rgb_neg-2.png",
+      "page": "https://www.lta.org.uk/fan-zone/international/lexus-nottingham-open/",
+      "licence": "The event organizer's official tournament logo (trademark), reproduced to identify the tournament; no open-content licence claimed.",
+      "source_sha256": "270c04ad8a85882ca2c59574df8d31368e294fccf68b171e9911f09706369482",
+      "processing": "Cropped transparent margin; near-white neutral strokes made dark for daytime, native coloured strokes retained; scaled to 64 px tall.",
+      "size": [
+        100,
+        64
+      ],
+      "sha256": "d8993cd2195b3827cf414fa2a38c19c7c7101da6323a4a38d5a5a74440c6de13",
+      "ink": "mono",
+      "crop": null
+    },
+    "tennis_event_wta_berlin": {
+      "source": "https://cdn.prod.website-files.com/67bc833a7d77f896da6f3df4/693adc19d9fb7701c38414d4_BER26_LOGO_Vanda_RGB-w3z.png",
+      "page": "https://www.berlintennisopen.com/en",
+      "licence": "The event organizer's official tournament logo (trademark), reproduced to identify the tournament; no open-content licence claimed.",
+      "source_sha256": "1bcc347657fc0f1f8e88e400d49ed27cd4cdbb83a61e41cf9734e6d09b2f67b2",
+      "processing": "Cropped transparent margin; near-white neutral strokes made dark for daytime, native coloured strokes retained; scaled to 64 px tall.",
+      "size": [
+        86,
+        64
+      ],
+      "sha256": "7f46a54e710ac1cd558b405315a1e1c39635d5c1c869314936e9fc9399a91a35",
+      "ink": "colour",
+      "crop": null
+    },
+    "tennis_event_wta_hamburg": {
+      "source": "https://wtafiles.wtatennis.com/pdf/matchnotes/2026/2042_Preview.pdf",
+      "page": "https://www.wtatennis.com/tournaments/2042/hamburg/2026",
+      "licence": "Official Hamburg WTA tournament trademark, published by the event or WTA and used solely to identify the event. No open licence is indicated; ownership and trademark rights remain with the respective owners.",
+      "source_sha256": "75877978ee75274b9b6509d2b68131bc77c434c44fda965e8b62728da17d91bc",
+      "embedded_image_sha256": "53d02e05226ee88357c44ea8bc38b6fa293062a3189e5d7f087728d79c0b3840",
+      "processing": "Original embedded image extracted from official WTA PDF page 1, image xref 1081; white ground (RGB channels all >235) cleared; transparent margins cropped; proportionally resized to 64 px high with Lanczos; published colours retained; no generated/redrawn lettering or shapes",
+      "size": [
+        146,
+        64
+      ],
+      "sha256": "cdb31308d7142db79d424d19b010e7c344bc1a85e049e8716ee963756bd88be6",
+      "ink": "colour",
+      "alpha_ink_bbox": [
+        0,
+        0,
+        146,
+        64
+      ],
+      "header_fit_size": [
+        46,
+        20
+      ],
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/logos/tennis_event_wta_hamburg.png",
+      "visible_year": null
+    },
+    "tennis_event_wta_toronto": {
+      "source": "https://assets.nationalbankopen.com/production/Logos/NBO-Light.png",
+      "page": "https://nationalbankopen.com/",
+      "licence": "Official Toronto WTA tournament trademark, published by the event or WTA and used solely to identify the event. No open licence is indicated; ownership and trademark rights remain with the respective owners.",
+      "source_sha256": "32aad0626fee6640330519a1345c22ef6e63c18b2558967f58a1859e329d3e6f",
+      "embedded_image_sha256": "32aad0626fee6640330519a1345c22ef6e63c18b2558967f58a1859e329d3e6f",
+      "processing": "Original image from the official event website; white ground (RGB channels all >235) cleared; transparent margins cropped; proportionally resized to 64 px high with Lanczos; published colours retained; no generated/redrawn lettering or shapes",
+      "size": [
+        155,
+        64
+      ],
+      "sha256": "e9a92dad5fb336bb7f4fda21a35cb1231f5715aa3a46e559d9c11b774cab4d6c",
+      "ink": "colour",
+      "alpha_ink_bbox": [
+        0,
+        0,
+        155,
+        64
+      ],
+      "header_fit_size": [
+        48,
+        20
+      ],
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/logos/tennis_event_wta_toronto.png",
+      "visible_year": null
+    },
+    "tennis_event_wta_monterrey": {
+      "source": "https://wtafiles.wtatennis.com/pdf/matchnotes/2026/1039_Preview.pdf",
+      "page": "https://www.wtatennis.com/tournaments/1039/monterrey/2026",
+      "licence": "Official Monterrey WTA tournament trademark, published by the event or WTA and used solely to identify the event. No open licence is indicated; ownership and trademark rights remain with the respective owners.",
+      "source_sha256": "b0d0a11ffe89a5a90461f7bd0cb53760afab2e39b7d8fb4d049cebab9b3bdfda",
+      "embedded_image_sha256": "abc6f8d4989f3bb06773f3fade6bc0a6ee0de04560355fb154b6e4b3c55ff519",
+      "processing": "Original embedded image extracted from official WTA PDF page 1, image xref 53; white ground (RGB channels all >235) cleared; transparent margins cropped; proportionally resized to 64 px high with Lanczos; published colours retained; no generated/redrawn lettering or shapes",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "9e7b6a58b5e19da1b893ae028999f96e2eb0e85e60ad5a064812472ad85b021e",
+      "ink": "colour",
+      "alpha_ink_bbox": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "header_fit_size": [
+        20,
+        20
+      ],
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/logos/tennis_event_wta_monterrey.png",
+      "visible_year": null
+    },
+    "tennis_event_wta_guadalajara": {
+      "source": "https://wtafiles.wtatennis.com/pdf/matchnotes/2026/2075_Preview.pdf",
+      "page": "https://www.wtatennis.com/tournaments/2075/guadalajara/2026",
+      "licence": "Official Guadalajara WTA tournament trademark, published by the event or WTA and used solely to identify the event. No open licence is indicated; ownership and trademark rights remain with the respective owners.",
+      "source_sha256": "52707b0863f5cc8cd6d901b92bd74b04cfd15b7cc42e414b6b61ad0af4c16b39",
+      "embedded_image_sha256": "c8271f139844491c90d19d22017379ff8ae0e11289a3bdd88dc3d2bd771f964c",
+      "processing": "Original embedded image extracted from official WTA PDF page 1, image xref 53; white ground (RGB channels all >235) cleared; transparent margins cropped; proportionally resized to 64 px high with Lanczos; published colours retained; no generated/redrawn lettering or shapes",
+      "size": [
+        86,
+        64
+      ],
+      "sha256": "2095161de67f49b062a988f3df8260fc19c280763f1d08b457b3dc6445971b24",
+      "ink": "colour",
+      "alpha_ink_bbox": [
+        0,
+        0,
+        86,
+        64
+      ],
+      "header_fit_size": [
+        27,
+        20
+      ],
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/logos/tennis_event_wta_guadalajara.png",
+      "visible_year": null
+    },
+    "tennis_event_wta_seoul": {
+      "source": "https://wtafiles.wtatennis.com/pdf/matchnotes/2026/1024_Preview.pdf",
+      "page": "https://www.wtatennis.com/tournaments/1024/seoul/2026",
+      "licence": "Official Seoul WTA tournament trademark, published by the event or WTA and used solely to identify the event. No open licence is indicated; ownership and trademark rights remain with the respective owners.",
+      "source_sha256": "11cae20ed6e36add2640bc67b5ff55466962b1ae9e0e498d1e62b61a117a7c5d",
+      "embedded_image_sha256": "12d07bb596ff38b6661da0ff14187aba8ad83a468a30d8bbca8090870c91d0e5",
+      "processing": "Original embedded image extracted from official WTA PDF page 1, image xref 1216; white ground (RGB channels all >235) cleared; transparent margins cropped; proportionally resized to 64 px high with Lanczos; published colours retained; no generated/redrawn lettering or shapes",
+      "size": [
+        204,
+        64
+      ],
+      "sha256": "1dcc09f8c2412cf9b82bc73d7a994c3d1e209ecdb10d540e098f26a54561cb80",
+      "ink": "colour",
+      "alpha_ink_bbox": [
+        0,
+        0,
+        204,
+        64
+      ],
+      "header_fit_size": [
+        64,
+        20
+      ],
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/logos/tennis_event_wta_seoul.png",
+      "visible_year": null
+    },
+    "tennis_event_wta_wuhan": {
+      "source": "https://wtafiles.wtatennis.com/pdf/matchnotes/2026/1075_preview.pdf",
+      "page": "https://www.wtatennis.com/tournaments/1075/wuhan/2026",
+      "licence": "Official Wuhan WTA tournament trademark, published by the event or WTA and used solely to identify the event. No open licence is indicated; ownership and trademark rights remain with the respective owners.",
+      "source_sha256": "bd0db0c91384a8f018eb7d2d8b427d8ab6702047bee87e94a045abd7af16cbd9",
+      "embedded_image_sha256": "c60925b93f412130befadbe0d2454e342f2552ca2cde25d06c38fb6e3b1df027",
+      "processing": "Original embedded image extracted from official WTA PDF page 1, image xref 21; event component cropped to source pixel box [526, 20, 670, 176]; white ground (RGB channels all >235) cleared; transparent margins cropped; proportionally resized to 64 px high with Lanczos; published colours retained; no generated/redrawn lettering or shapes",
+      "size": [
+        55,
+        64
+      ],
+      "sha256": "7ea0a21f478d60f0f7b97ce7f4c564ef3b209ba80e4adedd99a6131c183673b6",
+      "ink": "colour",
+      "alpha_ink_bbox": [
+        0,
+        0,
+        55,
+        64
+      ],
+      "header_fit_size": [
+        17,
+        20
+      ],
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/logos/tennis_event_wta_wuhan.png",
+      "visible_year": null
+    },
+    "tennis_event_wta_osaka": {
+      "source": "https://wtafiles.wtatennis.com/pdf/matchnotes/2026/405_Preview.pdf",
+      "page": "https://www.wtatennis.com/tournaments/405/osaka/2026",
+      "licence": "Official Osaka WTA tournament trademark, published by the event or WTA and used solely to identify the event. No open licence is indicated; ownership and trademark rights remain with the respective owners.",
+      "source_sha256": "8d97f7368cfbbdb279565cef766875ebe4f3bed0158bdd47c7601585be7021b0",
+      "embedded_image_sha256": "ccc6e42b15ee92df8d2c500c35f00e856f72f9d8ba6864b8d9ba60e7b06b0dd1",
+      "processing": "Original embedded image extracted from official WTA PDF page 1, image xref 53; white ground (RGB channels all >235) cleared; transparent margins cropped; proportionally resized to 64 px high with Lanczos; published colours retained; no generated/redrawn lettering or shapes",
+      "size": [
+        206,
+        64
+      ],
+      "sha256": "ad543b34116bd96521f2bfba3a8eb918e2ac2e6550907435d0b597a5edb92702",
+      "ink": "colour",
+      "alpha_ink_bbox": [
+        0,
+        0,
+        206,
+        64
+      ],
+      "header_fit_size": [
+        64,
+        20
+      ],
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/logos/tennis_event_wta_osaka.png",
+      "visible_year": null
+    },
+    "tennis_event_wta_tokyo": {
+      "source": "https://www.toray-ppo.com/assets/images/common/logo-image.jpg",
+      "page": "https://www.toray-ppo.com/",
+      "licence": "Official Tokyo WTA tournament trademark, published by the event or WTA and used solely to identify the event. No open licence is indicated; ownership and trademark rights remain with the respective owners.",
+      "source_sha256": "e2cde45623b79a507ec5f174cf5923f8e10e52eb5f703ff6bfbf1c24e7ea1b4f",
+      "embedded_image_sha256": "e2cde45623b79a507ec5f174cf5923f8e10e52eb5f703ff6bfbf1c24e7ea1b4f",
+      "processing": "Original image from the official event website; white ground (RGB channels all >235) cleared; transparent margins cropped; proportionally resized to 64 px high with Lanczos; published colours retained; no generated/redrawn lettering or shapes",
+      "size": [
+        382,
+        64
+      ],
+      "sha256": "f94ed8b6403f2c2c9ecca3935ff981c5e4cc0e2fc9596a54ccc5e8bff4a3350b",
+      "ink": "colour",
+      "alpha_ink_bbox": [
+        0,
+        0,
+        382,
+        64
+      ],
+      "header_fit_size": [
+        66,
+        11
+      ],
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/logos/tennis_event_wta_tokyo.png",
+      "visible_year": null
+    },
+    "tennis_event_wta_chennai": {
+      "source": "https://wtafiles.wtatennis.com/pdf/matchnotes/2026/1148_Preview.pdf",
+      "page": "https://www.wtatennis.com/tournaments/1148/chennai/2026",
+      "licence": "Official Chennai WTA tournament trademark, published by the event or WTA and used solely to identify the event. No open licence is indicated; ownership and trademark rights remain with the respective owners.",
+      "source_sha256": "859c0e5751b7d7122cec5076308465df2052b91bb48c3ed4e88a1988a6828d09",
+      "embedded_image_sha256": "1b0274f604da7e0702e413dabb0acae11d23c849b9b193be8527bc47b2ad39a6",
+      "processing": "Original embedded image extracted from official WTA PDF page 1, image xref 53; white ground (RGB channels all >235) cleared; transparent margins cropped; proportionally resized to 64 px high with Lanczos; published colours retained; no generated/redrawn lettering or shapes",
+      "size": [
+        103,
+        64
+      ],
+      "sha256": "70ff89dfa1024a8a70fcce30402a3cc0cb663c6ed8925de36cfdb63660de2da5",
+      "ink": "colour",
+      "alpha_ink_bbox": [
+        0,
+        0,
+        103,
+        64
+      ],
+      "header_fit_size": [
+        32,
+        20
+      ],
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/logos/tennis_event_wta_chennai.png",
+      "visible_year": null
+    },
+    "tennis_place_domain_tennis_centre": {
+      "source": "https://domaintennis.com.au/images/domain-tennis-logo.png",
+      "page": "https://domaintennis.com.au/",
+      "licence": "Official venue or named club/venue-complex trademark published by the venue or its owner; no open licence is indicated. Used solely to identify the venue; rights remain with the respective owners.",
+      "source_sha256": "f2c54ab6c1b4ff1e5bc7a1cf6be9ce9db7cb81fb7b7a5879886d9d64e974041e",
+      "processing": "white lettering normalized to dark (26,26,26), retaining alpha and coloured symbol; transparent margins cropped; proportionally scaled to 64 px high with Lanczos; no generated or redrawn symbols/lettering",
+      "size": [
+        154,
+        64
+      ],
+      "sha256": "37a3fceb06da492537a5274c989d72d81e1d8e71b526c003565840bd9a0f0b2a",
+      "ink": "colour",
+      "venue_names": [
+        "Domain Tennis Centre"
+      ],
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/logos/tennis_place_domain_tennis_centre.png",
+      "alpha_ink_bbox": [
+        0,
+        0,
+        154,
+        64
+      ],
+      "header_fit_size": [
+        48,
+        20
+      ],
+      "identity_note": "Official Domain Tennis header mark. White lettering is normalized dark for the pale display ground."
+    },
+    "tennis_place_zayed_sports_city": {
+      "source": "https://www.zsc.ae/documents/3395079/8627912/Logo.png/f534f9c8-02b8-973c-d431-2f522accf5f0?version=1.0&t=1760353307000",
+      "page": "https://www.zsc.ae/en/",
+      "licence": "Official venue or named club/venue-complex trademark published by the venue or its owner; no open licence is indicated. Used solely to identify the venue; rights remain with the respective owners.",
+      "source_sha256": "44b3cb7f43a0bf5d211b70327e9b7e745b9c5ad128f35bd9d7f9354c839e15d1",
+      "processing": "transparent margins cropped; proportionally scaled to 64 px high with Lanczos; no generated or redrawn symbols/lettering",
+      "size": [
+        152,
+        64
+      ],
+      "sha256": "00c0927432d2fe8e8be670244e62177601451d2344911edbceeafd41f895b2da",
+      "ink": "colour",
+      "venue_names": [
+        "Zayed Sports City"
+      ],
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/logos/tennis_place_zayed_sports_city.png",
+      "alpha_ink_bbox": [
+        0,
+        0,
+        152,
+        64
+      ],
+      "header_fit_size": [
+        47,
+        20
+      ],
+      "identity_note": "Venue complex mark labelled ZAYED SPORTS CITY, not the separate OVG/Haraka operator mark."
+    },
+    "tennis_place_credit_one_stadium": {
+      "source": "https://creditonestadium.com/wp-content/themes/credit-one-stadium/assets/img/logo.png",
+      "page": "https://creditonestadium.com/",
+      "licence": "Official venue or named club/venue-complex trademark published by the venue or its owner; no open licence is indicated. Used solely to identify the venue; rights remain with the respective owners.",
+      "source_sha256": "ec13cfbcea297f40990f9e66b8906bb790d4187139fb7b8034f2131752303cd9",
+      "processing": "transparent margins cropped; proportionally scaled to 64 px high with Lanczos; no generated or redrawn symbols/lettering",
+      "size": [
+        165,
+        64
+      ],
+      "sha256": "d5801a75afd335f01a5064c992f35a7e742efee76354a4bf8be34fbb02ee3520",
+      "ink": "colour",
+      "venue_names": [
+        "Credit One Stadium"
+      ],
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/logos/tennis_place_credit_one_stadium.png",
+      "alpha_ink_bbox": [
+        0,
+        0,
+        165,
+        64
+      ],
+      "header_fit_size": [
+        52,
+        20
+      ],
+      "identity_note": "Complete Credit One STADIUM venue lockup; not Credit One Bank alone or the Charleston Open event mark."
+    },
+    "tennis_place_design_center_linz": {
+      "source": "https://a.storyblok.com/f/203556/405x159/45acb45f4f/dc-logo-transparenter-hintergrund-300-dpi-2.png",
+      "page": "https://www.design-center.at/en",
+      "licence": "Official venue or named club/venue-complex trademark published by the venue or its owner; no open licence is indicated. Used solely to identify the venue; rights remain with the respective owners.",
+      "source_sha256": "8a45a54be03dafe85e4c79bfe5b3239ea2cba095b858c4c52cdc6b59d211299c",
+      "processing": "white print ground cleared (all RGB >235); transparent margins cropped; proportionally scaled to 64 px high with Lanczos; no generated or redrawn symbols/lettering",
+      "size": [
+        163,
+        64
+      ],
+      "sha256": "d0a37d533e3bfc8fd6dd0083cf1fe8950596b5804b45708aef4b45a36113976e",
+      "ink": "colour",
+      "venue_names": [
+        "Design Center Linz"
+      ],
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/logos/tennis_place_design_center_linz.png",
+      "alpha_ink_bbox": [
+        0,
+        0,
+        163,
+        64
+      ],
+      "header_fit_size": [
+        51,
+        20
+      ],
+      "identity_note": "Compact official venue lockup published in the venue homepage, preferable to its long header variant at small size."
+    },
+    "tennis_place_porsche_arena": {
+      "source": "https://www.hallenduo.de/typo3conf/ext/hallenduo/Resources/Public/Images/sprites/common/logo-porsche-arena.png",
+      "page": "https://www.hallenduo.de/de/home",
+      "licence": "Official venue or named club/venue-complex trademark published by the venue or its owner; no open licence is indicated. Used solely to identify the venue; rights remain with the respective owners.",
+      "source_sha256": "a804d2fd6459b5c9381a0217250ac1f16c08b947711923ec49daae5447918110",
+      "processing": "transparent margins cropped; proportionally scaled to 64 px high with Lanczos; no generated or redrawn symbols/lettering",
+      "size": [
+        322,
+        64
+      ],
+      "sha256": "ddd5bc6ef91215c151ac1089411cb3a4de835230db69f775ffa12f66c95af9eb",
+      "ink": "colour",
+      "venue_names": [
+        "Porsche Arena"
+      ],
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/logos/tennis_place_porsche_arena.png",
+      "alpha_ink_bbox": [
+        0,
+        0,
+        322,
+        64
+      ],
+      "header_fit_size": [
+        72,
+        14
+      ],
+      "identity_note": "Official PORSCHE Arena venue lockup, separately labelled from Hanns-Martin-Schleyer-Halle on the same official hall site."
+    },
+    "tennis_place_kindarena": {
+      "source": "https://www.kindarena.fr/sites/hubber_site_kindarena8/files/kindarena250.jpeg",
+      "page": "https://www.kindarena.fr/fr",
+      "licence": "Official venue or named club/venue-complex trademark published by the venue or its owner; no open licence is indicated. Used solely to identify the venue; rights remain with the respective owners.",
+      "source_sha256": "3920130ad04d25df36abe7dddb2f8cdb35da292fe1ffa02532657ed3c7e6a17f",
+      "processing": "white print ground cleared (all RGB >235); transparent margins cropped; proportionally scaled to 64 px high with Lanczos; no generated or redrawn symbols/lettering",
+      "size": [
+        263,
+        64
+      ],
+      "sha256": "0845e73b39f2f731513594ba155e8eca938422bc35b8be4ec66a4594046088f4",
+      "ink": "colour",
+      "venue_names": [
+        "Kindarena"
+      ],
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/logos/tennis_place_kindarena.png",
+      "alpha_ink_bbox": [
+        0,
+        0,
+        263,
+        64
+      ],
+      "header_fit_size": [
+        72,
+        18
+      ],
+      "identity_note": "Official Kindarena header mark, including the venue-specific orange K and Métropole Rouen Normandie subline."
+    },
+    "tennis_place_tennis_club_strasbourg": {
+      "source": "https://static.wixstatic.com/media/490d24_5570c95863c241ed9c4c9331141e4e7f~mv2.png",
+      "page": "https://www.tcstrasbourg.fr/",
+      "licence": "Official venue or named club/venue-complex trademark published by the venue or its owner; no open licence is indicated. Used solely to identify the venue; rights remain with the respective owners.",
+      "source_sha256": "99f62f6411a981575385e097f865297e5d56e2a1c831377a1a15a2bd92bfc950",
+      "processing": "transparent margins cropped; proportionally scaled to 64 px high with Lanczos; no generated or redrawn symbols/lettering",
+      "size": [
+        91,
+        64
+      ],
+      "sha256": "1cb6702f598a066d2b099b2214c29258162dc60693b547165d1ac0c1f03b890f",
+      "ink": "colour",
+      "venue_names": [
+        "Tennis Club de Strasbourg",
+        "Tennis Club Strasbourg"
+      ],
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/logos/tennis_place_tennis_club_strasbourg.png",
+      "alpha_ink_bbox": [
+        0,
+        0,
+        91,
+        64
+      ],
+      "header_fit_size": [
+        28,
+        20
+      ],
+      "identity_note": "TCS club mark from the club homepage; rejected separate Internationaux de Strasbourg tournament and restaurant marks."
+    },
+    "tennis_place_nottingham_tennis_centre": {
+      "source": "https://www.nottinghamtenniscentre.co.uk/wp-content/themes/framework/assets/img/new-logo.png",
+      "page": "https://www.nottinghamtenniscentre.co.uk/",
+      "licence": "Official venue or named club/venue-complex trademark published by the venue or its owner; no open licence is indicated. Used solely to identify the venue; rights remain with the respective owners.",
+      "source_sha256": "4c8a0af56aa32106420ab487940b4ecfd85c2aa3f5c3a8c856f0a5095fbe4c56",
+      "processing": "transparent margins cropped; proportionally scaled to 64 px high with Lanczos; no generated or redrawn symbols/lettering",
+      "size": [
+        98,
+        64
+      ],
+      "sha256": "7a8bb6d1acd76b23163ccfd1c1ff63e94e6fc391be7fc4ed9ce859d8a5dcf58f",
+      "ink": "mono",
+      "venue_names": [
+        "Nottingham Tennis Centre",
+        "Lexus Nottingham Tennis Centre"
+      ],
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/logos/tennis_place_nottingham_tennis_centre.png",
+      "alpha_ink_bbox": [
+        0,
+        0,
+        98,
+        64
+      ],
+      "header_fit_size": [
+        31,
+        20
+      ],
+      "identity_note": "Complete current Lexus NOTTINGHAM TENNIS CENTRE venue mark; not the separate tournament or Lexus-only logo."
+    },
+    "tennis_place_lttc_rot_weiss_berlin": {
+      "source": "https://www.rot-weiss-berlin.de/images/rw-logo/RW-Logo_mit_Claim_-_roter_Titel.png",
+      "page": "https://www.rot-weiss-berlin.de/",
+      "licence": "Official venue or named club/venue-complex trademark published by the venue or its owner; no open licence is indicated. Used solely to identify the venue; rights remain with the respective owners.",
+      "source_sha256": "4ecb0552a035f0a7bb7eca7f1c664c7c056a337f9730fe1d443bb49914b96e4b",
+      "processing": "transparent margins cropped; proportionally scaled to 64 px high with Lanczos; no generated or redrawn symbols/lettering",
+      "size": [
+        292,
+        64
+      ],
+      "sha256": "0491be1eaa5b336c8428180fc094535fe028f901a214bd68749773e3bdad6624",
+      "ink": "colour",
+      "venue_names": [
+        "LTTC Rot-Weiß Berlin",
+        "LTTC Rot-Weiss Berlin"
+      ],
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/logos/tennis_place_lttc_rot_weiss_berlin.png",
+      "alpha_ink_bbox": [
+        0,
+        0,
+        292,
+        64
+      ],
+      "header_fit_size": [
+        72,
+        16
+      ],
+      "identity_note": "Official LTTC Rot-Weiss club lockup and crest. The printed 1897 is the club founding year, not a tournament edition."
+    },
+    "tennis_place_sobeys_stadium": {
+      "source": "https://www.tenniscanadabrand.ca/files/OFFICIAL_NBO_Brandguidelines_EN.pdf",
+      "page": "https://www.tenniscanada.com/about-tennis-canada/sobeys-stadium",
+      "licence": "Official venue or named club/venue-complex trademark published by the venue or its owner; no open licence is indicated. Used solely to identify the venue; rights remain with the respective owners.",
+      "source_sha256": "c82216c6eb8b524a1539f044ff6bbd49da38a0e4e60499e319c3e084e3fd733f",
+      "processing": "official PDF page 24 vector logo rendered at 4x from rectangle [895,305,1035,372]; white print ground cleared (all RGB >235); transparent margins cropped; proportionally scaled to 64 px high with Lanczos; no generated or redrawn symbols/lettering",
+      "size": [
+        146,
+        64
+      ],
+      "sha256": "90b486246396df370b9a10488cbc2fbf3845449cadb63516da2b1f1b6d432b45",
+      "ink": "mono",
+      "venue_names": [
+        "Sobeys Stadium"
+      ],
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/logos/tennis_place_sobeys_stadium.png",
+      "alpha_ink_bbox": [
+        0,
+        0,
+        146,
+        64
+      ],
+      "header_fit_size": [
+        46,
+        20
+      ],
+      "identity_note": "Official venue-specific Sobeys STADIUM mark; rendered from Tennis Canada NBO brand guidelines page 24, original PDF rectangle [895,305,1035,372]. Toronto only, selected by resolved venue."
+    },
+    "tennis_place_iga_stadium": {
+      "source": "https://assets.tenniscanada.com/production/PDFs/ENG-_-Changements-sur-le-site-Stade-IGA-2.pdf",
+      "page": "https://www.tenniscanada.com/about-tennis-canada/iga-stadium-montreal",
+      "licence": "Official venue or named club/venue-complex trademark published by the venue or its owner; no open licence is indicated. Used solely to identify the venue; rights remain with the respective owners.",
+      "source_sha256": "95195da9505bc66bcd0ab239ae2982a001b2bb94b666e2faf1723af4cbdc2ea7",
+      "processing": "official PDF page 1 embedded image xref 22 extracted; white print ground cleared (all RGB >235); transparent margins cropped; proportionally scaled to 64 px high with Lanczos; no generated or redrawn symbols/lettering",
+      "size": [
+        163,
+        64
+      ],
+      "sha256": "8b39aed6765092b81d8c7b538d74056715ca5ba18e74daa29ce7c51edaa8818f",
+      "ink": "colour",
+      "venue_names": [
+        "IGA Stadium",
+        "Stade IGA"
+      ],
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/logos/tennis_place_iga_stadium.png",
+      "alpha_ink_bbox": [
+        0,
+        0,
+        163,
+        64
+      ],
+      "header_fit_size": [
+        51,
+        20
+      ],
+      "identity_note": "Official venue-specific STADE IGA mark. Extracted unchanged from Tennis Canada facility notice PDF page 1, image xref 22. Montreal only, selected by resolved venue."
+    },
+    "tennis_place_club_sonoma": {
+      "source": "https://clubsonoma.mx/",
+      "page": "https://clubsonoma.mx/",
+      "licence": "Official venue or named club/venue-complex trademark published by the venue or its owner; no open licence is indicated. Used solely to identify the venue; rights remain with the respective owners.",
+      "source_sha256": "a76a0d310ccd46fa7ee66de4fef760d1b9feac95b0509b2078945524303e8c0b",
+      "processing": "official header inline SVG extracted with original XML and paths; currentColor rendered as black; no geometry changed; transparent margins cropped; proportionally scaled to 64 px high with Lanczos; no generated or redrawn symbols/lettering",
+      "size": [
+        275,
+        64
+      ],
+      "sha256": "253573979b14e3ccfad7ffdeaa6f1d9498729a4d0978ba02326c8c52c6bb037f",
+      "ink": "mono",
+      "venue_names": [
+        "Club Sonoma"
+      ],
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/logos/tennis_place_club_sonoma.png",
+      "alpha_ink_bbox": [
+        0,
+        0,
+        275,
+        64
+      ],
+      "header_fit_size": [
+        72,
+        17
+      ],
+      "identity_note": "Official Sonoma Club & Residences complex mark from its inline header SVG. Official homepage identifies the tennis stadium and Abierto GNP within this same named complex; not a separate stadium-only logo or property developer mark.",
+      "extracted_svg_sha256": "5860581b6cc250a32d2a4dffb218b61e760169046cb8690ac57965e2af55a0fd"
+    },
+    "tennis_place_seoul_olympic_park": {
+      "source": "https://www.ksponco.or.kr/olympicpark/img/common/logo.svg",
+      "page": "https://www.ksponco.or.kr/olympicpark/menu.es?mid=a30101000000",
+      "licence": "Official venue or named club/venue-complex trademark published by the venue or its owner; no open licence is indicated. Used solely to identify the venue; rights remain with the respective owners.",
+      "source_sha256": "783a42d2dadf5a07f3326b0fe96538bdeae2148ed9914f5c7460a0ddadab3e95",
+      "processing": "official SVG rendered using Chromium then lower dark-letter sprite cropped at pixel rectangle [0,268,1824,536]; transparent margins cropped; proportionally scaled to 64 px high with Lanczos; no generated or redrawn symbols/lettering",
+      "size": [
+        150,
+        64
+      ],
+      "sha256": "7e15b292436735f46db6095f26d78c23027409704da33da7c2c39762c3c92b28",
+      "ink": "colour",
+      "venue_names": [
+        "Seoul Olympic Park"
+      ],
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/logos/tennis_place_seoul_olympic_park.png",
+      "alpha_ink_bbox": [
+        0,
+        0,
+        150,
+        64
+      ],
+      "header_fit_size": [
+        47,
+        20
+      ],
+      "identity_note": "Official Olympic Park complex mark; select only the park venue name, not any unrelated Olympic venue. The supplied SVG is a light/dark sprite: use its lower dark-letter variant. SEOUL 1988 is the historic Games identity, not a current-year tournament qualifier."
+    },
+    "tennis_place_optics_valley_tennis_center": {
+      "source": "https://wsdi.com.cn/upload/default/20221230/3cdbd6516e5cf87b2c00e3f16fba8bae.pdf",
+      "page": "https://wsdi.com.cn/",
+      "licence": "Official venue or named club/venue-complex trademark published by the venue or its owner; no open licence is indicated. Used solely to identify the venue; rights remain with the respective owners.",
+      "source_sha256": "7b85feff98e4982f34eec7067f7f829c82c690f0ddf04310717562ec20c7f2db",
+      "processing": "official PDF page 1 vector logo rendered at 4x from rectangle [335,255,505,340]; white print ground cleared (all RGB >235); transparent margins cropped; proportionally scaled to 64 px high with Lanczos; no generated or redrawn symbols/lettering",
+      "size": [
+        131,
+        64
+      ],
+      "sha256": "dce0455a7e8dbec4a80353e4466158d8a04662a27b0eebbacc673625228fdc7b",
+      "ink": "colour",
+      "venue_names": [
+        "Optics Valley Tennis Center",
+        "Optics Valley International Tennis Center"
+      ],
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/logos/tennis_place_optics_valley_tennis_center.png",
+      "alpha_ink_bbox": [
+        0,
+        0,
+        131,
+        64
+      ],
+      "header_fit_size": [
+        41,
+        20
+      ],
+      "identity_note": "Independent 光谷国际网球中心 / OPTICS VALLEY INTERNATIONAL TENNIS CENTER mark from venue investment brochure p1, PDF rectangle [335,255,505,340]. The owner website separately lists this venue brand and Wuhan Open; not the Wuhan Open event logo."
     }
   }
 }

@@ -6,8 +6,10 @@ logos.source.json): the ATP Tour's tournament logos from each event's overview p
 The ATP serves most of its logos white for dark heroes; those are stored in one dark ink, so the day
 page prints them and night_inked lightens them by night. A logo printed on its own dark box keeps its
 colours both ways ("boxed"). WTA events that share their brand with the ATP event (Indian Wells,
-Miami, Madrid, Rome, Cincinnati, Beijing ...) carry the same mark; the WTA publishes no logo of its
-own events, so the rest keep the WTA's tier tag. The venue names the hall or club where it is well
+Miami, Madrid, Rome, Cincinnati, Beijing ...) carry the same mark. Independent WTA event marks
+come from their organizers' official sites or official WTA tournament documents. An event without
+a verified bundled mark keeps the WTA's tier tag; this does not imply that no official mark exists.
+The venue names the hall or club where it is well
 known; without one the card names the city ESPN gives.
 
 Rows are matched in order on the lower-cased tournament name and ESPN's place line, only for the
@@ -73,7 +75,7 @@ EVENTS = (
     ("estoril", ATP, r"estoril", "Clube de Ténis do Estoril", "mono"),
     ("washington", BOTH, r"washington|dc open", "Rock Creek Park", "colour"),
     ("los_cabos", ATP, r"los cabos|mifel", "Cabo Sports Complex", "mono"),
-    ("montreal", ATP, r"montr[eé]al|banque nationale", "IGA Stadium", "mono"),
+    ("montreal", ATP, r"montr[eé]al|toronto|banque nationale|national bank", "", "mono"),
     ("cincinnati", BOTH, r"cincinnati", "Lindner Family Tennis Center", "mono"),
     ("winston_salem", ATP, r"winston", "Wake Forest Tennis Complex", "mono"),
     ("chengdu", ATP, r"chengdu", "Sichuan Tennis Center", "mono"),
@@ -88,40 +90,99 @@ EVENTS = (
     ("basel", ATP, r"basel|swiss indoors", "St. Jakobshalle", "mono"),
     ("paris", ATP, r"paris masters|rolex paris", "", "mono"),
     ("stockholm", ATP, r"stockholm", "Kungliga tennishallen", "mono"),
-    # WTA events with a brand of their own: the venue only, the WTA's tier tag stays.
-    ("wta_hobart", WTA, r"hobart", "Domain Tennis Centre", None),
-    ("wta_abu_dhabi", WTA, r"abu dhabi", "Zayed Sports City", None),
-    ("wta_doha", WTA, r"doha|qatar", "Khalifa Tennis Complex", None),
-    ("wta_charleston", WTA, r"charleston", "Credit One Stadium", None),
-    ("wta_linz", WTA, r"\blinz\b", "Design Center Linz", None),
-    ("wta_stuttgart", WTA, r"stuttgart|porsche", "Porsche Arena", None),
-    ("wta_rouen", WTA, r"rouen", "Kindarena", None),
-    ("wta_strasbourg", WTA, r"strasbourg", "Tennis Club de Strasbourg", None),
-    ("wta_nottingham", WTA, r"nottingham", "Nottingham Tennis Centre", None),
-    ("wta_berlin", WTA, r"berlin", "LTTC Rot-Weiß Berlin", None),
-    ("wta_hamburg", WTA, r"hamburg", "Am Rothenbaum", None),
-    ("wta_toronto", WTA, r"toronto|national bank", "Sobeys Stadium", None),
-    ("wta_monterrey", WTA, r"monterrey|abierto gnp", "Club Sonoma", None),
-    ("wta_guadalajara", WTA, r"guadalajara", "Panamerican Tennis Center", None),
-    ("wta_seoul", WTA, r"seoul|korea open", "Seoul Olympic Park", None),
-    ("wta_wuhan", WTA, r"wuhan", "Optics Valley Tennis Center", None),
-    ("wta_osaka", WTA, r"osaka|japan open", "Utsubo Tennis Center", None),
-    ("wta_tokyo", WTA, r"tokyo|pan pacific", "Ariake Coliseum", None),
-    ("wta_hong_kong", WTA, r"hong kong", "Victoria Park", None),
-    ("wta_chennai", WTA, r"chennai", "SDAT Tennis Stadium", None),
+    # WTA events with a brand of their own; never borrow a same-city ATP sponsor's mark.
+    ("wta_hobart", WTA, r"hobart", "Domain Tennis Centre", "mono"),
+    ("wta_abu_dhabi", WTA, r"abu dhabi", "Zayed Sports City", "boxed"),
+    ("wta_doha", WTA, r"doha|qatar", "Khalifa Tennis Complex", "boxed"),
+    ("wta_charleston", WTA, r"charleston", "Credit One Stadium", "colour"),
+    ("wta_linz", WTA, r"\blinz\b", "Design Center Linz", "mono"),
+    ("wta_stuttgart", WTA, r"stuttgart|porsche", "Porsche Arena", "boxed"),
+    ("wta_rouen", WTA, r"rouen", "Kindarena", "mono"),
+    ("wta_strasbourg", WTA, r"strasbourg", "Tennis Club de Strasbourg", "mono"),
+    ("wta_nottingham", WTA, r"nottingham", "Nottingham Tennis Centre", "mono"),
+    ("wta_berlin", WTA, r"berlin", "LTTC Rot-Weiß Berlin", "colour"),
+    ("wta_hamburg", WTA, r"hamburg", "Am Rothenbaum", "colour"),
+    ("wta_toronto", WTA, r"toronto|montr[eé]al|national bank|banque nationale", "", "colour"),
+    ("wta_monterrey", WTA, r"monterrey|abierto gnp", "Club Sonoma", "colour"),
+    ("wta_guadalajara", WTA, r"guadalajara", "Panamerican Tennis Center", "colour"),
+    ("wta_seoul", WTA, r"seoul|korea open", "Seoul Olympic Park", "colour"),
+    ("wta_wuhan", WTA, r"wuhan", "Optics Valley Tennis Center", "colour"),
+    ("wta_osaka", WTA, r"osaka|japan open", "Utsubo Tennis Center", "colour"),
+    ("wta_tokyo", WTA, r"tokyo|pan pacific", "Ariake Coliseum", "colour"),
+    ("wta_hong_kong", WTA, r"hong kong", "Victoria Park", "mono"),
+    ("wta_chennai", WTA, r"chennai", "SDAT Tennis Stadium", "colour"),
 )
 _COMPILED = tuple((key, tours, re.compile(pattern), venue, mark) for key, tours, pattern, venue, mark in EVENTS)
+# The source artwork explicitly prints this edition. Unknown or later editions use the tier tag.
+MARK_YEARS = {"wta_doha": 2026}
+
+
+def _edition_year(tournament):
+    start = re.match(r"^(\d{4})-\d{2}-\d{2}", str(tournament.get("start") or ""))
+    if start:
+        return int(start.group(1))
+    year = str(tournament.get("year") or "")
+    return int(year) if re.fullmatch(r"\d{4}", year) else None
+
+
+def _canadian_venue(tournament):
+    # The tours alternate cities. The event brand alone never establishes the host venue.
+    for fields in (("city", "place", "venue"), ("name",)):
+        location = " ".join(str(tournament.get(field) or "") for field in fields).lower()
+        toronto = bool(re.search(r"toronto|sobeys", location))
+        montreal = bool(re.search(r"montr[eé]al|\biga\b", location))
+        if toronto or montreal:
+            return ("Sobeys Stadium" if toronto else "IGA Stadium") if toronto != montreal else ""
+    return ""
+
+
 # The venue by its own official logo where one is bundled (assets/logos, recorded in logos.source.json):
 # the Royal Tennis Hall's crest from its own site, the others Wikimedia Commons' public-domain logos.
-# Without one the card names the venue in words.
+# New named venues are sourced from their own official sites or owner documents.
+# Without a verified mark, show a generic court pictogram and a short Chinese venue label.
 VENUE_MARKS = {
     "stockholm": "tennis_place_kungliga_tennishallen",
     "rotterdam": "tennis_place_rotterdam_ahoy",
     "vienna": "tennis_place_wiener_stadthalle",
     "miami": "tennis_place_hard_rock_stadium",
 }
-# Venue logos printed in their own colours on any ground (a night inking would wash out their details).
-VENUE_MARKS_IN_COLOUR = {"tennis_place_kungliga_tennishallen", "tennis_place_hard_rock_stadium"}
+# Exact named venues: a sponsor or a city alone must not select a venue trademark.
+VENUE_NAME_MARKS = {
+    "Domain Tennis Centre": "tennis_place_domain_tennis_centre",
+    "Zayed Sports City": "tennis_place_zayed_sports_city",
+    "Credit One Stadium": "tennis_place_credit_one_stadium",
+    "Design Center Linz": "tennis_place_design_center_linz",
+    "Porsche Arena": "tennis_place_porsche_arena",
+    "Kindarena": "tennis_place_kindarena",
+    "Tennis Club de Strasbourg": "tennis_place_tennis_club_strasbourg",
+    "Tennis Club Strasbourg": "tennis_place_tennis_club_strasbourg",
+    "Nottingham Tennis Centre": "tennis_place_nottingham_tennis_centre",
+    "Lexus Nottingham Tennis Centre": "tennis_place_nottingham_tennis_centre",
+    "LTTC Rot-Weiß Berlin": "tennis_place_lttc_rot_weiss_berlin",
+    "LTTC Rot-Weiss Berlin": "tennis_place_lttc_rot_weiss_berlin",
+    "Sobeys Stadium": "tennis_place_sobeys_stadium",
+    "IGA Stadium": "tennis_place_iga_stadium",
+    "Stade IGA": "tennis_place_iga_stadium",
+    "Club Sonoma": "tennis_place_club_sonoma",
+    "Seoul Olympic Park": "tennis_place_seoul_olympic_park",
+    "Optics Valley Tennis Center": "tennis_place_optics_valley_tennis_center",
+    "Optics Valley International Tennis Center": "tennis_place_optics_valley_tennis_center",
+}
+# Coloured venue marks retain their colours; low-contrast night artwork is adapted by the renderer.
+VENUE_MARKS_IN_COLOUR = {
+    "tennis_place_kungliga_tennishallen", "tennis_place_hard_rock_stadium",
+    "tennis_place_domain_tennis_centre",
+    "tennis_place_zayed_sports_city",
+    "tennis_place_credit_one_stadium",
+    "tennis_place_design_center_linz",
+    "tennis_place_porsche_arena",
+    "tennis_place_kindarena",
+    "tennis_place_tennis_club_strasbourg",
+    "tennis_place_lttc_rot_weiss_berlin",
+    "tennis_place_iga_stadium",
+    "tennis_place_seoul_olympic_park",
+    "tennis_place_optics_valley_tennis_center",
+}
 
 
 def event_for(tournament):
@@ -129,13 +190,20 @@ def event_for(tournament):
     logo or None)} for the tournament, or None."""
     tournament = tournament or {}
     tour = str(tournament.get("tour") or "").upper()
+    # A same-city lower-tier event does not share the tour-level event's identity.
+    if re.search(r"\bchallenger\b|\bitf\b|\bwta[\s-]*125\b", str(tournament.get("name") or ""), re.I):
+        return None
     text = " ".join(str(tournament.get(field) or "") for field in ("name", "place", "city")).lower()
     if not text.strip():
         return None
     for key, tours, pattern, venue, mark in _COMPILED:
         if tour in tours and pattern.search(text):
+            if key in MARK_YEARS and _edition_year(tournament) != MARK_YEARS[key]:
+                mark = None
+            if key in {"montreal", "wta_toronto"}:
+                venue = _canadian_venue(tournament)
             return {"key": key, "mark": f"tennis_event_{key}" if mark else None, "ink": mark, "venue": venue,
-                    "venue_mark": VENUE_MARKS.get(key)}
+                    "venue_mark": VENUE_MARKS.get(key) or VENUE_NAME_MARKS.get(venue)}
     return None
 
 
@@ -146,4 +214,4 @@ def mark_keys():
 
 def venue_mark_keys():
     """Every bundled venue logo's name (tennis_place_<venue>)."""
-    return sorted(set(VENUE_MARKS.values()))
+    return sorted(set(VENUE_MARKS.values()) | set(VENUE_NAME_MARKS.values()))

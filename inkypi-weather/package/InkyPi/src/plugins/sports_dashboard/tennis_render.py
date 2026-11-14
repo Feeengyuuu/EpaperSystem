@@ -10,6 +10,7 @@ from datetime import datetime
 
 from .common import *
 from . import tennis, tennis_events
+from .tennis_places import venue_label
 from .icon_marks import espn_flag_url
 from utils.tennis_font import tour_font
 from .sport_type import sport_panel
@@ -40,6 +41,7 @@ SEED_ICON_CACHE = {}
 # at most this share of the header.
 PLACE_LOGO = (72, 20)
 VENUE_SHARE = 0.36
+VENUE_ICON_WIDTH, VENUE_ICON_HEIGHT, VENUE_ICON_GAP = 15, 11, 3
 
 
 def match_state_label(match, now):
@@ -83,12 +85,14 @@ class TennisRenderMixin:
         key = tennis.tournament_mark(tournament)
         event = tennis_events.event_for(tournament) or {}
         path = os.path.join(LOCAL_TEAM_LOGO_DIR, f"{key}.png") if key else TOUR_MARKS[tour]
-        mark = self._load_local_logo(path, (66, 20) if key else (40, 14), alpha_threshold=8)
+        boxed = key == event.get("mark") and event.get("ink") == "boxed"
+        mark = self._load_local_logo(path, (66, 20) if key else (40, 14), alpha_threshold=8,
+                                     keep_ground=boxed)
         x = x1 + 8
         if mark:
             # A logo printed on its own dark box keeps its colours by night (its letters are white).
-            if not (key == event.get("mark") and event.get("ink") == "boxed"):
-                mark = SportsDashboard._night_inked_mark(mark)
+            if not boxed:
+                mark = self._kit_title_wordmark(SportsDashboard._night_inked_mark(mark))
             image.paste(mark, (x, y1 + (HEAD_HEIGHT - mark.height) // 2), mark)
             x += mark.width + 6
         category = tennis.tournament_category(tournament)
@@ -107,18 +111,29 @@ class TennisRenderMixin:
         place = self._load_local_logo(os.path.join(LOCAL_TEAM_LOGO_DIR, f"{place_key}.png"), PLACE_LOGO,
                                       alpha_threshold=8) if place_key else None
         city = "" if place is not None else event.get("venue") or tournament.get("city") or ""
+        if place is None and city:
+            # Reuse already verified shared venue artwork before falling back to a court pictogram.
+            place = self._kit_venue_logo(city, PLACE_LOGO)
+            if place is not None:
+                city = ""
+        city = venue_label(city)
         city_font = self._tennis_font(tour, 9)
+        icon_room = VENUE_ICON_WIDTH + VENUE_ICON_GAP if city else 0
         if city:
-            city, city_font = self._tennis_fit(draw, city, (x2 - x1) * VENUE_SHARE, 9, tour, min_size=8)
-        city_w = place.width if place is not None else (self._text_width(draw, city, city_font) if city else 0)
+            city, city_font = self._tennis_fit(draw, city, (x2 - x1) * VENUE_SHARE - icon_room,
+                                              9, tour, min_size=8)
+        city_w = place.width if place is not None else (self._text_width(draw, city, city_font) + icon_room if city else 0)
         name, name_font = self._tennis_fit(draw, name, x2 - x - city_w - 14, 12, tour, bold=True, min_size=9)
         self._draw_text_in_box(draw, (x, y1, x2 - city_w - 10, y1 + HEAD_HEIGHT), name, name_font, COLORS["text"])
         if place is not None:
             if place_key not in tennis_events.VENUE_MARKS_IN_COLOUR:
                 place = SportsDashboard._night_inked_mark(place)
+            place = self._kit_title_wordmark(place)
             image.paste(place, (x2 - 8 - place.width, y1 + (HEAD_HEIGHT - place.height) // 2), place)
         elif city:
-            self._draw_text_in_box(draw, (x2 - city_w - 8, y1, x2 - 6, y1 + HEAD_HEIGHT), city, city_font, COLORS["muted"],
+            left = x2 - city_w - 8
+            self._draw_tennis_venue_icon(draw, left, y1 + (HEAD_HEIGHT - VENUE_ICON_HEIGHT) // 2)
+            self._draw_text_in_box(draw, (left + icon_room, y1, x2 - 6, y1 + HEAD_HEIGHT), city, city_font, COLORS["text"],
                                    align="right")
         shown = entry.get("shown") or []
         block_top = y1 + HEAD_HEIGHT + 4
@@ -127,6 +142,19 @@ class TennisRenderMixin:
         for index, match in enumerate(shown):
             top = block_top + index * (block_h + 4)
             self._draw_tennis_match(image, draw, (x1, top, x2, top + block_h), match, now, accent, tour=tour)
+
+    @staticmethod
+    def _draw_tennis_venue_icon(draw, x, y):
+        """A generic court pictogram, never presented as a venue's official trademark."""
+        right, bottom = x + VENUE_ICON_WIDTH - 1, y + VENUE_ICON_HEIGHT - 1
+        ink = COLORS["text"]
+        draw.rectangle((x, y, right, bottom), outline=ink, width=1)
+        draw.line((x, y + 2, right, y + 2), fill=ink, width=1)
+        draw.line((x, bottom - 2, right, bottom - 2), fill=ink, width=1)
+        draw.line((x + 7, y, x + 7, bottom), fill=ink, width=1)
+        draw.line((x + 3, y + 2, x + 3, bottom - 2), fill=ink, width=1)
+        draw.line((right - 3, y + 2, right - 3, bottom - 2), fill=ink, width=1)
+        draw.line((x + 3, y + 5, right - 3, y + 5), fill=ink, width=1)
 
     def _draw_tennis_match(self, image, draw, box, match, now, accent, tour=None):
         x1, y1, x2, y2 = [int(value) for value in box]
