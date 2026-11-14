@@ -210,6 +210,10 @@ body {
 .charts-table.variant-top-records .col-peak      { width: 22%; }
 .charts-table.variant-top-records .col-time      { width: 17%; }
 
+.charts-table.has-images.variant-trending .col-name { width: 63%; }
+.charts-table.has-images.variant-top-games .col-name { width: 62%; }
+.charts-table.has-images.variant-top-records .col-name { width: 61%; }
+
 .charts-table.has-images thead .col-name {
     padding-left: calc(var(--image-width) + var(--image-gap));
 }
@@ -246,6 +250,33 @@ body {
 
 .game-name-content.has-image {
     gap: var(--image-gap);
+}
+
+.game-cover {
+    position: relative;
+    flex: 0 0 var(--image-width);
+    width: var(--image-width);
+}
+
+.image-rank {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px 3px;
+    border-radius: 2px;
+    background: rgba(18, 26, 32, 0.8);
+    color: #ffffff;
+    font-size: 9px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+}
+
+.game-cover.cover-missing .image-rank {
+    display: none;
 }
 
 .game-name-image {
@@ -455,6 +486,14 @@ body {
     border-bottom: 0;
 }
 
+.compact-row.has-cover:not(.cover-missing) {
+    grid-template-columns: minmax(0, 1fr) minmax(6.75rem, 7.65rem);
+}
+
+.compact-row.has-cover:not(.cover-missing) > .compact-rank {
+    display: none;
+}
+
 .compact-rank {
     color: var(--ink);
     font-size: var(--compact-rank-size);
@@ -477,6 +516,15 @@ body {
 
 .compact-name.has-image.cover-missing {
     display: flex;
+}
+
+.compact-cover {
+    position: relative;
+    min-width: 0;
+}
+
+.compact-name.cover-missing .compact-cover {
+    display: none;
 }
 
 .compact-image {

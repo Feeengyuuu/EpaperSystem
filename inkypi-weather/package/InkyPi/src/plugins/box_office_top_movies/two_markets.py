@@ -17,6 +17,7 @@ from PIL import Image, ImageDraw
 
 from plugins.base_plugin.render_provenance import SourceProvenance
 from utils.doodle_backdrop import paint_doodles
+from utils.image_badges import draw_image_badge
 from utils.local_wordmark import load_source_logo, paste_local_wordmark
 
 logger = logging.getLogger(__name__)
@@ -431,6 +432,8 @@ def _draw_hero(page, left, right, market, movie, runner_up=None):
     colors = page.colors
     accent = colors[market]["accent"]
     page.poster(movie, left + 8, 88, 102, 146)
+    draw_image_badge(page.canvas, page.draw, (page.x(left + 11), page.y(91)), "1", font=page.font(11),
+                     padding=(max(1, page.x(3)), max(1, page.y(2))), radius=max(1, page.x(2)))
     if market == "china":
         # The score with how many rated it when that fits across the poster, else the score alone.
         badge, votes = maoyan_badge(movie), (movie.extra or {}).get("maoyan_votes")
@@ -450,11 +453,7 @@ def _draw_hero(page, left, right, market, movie, runner_up=None):
     label = "今日占比" if market == "china" else "本期票房"
     today = china_today_gross(movie) if market == "china" else None
     metric_width = 140 if today else width
-    # The champion's rank belongs to the text block, leaving the complete poster and title visible.
-    page.draw.rounded_rectangle((page.x(x), page.y(130), page.x(x + 30), page.y(148)), radius=page.x(3),
-                                fill=colors["gold"])
-    page.draw.text((page.x(x + 15), page.y(139)), "#1", font=page.font(13), fill=colors["gold_text"], anchor="mm")
-    page.text((x + 36, 133), label, 11, colors["text"])
+    page.text((x, 133), label, 11, colors["text"])
     page.text((x, 146), movie.weekend_gross or "—", 30, accent, max_width=metric_width,
               sizes=(28, 26, 24, 22, 20, 18))
     if today:
@@ -549,19 +548,20 @@ def _draw_row(page, left, right, market, movie, top, leader, *, first):
     if not first:
         page.draw.line((page.x(left + 8), page.y(top - 3), page.x(right - 8), page.y(top - 3)),
                        fill=colors["rule"], width=1)
-    page.text((left + 10, top + 12), f"#{movie.rank}", 19, colors["gold"])
-    if market == "america":
-        _draw_rank_move(page, left + 12, top + 42, movie)
-    page.poster(movie, left + 44, top + 1, 34, 48)
+    page.poster(movie, left + 8, top + 1, 34, 48)
+    draw_image_badge(page.canvas, page.draw, (page.x(left + 10), page.y(top + 3)), str(movie.rank),
+                     font=page.font(9), padding=(max(1, page.x(2)), max(1, page.y(1))), radius=max(1, page.x(2)))
     badge = maoyan_badge(movie, short=True) if market == "china" else ""
     if badge:
         pill_width = page.draw.textlength(badge, font=page.font(9)) / page.sx + 8
-        _poster_pill(page, left + 44 + (34 - pill_width) / 2, top + 47, badge, 9)
+        _poster_pill(page, left + 8 + (34 - pill_width) / 2, top + 47, badge, 9)
     primary, secondary = page.plugin._display_titles(movie)
     # The Chinese title reads at 18 (1.2x the old 15) and takes a little of the figures' room.
-    page.text((left + 86, top + 2), primary, 18, colors["text"], max_width=142, sizes=(17, 16, 15))
+    page.text((left + 50, top + 2), primary, 18, colors["text"], max_width=178, sizes=(17, 16, 15))
     if secondary:
-        page.text((left + 86, top + 29), secondary, 10, _subtitle_color(colors, accent), max_width=142)
+        page.text((left + 50, top + 29), secondary, 10, _subtitle_color(colors, accent), max_width=140)
+    if market == "america":
+        _draw_rank_move(page, left + 194, top + 36, movie)
     metric_x = left + 232
     page.text((metric_x, top + 5), movie.weekend_gross or "—", 13, colors["text"], max_width=86)
     value = _metric_value(market, movie)

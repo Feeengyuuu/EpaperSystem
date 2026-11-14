@@ -18,9 +18,10 @@ from zoneinfo import ZoneInfo
 from PIL import Image, ImageDraw, ImageOps
 
 from utils.doodle_backdrop import paint_doodles
+from utils.image_badges import draw_image_badge
 from utils.flat_icons import draw_icon
 from utils.local_wordmark import load_source_logo, paste_local_wordmark
-from utils.page_canvas import NO_LINE_START, PageCanvas, re_tokens
+from utils.page_canvas import PageCanvas
 
 
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -49,8 +50,6 @@ ROW_HEIGHT = 52
 SECTION_HEIGHT = 22
 # A right-column row's picture.
 THUMB = (66, 48)
-CLASSIC_RANK_WIDTH = 22
-CARD_RANK_WIDTH = 15
 # The lead's picture block: its cover and, at the cover's right, a column of its next pictures.
 LEAD_PICTURE = (304, 206)
 SUMMARY_LINES = 3
@@ -357,10 +356,10 @@ def _lead(canvas, model, images, chinese, doodle_key):
     paint_doodles(canvas.image, (text_left - 4, y1 + 3, x2 - 3, y2 - 3), DOODLES, BRAND,
                   strength=DOODLE_STRENGTH[doodle_key], grounds=[canvas.color("lead")])
     _lead_pictures(canvas, model, images, (x1 + 6, y1 + 6, x1 + 6 + LEAD_PICTURE[0], y2 - 6))
+    draw_image_badge(canvas.image, canvas.draw, (x1 + 9, y1 + 9), "1", font=canvas.font(11, True))
     name, summary, translated = shown_name(model, chinese)
     # The top row: the list's own tag and the model's category.
-    canvas.text((text_left, y1 + 18), "1", 13, BRAND, anchor="lm")
-    chips_x = text_left + CARD_RANK_WIDTH
+    chips_x = text_left
     chips_x += _chip(canvas, chips_x, y1 + 18, "编辑精选" if model.get("staff_pick") else "当前最热") + 6
     if model.get("category"):
         _chip(canvas, chips_x, y1 + 18, canvas.fit(model["category"], 10, right - chips_x - 12),
@@ -440,31 +439,12 @@ def _card_tags(canvas, x, middle, model, right):
         _stat(canvas, x, middle, "star", rating, size=10, icon=10)
 
 
-def _card_title_lines(canvas, name, width, room):
-    """Only the first title line shares its width with the rank beside it."""
-    first_width = width - CARD_RANK_WIDTH
-    if room <= 1:
-        return canvas.wrap(name, 12, first_width, 1)
-    tokens = re_tokens(" ".join(str(name or "").split()))
-    if not tokens:
-        return []
-    split = 1
-    while split < len(tokens) and canvas.width("".join(tokens[:split + 1]), 12) <= first_width:
-        split += 1
-    # Carry the last word/character along when the next token is closing punctuation,
-    # matching PageCanvas.wrap's line-break rule.
-    if (split > 1 and split < len(tokens) and tokens[split].lstrip()[:1] in NO_LINE_START
-            and tokens[split - 1].lstrip()[:1] not in NO_LINE_START):
-        split -= 1
-    first = canvas.fit("".join(tokens[:split]), 12, first_width)
-    return [first, *canvas.wrap("".join(tokens[split:]).lstrip(), 12, width, room - 1)]
-
-
 def _card(canvas, box, model, rank, images, chinese):
     x1, y1, x2, y2 = box
     canvas.draw.rounded_rectangle(box, radius=7, fill=canvas.color("card"), outline=canvas.color("rule"), width=1)
     picture_bottom = y1 + 4 + int((x2 - x1 - 8) * CARD_PICTURE_RATIO)
     _picture(canvas, images.get(model["image"]), (x1 + 4, y1 + 4, x2 - 4, picture_bottom), radius=5)
+    draw_image_badge(canvas.image, canvas.draw, (x1 + 7, y1 + 7), str(rank), font=canvas.font(10, True))
     name, _summary, _translated = shown_name(model, chinese)
     # How it prints (else what comes with it) and its counts sit at the foot; the name runs down
     # into the room above them, and its maker (avatar and name) takes the line a short name leaves.
@@ -476,12 +456,11 @@ def _card(canvas, box, model, rank, images, chinese):
     y = picture_bottom + 5
     bottom = (detail_middle - 8) if detail else (stats_middle - 9)
     room = max(1, int((bottom - y) // CARD_TITLE_LINE))
-    lines = _card_title_lines(canvas, name, width, room)
+    lines = canvas.wrap(name, 12, width, room)
     has_maker = bool(model.get("maker") or images.get(model.get("avatar")))
     maker_line = has_maker and len(lines) < room
-    canvas.text((x1 + 5, y + 6), str(rank), 12, BRAND, anchor="lm")
-    for index, line in enumerate(lines):
-        canvas.text((x1 + 5 + (CARD_RANK_WIDTH if index == 0 else 0), y), line, 12)
+    for line in lines:
+        canvas.text((x1 + 5, y), line, 12)
         y += CARD_TITLE_LINE
     # A line still to spare (a short name) carries its category, else a tag, and its rating.
     if room - len(lines) - (1 if maker_line else 0) >= 1:
@@ -549,16 +528,16 @@ def _year_text(value):
 
 
 def _classic_row(canvas, y, model, images, chinese):
-    """An all-time classic: its place beside the picture, then its name, its downloads,
+    """An all-time classic: its place on the picture, then its name, its downloads,
     likes and prints, and who made it and in which year."""
     x1, _y1, x2, _y2 = RIGHT
     top = y + (ROW_HEIGHT - THUMB[1]) // 2
-    picture_left = x1 + CLASSIC_RANK_WIDTH
+    picture_left = x1
     _picture(canvas, images.get(model.get("image_small")) or images.get(model["image"]),
              (picture_left, top, picture_left + THUMB[0], top + THUMB[1]), radius=5)
     if model.get("rank"):
-        canvas.text((x1 + (CLASSIC_RANK_WIDTH - 4) / 2, top + THUMB[1] / 2), str(model["rank"]),
-                    12, BRAND, anchor="mm", width=CLASSIC_RANK_WIDTH - 4)
+        draw_image_badge(canvas.image, canvas.draw, (picture_left + 2, top + 2), str(model["rank"]),
+                         font=canvas.font(9, True), padding=(2, 1))
     name, _summary, _translated = shown_name(model, chinese)
     left = picture_left + THUMB[0] + 8
     canvas.text((left, top + 8), name, 12, anchor="lm", width=x2 - left)

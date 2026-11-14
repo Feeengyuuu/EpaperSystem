@@ -23,6 +23,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageOps
 
 from utils.doodle_backdrop import paint_doodles
 from utils.flat_icons import draw_icon
+from utils.image_badges import draw_image_badge
 from utils.local_wordmark import load_source_logo, paste_local_wordmark
 from utils.content_fonts import ContentCanvas as PageCanvas
 
@@ -79,10 +80,9 @@ BOARD_STYLES = {
     "game": ("gamepad", (124, 58, 237), (167, 139, 250)),
     "car": ("car", (217, 119, 6), (251, 176, 59)),
 }
-# A card row: a narrow rank column, then the full thumbnail; the title on the
+# A card row: a thumbnail with a compact corner rank; the title on the
 # first line, the heat, labels and the platform's own words on the second.
 THUMB_RATIO = 1.3
-RANK_WIDTH = 16
 MOVE_ROOM = 28
 # A row's title takes the largest of these sizes it fits whole at (the narrow cards start a size
 # down), clipped only at the smallest.
@@ -482,16 +482,15 @@ def _frame(canvas, box, tint, title_drawer, pattern):
 
 
 def _row(canvas, box, y0, row_h, *, picture, tint, rank, title, move, meta):
-    """One entry: rank beside the picture, title (its move at the line's end) and the meta line
+    """One entry: picture with its corner rank, title (its move at the line's end) and the meta line
     ``meta`` draws from a left x and a middle y."""
     left, _top, right, _bottom = box
     thumb_h = int(row_h - 5)
-    thumb_left = left + 6 + RANK_WIDTH
+    thumb_left = left + 8
     thumb = (thumb_left, int(y0 + 2), thumb_left + round(thumb_h * THUMB_RATIO), int(y0 + 2) + thumb_h)
     _thumb(canvas, picture, thumb, tint)
-    rank_ink = tuple(round(channel * 0.7 + 255 * 0.3) for channel in tint) if _night(canvas) else tint
-    canvas.text((left + 6 + (RANK_WIDTH - 3) / 2, y0 + row_h / 2), str(rank), 12 if rank < 10 else 11,
-                rank_ink if rank <= 3 else "muted", anchor="mm", width=RANK_WIDTH - 3)
+    draw_image_badge(canvas.image, canvas.draw, (thumb[0] + 2, thumb[1] + 2), rank,
+                     font=canvas.font(9, True), padding=(2, 1))
     text_x = thumb[2] + 6
     # The move's room is kept only when there is a move to show.
     room = right - 8 - (MOVE_ROOM if _has_move(move) else 0) - text_x

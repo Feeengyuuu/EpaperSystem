@@ -70,11 +70,14 @@
             </div>
             <div class="compact-list">
                 {% for game in group.games %}
-                <div class="compact-row" style="--name-font-scale: {{ game.name_font_scale | default(1) }}; --metric-font-scale: {{ game.metric_font_scale | default(1) }};">
+                <div class="compact-row{% if show_images and game.image %} has-cover{% endif %}" style="--name-font-scale: {{ game.name_font_scale | default(1) }}; --metric-font-scale: {{ game.metric_font_scale | default(1) }};">
                     <div class="compact-rank">{{ game.rank }}</div>
                     <div class="compact-name{% if show_images and game.image %} has-image{% endif %}">
                         {% if show_images and game.image %}
-                        <img class="compact-image" src="{{ game.image }}" alt="{{ game.name }}" onerror="this.style.display='none';this.parentElement.classList.add('cover-missing')" />
+                        <div class="compact-cover">
+                            <img class="compact-image" src="{{ game.image }}" alt="{{ game.name }}" onerror="this.closest('.compact-row').classList.add('cover-missing');this.closest('.compact-name').classList.add('cover-missing')" />
+                            <span class="image-rank">{{ game.rank }}</span>
+                        </div>
                         {% endif %}
                         <div class="compact-copy{% if game.center_title_block %} center-title-block{% endif %}">
                             <div class="compact-title" data-fit-text data-fit-min="13.8">{{ game.display_name | default(game.name) }}</div>
@@ -101,7 +104,7 @@
     <table class="charts-table variant-{{ table_variant | replace('_', '-') }}{% if show_images %} has-images{% endif %}">
         <thead>
             <tr>
-                <th class="col-rank">#</th>
+                {% if not show_images %}<th class="col-rank">#</th>{% endif %}
                 <th class="col-name">Name</th>
                 {% if table_variant == "trending" %}
                 <th class="col-change">24-hour Change</th>
@@ -121,12 +124,15 @@
         <tbody>
             {% for game in games %}
             <tr class="game-row" style="--name-font-scale: {{ game.name_font_scale | default(1) }}; --metric-font-scale: {{ game.metric_font_scale | default(1) }};">
-                <td class="col-rank rank">{{ game.rank }}</td>
+                {% if not show_images %}<td class="col-rank rank">{{ game.rank }}</td>{% endif %}
                 <td class="col-name game-name">
                     <div class="game-name-content{% if show_images %} has-image{% endif %}">
                         {% if show_images %}
-                        <img class="game-name-image" src="{{ game.image }}" alt="{{ game.name }}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" />
-                        <div class="game-name-placeholder" style="display:none;">?</div>
+                        <div class="game-cover">
+                            <img class="game-name-image" src="{{ game.image }}" alt="{{ game.name }}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';this.parentElement.classList.add('cover-missing')" />
+                            <div class="game-name-placeholder" style="display:none;">{{ game.rank }}</div>
+                            <span class="image-rank">{{ game.rank }}</span>
+                        </div>
                         {% endif %}
                         <span class="game-name-text">
                             <span class="game-name-primary" data-fit-text data-fit-min="15">{{ game.display_name | default(game.name) }}</span>

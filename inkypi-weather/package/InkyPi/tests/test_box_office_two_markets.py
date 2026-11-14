@@ -291,11 +291,11 @@ def test_champion_cards_show_extra_source_facts_without_touching_lower_rankings(
         if text in ("24.60万", "$8,609", "+7.30pp"):
             assert box[1] >= 130 and box[3] < 234
             assert (128 <= box[0] < box[2] <= 384) if xy[0] < 400 else (526 <= box[0] < box[2] <= 782)
-    assert sum(text == "#2" and xy[1] == 252 for xy, text, _box in drawn) == 2
+    assert sum(text == "2" and 240 <= xy[1] < 255 for xy, text, _box in drawn) == 2
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])
-def test_champion_rank_is_outside_the_original_poster_and_does_not_narrow_the_title(mode, monkeypatch):
+def test_champion_rank_is_inside_the_poster_and_does_not_narrow_the_title(mode, monkeypatch):
     plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
     posters, text = [], []
     colour = (220, 25, 180)
@@ -316,11 +316,12 @@ def test_champion_rank_is_outside_the_original_poster_and_does_not_narrow_the_ti
                                          snapshot(america_movies(), "The Numbers"), {"_inkypi_theme": {"mode": mode}})
     champions = [box for box in posters if box[2:] == (102, 146)]
     assert champions == [(16, 88, 102, 146), (414, 88, 102, 146)]
-    ranks = [box for value, box, _xy in text if value == "#1"]
+    ranks = [box for value, box, _xy in text if value == "1" and 88 <= box[1] < 110]
     assert len(ranks) == 2
     for (left, top, width, height), rank in zip(champions, ranks):
-        assert rank[0] > left + width
-        assert image.crop((left, top, left + width, top + height)).getcolors() == [(width * height, colour)]
+        assert left < rank[0] < rank[2] < left + 24
+        assert top < rank[1] < rank[3] < top + 24
+        assert image.crop((left + 24, top, left + width, top + 100)).getcolors() == [((width - 24) * 100, colour)]
     # Both primary titles still start at the original column edge and have its complete width.
     assert next(xy[0] for value, _box, xy in text if value.startswith("生化危机")) == 128
     assert next(xy[0] for value, _box, xy in text if value == "街头霸王") == 526
@@ -395,7 +396,7 @@ def test_the_china_column_shows_the_national_total_maoyan_scores_and_seat_occupa
     assert any("140分钟" in text for text in texts)
     # The headliner's six facts and the rows stay in their places: the third fact row ends above #2.
     assert all(xy[1] < 234 for xy, text in drawn if text in {"网售", "83.74%"})
-    assert sum(text == "#2" and xy[1] == 252 for xy, text in drawn) == 2
+    assert sum(text == "2" and 240 <= xy[1] < 255 for xy, text in drawn) == 2
     # Maoyan's score pill is red on the headliner's poster.
     pill = image.crop((20, 205, 120, 232)).convert("RGB")
     assert two_markets.MAOYAN_RED in set(pill.get_flattened_data())
@@ -447,8 +448,8 @@ def test_north_america_rows_show_their_rank_move_and_weekly_change(mode, monkeyp
     texts = [text for _xy, text in drawn]
     assert {"环比 -54%", "环比 -27%", "环比 +12%", "NEW", "上周", "#2"} <= set(texts)
     colors = two_markets.PALETTES[mode]
-    # #2 (Clayface, last week's #1) fell a place: a red triangle under its rank; #5 rose four.
-    fell = image.crop((418, 240 + 36, 430, 240 + 48)).convert("RGB")
-    rose = image.crop((418, 456 - 54 + 36, 430, 456 - 54 + 48)).convert("RGB")
+    # Rank movement sits after the subtitle, clear of both the poster and the revenue column.
+    fell = image.crop((600, 240 + 30, 612, 240 + 42)).convert("RGB")
+    rose = image.crop((600, 456 - 54 + 30, 612, 456 - 54 + 42)).convert("RGB")
     assert colors["down"] in set(fell.get_flattened_data()) and colors["up"] in set(rose.get_flattened_data())
     assert "4" in texts

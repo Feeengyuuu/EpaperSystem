@@ -761,26 +761,35 @@ def test_the_page_draws_each_items_own_mark(tmp_path, monkeypatch, mode):
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])
-def test_story_and_board_ranks_stand_before_the_complete_icons(tmp_path, monkeypatch, mode):
+def test_story_ranks_fit_inside_icons_and_tiny_board_icons_keep_their_rank_column(tmp_path, monkeypatch, mode):
     plugin = _plugin(tmp_path)
     marks, texts = _tracked(plugin, monkeypatch)
+    badges = []
+    original = tech_pulse_module.draw_image_badge
+
+    def badge(*args, **kwargs):
+        box = original(*args, **kwargs)
+        badges.append(box)
+        return box
+
+    monkeypatch.setattr(tech_pulse_module, "draw_image_badge", badge)
 
     icons = {"site:anthropic.com": Image.new("RGBA", (48, 48), MAGENTA),
              "site:postalpro.usps.com": Image.new("RGBA", (48, 48), TEAL)}
     page = plugin._render_page((800, 480), _payload(plugin), {"_inkypi_theme": _theme(mode)}, NOW, _boards(), {},
                                None, icons)
 
-    module = tech_pulse_module
-    for (key, (x, y), size), rank in zip(marks[:4], "1234"):
-        left, top, right, bottom = next(box for value, box in texts if value == rank and box[0] < x)
-        assert x - module.STORY_RANK_W <= left < right <= x - 4
-        assert y <= top < bottom <= y + size
+    assert len(badges) == 4
+    for (key, (x, y), size), (left, top, right, bottom) in zip(marks[:4], badges):
+        assert x < left < right < x + size and y < top < bottom < y + size
+        assert (right - left + 1) * (bottom - top + 1) < size * size / 5
         if key in icons:
             expected = item_icons.on_page(icons[key], size, plugin._palette({"_inkypi_theme": _theme(mode)})["panel"])
-            # Every opaque icon pixel survives, including the upper-left area formerly covered by the rank.
+            # Only the compact rank corner changes; the icon's remaining pixels survive.
             for iy in range(size):
                 for ix in range(size):
-                    if expected.getpixel((ix, iy))[3] == 255:
+                    inside_badge = left <= x + ix <= right and top <= y + iy <= bottom
+                    if expected.getpixel((ix, iy))[3] == 255 and not inside_badge:
                         assert page.getpixel((x + ix, y + iy)) == expected.getpixel((ix, iy))[:3]
     for key, (x, y), size in marks[6:]:
         rank = next(box for value, box in texts if value in "123" and box[2] <= x and x - box[2] < 14

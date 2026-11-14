@@ -179,7 +179,7 @@ def test_the_page_names_makerworld_and_shows_the_leads_details(monkeypatch):
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])
-def test_ranking_numbers_leave_every_model_picture_unobstructed(monkeypatch, mode):
+def test_ranking_numbers_only_cover_a_small_corner_of_model_pictures(monkeypatch, mode):
     from PIL import ImageChops
 
     payload = _payload()
@@ -200,8 +200,9 @@ def test_ranking_numbers_leave_every_model_picture_unobstructed(monkeypatch, mod
     monkeypatch.setattr(render, "_picture", record)
     page = render.render_page((800, 480), payload, {"_inkypi_theme": {"mode": mode}}, NOW, images)
     assert len(placed) >= 8
-    for box, original_pixels in placed:
-        assert ImageChops.difference(page.crop(box), original_pixels).getbbox() is None
+    changed = [ImageChops.difference(page.crop(box), original_pixels).getbbox() for box, original_pixels in placed]
+    assert sum(bounds is not None for bounds in changed) >= 5
+    assert all(bounds is None or (bounds[2] <= 24 and bounds[3] <= 16) for bounds in changed)
 
 
 def test_the_plugin_keeps_its_lists_and_reads_them_back_offline(monkeypatch, tmp_path):
@@ -304,12 +305,10 @@ def test_card_continuation_uses_full_width_with_the_bundled_font(monkeypatch, th
     box = (10, 286, 132, 472)
     render._card(canvas, box, model, 2, {}, {})
 
-    rank, *lines = drawn
-    assert rank[0] == "2"
+    lines = drawn
     assert " ".join(value for value, _bounds in lines) == title
     assert len(lines) == 3
-    assert rank[1][2] < lines[0][1][0]
-    assert all(bounds[0] == box[0] + 5 for _value, bounds in lines[1:])
+    assert all(bounds[0] == box[0] + 5 for _value, bounds in lines)
     assert all(box[0] + 5 <= bounds[0] < bounds[2] <= box[2] - 5
                and 380 <= bounds[1] < bounds[3] <= box[3] - 38 for _value, bounds in lines)
     assert all(left[1][3] <= right[1][1] for left, right in zip(lines, lines[1:]))
@@ -406,14 +405,17 @@ def test_the_classics_take_turns_three_at_a_time_through_the_all_time_list():
 
 
 def test_a_classic_row_gives_its_place_counts_maker_and_year(monkeypatch):
-    drawn = []
+    drawn, ranks = [], []
     original = render.PageCanvas.text
+    original_badge = render.draw_image_badge
 
     def text(self, xy, value, *args, **kwargs):
         drawn.append(str(value))
         return original(self, xy, value, *args, **kwargs)
 
     monkeypatch.setattr(render.PageCanvas, "text", text)
+    monkeypatch.setattr(render, "draw_image_badge", lambda image, draw, xy, value, **kwargs: (
+        ranks.append(str(value)), original_badge(image, draw, xy, value, **kwargs))[1])
     payload = _payload()
     payload["classics"] = [{**model, "rank": 7 + index, "of": 30, "downloads": 81000, "likes": 46000, "makes": 9200,
                             "maker": "Jakob", "published": "2023-05-02T10:00:00+00:00"}
@@ -421,5 +423,5 @@ def test_a_classic_row_gives_its_place_counts_maker_and_year(monkeypatch):
     image = render.render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, {})
 
     assert image.size == (800, 480)
-    assert "点赞榜 7–9 / 30" in drawn and {"7", "8", "9"} <= set(drawn)
+    assert "点赞榜 7–9 / 30" in drawn and {"7", "8", "9"} <= set(ranks)
     assert {"81k", "46k", "9.2k", "2023 年", "Jakob"} <= set(drawn)

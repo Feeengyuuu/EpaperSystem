@@ -18,6 +18,7 @@ from PIL import Image, ImageDraw, ImageOps
 from plugins.base_plugin import steam_studios
 from utils.doodle_backdrop import paint_doodles
 from utils.flat_icons import draw_icon
+from utils.image_badges import draw_image_badge
 from utils.theme_utils import contrast_ratio
 
 ICON_DIR = Path(__file__).resolve().parent / "assets" / "icons"
@@ -39,9 +40,6 @@ STUDIO_MIN_CONTRAST = 2.0
 STUDIO_KEEP_SHARE = 0.25
 METRIC_W = 112
 NAME_SIZES = (17, 16, 15, 14, 13, 12, 11)
-# The top three ranks wear medals; the rest an ink disc.
-MEDALS = ((240, 185, 40), (196, 204, 216), (205, 127, 60))
-RANK_DISC = 20
 FIRST_WEEK_DAYS, NEW_RELEASE_DAYS = 7, 30
 # Metacritic's score on the art's top right corner, in its own bands: green from 75, gold from 50.
 METACRITIC_GREEN, METACRITIC_GOLD = 75, 50
@@ -263,7 +261,7 @@ class LiveOverviewMixin:
         top = int(top)
         cover_xy = (left, top + 5)
         self._overview_cover(image, draw, cover_xy, game, colors)
-        self._overview_badges(draw, cover_xy, game, colors)
+        self._overview_badges(image, draw, cover_xy, game, colors)
 
         text_x, text_right = left + COVER[0] + 10, right - METRIC_W - 8
         hero_w = self._overview_metric(draw, box, game, trending, colors)
@@ -335,20 +333,13 @@ class LiveOverviewMixin:
         ImageDraw.Draw(mask).rounded_rectangle((0, 0, COVER[0] - 1, COVER[1] - 1), radius=COVER_RADIUS, fill=255)
         image.paste(fitted, (x, y), mask)
 
-    def _overview_badges(self, draw, xy, game, colors):
-        """The rank as a medal on the art's corner (gold, silver, bronze, then ink), its move since
+    def _overview_badges(self, image, draw, xy, game, colors):
+        """The rank inside the art's corner, its move since
         the board last changed along the art's foot, and a new release's tag beside it."""
         x, y = xy
         rank = int(game.get("rank") or 0)
         if rank:
-            fill = MEDALS[rank - 1] if rank <= len(MEDALS) else colors["ink"]
-            ink = (20, 20, 20) if rank <= len(MEDALS) else colors["paper"]
-            disc = (x - 5, y - 4, x - 5 + RANK_DISC, y - 4 + RANK_DISC)
-            draw.ellipse(disc, fill=fill, outline=colors["paper"], width=2)
-            font = self._font(11, "bold")
-            label = str(rank)
-            draw.text(((disc[0] + disc[2] - draw.textlength(label, font=font)) / 2, disc[1] + 3), label, font=font,
-                      fill=ink)
+            draw_image_badge(image, draw, (x + 3, y + 3), str(rank), font=self._font(9, "bold"))
         foot = y + COVER[1] - 3
         score = int(((game.get("store") or {}).get("metacritic")) or 0)
         if score:

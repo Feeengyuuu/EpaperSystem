@@ -30,6 +30,7 @@ from plugins.sports_dashboard.render_fonts import render_font_scope
 from utils.doodle_backdrop import paint_doodles
 from runtime.refresh_contracts import TaskCancelled
 from utils.http_client import get_http_session
+from utils.image_badges import draw_image_badge
 from utils.picture_grounds import readable_on
 from utils.safe_image import ImageLimits
 
@@ -2828,7 +2829,7 @@ class LiveRadar(BasePlugin):
                 outline=theme["panel"],
             )
         if card["status"] == "live":
-            self._draw_uptime_chip(draw, x + w - 4, strip_top - 4, card)
+            self._draw_uptime_chip(image, draw, x + w - 4, strip_top - 4, card)
         elif card["status"] == "replay":
             self._draw_replay_chip(draw, x + w - 5, y + 5)
 
@@ -2890,15 +2891,19 @@ class LiveRadar(BasePlugin):
             self._draw_platform_badge(image, draw, (mark_x, mark_y, mark_x + mark, mark_y + mark),
                                       card["platform"], fill=theme["panel"], ink=theme["ink"], outline=theme["panel"])
 
-    def _draw_uptime_chip(self, draw, right, bottom, card):
+    def _draw_uptime_chip(self, image, draw, right, bottom, card):
         text = self._format_uptime(card.get("start_time")).replace(" ", "")
         if not text:
             return
         font = self._font(8, "bold")
-        text_w = int(draw.textlength(text, font=font))
-        chip = (right - text_w - 6, bottom - 11, right, bottom)
-        self._rounded_rectangle(draw, chip, radius=3, fill=placeholder_art.BLACK)
-        draw.text((chip[0] + 3, chip[1] - 1), text, fill=placeholder_art.WHITE, font=font)
+        # Fit the visible glyphs, including the font's bearing, rather than its line height.
+        left, top, text_right, text_bottom = draw.textbbox((0, 0), text, font=font)
+        pad_x, pad_y = 2, 1
+        chip_w, chip_h = text_right - left + pad_x * 2, text_bottom - top + pad_y * 2
+        chip_x, chip_y = right - chip_w + 1, bottom - chip_h + 1
+        draw_image_badge(
+            image, draw, (chip_x, chip_y), text, font=font, padding=(pad_x, pad_y),
+        )
 
     def _draw_replay_chip(self, draw, right, top):
         """The word 'REPLAY' straight on a replay tile's cover: amber letters with an ink edge, no tag behind."""

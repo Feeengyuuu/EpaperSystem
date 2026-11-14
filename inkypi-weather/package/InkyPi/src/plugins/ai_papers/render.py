@@ -22,6 +22,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageOps
 
 from utils.doodle_backdrop import paint_doodles
+from utils.image_badges import draw_image_badge
 from utils.flat_icons import draw_icon
 from utils.local_wordmark import load_source_logo, paste_local_wordmark
 from utils.content_fonts import ContentCanvas as PageCanvas
@@ -253,11 +254,6 @@ def _doodles(canvas, box, ground, offset=(0, 0)):
                   strength=DOODLE_STRENGTH[mode], grounds=[ground], radius=6, offset=offset)
 
 
-def _rank(canvas, x, middle, rank, size=12):
-    """The paper's rank in its information row, clear of its figure."""
-    return canvas.text((x, middle), str(rank), size, anchor="lm") + 7
-
-
 def _upvote(canvas, x, middle, count, size=11, *, anchor="lm"):
     """The upvote arrow (solid orange) and the count; the pair's width."""
     text = count_text(count)
@@ -411,10 +407,10 @@ def _lead(canvas, paper, images, chinese):
     figure_width = _figure_width(art, drawing, bottom + 1 - top, LEAD_FIGURE_WIDTH)
     _figure(canvas, art, drawing, (left, top, left + figure_width, bottom + 1), canvas.color("lead"), radius=6,
             kept=LEAD_DIAGRAM_KEPT)
+    draw_image_badge(canvas.image, canvas.draw, (left + 3, top + 3), "1", font=canvas.font(11, True))
     x, text_right = left + figure_width + 12, right - 10
     links = _links(canvas, paper, text_right, top + 16, 11)
-    rank_w = _rank(canvas, x, top + 16, 1)
-    _org_line(canvas, paper, images, x + rank_w, top + 16, text_right - (links + 8 if links else 0), 12)
+    _org_line(canvas, paper, images, x, top + 16, text_right - (links + 8 if links else 0), 12)
     title, summary, translated = shown_text(paper, chinese)
     y = top + 30
     for line in canvas.wrap(title, 18, text_right - x, 3 if not translated else 2):
@@ -452,11 +448,12 @@ def _card(canvas, box, rank, paper, images, chinese):
     art, drawing = _prepared(_picture(paper, images))
     figure = (left + 1, top + 1, left + 1 + CARD_FIGURE_WIDTH, bottom)
     _figure(canvas, art, drawing, figure, canvas.color("paper"), radius=5, kept=CARD_DIAGRAM_KEPT)
+    draw_image_badge(canvas.image, canvas.draw, (figure[0] + 3, figure[1] + 3), str(rank),
+                     font=canvas.font(10, True))
     _links(canvas, paper, figure[0] + 4 + _links_width(canvas, paper, solid=True), bottom - 12, solid=True)
     x, text_right = figure[2] + 8, right - 8
     count_w = _upvote(canvas, text_right, top + 13, paper["upvotes"], 11, anchor="rm")
-    rank_w = _rank(canvas, x, top + 13, rank, 10)
-    _org_line(canvas, paper, images, x + rank_w, top + 13, text_right - count_w - 6, 10)
+    _org_line(canvas, paper, images, x, top + 13, text_right - count_w - 6, 10)
     title, summary, _translated = shown_text(paper, chinese)
     y = top + 25
     lines = canvas.wrap(title, 12, text_right - x, 3)

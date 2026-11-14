@@ -203,13 +203,12 @@ def test_the_page_draws_the_lead_cards_and_ranking(mode):
     left, top, _right, bottom = render.LEAD
     lead_figure = page.crop((left + 40, top, left + render.LEAD_FIGURE_WIDTH[0] - 8, bottom + 1)).convert("RGB")
     assert set(lead_figure.get_flattened_data()) == {(40, 120, 200)}
-    # The former rank discs no longer cover the upper-left of either figure.
-    assert set(page.crop((left + 7, top + 7, left + 30, top + 30)).get_flattened_data()) == {(40, 120, 200)}
+    # Ranks occupy only the small upper-left corner; the rest of each figure remains clear.
+    assert len(set(page.crop((left + 3, top + 3, left + 18, top + 18)).get_flattened_data())) > 1
     grid_left, grid_top = render.GRID[:2]
     card_figure = page.crop((grid_left + 32, grid_top + 8, grid_left + render.CARD_FIGURE_WIDTH - 6, grid_top + 84))
     assert set(card_figure.convert("RGB").get_flattened_data()) == {(40, 120, 200)}
-    assert set(page.crop((grid_left + 6, grid_top + 6, grid_left + 24, grid_top + 24)).get_flattened_data()) == {
-        (40, 120, 200)}
+    assert len(set(page.crop((grid_left + 4, grid_top + 4, grid_left + 18, grid_top + 18)).get_flattened_data())) > 1
     assert render.shown_text(papers[0], chinese)[:2] == ("首篇论文的中文标题", "一句话说明它做了什么。")
     assert render.shown_text(papers[1], chinese)[0] == papers[1]["title"]
     # The ranking rows carry the organisations' avatars (orange here).

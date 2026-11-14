@@ -145,13 +145,13 @@ def test_wide_cover_is_complete_proportional_and_surrounded_by_page_background(m
 
 def _thumb_frame(result, row):
     box = result.info["game_deals_layout"][row]["box"]
-    left = box[0] + 26
+    left = box[0]
     middle = (box[1] + box[3]) // 2
     return result.crop((left, middle - THUMB[1] // 2, left + THUMB[0], middle + THUMB[1] // 2))
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])
-def test_small_cover_is_not_enlarged_and_keeps_every_source_pixel(mode):
+def test_small_cover_is_not_enlarged_and_keeps_source_pixels_outside_the_rank(mode):
     cover = Image.new("RGB", (60, 20), (27, 144, 233))
     ImageDraw.Draw(cover).rectangle((0, 0, 5, 19), fill=(200, 25, 40))
     snapshot = DealSnapshot(offers()[:2], NOW, "live", "steam")
@@ -160,7 +160,8 @@ def test_small_cover_is_not_enlarged_and_keeps_every_source_pixel(mode):
     background = Image.new("RGB", frame.size, result.getpixel((0, 0)))
     visible = ImageChops.difference(frame, background).getbbox()
     assert (visible[2] - visible[0], visible[3] - visible[1]) == (60, 20)
-    assert ImageChops.difference(frame.crop(visible), cover).getbbox() is None
+    changed = ImageChops.difference(frame.crop(visible), cover).getbbox()
+    assert changed is not None and 2 <= changed[0] < changed[2] <= 18 and 2 <= changed[1] < changed[3] <= 16
 
 
 def test_steam_capsule_keeps_its_ratio_at_full_thumbnail_width():

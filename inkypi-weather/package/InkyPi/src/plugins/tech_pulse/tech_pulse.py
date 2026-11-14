@@ -29,6 +29,7 @@ from runtime.refresh_contracts import TaskCancelled, TaskContext, TaskDeadlineEx
 from utils.app_utils import DEFAULT_FONT_FAMILY, bounded_int, coerce_bool, get_available_font_names, get_font
 from utils.flat_icons import draw_icon
 from utils.http_client import get_http_client, get_http_session
+from utils.image_badges import draw_image_badge
 from utils.image_utils import text_width
 from utils.doodle_backdrop import paint_doodles
 from utils.local_wordmark import load_source_logo
@@ -161,9 +162,8 @@ ICON_DIR = "icons"
 ICON_LOOKUPS = "icon-lookups.json"
 ICON_SECONDS, ICON_RESERVE_SECONDS = 20, 15
 LEAD_ICON, STORY_ICON, BOARD_ICON, SKILL_ICON = 40, 30, 20, 15
-# Story ranks have a narrow column before the unchanged site icons. Model and repository
-# ranks already stand in their own BOARD_RANK_W column.
-STORY_RANK_DISC, STORY_RANK_W = 17, 22
+# Story ranks fit inside the site icon's corner. Tiny model and repository marks keep
+# their plain rank column, leaving those logos legible.
 BOARD_RANK_W = 12
 # The trending Spaces close the Hugging Face panel on one line this tall.
 SPACES_LINE_H = 22
@@ -920,13 +920,6 @@ class TechPulse(BasePlugin):
             tile = item_icons.monogram(key, size, font)
         image.paste(tile, (x, y), tile)
 
-    def _rank_disc(self, draw, corner, size, rank, fill, ink, palette, fonts):
-        """A story's rank at ``corner`` inside its own column, clear of the site's icon."""
-        left, top = corner
-        draw.ellipse((left - 1, top - 1, left + size, top + size), fill=palette["panel"])
-        draw.ellipse((left, top, left + size - 1, top + size - 1), fill=fill)
-        self._draw_text(draw, (left + size / 2, top + size / 2), str(rank), fonts["metric"], ink, anchor="mm")
-
     def _draw_hn_panel(self, image, draw, box, payload, settings, palette, fonts, history, now, icons=None):
         x0, y0, x1, y1 = box
         stories = payload.get("stories") or []
@@ -947,13 +940,13 @@ class TechPulse(BasePlugin):
                               settings, palette, fonts, board, now, HN_LIST_ROWS, image, icons)
 
     def _draw_lead(self, image, draw, box, story, settings, palette, fonts, history, now, icons=None):
-        """The top story: its rank before the site's icon, title, meta, points trend and
+        """The top story: its rank on the site's icon, title, meta, points trend and
         top comment; returns its bottom edge."""
         x0, y0, x1, _y1 = box
-        icon_x = x0 + STORY_RANK_W
+        icon_x = x0
         self._mark(image, item_icons.story_key(story), (icon_x, y0), LEAD_ICON, palette, fonts, icons)
-        self._rank_disc(draw, (x0, round(y0 + (LEAD_ICON - STORY_RANK_DISC) / 2)), STORY_RANK_DISC,
-                        story.get("rank") or 1, palette["orange"], (20, 20, 20), palette, fonts)
+        draw_image_badge(image, draw, (icon_x + 2, y0 + 2), story.get("rank") or 1,
+                         font=fonts["tiny_bold"], padding=(2, 1))
         # The title and the line under it share one column beside the icon.
         text_x = icon_x + LEAD_ICON + 8
         lines = self._wrap_text(draw, story.get("title") or "No story available", fonts["lead"], x1 - text_x,
@@ -998,16 +991,19 @@ class TechPulse(BasePlugin):
                 self._dotted(draw, x0, x1, top + row_h, palette["rule"])
 
     def _story_row(self, draw, box, story, settings, palette, fonts, history, now, image=None, icons=None):
-        """A listed story: its rank before the site's icon, then its title over its
-        source, age and figures. Without an ``image`` to paste on, only the rank's disc stands there."""
+        """A listed story: its rank inside the site's icon, then its title over its
+        source, age and figures. Without an image, a plain rank occupies the icon slot."""
         x0, y0, x1, y1 = box
         middle = (y0 + y1) / 2
         title_y, meta_y = middle - 9, middle + 10
-        icon_x, icon_y = x0 + STORY_RANK_W, middle - STORY_ICON / 2
+        icon_x, icon_y = x0, middle - STORY_ICON / 2
         if image is not None:
             self._mark(image, item_icons.story_key(story), (icon_x, icon_y), STORY_ICON, palette, fonts, icons)
-        self._rank_disc(draw, (x0, round(middle - STORY_RANK_DISC / 2)), STORY_RANK_DISC,
-                        story.get("rank") or "", palette["orange"], (20, 20, 20), palette, fonts)
+            draw_image_badge(image, draw, (icon_x + 2, icon_y + 2), story.get("rank") or "",
+                             font=fonts["tiny_bold"], padding=(2, 1))
+        else:
+            self._draw_text(draw, (icon_x + STORY_ICON / 2, middle), str(story.get("rank") or ""),
+                            fonts["metric"], palette["ink"], anchor="mm")
         text_x = icon_x + STORY_ICON + 8
         title = self._fit_text(draw, story.get("title") or "", fonts["row"], x1 - text_x)
         self._draw_text(draw, (text_x, title_y), title, fonts["row"], palette["ink"], anchor="lm")

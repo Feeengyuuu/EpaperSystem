@@ -32,6 +32,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
 from utils.doodle_backdrop import paint_doodles
 from utils.flat_icons import draw_icon
+from utils.image_badges import draw_image_badge
 from utils.local_wordmark import load_source_logo
 from utils.content_fonts import ContentCanvas as PageCanvas
 from utils.picture_grounds import light_on_dark
@@ -88,7 +89,7 @@ SUN_CROP = 0.9
 # By day the corona's colours are lifted this much (the disk keeps its own).
 CORONA_LIFT = 1.9
 # The foot's pictures: where they start below each panel's heading, the room between them, their
-# corners and the rank discs on them.
+# corners and the small rank labels on them.
 ART_TOP = 24
 ART_GAP = 10
 ART_RADIUS = 5
@@ -650,14 +651,9 @@ def _artwork(canvas, picture, box):
     canvas.image.paste(tile, (left, top), mask)
 
 
-def _ranked_caption(canvas, centre, middle, rank, title, size, width):
-    """A compact number before the title, wholly below the artwork."""
-    rank_width = canvas.width(str(rank), size) + 5
-    title_width = max(0, width - rank_width)
-    shown = canvas.fit(title, size, title_width)
-    left = centre - (rank_width + canvas.width(shown, size)) / 2
-    canvas.text((left, middle), str(rank), size, "muted", anchor="lm")
-    canvas.text((left + rank_width, middle), title, size, anchor="lm", width=title_width)
+def _rank(canvas, x, y, rank):
+    """The item's place, inside the artwork's top-left corner and clear of its footnotes."""
+    draw_image_badge(canvas.image, canvas.draw, (x, y), str(rank), font=canvas.font(9, True))
 
 
 def _rating_mark(canvas, right, bottom, rating):
@@ -778,6 +774,7 @@ def _music_panel(canvas, night, box, chart, images, zone, now=None):
         centre = (slot_left + slot_right) / 2
         cover = (centre - side / 2, art_top, centre + side / 2, art_top + side)
         _artwork(canvas, images.get(track.get("cover") or ""), cover)
+        _rank(canvas, cover[0] + 3, cover[1] + 3, index + 1)
         move = song_move(track, index + 1)
         if move:
             _move_mark(canvas, cover[2] - 2, cover[3] - 2, move)
@@ -787,7 +784,7 @@ def _music_panel(canvas, night, box, chart, images, zone, now=None):
         size = 13
         while size > 11 and canvas.width(track["title"], size) > width:
             size -= 1
-        _ranked_caption(canvas, centre, art_top + side + 11, index + 1, track["title"], size, width)
+        canvas.text((centre, art_top + side + 11), track["title"], size, anchor="mm", width=width)
         canvas.text((centre, art_top + side + 26), track["artist"], 11, "muted", anchor="mm", width=width,
                     bold=False)
         note = song_note(track, now, index + 1)
@@ -807,11 +804,12 @@ def _douban_panel(canvas, night, box, items, title, images):
         centre = (slot_left + slot_right) / 2
         poster = (centre - width / 2, art_top, centre + width / 2, art_top + height)
         _artwork(canvas, images.get(item.get("poster") or ""), poster)
+        _rank(canvas, poster[0] + 3, poster[1] + 3, index + 1)
         if item.get("rating"):
             _rating_mark(canvas, poster[2] - 2, poster[3] - 2, item["rating"])
         else:
             canvas.text((centre, poster[3] - 9), "暂无评分", 10, "muted", anchor="mm", bold=False)
-        _ranked_caption(canvas, centre, bottom - 7, index + 1, item["title"], 12, slot_right - slot_left - 4)
+        canvas.text((centre, bottom - 7), item["title"], 12, anchor="mm", width=slot_right - slot_left - 4)
 
 
 def _media(canvas, night, box, payload, images):

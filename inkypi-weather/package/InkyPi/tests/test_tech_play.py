@@ -185,7 +185,7 @@ def test_page_renders_without_any_images(mode):
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])
-def test_paper_and_speedrun_ranks_leave_their_images_unobstructed(monkeypatch, mode):
+def test_paper_and_speedrun_ranks_fit_inside_a_small_image_corner(monkeypatch, mode):
     from PIL import Image, ImageChops
     from plugins.tech_play import render
 
@@ -211,7 +211,11 @@ def test_paper_and_speedrun_ranks_leave_their_images_unobstructed(monkeypatch, m
     page = render.render_page((800, 480), payload, {"_inkypi_theme": {"mode": mode}}, NOW, images)
     assert len(saved) == 2
     for box, original_pixels in saved:
-        assert ImageChops.difference(page.crop(box), original_pixels).getbbox() is None
+        changed = ImageChops.difference(page.crop(box), original_pixels).getbbox()
+        assert changed is not None
+        left, top, right, bottom = changed
+        assert 0 < left < right < original_pixels.width and 0 < top < bottom < original_pixels.height
+        assert (right - left) * (bottom - top) < original_pixels.width * original_pixels.height / 8
 
 
 def test_platforms_group_into_families_in_a_fixed_order():

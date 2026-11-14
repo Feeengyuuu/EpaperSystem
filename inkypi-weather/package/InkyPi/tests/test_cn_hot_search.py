@@ -19,7 +19,7 @@ TURN_START = datetime(2026, 10, 28, 17, 0, tzinfo=sources.PACIFIC)
 
 @pytest.mark.parametrize("mode", ["day", "night"])
 @pytest.mark.parametrize("width,row_height,rank", [(256, 35, 1), (384, 64, 12)])
-def test_rank_column_leaves_the_thumbnail_unobstructed(monkeypatch, mode, width, row_height, rank):
+def test_rank_changes_only_a_small_corner_inside_the_thumbnail(monkeypatch, mode, width, row_height, rank):
     from PIL import Image, ImageChops
     from plugins.cn_hot_search import render
 
@@ -38,7 +38,11 @@ def test_rank_column_leaves_the_thumbnail_unobstructed(monkeypatch, mode, width,
                 tint=render.BRANDS["weibo"], rank=rank, title="完整显示缩略图", move=None,
                 meta=lambda *_args: None)
     box, before = saved[0]
-    assert ImageChops.difference(canvas.image.crop(box), before).getbbox() is None
+    changed = ImageChops.difference(canvas.image.crop(box), before).getbbox()
+    assert changed is not None
+    left, top, right, bottom = changed
+    assert 0 < left < right < before.width and 0 < top < bottom < before.height
+    assert (right - left) * (bottom - top) < before.width * before.height / 5
 
 
 def test_baidu_skips_the_pinned_row_and_keeps_heat_summary_picture_and_move():
@@ -182,7 +186,7 @@ def test_a_row_title_steps_down_to_fit_and_keeps_the_move_room_only_for_a_move()
     lists = {"weibo": lists["douyin"], **lists}
     payload = {"lists": lists, "topics": sources.cross_topics(lists), "history": {}}
     drawn = []
-    from utils.page_canvas import PageCanvas
+    from plugins.cn_hot_search.render import PageCanvas
 
     original = PageCanvas.text
 
@@ -205,7 +209,7 @@ def test_a_rows_sentence_comes_before_its_heat_and_tags():
              for platform in sources.PLATFORMS}
     payload = {"lists": lists, "topics": [], "history": {}}
     drawn = []
-    from utils.page_canvas import PageCanvas
+    from plugins.cn_hot_search.render import PageCanvas
 
     original = PageCanvas.text
 
@@ -228,7 +232,7 @@ def test_a_row_without_a_sentence_keeps_its_heat_and_tags_first():
     lists = {platform: [{"rank": rank, "title": "某话题", "heat": 12_150_000, "tag": "热", "videos": 7, "image": None}
                         for rank in range(1, 4)] for platform in sources.PLATFORMS}
     drawn = []
-    from utils.page_canvas import PageCanvas
+    from plugins.cn_hot_search.render import PageCanvas
 
     original = PageCanvas.text
 

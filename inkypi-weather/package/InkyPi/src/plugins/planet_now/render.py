@@ -22,6 +22,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageOps
 
 from utils.doodle_backdrop import paint_doodles
+from utils.image_badges import draw_image_badge
 from utils.local_wordmark import load_source_logo, paste_header_logo_row, paste_local_wordmark
 from utils.page_canvas import PageCanvas
 from utils.safe_image import ImageLimits, safe_open_image
@@ -602,7 +603,7 @@ def _trends(canvas, payload, images):
     if not trends:
         canvas.text(((left + right) / 2, (top + bottom) / 2), "热搜暂不可用", 14, "muted", anchor="mm")
         return
-    # Five searches as a table: rank, picture, the search over its outlet and headline, and the
+    # Five searches as a table: ranked picture, search over its outlet and headline, and the
     # search volume with a bar on a log scale.
     x0, x1 = left + 10, right - 10
     rows = trends[:5]
@@ -611,16 +612,16 @@ def _trends(canvas, payload, images):
         y = top + HEADER + 8 + index * 26
         if index:
             canvas.draw.line((x0, y - 2, x1, y - 2), fill=canvas.color("rule"), width=1)
-        canvas.text((x0 + 7, y + 11), str(index + 1), 15, "trends" if index < 3 else "muted", anchor="mm")
-        thumb_box = (x0 + 18, y, x0 + 42, y + 24)
+        thumb_box = (x0, y, x0 + 24, y + 24)
         thumb = images.get(item.get("picture"))
         if thumb is not None:
             small = ImageOps.fit(thumb, (24, 24), Image.Resampling.LANCZOS)
             _paste(canvas, small, thumb_box[:2], _rounded(small, 3))
+            draw_image_badge(canvas.image, canvas.draw, (x0 + 2, y + 2), index + 1,
+                             font=canvas.font(9, True), padding=(2, 1))
         else:
-            canvas.draw.rounded_rectangle(thumb_box, radius=3, fill=canvas.color("panel"))
-            canvas.text((x0 + 30, y + 12), (item.get("title") or "?")[:1].upper(), 12, "trends", anchor="mm")
-        text_x, column = x0 + 48, x1 - 40
+            canvas.text((x0 + 12, y + 11), str(index + 1), 15, "trends" if index < 3 else "muted", anchor="mm")
+        text_x, column = x0 + 30, x1 - 40
         volume = int(item.get("traffic") or 0)
         if volume:
             canvas.text((x1, y + 7), _traffic(volume), 11, anchor="rm")

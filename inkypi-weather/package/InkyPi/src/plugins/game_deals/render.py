@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from PIL import Image, ImageDraw
 
 from utils.doodle_backdrop import paint_doodles
+from utils.image_badges import draw_image_badge
 from utils.local_wordmark import load_source_logo, paste_local_wordmark
 from utils.steam_font import steam_font
 
@@ -32,13 +33,13 @@ HERO_FACTS_MIDDLE, HERO_NOTE_MIDDLE = 390, 422
 HERO_BADGE_W, HERO_PRICE_SIZE = 112, 64
 # The card's right foot, beside the marks and the verdict: savings, deal rating, when the low was seen.
 HERO_ASIDE_LEFT, HERO_ASIDE_Y = 262, 376
-# The other nine offers, one row each down the right column: its rank, its capsule, its name with
+# The other nine offers, one row each down the right column: its ranked capsule, its name with
 # its marks under it, its sale price over the struck original, and its discount block.
 LIST_LEFT, LIST_RIGHT = 396, 785
 LIST_TOP, ROW_PITCH, ROW_HEIGHT = 74, 41, 40
 LIST_ROWS = 9
-RANK_W, THUMB = 20, (84, 32)
-LIST_TEXT_X = LIST_LEFT + RANK_W + 6 + THUMB[0] + 6
+THUMB = (84, 32)
+LIST_TEXT_X = LIST_LEFT + THUMB[0] + 6
 LIST_BADGE = (48, 24)
 LIST_PRICE_W = 62
 # A row's name baseline and its marks' centre, from the row's top.
@@ -316,15 +317,13 @@ def _hero(image, draw, deal, cover, price_tags, mode, ink, muted):
 
 def _row(image, draw, deal, rank, top, cover, price_tags, mode, ink, muted):
     middle = top + ROW_HEIGHT / 2
-    # The rank as a bare figure in the ink, no tab behind it.
-    draw.text((LIST_LEFT + RANK_W / 2, middle), str(rank), font=_fitted_font(str(rank), RANK_W, 16, 11, True),
-              fill=ink, anchor="mm")
-    thumb_left = LIST_LEFT + RANK_W + 6
+    thumb_left = LIST_LEFT
     thumb_box = (thumb_left, round(middle - THUMB[1] / 2), thumb_left + THUMB[0], round(middle + THUMB[1] / 2))
     art = _fit_art(image, cover, thumb_box)
     if art is None:
         art = thumb_box
         _placeholder(draw, thumb_box, 11)
+    draw_image_badge(image, draw, (art[0] + 2, art[1] + 2), str(rank), font=_font(9, True), padding=(2, 1))
     badge_left = LIST_RIGHT - LIST_BADGE[0]
     price_left = badge_left - 6 - LIST_PRICE_W
     text_right = price_left - 6

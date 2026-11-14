@@ -15,6 +15,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageOps
 
 from utils.flat_icons import draw_icon
+from utils.image_badges import draw_image_badge
 from utils.local_wordmark import paste_header_logo_row, paste_local_wordmark
 from utils.content_fonts import ContentCanvas as PageCanvas
 from utils.picture_grounds import (
@@ -460,14 +461,15 @@ def _papers(canvas, payload, now, images):
         institution = paper.get("institution") or {}
         mark = images.get(institution.get("logo") or "")
         figure = images.get(paper.get("figure") or "")
-        # Each row: a separate rank column and the figure (its organisation's logo stands in
+        # Each row: the figure with a small corner rank (its organisation's logo stands in
         # for a paper without one), then its title (two lines) over the organisation behind it, or
         # its authors when the logo already fills the figure's place, and when it came out.
-        figure_left = left + 16
+        figure_left = left
         _paper_figure(canvas, figure, mark, (figure_left, top, figure_left + PAPER_FIGURE[0], top + PAPER_FIGURE[1]))
         if figure is None:
             mark, institution = None, {}
-        canvas.text((left + 5, top + PAPER_FIGURE[1] / 2), str(index + 1), 12, "ink", anchor="mm")
+        draw_image_badge(canvas.image, canvas.draw, (figure_left + 3, top + 3), index + 1,
+                         font=canvas.font(10, True))
         x = figure_left + PAPER_FIGURE[0] + 7
         for line_index, line in enumerate(canvas.wrap(paper["title"], 13, right - x, 2)):
             canvas.text((x, top + line_index * 16), line, 13, anchor="la")
@@ -747,7 +749,7 @@ def _speedruns(canvas, payload, images, now):
         if index:
             canvas.rule((x - gap / 2, top, x - gap / 2, SPEED_CARD[3] - 8))
         cover = images.get(game.get("cover"))
-        cover_left = x + 14
+        cover_left = x
         box = (cover_left, top, cover_left + 36, top + 48)
         if cover is not None:
             canvas.image.paste(_cover(cover, (36, 48)), (cover_left, top))
@@ -757,13 +759,14 @@ def _speedruns(canvas, payload, images, now):
             canvas.text((cover_left + 18, top + 20), _initials(game.get("name")), 11, (255, 255, 255), anchor="mm")
             draw_icon(canvas.draw, "trophy", (cover_left + 12, top + 30), 12, canvas.color("gold"), canvas.color("band"))
         _round_corners(canvas, box, 6)
-        canvas.text((x + 4, top + 24), str(index + 1), 12, "ink", anchor="mm")
+        draw_image_badge(canvas.image, canvas.draw, (cover_left + 3, top + 3), index + 1,
+                         font=canvas.font(9, True), padding=(2, 1))
         text_left = cover_left + 44
-        for line_index, line in enumerate(canvas.wrap(game.get("name") or "", 12, width - 58, 2)):
+        for line_index, line in enumerate(canvas.wrap(game.get("name") or "", 12, width - 44, 2)):
             canvas.text((text_left, top + 1 + line_index * 15), line, 12, anchor="la")
         meta = " · ".join(part for part in (f"{game.get('week_runs', 0)} 次验证", str(game.get("released") or ""))
                           if part)
-        canvas.text((text_left, top + 40), meta, 11, "muted", anchor="lm", bold=False, width=width - 58)
+        canvas.text((text_left, top + 40), meta, 11, "muted", anchor="lm", bold=False, width=width - 44)
         for run_index, run in enumerate(game.get("runs", [])[:2]):
             y = top + 58 + run_index * 30
             canvas.draw.ellipse((x, y + 3, x + 8, y + 11), fill=canvas.color("speed_bar"), outline=canvas.color("ink"))

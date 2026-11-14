@@ -14,6 +14,7 @@ from utils.steam_font import private_path as steam_private_path
 from utils.atomic_file import atomic_write_json
 from utils.http_client import get_http_client
 from utils.draw_utils import fit_text as fit_text_to_width
+from utils.image_badges import draw_image_badge
 from utils.safe_image import ImageLimits, safe_open_base64_image, safe_open_image
 from utils.theme_utils import get_theme_context, get_theme_palette, rgb_to_hex
 import base64
@@ -759,7 +760,7 @@ class SteamCharts(LiveOverviewMixin, BasePlugin):
         row_gap = max(7, int(height * 0.016))
         row_height = max(44, int((height - top - margin) / max(1, len(games))))
         rank_x = margin
-        name_x = margin + int(width * 0.052)
+        name_x = margin if show_images else margin + int(width * 0.052)
         metric_x = width - margin
         cover_width = int(width * 0.1885) if show_images else 0
         cover_height = max(28, int(cover_width * 3 / 8)) if show_images else 0
@@ -774,7 +775,8 @@ class SteamCharts(LiveOverviewMixin, BasePlugin):
             y = top + index * row_height
 
             rank = str(game.get("rank", index + 1))
-            draw.text((rank_x, y + row_height * 0.24), rank, fill=ink, font=rank_font)
+            if not show_images:
+                draw.text((rank_x, y + row_height * 0.24), rank, fill=ink, font=rank_font)
 
             if show_images:
                 cover = self._decode_data_image(game.get("image"))
@@ -783,6 +785,10 @@ class SteamCharts(LiveOverviewMixin, BasePlugin):
                 if cover:
                     cover = ImageOps.fit(cover.convert("RGB"), (cover_width, cover_height), method=Image.Resampling.LANCZOS)
                     image.paste(cover, (cover_x, cover_y))
+                    draw_image_badge(image, draw, (cover_x + 3, cover_y + 3), rank,
+                                     font=self._font(max(9, round(height * 0.019)), "bold"))
+                else:
+                    draw.text((rank_x, y + row_height * 0.24), rank, fill=ink, font=rank_font)
 
             name_scale = self._coerce_font_scale(game.get("name_font_scale", 1))
             metric_scale = self._coerce_font_scale(game.get("metric_font_scale", 1))

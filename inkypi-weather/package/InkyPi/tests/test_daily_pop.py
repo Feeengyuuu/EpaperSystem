@@ -168,7 +168,7 @@ def test_page_renders_long_text_without_any_images(mode):
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])
-def test_bilibili_covers_fade_under_their_titles_and_ranks_stay_outside(mode, monkeypatch):
+def test_bilibili_covers_fade_under_their_titles_and_ranks_fit_inside(mode, monkeypatch):
     from plugins.daily_pop import render
 
     payload = _payload()
@@ -183,25 +183,27 @@ def test_bilibili_covers_fade_under_their_titles_and_ranks_stay_outside(mode, mo
         covers.append(box)
         return original_cover(canvas, picture, box, **kwargs)
 
-    def rank(canvas, xy, number):
-        ranks.append((number, canvas.draw.textbbox(xy, str(number), font=canvas.font(12, True), anchor="mm")))
-        return original_rank(canvas, xy, number)
+    def rank(canvas, xy, number, *args):
+        box = original_rank(canvas, xy, number, *args)
+        ranks.append((number, box))
+        return box
 
     monkeypatch.setattr(render, "_paste_fade", cover)
     monkeypatch.setattr(render, "_rank", rank)
     image = render_page((800, 480), payload, {"_inkypi_theme": {"mode": mode}}, NOW, images)
 
     left, top, right, _bottom = render.CARDS["bilibili"]
-    cover_top = top + render.BAR + 24 + 18
+    cover_top = top + render.BAR + 24 + 2
     middle = (left + right) // 2
-    fade = cover_top + round((render.BILI_LEAD_HEIGHT - 16) * render.BILI_LEAD_FADE)
+    fade = cover_top + round(render.BILI_LEAD_HEIGHT * render.BILI_LEAD_FADE)
     # Solid cover above the fade, then easing to the page by the cover's foot, under the title.
     assert image.getpixel((middle, fade - 30)) == (200, 30, 30)
     foot = image.getpixel((right - 12, covers[0][3] - 2))
     assert (foot[1] > 200 and foot[2] > 200) if mode == "day" else max(foot) < 10
-    assert [number for number, _box in ranks] == [1, 2, 3, 4]
-    for _number, (x0, y0, x1, y1) in ranks:
-        assert all(x1 <= a or x0 >= c or y1 <= b or y0 >= d for a, b, c, d in covers)
+    assert [number for number, _box in ranks[:4]] == [1, 2, 3, 4]
+    for (_number, (x0, y0, x1, y1)), (a, b, c, d) in zip(ranks[:4], covers):
+        assert a < x0 < x1 < c and b < y0 < y1 < d
+        assert (x1 - x0 + 1) * (y1 - y0 + 1) < (c - a) * (d - b) / 8
 
 
 def test_wiki_globe_is_a_lit_sphere_with_a_glow():
@@ -343,9 +345,10 @@ def test_a_show_wears_its_episodes_genre_and_top_rank(mode, monkeypatch):
                                   "2": {"episodes": 0, "genre": "很长很长的类型名字", "rank": 5310, "aired": [[3, "2026-10-19"]]}}
     render_page((800, 480), payload, {"_inkypi_theme": {"mode": mode}}, datetime(2026, 11, 2, 7, 0, tzinfo=sources.PACIFIC), {})
 
-    assert {"5/12话", "#812 · 87在追", "第3话", "2107在追"} <= set(drawn)
+    assert {"5/12话", "812", "第3话", "2107在追"} <= set(drawn)
+    assert any(text.startswith("87在追") for text in drawn)
     # Rank 5310 is not shown, nor a genre that does not fit beside the count.
-    assert "#5310" not in drawn and not any("很长" in text for text in drawn)
+    assert "5310" not in drawn and not any("很长" in text for text in drawn)
 
 
 def test_a_songs_artist_is_found_by_their_apple_music_page():
