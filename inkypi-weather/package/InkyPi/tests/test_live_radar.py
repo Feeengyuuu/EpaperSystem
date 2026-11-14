@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 import pytest
 
 import plugins.live_radar.live_radar as live_radar_module
@@ -3156,6 +3156,57 @@ def test_replay_snapshot_mini_card_draws_room_title(monkeypatch):
     plugin._draw_snapshot_mini_card(image, draw, (10, 20, 240, 76), card, theme)
 
     assert "这是房间标题" in fitted_text
+
+
+@pytest.mark.parametrize("renderer,box", [
+    ("mini", (10, 10, 146, 34)),
+    ("mini", (10, 10, 240, 76)),
+    ("small", (10, 10, 150, 48)),
+    ("small", (10, 10, 220, 60)),
+])
+@pytest.mark.parametrize("mode", ["light", "dark"])
+@pytest.mark.parametrize("status", ["offline", "replay"])
+@pytest.mark.parametrize("platform,room_id,kind", [("twitch", "test", "fav"), ("bilibili", "545318", "superfav")])
+def test_secondary_cards_keep_favourites_clear_of_long_text(renderer, box, mode, status, platform, room_id, kind):
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": mode}, FakeDeviceConfig())
+    image = Image.new("RGB", (270, 100), theme["bg"])
+    texts, stars = [], []
+    draw = _TextSpy(ImageDraw.Draw(image), texts)
+    plugin._load_cover_source = lambda *_args: Image.new("RGB", (160, 90), (24, 180, 240))
+    plugin._load_avatar_source = lambda *_args: Image.new("RGB", (40, 40), (240, 80, 32))
+    draw_badge = plugin._draw_icon_badge
+
+    def record_badge(image, draw, badge_box, badge_kind, **kwargs):
+        left = draw_badge(image, draw, badge_box, badge_kind, **kwargs)
+        if badge_kind in ("fav", "superfav"):
+            grow = badge_box[0] - left
+            bounds = (left, badge_box[1] - grow, badge_box[2] + grow, badge_box[3] + grow)
+            stars.append((badge_kind, bounds, image.crop(bounds)))
+        return left
+
+    plugin._draw_icon_badge = record_badge
+    card = _queue_row_card(
+        platform=platform, id=room_id, status=status, is_fav=True,
+        owner="LongStreamerNameThatMustYieldToTheFavourite", title="RoomTitleThatMustNeverCoverTheFavourite",
+    )
+    if renderer == "mini":
+        plugin._draw_snapshot_mini_card(image, draw, box, card, theme)
+    else:
+        plugin._draw_card(image, draw, box, card, theme, large=False)
+
+    (shown_kind, bounds, after_star), = stars
+    assert shown_kind == kind
+    assert _has_vivid_pixels(after_star)
+    assert ImageChops.difference(after_star, image.crop(bounds)).getbbox() is None
+    left, top, right, bottom = bounds
+    assert box[0] <= left < right <= box[0] + box[2]
+    assert box[1] <= top < bottom <= box[1] + box[3]
+    content = [(xy, text, font) for xy, text, _fill, font in texts if text and (card["owner"].startswith(text) or card["title"].startswith(text))]
+    assert content
+    for xy, text, font in content:
+        text_left, text_top, text_right, text_bottom = draw.textbbox(xy, text, font=font)
+        assert text_right <= left or text_left >= right or text_bottom <= top or text_top >= bottom
 
 
 def test_snapshot_mini_section_draws_cover_thumbnails():

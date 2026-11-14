@@ -2059,6 +2059,13 @@ class LiveRadar(BasePlugin):
                 ink=ink,
                 outline=ink,
             )
+            fav_box = None
+            if card.get("is_fav"):
+                star = 11
+                grow = round(star * (SUPERFAV_BADGE_SCALE - 1) / 2) if self._fav_icon_kind(card) == "superfav" else 0
+                star_right = x + w - pad - status_w - 3 - grow
+                star_top = pill_y + (19 - star) // 2
+                fav_box = (star_right - star, star_top, star_right, star_top + star)
             if snapshot_h:
                 text_x = x + pad
                 text_w = max(20, w - 2 * pad)
@@ -2067,14 +2074,19 @@ class LiveRadar(BasePlugin):
                 text_x = x + pad + platform_w + 7
                 text_w = max(20, w - (text_x - x) - status_w - pad - 8)
                 text_y = y + 7
+            if fav_box:
+                text_w = max(0, fav_box[0] - grow - 4 - text_x)
             owner_text = self._card_display_name(card)
             body_font = self._fit_font(draw, owner_text, text_w, 13 if snapshot_h else 14, 9, "bold")
             owner = self._fit_text(draw, owner_text, body_font, text_w)
             draw.text((text_x, text_y), owner, fill=ink, font=body_font)
             detail_y = text_y + self._line_height(body_font) + 1 + CARD_DETAIL_Y_NUDGE
             if detail_y + self._line_height(title_font) <= y + h - 3:
-                detail = self._fit_text(draw, card["title"] or self._meta_text(card), title_font, w - 2 * pad)
+                detail_w = max(0, fav_box[0] - grow - 4 - x - pad) if fav_box else w - 2 * pad
+                detail = self._fit_text(draw, card["title"] or self._meta_text(card), title_font, detail_w)
                 draw.text((x + pad, detail_y), detail, fill=muted, font=title_font)
+            if fav_box:
+                self._draw_icon_badge(image, draw, fav_box, self._fav_icon_kind(card), fill=fill, ink=ink, outline=muted)
             return
 
         pill_y = y + 10
@@ -2699,6 +2711,11 @@ class LiveRadar(BasePlugin):
         room_title = str(card.get("title") or "").strip()
         name_x = text_x + avatar_size + 6
         name_w = max(12, text_w - avatar_size - 6)
+        star = 11 if card.get("is_fav") else 0
+        grow = round(star * (SUPERFAV_BADGE_SCALE - 1) / 2) if self._fav_icon_kind(card) == "superfav" else 0
+        if star:
+            # Reserve the whole favourite, including the super-favourite's rays, before fitting text.
+            name_w = max(0, name_w - star - 2 * grow - 4)
         name_font = self._fit_font(draw, owner_text, name_w, 11, 8, "bold")
         name_h = self._line_height(name_font)
         icon_h = max(9, min(11, h - avatar_size - 8))
@@ -2708,7 +2725,7 @@ class LiveRadar(BasePlugin):
             else None
         )
         room_title_h = self._line_height(room_title_font) if room_title_font else 0
-        first_row_h = max(avatar_size, name_h)
+        first_row_h = max(avatar_size, name_h, star + 2 * grow)
         block_h = first_row_h + 3 + icon_h
         if room_title_font:
             block_h += 2 + room_title_h
@@ -2759,6 +2776,13 @@ class LiveRadar(BasePlugin):
                     fill=ink,
                     font=room_title_font,
                 )
+        if star:
+            star_right = x + w - pad - grow
+            star_top = block_y + (first_row_h - star) // 2
+            self._draw_icon_badge(
+                image, draw, (star_right - star, star_top, star_right, star_top + star),
+                self._fav_icon_kind(card), fill=fill, ink=ink, outline=muted,
+            )
 
     def _live_queue_visible_count(self, box, card_count, max_items):
         return self._live_queue_layout(box, card_count, max_items)["visible_count"]
