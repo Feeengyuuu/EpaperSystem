@@ -167,7 +167,8 @@ def test_page_renders_long_text_without_any_images(mode):
     assert len(image.getcolors(800 * 480)) > 4
 
 
-def test_bilibili_covers_fade_into_the_page_under_their_titles_with_translucent_chips():
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_bilibili_covers_fade_under_their_titles_and_ranks_stay_outside(mode, monkeypatch):
     from plugins.daily_pop import render
 
     payload = _payload()
@@ -175,19 +176,32 @@ def test_bilibili_covers_fade_into_the_page_under_their_titles_with_translucent_
         video["cover"] = f"https://i0.hdslb.com/{index}.jpg"
     red = Image.new("RGB", (320, 180), (200, 30, 30))
     images = {sources.safe_image_url(video["cover"]): red for video in payload["bilibili"]["data"]["videos"]}
-    image = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, images)
+    covers, ranks = [], []
+    original_cover, original_rank = render._paste_fade, render._rank
+
+    def cover(canvas, picture, box, **kwargs):
+        covers.append(box)
+        return original_cover(canvas, picture, box, **kwargs)
+
+    def rank(canvas, xy, number):
+        ranks.append((number, canvas.draw.textbbox(xy, str(number), font=canvas.font(12, True), anchor="mm")))
+        return original_rank(canvas, xy, number)
+
+    monkeypatch.setattr(render, "_paste_fade", cover)
+    monkeypatch.setattr(render, "_rank", rank)
+    image = render_page((800, 480), payload, {"_inkypi_theme": {"mode": mode}}, NOW, images)
 
     left, top, right, _bottom = render.CARDS["bilibili"]
-    cover_top = top + render.BAR + 24 + 2
+    cover_top = top + render.BAR + 24 + 18
     middle = (left + right) // 2
-    fade = cover_top + round(render.BILI_LEAD_HEIGHT * render.BILI_LEAD_FADE)
+    fade = cover_top + round((render.BILI_LEAD_HEIGHT - 16) * render.BILI_LEAD_FADE)
     # Solid cover above the fade, then easing to the page by the cover's foot, under the title.
     assert image.getpixel((middle, fade - 30)) == (200, 30, 30)
-    foot = image.getpixel((right - 12, cover_top + render.BILI_LEAD_HEIGHT - 2))
-    assert foot[1] > 200 and foot[2] > 200
-    # The rank chip lets the cover show through: neither the solid brand blue nor the cover.
-    chip = image.getpixel((left + 6 + 6 + 3, cover_top + 6 + 9))
-    assert chip not in (render.BRANDS["bilibili"], (200, 30, 30)) and chip[0] > 30
+    foot = image.getpixel((right - 12, covers[0][3] - 2))
+    assert (foot[1] > 200 and foot[2] > 200) if mode == "day" else max(foot) < 10
+    assert [number for number, _box in ranks] == [1, 2, 3, 4]
+    for _number, (x0, y0, x1, y1) in ranks:
+        assert all(x1 <= a or x0 >= c or y1 <= b or y0 >= d for a, b, c, d in covers)
 
 
 def test_wiki_globe_is_a_lit_sphere_with_a_glow():
@@ -228,6 +242,31 @@ def test_the_header_names_each_source_by_its_logo_and_a_card_without_a_note_sets
     assert not {"B站", "新番", "维基", "地球", "棋题"} & set(texts)
     puzzle = next(entry for entry in drawn if entry[0] == "每日棋题")
     assert puzzle[2] == "rm" and puzzle[1] == render.CARDS["puzzle"][2] - 10
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_itunes_fallback_names_the_actual_source_in_header_and_song_card(monkeypatch, mode):
+    from plugins.daily_pop import render
+
+    payload = _payload()
+    payload["songs"]["data"]["chart"] = "itunes"
+    requested, texts = [], []
+    original_logo, original_text = render._logo, render.PageCanvas.text
+
+    def logo(name, *args):
+        requested.append(name)
+        return original_logo(name, *args)
+
+    monkeypatch.setattr(render, "_logo", logo)
+    monkeypatch.setattr(render.PageCanvas, "text", lambda self, xy, text, *a, **k: (
+        texts.append(str(text)), original_text(self, xy, text, *a, **k))[1])
+    render_page((800, 480), payload, {"themeMode": mode}, NOW, {})
+    assert requested.count("itunes") == 2 and "apple_music" not in requested
+    assert "美国 · 热销榜" in texts and "iTunes 热歌" not in texts
+    monkeypatch.setattr(render, "_logo", lambda name, *a: None if name == "itunes" else original_logo(name, *a))
+    texts.clear()
+    render_page((800, 480), payload, {"themeMode": mode}, NOW, {})
+    assert {"iTunes", "iTunes 热歌", "美国 · 热销榜"} <= set(texts)
 
 
 SUBJECT = {"id": 624923, "eps": 12, "total_episodes": 12, "rating": {"rank": 812, "score": 6.4},
@@ -304,7 +343,7 @@ def test_a_show_wears_its_episodes_genre_and_top_rank(mode, monkeypatch):
                                   "2": {"episodes": 0, "genre": "很长很长的类型名字", "rank": 5310, "aired": [[3, "2026-10-19"]]}}
     render_page((800, 480), payload, {"_inkypi_theme": {"mode": mode}}, datetime(2026, 11, 2, 7, 0, tzinfo=sources.PACIFIC), {})
 
-    assert {"5/12话", "#812", "87在追 · 奇幻", "第3话", "2107在追"} <= set(drawn)
+    assert {"5/12话", "#812 · 87在追", "第3话", "2107在追"} <= set(drawn)
     # Rank 5310 is not shown, nor a genre that does not fit beside the count.
     assert "#5310" not in drawn and not any("很长" in text for text in drawn)
 

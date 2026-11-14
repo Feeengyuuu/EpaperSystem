@@ -208,6 +208,37 @@ def test_dense_slip_preserves_distance_age_and_sale_state_without_overlapping(mo
     assert 784 - 6 <= facts[-1][2] <= 784
 
 
+@pytest.mark.parametrize("mode", ["day", "night"])
+@pytest.mark.parametrize("venue, city", [("The Ritz", "San Jose"), ("The Castro", "San Francisco")])
+def test_venue_wordmark_replaces_only_the_name_and_keeps_city_distance_and_important_facts(mode, venue, city):
+    from tests.test_ticketmaster_events import _canonical_theme
+
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    colors = plugin._palette({"_inkypi_theme": _canonical_theme(mode)})
+    image = Image.new("RGB", (800, 480), colors["paper"])
+    draw = ImageDraw.Draw(image)
+    calls = []
+    original_text = draw.text
+
+    def record_text(position, text, **kwargs):
+        calls.append((text, draw.textbbox(position, text, font=kwargs["font"])))
+        original_text(position, text, **kwargs)
+
+    draw.text = record_text
+    show = event("Music", "Rock", title="Live Show", local_time="20:00:00", venue_name=venue, city=city,
+                 distance="123.4 mi", status="rescheduled", price="$38-250", extra={"age": "21+"})
+    plugin._draw_slip(image, draw, show, (332, 92, 784, 138), "", colors, NOW)
+
+    labels = [text for text, _box in calls]
+    assert f"{city} · 123.4 mi" in labels
+    assert not any(venue in text for text in labels)
+    assert "改期" in labels
+    place_box = next(box for text, box in calls if text.endswith("123.4 mi"))
+    fact_boxes = [box for text, box in calls if text in {"改期", "21+", "$38"}]
+    assert all(place_box[2] + 8 <= box[0] for box in fact_boxes)
+    assert all(332 <= box[0] <= box[2] <= 784 and 92 <= box[1] <= box[3] <= 138 for _text, box in calls)
+
+
 @pytest.mark.parametrize("marker", ["(SOLD OUT)", "[ sold out ]"])
 def test_explicit_sold_out_title_wins_over_conflicting_onsale_zero_price_metadata(marker):
     plugin = TicketmasterEvents({"id": "ticketmaster_events"})

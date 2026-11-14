@@ -71,6 +71,10 @@ STRIP_H, STRIP_GAP = 66, 2
 STRIP_DOODLES = ASSETS / "doodles" / "aviation.png"
 STRIP_DOODLE_STRENGTH = 0.18
 STRIP_LOGO_HEIGHT = 14
+# Compact emblems need more height than the airlines' wide wordmarks. Keep their official
+# colours (including the UPS shield's brown fill) in both themes.
+AIRLINE_EMBLEMS = {"CKK", "UPS"}
+STRIP_EMBLEM_HEIGHT = 18
 STRIP_ROUTE_MARK = 12
 STRIP_PROGRESS = {"departure": 0.18, "arrival": 0.86, "overflight": 0.5}
 PHASE_CODES = {"arrival": "ARR", "departure": "DEP", "ground": "GND", "overflight": "OVR"}
@@ -1001,9 +1005,11 @@ def _strips(plugin, image, snapshot, theme, now):
         callsign = str(plane.get("callsign") or plane.get("hex") or "未知").strip()
         call_font = _airport_font(plugin, 12, text=callsign)
         # Line 1: the airline's wordmark and the callsign; the phase as a chip at the right.
-        logo = airline_logo(callsign[:3], 54, STRIP_LOGO_HEIGHT)
+        emblem = callsign[:3].upper() in AIRLINE_EMBLEMS
+        logo = airline_logo(callsign[:3], 54, STRIP_EMBLEM_HEIGHT if emblem else STRIP_LOGO_HEIGHT)
         if logo is not None:
-            logo = on_panel(logo, theme["panel2"], theme)
+            if not emblem:
+                logo = on_panel(logo, theme["panel2"], theme)
             image.paste(logo, (sx0 + 8, round(sy0 + 10 - logo.height / 2)), logo)
             call_x = sx0 + 12 + max(logo.width, 36)
         else:

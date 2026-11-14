@@ -69,7 +69,7 @@
     "hitokoto": {
       "source": "https://avatars.githubusercontent.com/u/61328368?v=4",
       "page": "https://github.com/hitokoto-osc",
-      "licence": "Hitokoto's (\u4e00\u8a00) logo, the avatar of its open-source organisation, shown to name the source",
+      "licence": "Hitokoto's (一言) logo, the avatar of its open-source organisation, shown to name the source",
       "source_sha256": "94b1d07cebd2f9cce896c629892d93cff05647bf2e13ca02457a31e914df9351",
       "processing": "the white ground cleared",
       "size": [
@@ -114,7 +114,7 @@
     "sspai": {
       "source": "https://cdn-static.sspai.com/favicon/sspai.ico",
       "page": "https://sspai.com/",
-      "licence": "\u5c11\u6570\u6d3e's site icon (its \u03c0 mark), shown to name the source",
+      "licence": "少数派's site icon (its π mark), shown to name the source",
       "source_sha256": "62995e6583087fc0422a38843aeea6c982af3e1b473d3b8aae26e7c13921ea50",
       "size": [
         49,
@@ -154,6 +154,18 @@
         64
       ],
       "sha256": "776dbcafd10d280f54a6e0c50aa1e1bb988341afab2c147ffaeb452f1f3e0f41"
+    },
+    "xkcd": {
+      "source": "https://xkcd.com/s/0b7742.png",
+      "page": "https://xkcd.com/",
+      "licence": "The brand's official logo (trademark), used to identify its source",
+      "source_sha256": "770ec8ae6c2d8e645cee1727f07fb3c27e575597f15d71b6c67aeab82aec31b1",
+      "processing": "alpha trim and proportional scaling only",
+      "size": [
+        185,
+        83
+      ],
+      "sha256": "6754da7a5388bba96a7e895897cd9f780db855ea532cd647ffa5cf1361851df7"
     }
   }
 }

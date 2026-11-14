@@ -631,7 +631,14 @@ def _trends(canvas, payload, images):
         source, headline = item.get("source") or "", item.get("news") or ""
         line_x = text_x
         if source:
-            line_x += canvas.text((line_x, y + 20), canvas.fit(source, 9, 72), 9, "trends", anchor="lm") + 4
+            # Exact outlet names only: a truncated or unfamiliar name remains text.
+            outlet = {"cnn": "cnn", "espn": "espn", "goal": "goal", "goal.com": "goal"}.get(source.strip().casefold())
+            mark = load_source_logo(ASSETS / "logos" / f"{outlet}.png", 11, canvas.color("ink")) if outlet else None
+            if mark is not None:
+                canvas.image.paste(mark, (round(line_x), round(y + 20 - mark.height / 2)), mark)
+                line_x += mark.width + 4
+            else:
+                line_x += canvas.text((line_x, y + 20), canvas.fit(source, 9, 72), 9, "trends", anchor="lm") + 4
         if headline:
             canvas.text((line_x, y + 20), headline, 10, "muted", anchor="lm", bold=False, width=column - line_x)
     if wiki:

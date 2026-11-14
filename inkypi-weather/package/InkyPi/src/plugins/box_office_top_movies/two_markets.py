@@ -431,9 +431,6 @@ def _draw_hero(page, left, right, market, movie, runner_up=None):
     colors = page.colors
     accent = colors[market]["accent"]
     page.poster(movie, left + 8, 88, 102, 146)
-    page.draw.rounded_rectangle((page.x(left + 6), page.y(86), page.x(left + 40), page.y(110)), radius=page.x(4),
-                                fill=colors["gold"])
-    page.text((left + 11, 85), "#1", 18, colors["gold_text"])
     if market == "china":
         # The score with how many rated it when that fits across the poster, else the score alone.
         badge, votes = maoyan_badge(movie), (movie.extra or {}).get("maoyan_votes")
@@ -453,7 +450,11 @@ def _draw_hero(page, left, right, market, movie, runner_up=None):
     label = "今日占比" if market == "china" else "本期票房"
     today = china_today_gross(movie) if market == "china" else None
     metric_width = 140 if today else width
-    page.text((x, 133), label, 11, colors["text"])
+    # The champion's rank belongs to the text block, leaving the complete poster and title visible.
+    page.draw.rounded_rectangle((page.x(x), page.y(130), page.x(x + 30), page.y(148)), radius=page.x(3),
+                                fill=colors["gold"])
+    page.draw.text((page.x(x + 15), page.y(139)), "#1", font=page.font(13), fill=colors["gold_text"], anchor="mm")
+    page.text((x + 36, 133), label, 11, colors["text"])
     page.text((x, 146), movie.weekend_gross or "—", 30, accent, max_width=metric_width,
               sizes=(28, 26, 24, 22, 20, 18))
     if today:

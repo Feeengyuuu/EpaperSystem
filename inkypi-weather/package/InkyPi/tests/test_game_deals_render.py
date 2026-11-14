@@ -42,6 +42,33 @@ def test_ten_realistic_and_extreme_titles_fit_day_and_night():
     assert titles["A Very Long Game Title With Many Actual Words " * 4].endswith("…")
 
 
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_steam_footer_uses_its_official_logo_and_falls_back_to_its_name(monkeypatch, mode):
+    from plugins.game_deals import render
+
+    texts, marks = [], []
+    original_text, original_mark = ImageDraw.ImageDraw.text, render._mark
+
+    def mark(name, height, *args):
+        marks.append((name, height))
+        return original_mark(name, height, *args)
+
+    monkeypatch.setattr(render, "_mark", mark)
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", lambda self, xy, text, *a, **k: (
+        texts.append((xy, str(text))), original_text(self, xy, text, *a, **k))[1])
+    snapshot = DealSnapshot(offers(), NOW, "live", "steam")
+    render_page(snapshot, {}, theme={"mode": mode}, now=NOW)
+    footer = [text for xy, text in texts if xy[1] >= 450]
+    assert ("steam_logo", 13) in marks and "美元报价" in footer
+    assert not any("Steam" in text for text in footer)
+    monkeypatch.setattr(render, "_mark", lambda name, height, *a: (
+        None if name == "steam_logo" else original_mark(name, height, *a)))
+    texts.clear()
+    render_page(snapshot, {}, theme={"mode": mode}, now=NOW)
+    footer = [text for xy, text in texts if xy[1] >= 450]
+    assert {"Steam", "美元报价"} <= set(footer)
+
+
 def test_chinese_store_name_replaces_only_the_title_line():
     english = offers()
     chinese = tuple(dict(deal, title_zh=name) for deal, name in zip(english, ["巫师2：国王刺客 加强版", "", "无尽传奇2"]))

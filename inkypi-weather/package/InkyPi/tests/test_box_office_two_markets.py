@@ -294,6 +294,38 @@ def test_champion_cards_show_extra_source_facts_without_touching_lower_rankings(
     assert sum(text == "#2" and xy[1] == 252 for xy, text, _box in drawn) == 2
 
 
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_champion_rank_is_outside_the_original_poster_and_does_not_narrow_the_title(mode, monkeypatch):
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    posters, text = [], []
+    colour = (220, 25, 180)
+    original_text = two_markets.ImageDraw.ImageDraw.text
+
+    def poster(canvas, _movie, box, _palette):
+        left, top, width, height = box
+        posters.append(box)
+        canvas.paste(Image.new("RGB", (width, height), colour), (left, top))
+
+    def record(draw, xy, value, *args, **kwargs):
+        text.append((value, draw.textbbox(xy, value, font=kwargs.get("font"), anchor=kwargs.get("anchor")), xy))
+        return original_text(draw, xy, value, *args, **kwargs)
+
+    monkeypatch.setattr(plugin, "_paste_poster", poster)
+    monkeypatch.setattr(two_markets.ImageDraw.ImageDraw, "text", record)
+    image = two_markets.render_two_markets(plugin, (800, 480), snapshot(china_movies(), "中国电影票房"),
+                                         snapshot(america_movies(), "The Numbers"), {"_inkypi_theme": {"mode": mode}})
+    champions = [box for box in posters if box[2:] == (102, 146)]
+    assert champions == [(16, 88, 102, 146), (414, 88, 102, 146)]
+    ranks = [box for value, box, _xy in text if value == "#1"]
+    assert len(ranks) == 2
+    for (left, top, width, height), rank in zip(champions, ranks):
+        assert rank[0] > left + width
+        assert image.crop((left, top, left + width, top + height)).getcolors() == [(width * height, colour)]
+    # Both primary titles still start at the original column edge and have its complete width.
+    assert next(xy[0] for value, _box, xy in text if value.startswith("生化危机")) == 128
+    assert next(xy[0] for value, _box, xy in text if value == "街头霸王") == 526
+
+
 def test_missing_or_unverified_source_values_do_not_become_new_hero_statistics():
     movie = BoxOfficeMovie(rank=1, title="Cached film", weekend_gross="$24,002,731", theaters="3458")
     assert two_markets.theater_average(movie) is None

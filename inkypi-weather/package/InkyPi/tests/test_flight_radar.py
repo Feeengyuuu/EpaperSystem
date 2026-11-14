@@ -775,6 +775,41 @@ def test_strips_show_each_route_as_its_progress_between_two_big_codes():
     assert theme["blue"] in set(image.crop((100, 4, 230, 26)).get_flattened_data())
 
 
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_cargo_airline_emblems_preserve_callsigns_routes_and_brand_colours(monkeypatch, mode):
+    from plugins.flight_radar import pro_view
+
+    plugin = _plugin()
+    theme = plugin._theme(_canonical_theme(mode))
+    snapshot = _sample_snapshot()
+    snapshot["aircraft"] = [
+        {"callsign": "CKK222", "origin": "LAX", "destination": "PVG", "distance_nm": 2,
+         "lat": 37.7, "lon": -122.3, "speed_kt": 430, "type": "B77L"},
+        {"callsign": "UPS5944", "origin": "SDF", "destination": "OAK", "distance_nm": 3,
+         "lat": 37.75, "lon": -122.2, "speed_kt": 230, "type": "B763"},
+    ]
+    labels = []
+    original = ImageDraw.ImageDraw.text
+
+    def record(self, xy, text, *args, **kwargs):
+        labels.append(str(text))
+        return original(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", record)
+    image = Image.new("RGB", (800, 480), theme["bg"])
+    pro_view._strips(plugin, image, snapshot, theme, datetime.fromisoformat(snapshot["generated_at"]))
+
+    assert {"CKK222", "UPS5944", "LAX", "PVG", "SDF", "OAK"} <= set(labels)
+    assert "CKK" not in labels and "UPS" not in labels
+    left, top = pro_view.STRIPS[0] + 14, pro_view.STRIPS[1] + 29
+    ckk = image.crop((left, top, left + 20, top + 18))
+    ups = image.crop((left, top + pro_view.STRIP_H + pro_view.STRIP_GAP,
+                      left + 20, top + pro_view.STRIP_H + pro_view.STRIP_GAP + 18))
+    assert any(r > 150 and r > 2 * g and r > 2 * b for r, g, b in ckk.get_flattened_data())
+    assert any(r > 180 and 90 < g < 230 and b < 60 for r, g, b in ups.get_flattened_data())
+    assert any(30 < r < 90 and g < 15 and b < 15 for r, g, b in ups.get_flattened_data())
+
+
 def _taf_period(start, end, change=None, wx=None, clouds=(), wspd=8, wgst=None, visib="6+", probability=None):
     return {"timeFrom": start, "timeTo": end, "fcstChange": change, "probability": probability, "wdir": 180,
             "wspd": wspd, "wgst": wgst, "visib": visib, "wxString": wx, "vertVis": None,

@@ -17,6 +17,30 @@ NOW = datetime(2026, 10, 28, 21, 30, tzinfo=sources.PACIFIC)
 TURN_START = datetime(2026, 10, 28, 17, 0, tzinfo=sources.PACIFIC)
 
 
+@pytest.mark.parametrize("mode", ["day", "night"])
+@pytest.mark.parametrize("width,row_height,rank", [(256, 35, 1), (384, 64, 12)])
+def test_rank_column_leaves_the_thumbnail_unobstructed(monkeypatch, mode, width, row_height, rank):
+    from PIL import Image, ImageChops
+    from plugins.cn_hot_search import render
+
+    canvas = render.PageCanvas(render._palette({"_inkypi_theme": {"mode": mode}}))
+    picture = Image.new("RGB", (200, 150), (47, 86, 123))
+    saved = []
+    original = render._thumb
+
+    def record(canvas, picture, box, tint):
+        result = original(canvas, picture, box, tint)
+        saved.append((box, canvas.image.crop(box)))
+        return result
+
+    monkeypatch.setattr(render, "_thumb", record)
+    render._row(canvas, (12, 20, 12 + width, 200), 40, row_height, picture=picture,
+                tint=render.BRANDS["weibo"], rank=rank, title="完整显示缩略图", move=None,
+                meta=lambda *_args: None)
+    box, before = saved[0]
+    assert ImageChops.difference(canvas.image.crop(box), before).getbbox() is None
+
+
 def test_baidu_skips_the_pinned_row_and_keeps_heat_summary_picture_and_move():
     payload = {"data": {"cards": [{"content": [
         {"isTop": True, "word": "置顶"},

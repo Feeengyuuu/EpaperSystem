@@ -92,7 +92,6 @@ CORONA_LIFT = 1.9
 ART_TOP = 24
 ART_GAP = 10
 ART_RADIUS = 5
-RANK_SIZE = 17
 # A poster's rating sits on the picture itself: white figures this size in a thin halo of this ink.
 RATING_SIZE = 13
 RATING_HALO = 2
@@ -557,13 +556,15 @@ def comic_view(picture, size):
 
 
 def _xkcd_tile(canvas, night, box, comic, picture):
-    """Today's xkcd: the tile's frame and its title in type (xkcd's logo does not ship with the
-    page), the comic in the room below, its number and title along the foot."""
+    """Today's xkcd: its official site logo, the comic, then its number and title."""
     left, top, right, bottom = box
     canvas.image.info["daily_digest_xkcd"] = {"box": list(box)}
     _card(canvas, box, "游戏")
     middle = top + BAND + 12
-    x = left + 8 + canvas.text((left + 8, middle), "xkcd", 12, anchor="lm") + 6
+    width = _paste_logo(canvas, night, "xkcd", left + 8, middle, 18)
+    if not width:
+        width = canvas.text((left + 8, middle), "xkcd", 12, anchor="lm")
+    x = left + 8 + width + 6
     canvas.text((right - 8, middle), "今日漫画", 10, "muted", anchor="rm", bold=False, width=right - 8 - x)
     room = (left + 8, top + COMIC_BODY_TOP, right - 8, bottom - 20)
     view = comic_view(picture, (room[2] - room[0], room[3] - room[1]))
@@ -649,12 +650,14 @@ def _artwork(canvas, picture, box):
     canvas.image.paste(tile, (left, top), mask)
 
 
-def _rank(canvas, x, y, rank):
-    """The item's place: a solid 影音 disc with its number, over the picture's top-left corner."""
-    canvas.draw.ellipse((x, y, x + RANK_SIZE, y + RANK_SIZE), fill=canvas.color("影音"), outline=canvas.color("paper"),
-                        width=1)
-    canvas.draw.text((x + RANK_SIZE / 2, y + RANK_SIZE / 2 + 1), str(rank), font=canvas.font(11, True),
-                     fill=(255, 255, 255), anchor="mm")
+def _ranked_caption(canvas, centre, middle, rank, title, size, width):
+    """A compact number before the title, wholly below the artwork."""
+    rank_width = canvas.width(str(rank), size) + 5
+    title_width = max(0, width - rank_width)
+    shown = canvas.fit(title, size, title_width)
+    left = centre - (rank_width + canvas.width(shown, size)) / 2
+    canvas.text((left, middle), str(rank), size, "muted", anchor="lm")
+    canvas.text((left + rank_width, middle), title, size, anchor="lm", width=title_width)
 
 
 def _rating_mark(canvas, right, bottom, rating):
@@ -775,7 +778,6 @@ def _music_panel(canvas, night, box, chart, images, zone, now=None):
         centre = (slot_left + slot_right) / 2
         cover = (centre - side / 2, art_top, centre + side / 2, art_top + side)
         _artwork(canvas, images.get(track.get("cover") or ""), cover)
-        _rank(canvas, cover[0] - 3, cover[1] - 3, index + 1)
         move = song_move(track, index + 1)
         if move:
             _move_mark(canvas, cover[2] - 2, cover[3] - 2, move)
@@ -785,7 +787,7 @@ def _music_panel(canvas, night, box, chart, images, zone, now=None):
         size = 13
         while size > 11 and canvas.width(track["title"], size) > width:
             size -= 1
-        canvas.text((centre, art_top + side + 11), track["title"], size, anchor="mm", width=width)
+        _ranked_caption(canvas, centre, art_top + side + 11, index + 1, track["title"], size, width)
         canvas.text((centre, art_top + side + 26), track["artist"], 11, "muted", anchor="mm", width=width,
                     bold=False)
         note = song_note(track, now, index + 1)
@@ -805,12 +807,11 @@ def _douban_panel(canvas, night, box, items, title, images):
         centre = (slot_left + slot_right) / 2
         poster = (centre - width / 2, art_top, centre + width / 2, art_top + height)
         _artwork(canvas, images.get(item.get("poster") or ""), poster)
-        _rank(canvas, poster[0] - 3, poster[1] - 3, index + 1)
         if item.get("rating"):
             _rating_mark(canvas, poster[2] - 2, poster[3] - 2, item["rating"])
         else:
             canvas.text((centre, poster[3] - 9), "暂无评分", 10, "muted", anchor="mm", bold=False)
-        canvas.text((centre, bottom - 7), item["title"], 12, anchor="mm", width=slot_right - slot_left - 4)
+        _ranked_caption(canvas, centre, bottom - 7, index + 1, item["title"], 12, slot_right - slot_left - 4)
 
 
 def _media(canvas, night, box, payload, images):

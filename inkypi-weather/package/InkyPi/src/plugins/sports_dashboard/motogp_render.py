@@ -15,6 +15,7 @@ from datetime import datetime
 from .common import *
 from . import motogp, motogp_riders
 from .icon_marks import iso2_flag_url
+from .scorebug_kit import _kit_inked_where_faint
 
 SportsDashboard = None
 
@@ -129,10 +130,17 @@ class MotoGPRenderMixin:
         text_x = (flag[2] + 7) if flag else x1 + 14
         start, end = motogp._day(weekend.get("start")), motogp._day(weekend.get("end"))
         dates = f"{start:%m/%d}–{end:%m/%d}" if start and end and end != start else (f"{start:%m/%d}" if start else "")
-        # The circuit and the dates, right-aligned: each its line icon then its words.
+        # Keep the dates at the right edge; a known circuit uses its own mark.
         x = x2 - 8
         for kind, text, width in (("CLOCK", dates, 80), ("VENUE", weekend.get("circuit") or "", 180)):
             if not text:
+                continue
+            logo = self._kit_venue_logo(text, (130, 18)) if kind == "VENUE" else None
+            if logo is not None:
+                # Lusail's bright mint wordmark needs the page ink on a light card.
+                logo = _kit_inked_where_faint(logo, COLORS["panel"])
+                image.paste(logo, (x - logo.width, middle - logo.height // 2), logo)
+                x -= logo.width + 12
                 continue
             text, font = self._motogp_type(draw, text, width, 9)
             text_w = self._text_width(draw, text, font)

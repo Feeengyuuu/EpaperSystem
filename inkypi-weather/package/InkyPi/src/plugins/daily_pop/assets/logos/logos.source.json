@@ -1,0 +1,16 @@
+{
+  "logos": {
+    "itunes": {
+      "source": "https://www.apple.com/v/itunes/home/l/images/overview/itunes_logo__dwjkvx332d0m_large_2x.png",
+      "page": "https://www.apple.com/itunes/",
+      "licence": "The brand's official logo (trademark), used to identify its source",
+      "source_sha256": "2e6a46e17b8cd554a78b46bd3fa510ef96179693a408c9f869dff6b5edef3450",
+      "processing": "alpha trim and proportional scaling only",
+      "size": [
+        95,
+        96
+      ],
+      "sha256": "cfaeae46dd6874504402a3aaa6e5f0358acdd9b2453e841eecfea7f023a7e301"
+    }
+  }
+}

@@ -67,12 +67,21 @@ def _reads(monkeypatch):
 
 @pytest.fixture
 def drawn(monkeypatch):
-    """Every text a page draws while the test runs, in order."""
+    """The page's labels, including an xkcd source label drawn with its official logo."""
     texts = []
     original = render.PageCanvas.text
     monkeypatch.setattr(render.PageCanvas, "text",
                         lambda self, xy, text, *args, **kwargs: texts.append(str(text)) or original(
                             self, xy, text, *args, **kwargs))
+    original_logo = render._paste_logo
+
+    def mark(canvas, night, name, *args, **kwargs):
+        width = original_logo(canvas, night, name, *args, **kwargs)
+        if name == "xkcd" and width:
+            texts.append(name)
+        return width
+
+    monkeypatch.setattr(render, "_paste_logo", mark)
     return texts
 
 
@@ -270,3 +279,16 @@ def test_xkcd_is_scaled_whole_into_the_tile_and_a_wide_strip_shows_its_first_pan
     drawn.clear()
     _page(COMIC, 13)
     assert "Wordle 昨日" in drawn and "xkcd" not in drawn and page.size == (800, 480)
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_xkcd_official_logo_has_a_text_fallback_without_changing_the_comic(monkeypatch, mode):
+    normal = _page(COMIC, 13, mode, picture=_picture())
+    original = render.logo
+    monkeypatch.setattr(render, "logo", lambda name, *a: None if name == "xkcd" else original(name, *a))
+    fallback = _page(COMIC, 13, mode, picture=_picture())
+    x0, y0, x1, y1 = normal.info["daily_digest_xkcd"]["box"]
+    assert normal.crop((x0, y0, x1, y0 + render.COMIC_BODY_TOP)).tobytes() != fallback.crop(
+        (x0, y0, x1, y0 + render.COMIC_BODY_TOP)).tobytes()
+    assert normal.crop((x0, y0 + render.COMIC_BODY_TOP, x1, y1)).tobytes() == fallback.crop(
+        (x0, y0 + render.COMIC_BODY_TOP, x1, y1)).tobytes()

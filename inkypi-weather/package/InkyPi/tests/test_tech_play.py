@@ -184,6 +184,36 @@ def test_page_renders_without_any_images(mode):
     assert image.size == (800, 480)
 
 
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_paper_and_speedrun_ranks_leave_their_images_unobstructed(monkeypatch, mode):
+    from PIL import Image, ImageChops
+    from plugins.tech_play import render
+
+    payload = _payload()
+    payload["arxiv"]["data"]["papers"][0]["figure"] = "paper.png"
+    payload["speedrun"]["data"]["top"][0]["cover"] = "cover.png"
+    images = {key: Image.new("RGB", (160, 120), (47, 86, 123)) for key in ("paper.png", "cover.png")}
+    saved = []
+    original_figure, original_corners = render._paper_figure, render._round_corners
+
+    def figure(canvas, art, mark, box):
+        original_figure(canvas, art, mark, box)
+        saved.append((box, canvas.image.crop(box)))
+
+    def corners(canvas, box, radius):
+        original_corners(canvas, box, radius)
+        # The speedrun cover has its own 36 x 48 slot.
+        if box[2] - box[0] == 36 and box[3] - box[1] == 48:
+            saved.append((box, canvas.image.crop(box)))
+
+    monkeypatch.setattr(render, "_paper_figure", figure)
+    monkeypatch.setattr(render, "_round_corners", corners)
+    page = render.render_page((800, 480), payload, {"_inkypi_theme": {"mode": mode}}, NOW, images)
+    assert len(saved) == 2
+    for box, original_pixels in saved:
+        assert ImageChops.difference(page.crop(box), original_pixels).getbbox() is None
+
+
 def test_platforms_group_into_families_in_a_fixed_order():
     from plugins.tech_play.render import platform_families
 

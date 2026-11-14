@@ -385,9 +385,18 @@ def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
     shark, letters = _mark("cheapshark_mark", CHEAPSHARK_MARK_HEIGHT), _mark("cheapshark_letters", CHEAPSHARK_LETTERS_HEIGHT, ink)
     if shark is not None and letters is not None:
         source_x = _paste_mark(image, letters, _paste_mark(image, shark, 14, 463) + 5, 463) + 7
-        draw.text((source_x, 463), "‧ Steam 美元报价", font=_font(15, True), fill=ink, anchor="lm")
     else:
-        draw.text((14, 455), "CheapShark ‧ Steam 美元报价", font=_font(15, True), fill=ink, anchor="lt")
+        draw.text((14, 463), "CheapShark", font=_font(15, True), fill=ink, anchor="lm")
+        source_x = 14 + _font(15, True).getlength("CheapShark") + 7
+    draw.text((source_x, 463), "‧", font=_font(15, True), fill=ink, anchor="lm")
+    source_x += _font(15, True).getlength("‧") + 6
+    steam = _mark("steam_logo", 13, ink)
+    if steam is not None:
+        source_x = _paste_mark(image, steam, source_x, 463) + 6
+    else:
+        draw.text((source_x, 463), "Steam", font=_font(15, True), fill=ink, anchor="lm")
+        source_x += _font(15, True).getlength("Steam") + 6
+    draw.text((source_x, 463), "美元报价", font=_font(15, True), fill=ink, anchor="lm")
     stamp = snapshot.fetched_at.astimezone(LOCAL_ZONE).strftime("%m/%d %H:%M") if snapshot.fetched_at else "暂无数据"
     if snapshot.state == "stale":
         status, status_color = f"缓存已过期 ‧ {stamp}", (226, 79, 59) if night else (166, 35, 24)

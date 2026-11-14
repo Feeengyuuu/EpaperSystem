@@ -61,7 +61,12 @@ class GolfRenderMixin:
         name = str(event.get("name") or event.get("name_en") or "PGA TOUR").strip()
         name, name_font = self._fit_text(draw, name, px1 - text_x1 - 10, 16, bold=True, min_size=10)
         self._draw_text_in_box(draw, (text_x1, y1 + 3, px1 - 8, y1 + 24), name, name_font, COLORS["text"])
-        sub = "  ·  ".join(part for part in (str(event.get("venue") or "").strip(), SportsDashboard._pga_dates_label(event)) if part)
+        venue = str(event.get("venue") or "").strip()
+        dates = SportsDashboard._pga_dates_label(event)
+        if self._draw_kit_venue_line(image, draw, (text_x1, y1 + 23, x2 - 10, y1 + 39), venue,
+                                      after=dates, align="left", logo_height=16):
+            return
+        sub = "  ·  ".join(part for part in (venue, dates) if part)
         if sub:
             sub, sub_font = self._fit_text_ellipsis(draw, sub, x2 - text_x1 - 14, 9, bold=False, min_size=8)
             self._draw_text_in_box(draw, (text_x1, y1 + 25, x2 - 10, y1 + 37), sub, sub_font, COLORS["text"])

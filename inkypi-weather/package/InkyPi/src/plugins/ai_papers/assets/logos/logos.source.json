@@ -32,6 +32,32 @@
         64
       ],
       "sha256": "c1f124a1165243582add843b0d3e710d77ee999aeb7555126f8b518ca47e4139"
+    },
+    "github_mark": {
+      "source": "https://brand.github.com/GitHub_Logos.zip",
+      "page": "https://brand.github.com/foundations/logo",
+      "licence": "The brand's official logo (trademark), used to identify its source",
+      "source_sha256": "693d7abe6f899646cc2e96856723b45e95f71885a54910b2749f6decdf7e1ee1",
+      "processing": "Official SVG rasterized with PyMuPDF; alpha trim and proportional scaling only",
+      "size": [
+        99,
+        96
+      ],
+      "sha256": "c41594e68cbc934e63a9c99fd47d05bc253a74b21b6b3503d6c36020e04d8219",
+      "archive_member": "GitHub_Invertocat_Black.svg"
+    },
+    "github": {
+      "source": "https://brand.github.com/GitHub_Logos.zip",
+      "page": "https://brand.github.com/foundations/logo",
+      "licence": "The brand's official logo (trademark), used to identify its source",
+      "source_sha256": "802172fd58f2956be454f45e07c351d5c3d6830554632796b8f16fcecc7d273b",
+      "processing": "Official SVG rasterized with PyMuPDF; alpha trim and proportional scaling only",
+      "size": [
+        419,
+        96
+      ],
+      "sha256": "c7efa6e164e2b8951a9a46fb247fd4acb4918d6fea1cb3e8d4ce53b2e47526e4",
+      "archive_member": "GitHub_Lockup_Black.svg"
     }
   }
 }

@@ -210,6 +210,39 @@ def test_the_page_draws_four_cards_in_their_own_colours(mode):
     assert palette["gold"] in ring
 
 
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_news_outlets_use_exact_official_marks_and_unknown_names_stay_text(monkeypatch, mode):
+    payload = _payload()
+    names = ["CNN", "ESPN", "Goal.com", "The New York...", "CNN Sports"]
+    payload["trends"]["data"]["items"] = [
+        {"title": f"Search {index}", "source": name, "news": "Latest report", "traffic": 1000}
+        for index, name in enumerate(names)]
+    canvas = render.PageCanvas(render._palette({"themeMode": mode}))
+    marks, texts = [], []
+    original_logo, original_text = render.load_source_logo, canvas.text
+
+    def logo(path, *args, **kwargs):
+        if path.stem in {"cnn", "espn", "goal"}:
+            art = original_logo(path, *args, **kwargs)
+            assert art is not None and art.height == 11
+            marks.append(path.stem)
+            return art
+        return original_logo(path, *args, **kwargs)
+
+    monkeypatch.setattr(render, "load_source_logo", logo)
+    monkeypatch.setattr(canvas, "text", lambda xy, text, *a, **k: (
+        texts.append(str(text)), original_text(xy, text, *a, **k))[1])
+    render._trends(canvas, payload, {})
+    assert marks == ["cnn", "espn", "goal"]
+    assert not {"CNN", "ESPN", "Goal.com"} & set(texts)
+    assert all(canvas.fit(name, 9, 72) in texts for name in names[3:])
+    # A missing local file still names the outlet and keeps the headline.
+    monkeypatch.setattr(render, "load_source_logo", lambda path, *a, **k: None)
+    texts.clear()
+    render._trends(canvas, payload, {})
+    assert set(names[:3]) <= set(texts) and "Latest report" in texts
+
+
 def test_the_grid_table_fills_its_column_to_the_card_foot(monkeypatch):
     canvas = render.PageCanvas(render._palette({}))
     labels = []

@@ -760,20 +760,28 @@ def test_the_page_draws_each_items_own_mark(tmp_path, monkeypatch, mode):
             assert top < y + size and bottom > y, key
 
 
-def test_a_storys_rank_rides_its_icons_corner_and_a_boards_rank_stands_before_its_icon(tmp_path, monkeypatch):
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_story_and_board_ranks_stand_before_the_complete_icons(tmp_path, monkeypatch, mode):
     plugin = _plugin(tmp_path)
     marks, texts = _tracked(plugin, monkeypatch)
 
-    page = plugin._render_page((800, 480), _payload(plugin), {"_inkypi_theme": _theme("night")}, NOW, _boards(), {})
+    icons = {"site:anthropic.com": Image.new("RGBA", (48, 48), MAGENTA),
+             "site:postalpro.usps.com": Image.new("RGBA", (48, 48), TEAL)}
+    page = plugin._render_page((800, 480), _payload(plugin), {"_inkypi_theme": _theme(mode)}, NOW, _boards(), {},
+                               None, icons)
 
-    orange = plugin._palette({"_inkypi_theme": _theme("night")})["orange"]
     module = tech_pulse_module
     for (key, (x, y), size), rank in zip(marks[:4], "1234"):
-        # The disc overhangs the icon's upper left corner; its figure is drawn on it.
-        assert page.getpixel((x - module.RANK_OVERHANG + 2, y + 3)) == orange, key
-        left, top, right, bottom = next(box for value, box in texts if value == rank and box[0] < x + 12)
-        assert x - module.RANK_OVERHANG <= left and right <= x - module.RANK_OVERHANG + module.STORY_RANK_DISC
-        assert y - module.RANK_OVERHANG <= top and bottom <= y - module.RANK_OVERHANG + module.STORY_RANK_DISC
+        left, top, right, bottom = next(box for value, box in texts if value == rank and box[0] < x)
+        assert x - module.STORY_RANK_W <= left < right <= x - 4
+        assert y <= top < bottom <= y + size
+        if key in icons:
+            expected = item_icons.on_page(icons[key], size, plugin._palette({"_inkypi_theme": _theme(mode)})["panel"])
+            # Every opaque icon pixel survives, including the upper-left area formerly covered by the rank.
+            for iy in range(size):
+                for ix in range(size):
+                    if expected.getpixel((ix, iy))[3] == 255:
+                        assert page.getpixel((x + ix, y + iy)) == expected.getpixel((ix, iy))[:3]
     for key, (x, y), size in marks[6:]:
         rank = next(box for value, box in texts if value in "123" and box[2] <= x and x - box[2] < 14
                     and box[1] < y + size and box[3] > y)

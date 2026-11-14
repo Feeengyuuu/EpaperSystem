@@ -78,9 +78,10 @@ BOARD_STYLES = {
     "game": ("游", (124, 58, 237), (167, 139, 250)),
     "car": ("车", (217, 119, 6), (251, 176, 59)),
 }
-# A card row: its picture fills the row's height at 3:2, the rank on its corner; the title on the
+# A card row: a narrow rank column, then the full thumbnail; the title on the
 # first line, the heat, labels and the platform's own words on the second.
 THUMB_RATIO = 1.3
+RANK_WIDTH = 16
 MOVE_ROOM = 28
 # A row's title takes the largest of these sizes it fits whole at (the narrow cards start a size
 # down), clipped only at the smallest.
@@ -187,8 +188,8 @@ def _fade_right(canvas, picture, box, *, fade_from, radius=6):
     canvas.image.paste(tile, (x0, y0), ImageChops.multiply(mask, ramp.resize(size)))
 
 
-def _thumb(canvas, picture, box, tint, rank):
-    """The entry's picture in a rounded box, or its platform's colour as a quiet tile with the rank."""
+def _thumb(canvas, picture, box, tint):
+    """The entry's picture in a rounded box, or a quiet tile in its platform's colour."""
     x0, y0, x1, y1 = [int(value) for value in box]
     size = (max(1, x1 - x0), max(1, y1 - y0))
     mask = Image.new("L", size, 0)
@@ -200,7 +201,6 @@ def _thumb(canvas, picture, box, tint, rank):
     paper = canvas.color("paper")
     quiet = tuple(round(paper[index] * 0.8 + tint[index] * 0.2) for index in range(3))
     canvas.image.paste(quiet, (x0, y0, x1, y1), mask)
-    canvas.text(((x0 + x1) / 2, (y0 + y1) / 2), str(rank), 16, tint, anchor="mm")
     return False
 
 
@@ -479,19 +479,17 @@ def _frame(canvas, box, tint, title_drawer, pattern):
 
 
 def _row(canvas, box, y0, row_h, *, picture, tint, rank, title, move, meta):
-    """One entry: picture with its rank, the title (its move at the line's end) and the meta line
+    """One entry: rank beside the picture, title (its move at the line's end) and the meta line
     ``meta`` draws from a left x and a middle y."""
     left, _top, right, _bottom = box
     thumb_h = int(row_h - 5)
-    thumb = (left + 8, int(y0 + 2), left + 8 + round(thumb_h * THUMB_RATIO), int(y0 + 2) + thumb_h)
-    has_picture = _thumb(canvas, picture, thumb, tint, rank)
-    if has_picture:
-        chip = (thumb[0], thumb[1], thumb[0] + 15, thumb[1] + 15)
-        canvas.draw.rounded_rectangle(chip, radius=4, fill=tint if rank <= 3 else canvas.color("shade"),
-                                      corners=(True, False, True, False))
-        canvas.text(((chip[0] + chip[2]) / 2, (chip[1] + chip[3]) / 2), str(rank), 10,
-                    (255, 255, 255), anchor="mm")
-    text_x = thumb[2] + 8
+    thumb_left = left + 6 + RANK_WIDTH
+    thumb = (thumb_left, int(y0 + 2), thumb_left + round(thumb_h * THUMB_RATIO), int(y0 + 2) + thumb_h)
+    _thumb(canvas, picture, thumb, tint)
+    rank_ink = tuple(round(channel * 0.7 + 255 * 0.3) for channel in tint) if _night(canvas) else tint
+    canvas.text((left + 6 + (RANK_WIDTH - 3) / 2, y0 + row_h / 2), str(rank), 12 if rank < 10 else 11,
+                rank_ink if rank <= 3 else "muted", anchor="mm", width=RANK_WIDTH - 3)
+    text_x = thumb[2] + 6
     # The move's room is kept only when there is a move to show.
     room = right - 8 - (MOVE_ROOM if _has_move(move) else 0) - text_x
     sizes = TITLE_SIZES if right - left > 300 else TITLE_SIZES[1:]

@@ -80,15 +80,43 @@
     "CFG": "DE",
     "THT": "TN",
     "ELY": "LY",
-    "AIC": "AI"
+    "AIC": "AI",
+    "CKK": "CK",
+    "UPS": "5X"
   },
   "missing": [
     "QXE",
     "RPA",
-    "UPS",
     "ABX",
     "ATN",
     "JIA",
     "PDT"
-  ]
+  ],
+  "official_sources": {
+    "CKK": {
+      "site": "https://www.ckair.com/",
+      "source": "https://www.ckair.com/files/1673936647635.pdf",
+      "identity": "https://www.iata.org/en/about/members/airline-list/china-cargo-airlines-/297/",
+      "fetched_at": "2026-11-13",
+      "processing": "First-page embedded JPEG (xref 21), resized to 64 px tall. Original white ground retained for the red/navy emblem on night panels.",
+      "source_sha256": "b840f0715339aa1b971841e276d8424e8f9c29b0e71dbe24ccb90fcc957e7d75",
+      "size": [
+        66,
+        64
+      ],
+      "sha256": "8a51bc375061e0c8cbcf890e3c7646b67b8a80d57ba1cd7d468bcdd68d59a065"
+    },
+    "UPS": {
+      "site": "https://investors.ups.com/",
+      "source": "https://investors.ups.com/_assets/_4ff917ab37be9b214af733fc70205587/ups/files/theme/site-files/20250710/content/dam/upsstories/images/logo/ups-logo-wo-text.svg",
+      "fetched_at": "2026-11-13",
+      "processing": "Public investor-site header SVG fill declarations inlined for the rasterizer, rasterized with alpha and resized to 64 px tall; original brown/gold colours and register mark retained.",
+      "source_sha256": "a416370f6f98339e7edf9fe2c70a45bf9cfba93c0520921db47d15c27934ba88",
+      "size": [
+        54,
+        64
+      ],
+      "sha256": "3839f5a7be8ba70d9d5619f08234b4ce445778ec6ff1eef87724f40c7094cc84"
+    }
+  }
 }

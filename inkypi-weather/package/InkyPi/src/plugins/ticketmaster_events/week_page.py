@@ -25,7 +25,7 @@ from utils.doodle_backdrop import paint_doodles
 from utils.local_wordmark import load_source_logo
 
 from .team_logos import read_title, team_logo
-from .venue_logos import paste_venue_logo
+from .venue_logos import paste_venue_logo, venue_is_wordmark
 from utils.theme_utils import contrast_ratio, relative_luminance
 
 WEEKDAYS = "一二三四五六日"
@@ -149,6 +149,7 @@ SLIP_TOP, SLIP_H = 27, 46
 TIME_COLUMN, KIND_BAR, THUMB = 53, 5, (72, 41)
 # A venue's official logo leads its place: within these boxes on a list row and in the lead card.
 SLIP_VENUE_LOGO, HERO_VENUE_LOGO = (34, 13), (44, 16)
+SLIP_VENUE_WORDMARK, HERO_VENUE_WORDMARK = (108, 14), (132, 18)
 # A team's (or show's) logo leads its name in a title: as tall as the type plus TEAM_LOGO_RISE, at
 # most TEAM_LOGO_WIDE times as wide, TEAM_LOGO_GAP before the name. A list row's title takes the
 # first of SLIP_TITLE_SIZES that holds it, the teams by the first of NAME_FORMS that fits: as the
@@ -499,12 +500,14 @@ class WeekPageMixin:
             draw.text((px1 - distance_w, y), distance, fill=colors["ink"], font=meta_font)
         self._draw_pin(draw, (px0 + 5, y + 8), colors["accent"], colors["paper"])
         place_x = px0 + 14
-        logo_w = paste_venue_logo(image, event.venue_name, place_x, y + 8, HERO_VENUE_LOGO, colors["ink"], colors["paper"])
+        wordmark = venue_is_wordmark(event.venue_name)
+        logo_box = HERO_VENUE_WORDMARK if wordmark else HERO_VENUE_LOGO
+        logo_w = paste_venue_logo(image, event.venue_name, place_x, y + 8, logo_box, colors["ink"], colors["paper"])
         place_x += logo_w + 5 if logo_w else 0
         # The city goes before the venue's name is cut ('Chase Center', not 'Chase Center · San Fran...').
         room = px1 - place_x - (distance_w + 10 if distance else 0)
-        place = self._place_line(event)
-        if draw.textlength(place, font=meta_font) > room:
+        place = (event.city or "") if logo_w and wordmark else self._place_line(event)
+        if not (logo_w and wordmark) and draw.textlength(place, font=meta_font) > room:
             place = event.venue_name or place
         draw.text((place_x, y), self._fit_text(draw, place, meta_font, room), fill=colors["ink"], font=meta_font)
         y += 22
@@ -906,6 +909,11 @@ class WeekPageMixin:
         # Reserve the complete distance and important facts before fitting the venue.
         distance = f" · {event.distance}" if event.distance else ""
         distance_w = draw.textlength(distance, font=meta_font)
+        wordmark = venue_is_wordmark(event.venue_name)
+        logo_box = SLIP_VENUE_WORDMARK if wordmark else SLIP_VENUE_LOGO
+        # A wordmark replaces the venue name. Keep its city and distance ahead of optional chips.
+        place_min = (logo_box[0] + 4 + draw.textlength(event.city or "", font=meta_font)
+                     if wordmark else SLIP_PLACE_MIN)
         facts = self._slip_facts(event, now)
         price = "" if SOLD_OUT_NOTICE.search(event.title or "") else price_label(event.price, lowest=True)
         if price:
@@ -915,7 +923,7 @@ class WeekPageMixin:
         shown, facts_w = [], 0
         for text, alarm in facts:
             fact_w = draw.textlength(text, font=meta_font) + 8
-            if place_x - text_x + SLIP_PLACE_MIN + distance_w + SLIP_FACT_GAP + facts_w + fact_w > right - text_x:
+            if place_x - text_x + place_min + distance_w + SLIP_FACT_GAP + facts_w + fact_w > right - text_x:
                 break
             shown.append((text, alarm, fact_w))
             facts_w += fact_w + SLIP_CHIP_GAP
@@ -926,11 +934,11 @@ class WeekPageMixin:
             self._draw_chip(draw, (x, y - 1, x + fact_w, y + 13), text, meta_font, colors,
                             colors["accent"] if alarm else None, drop=1)
             x += fact_w + SLIP_CHIP_GAP
-        logo_w = paste_venue_logo(image, event.venue_name, place_x, y + 7, SLIP_VENUE_LOGO, colors["ink"], colors["paper"])
+        logo_w = paste_venue_logo(image, event.venue_name, place_x, y + 7, logo_box, colors["ink"], colors["paper"])
         place_x += logo_w + 4 if logo_w else 0
         room = (facts_left - SLIP_FACT_GAP if shown else right) - place_x - distance_w
-        place = self._place_line(event)
-        if draw.textlength(place, font=meta_font) > room:
+        place = (event.city or "") if logo_w and wordmark else self._place_line(event)
+        if not (logo_w and wordmark) and draw.textlength(place, font=meta_font) > room:
             place = event.venue_name or place
         draw.text((place_x, y), self._fit_text(draw, place, meta_font, max(room, 10)) + distance, fill=ink, font=meta_font)
 

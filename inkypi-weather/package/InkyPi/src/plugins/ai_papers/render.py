@@ -253,11 +253,9 @@ def _doodles(canvas, box, ground, offset=(0, 0)):
                   strength=DOODLE_STRENGTH[mode], grounds=[ground], radius=6, offset=offset)
 
 
-def _badge(canvas, x, y, rank, size=20):
-    """A Hugging Face yellow disc with the paper's rank."""
-    canvas.draw.ellipse((x, y, x + size, y + size), fill=HF_YELLOW, outline=(0x12, 0x1A, 0x20), width=1)
-    font = canvas.font(12 if size >= 20 else 10, True)
-    canvas.draw.text((x + size / 2, y + size / 2 + 1), str(rank), font=font, fill=(0x12, 0x1A, 0x20), anchor="mm")
+def _rank(canvas, x, middle, rank, size=12):
+    """The paper's rank in its information row, clear of its figure."""
+    return canvas.text((x, middle), str(rank), size, anchor="lm") + 7
 
 
 def _upvote(canvas, x, middle, count, size=11, *, anchor="lm"):
@@ -275,33 +273,47 @@ def _stat(canvas, x, middle, icon, text, size=11):
     return 15 + canvas.text((x + 15, middle), text, size, anchor="lm", bold=False)
 
 
+def _code_logo(canvas, size, solid=False):
+    ink = canvas.color("paper") if solid else canvas.color("ink")
+    return load_source_logo(ASSETS / "logos" / "github_mark.png", size + 1, ink)
+
+
 def _links_width(canvas, paper, size=10, gap=6, solid=False):
-    shown = [label for key, label in LINKS if paper.get(key)]
-    if solid:
-        return sum(canvas.width(label, size) + 8 for label in shown) + 4 * max(0, len(shown) - 1)
-    return sum(canvas.width(label, size) + LINK_MARK + 3 for label in shown) + gap * max(0, len(shown) - 1)
+    widths = []
+    for key, label in LINKS:
+        if paper.get(key):
+            art = _code_logo(canvas, size, solid) if key == "code" else None
+            mark = art.width + 3 if art is not None else (0 if solid else LINK_MARK + 3)
+            widths.append(canvas.width(label, size) + mark + (8 if solid else 0))
+    return sum(widths) + (4 if solid else gap) * max(0, len(widths) - 1)
 
 
 def _links(canvas, paper, right, middle, size=10, gap=6, solid=False):
-    """The paper's 有代码 and 项目页 marks ending at ``right``: a small solid square in the link's
-    colour, then the word in ink (a page of solid chips was too loud); ``solid`` chips with paper
-    lettering where they stand on a picture, which ink would not read on. Returns the width they
-    take (0 without either)."""
+    """GitHub's mark for code and a green marker for a project page, followed by their labels.
+    Solid chips keep both readable over the small cards' pictures."""
     width = _links_width(canvas, paper, size, gap, solid)
     x = right - width
     for key, label in LINKS:
         if not paper.get(key):
             continue
+        art = _code_logo(canvas, size, solid) if key == "code" else None
         if solid:
-            chip, height = canvas.width(label, size) + 8, size + 6
+            mark = art.width + 3 if art is not None else 0
+            chip, height = canvas.width(label, size) + mark + 8, size + 6
             canvas.draw.rounded_rectangle((x, middle - height / 2, x + chip, middle + height / 2), radius=height // 2,
                                           fill=canvas.color(key))
-            canvas.text((x + chip / 2, middle), label, size, "paper", anchor="mm")
+            if art is not None:
+                canvas.image.paste(art, (round(x + 4), round(middle - art.height / 2)), art)
+            canvas.text((x + 4 + mark, middle), label, size, "paper", anchor="lm")
             x += chip + 4
             continue
-        canvas.draw.rounded_rectangle((x, middle - LINK_MARK / 2, x + LINK_MARK, middle + LINK_MARK / 2), radius=2,
-                                      fill=canvas.color(key))
-        x += LINK_MARK + 3
+        if art is not None:
+            canvas.image.paste(art, (round(x), round(middle - art.height / 2)), art)
+            x += art.width + 3
+        else:
+            canvas.draw.rounded_rectangle((x, middle - LINK_MARK / 2, x + LINK_MARK, middle + LINK_MARK / 2), radius=2,
+                                          fill=canvas.color(key))
+            x += LINK_MARK + 3
         x += canvas.text((x, middle), label, size, "ink", anchor="lm") + gap
     return width
 
@@ -366,10 +378,18 @@ def _standing(canvas, paper, x, right, middles):
         at += _paste_logo(canvas, "arxiv", at, middle, 13) + 5
         canvas.text((at, middle), paper["id"], 11, anchor="lm", bold=False)
 
+    def github(at, middle):
+        at += _paste_logo(canvas, "github", at, middle, 12) + 5
+        _stat(canvas, at, middle, "star", count_text(paper["stars"]))
+
     parts = [(12 + canvas.width(votes, 13) + 4 + canvas.width("赞", 11, False), upvotes),
              stat("comment", f"{paper['comments']} 评论")]
     if paper.get("stars"):
-        parts.append(stat("star", f"{count_text(paper['stars'])} GitHub 星"))
+        github_logo = _logo(canvas, "github", 12)
+        if github_logo is not None:
+            parts.append((github_logo.width + 20 + canvas.width(count_text(paper["stars"]), 11, False), github))
+        else:
+            parts.append(stat("star", f"{count_text(paper['stars'])} GitHub 星"))
     parts.append(((logo.width + 5 if logo else 0) + canvas.width(paper["id"], 11, False), arxiv))
     lines = iter(middles)
     middle, at = next(lines), x
@@ -391,10 +411,10 @@ def _lead(canvas, paper, images, chinese):
     figure_width = _figure_width(art, drawing, bottom + 1 - top, LEAD_FIGURE_WIDTH)
     _figure(canvas, art, drawing, (left, top, left + figure_width, bottom + 1), canvas.color("lead"), radius=6,
             kept=LEAD_DIAGRAM_KEPT)
-    _badge(canvas, left + 6, top + 6, 1, 24)
     x, text_right = left + figure_width + 12, right - 10
     links = _links(canvas, paper, text_right, top + 16, 11)
-    _org_line(canvas, paper, images, x, top + 16, text_right - (links + 8 if links else 0), 12)
+    rank_w = _rank(canvas, x, top + 16, 1)
+    _org_line(canvas, paper, images, x + rank_w, top + 16, text_right - (links + 8 if links else 0), 12)
     title, summary, translated = shown_text(paper, chinese)
     y = top + 30
     for line in canvas.wrap(title, 18, text_right - x, 3 if not translated else 2):
@@ -432,11 +452,11 @@ def _card(canvas, box, rank, paper, images, chinese):
     art, drawing = _prepared(_picture(paper, images))
     figure = (left + 1, top + 1, left + 1 + CARD_FIGURE_WIDTH, bottom)
     _figure(canvas, art, drawing, figure, canvas.color("paper"), radius=5, kept=CARD_DIAGRAM_KEPT)
-    _badge(canvas, left + 4, top + 4, rank, 18)
     _links(canvas, paper, figure[0] + 4 + _links_width(canvas, paper, solid=True), bottom - 12, solid=True)
     x, text_right = figure[2] + 8, right - 8
     count_w = _upvote(canvas, text_right, top + 13, paper["upvotes"], 11, anchor="rm")
-    _org_line(canvas, paper, images, x, top + 13, text_right - count_w - 6, 10)
+    rank_w = _rank(canvas, x, top + 13, rank, 10)
+    _org_line(canvas, paper, images, x + rank_w, top + 13, text_right - count_w - 6, 10)
     title, summary, _translated = shown_text(paper, chinese)
     y = top + 25
     lines = canvas.wrap(title, 12, text_right - x, 3)

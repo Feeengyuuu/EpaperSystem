@@ -161,10 +161,9 @@ ICON_DIR = "icons"
 ICON_LOOKUPS = "icon-lookups.json"
 ICON_SECONDS, ICON_RESERVE_SECONDS = 20, 15
 LEAD_ICON, STORY_ICON, BOARD_ICON, SKILL_ICON = 40, 30, 20, 15
-# A story's rank sits on its icon's upper left corner as a small disc, RANK_OVERHANG px past it. A
-# model's or repository's icon is too small to carry one: its rank is a plain figure before the
-# icon, in a column BOARD_RANK_W wide.
-STORY_RANK_DISC, RANK_OVERHANG = 17, 5
+# Story ranks have a narrow column before the unchanged site icons. Model and repository
+# ranks already stand in their own BOARD_RANK_W column.
+STORY_RANK_DISC, STORY_RANK_W = 17, 22
 BOARD_RANK_W = 12
 # The trending Spaces close the Hugging Face panel on one line this tall.
 SPACES_LINE_H = 22
@@ -922,9 +921,8 @@ class TechPulse(BasePlugin):
         image.paste(tile, (x, y), tile)
 
     def _rank_disc(self, draw, corner, size, rank, fill, ink, palette, fonts):
-        """A story's rank as a disc over its icon's upper left ``corner``, RANK_OVERHANG px past it,
-        ringed in the panel's colour so it parts from the icon."""
-        left, top = corner[0] - RANK_OVERHANG, corner[1] - RANK_OVERHANG
+        """A story's rank at ``corner`` inside its own column, clear of the site's icon."""
+        left, top = corner
         draw.ellipse((left - 1, top - 1, left + size, top + size), fill=palette["panel"])
         draw.ellipse((left, top, left + size - 1, top + size - 1), fill=fill)
         self._draw_text(draw, (left + size / 2, top + size / 2), str(rank), fonts["metric"], ink, anchor="mm")
@@ -949,13 +947,13 @@ class TechPulse(BasePlugin):
                               settings, palette, fonts, board, now, HN_LIST_ROWS, image, icons)
 
     def _draw_lead(self, image, draw, box, story, settings, palette, fonts, history, now, icons=None):
-        """The top story: its site's icon with the rank on its corner, title, meta, points trend and
+        """The top story: its rank before the site's icon, title, meta, points trend and
         top comment; returns its bottom edge."""
         x0, y0, x1, _y1 = box
-        icon_x = x0 + RANK_OVERHANG
+        icon_x = x0 + STORY_RANK_W
         self._mark(image, item_icons.story_key(story), (icon_x, y0), LEAD_ICON, palette, fonts, icons)
-        self._rank_disc(draw, (icon_x, y0), STORY_RANK_DISC, story.get("rank") or 1, palette["orange"],
-                        (255, 255, 255), palette, fonts)
+        self._rank_disc(draw, (x0, round(y0 + (LEAD_ICON - STORY_RANK_DISC) / 2)), STORY_RANK_DISC,
+                        story.get("rank") or 1, palette["orange"], (20, 20, 20), palette, fonts)
         # The title and the line under it share one column beside the icon.
         text_x = icon_x + LEAD_ICON + 8
         lines = self._wrap_text(draw, story.get("title") or "No story available", fonts["lead"], x1 - text_x,
@@ -1000,16 +998,16 @@ class TechPulse(BasePlugin):
                 self._dotted(draw, x0, x1, top + row_h, palette["rule"])
 
     def _story_row(self, draw, box, story, settings, palette, fonts, history, now, image=None, icons=None):
-        """A listed story: its site's icon with the rank on its corner, then its title over its
+        """A listed story: its rank before the site's icon, then its title over its
         source, age and figures. Without an ``image`` to paste on, only the rank's disc stands there."""
         x0, y0, x1, y1 = box
         middle = (y0 + y1) / 2
         title_y, meta_y = middle - 9, middle + 10
-        icon_x, icon_y = x0 + RANK_OVERHANG, middle - STORY_ICON / 2
+        icon_x, icon_y = x0 + STORY_RANK_W, middle - STORY_ICON / 2
         if image is not None:
             self._mark(image, item_icons.story_key(story), (icon_x, icon_y), STORY_ICON, palette, fonts, icons)
-        self._rank_disc(draw, (icon_x, round(icon_y)), STORY_RANK_DISC, story.get("rank") or "", palette["orange"],
-                        (255, 255, 255), palette, fonts)
+        self._rank_disc(draw, (x0, round(middle - STORY_RANK_DISC / 2)), STORY_RANK_DISC,
+                        story.get("rank") or "", palette["orange"], (20, 20, 20), palette, fonts)
         text_x = icon_x + STORY_ICON + 8
         title = self._fit_text(draw, story.get("title") or "", fonts["row"], x1 - text_x)
         self._draw_text(draw, (text_x, title_y), title, fonts["row"], palette["ink"], anchor="lm")

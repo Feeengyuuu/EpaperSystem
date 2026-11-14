@@ -72,21 +72,33 @@ class UfcRenderMixin:
         headline, headline_font = self._fit_text_ellipsis(draw, str(event.get("headline") or ""), px1 - headline_x - 10, 14,
                                                           bold=True, min_size=10)
         self._draw_text_in_box(draw, (headline_x, y1 + 3, px1 - 8, y1 + 22), headline, headline_font, COLORS["text"])
-        # The venue and the start by the page's pin and clock icons, the broadcaster by its logo.
+        # Arena branding replaces only the venue name; keep the city and start legible.
         start = local_label(event.get("start"), now)
         broadcast = next((fight.get("broadcast") for fight in event.get("fights") or [] if fight.get("broadcast")), "")
         end = x2 - 10
         if broadcast and self._draw_kit_small_broadcast(image, (x2 - 110, y1 + 23, x2 - 10, y1 + 36), broadcast, 12,
                                                         align="right"):
             end = x2 - 116
-        venue = "  ·  ".join(part for part in (event.get("venue"), event.get("city")) if part)
         sub_font = self._font(9, False)
         x = x1 + 12
+        start_label = f"{start} 开打" if start else ""
+        time_w = self._text_width(draw, start_label, sub_font) + 12 if start else 0
+        venue_end = max(x, end - time_w - 12) if start else end
+        venue = "  ·  ".join(part for part in (event.get("venue"), event.get("city")) if part)
+        logo = self._kit_venue_logo(event.get("venue"), (min(105, max(0, venue_end - x)), 14)) if venue_end > x else None
+        if logo is not None:
+            image.paste(logo, (x, y1 + 23 + (13 - logo.height) // 2), logo)
+            x += logo.width + 6
+            venue = str(event.get("city") or "")
         if venue:
-            x = self._draw_icon_text(draw, "VENUE", (x, y1 + 23, min(end, x + 230), y1 + 36), venue, sub_font,
-                                     COLORS["text"], accent=accent) + 12
-        if start and end - x > 60:
-            self._draw_icon_text(draw, "CLOCK", (x, y1 + 23, end, y1 + 36), f"{start} 开打", sub_font, COLORS["text"],
+            if logo is not None:
+                city, font = self._fit_text_ellipsis(draw, venue, max(0, venue_end - x), 9, bold=False, min_size=8)
+                self._draw_text_in_box(draw, (x, y1 + 23, venue_end, y1 + 36), city, font, COLORS["text"])
+            else:
+                self._draw_icon_text(draw, "VENUE", (x, y1 + 23, venue_end, y1 + 36), venue, sub_font,
+                                     COLORS["text"], accent=accent)
+        if start:
+            self._draw_icon_text(draw, "CLOCK", (end - time_w, y1 + 23, end, y1 + 36), start_label, sub_font, COLORS["text"],
                                  accent=accent)
 
     def _draw_ufc_face_off(self, image, draw, box, fight, accent):

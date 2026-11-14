@@ -475,6 +475,46 @@
     64
    ],
    "sha256": "5b7fd3163a5d74d607cc1c32d5e7ce9a5951d7ee3e166d184eebfca04ab04113"
+  },
+  "the_ritz_san_jose": {
+   "names": [
+    "The Ritz",
+    "The Ritz San Jose",
+    "The Ritz - San Jose"
+   ],
+   "site": "https://theritzsanjose.com/",
+   "source": "https://theritzsanjose.com/wp-content/uploads/2018/09/Ritz.png",
+   "licence": "The venue's own logo from its public site, shown only to identify the venue.",
+   "processing": "Surplus black perimeter trimmed; original black ground and white lettering retained, resized to 64 px tall.",
+   "fetched_at": "2026-11-13",
+   "wordmark": true,
+   "source_sha256": "3d95c446b51e5cd5761e254af8469309c4f7ee0e919962ea87fa00f24c622642",
+   "size": [
+    150,
+    64
+   ],
+   "sha256": "57119dcea7251c286e18278fe955aa2ffc63c0b880d2b1647b6debe9beceaafb"
+  },
+  "the_castro": {
+   "names": [
+    "The Castro",
+    "The Castro Theatre",
+    "Castro Theatre",
+    "The Castro Theater",
+    "Castro Theater"
+   ],
+   "site": "https://thecastro.com/",
+   "source": "https://thecastro.com/wp-content/uploads/sites/8/2025/10/The-Castro-Core-Logo-Horizontal-Yellow-on-Red.png",
+   "licence": "The venue's own logo from its public site, shown only to identify the venue.",
+   "processing": "Official horizontal wordmark resized to 64 px tall, retaining original alpha and red/yellow colours.",
+   "fetched_at": "2026-11-13",
+   "wordmark": true,
+   "source_sha256": "171e3883745df928bea752b3b116a012a7dec70f58f11f4aa5eb217bdf77333c",
+   "size": [
+    477,
+    64
+   ],
+   "sha256": "8870e55415d1948aa7dce8d92a39aef0ff887568a8e61d106f244c8246cbb225"
   }
  }
 }

@@ -11,6 +11,23 @@
         64
       ],
       "sha256": "613a15e9748f7d2e3342b2c6a60af0ee305401dedc4bd6cbfd12b95a239ac9f4"
+    },
+    "makerworld_wordmark": {
+      "source": "https://store.bblcdn.com/s1/default/4eb22937178c4a62a396e43e77c6db8f/CyberBrick_Time_Lapse_Hardware_Kit_Application_Instruction.pdf",
+      "page_number": 19,
+      "source_sha256": "a9b3d5d2c6f2ccda029cdf8432d1b4a4c7600f81dbaca0537e5e3b7854c3ef09",
+      "processing": "Original vector paths rendered from the final page at 8x, transparent alpha crop only. No fonts substituted, no lettering or geometry recreated. Wordmark-only variant is the separate official lettering below the symbol; stacked variant preserves the full official lockup.",
+      "size": [
+        857,
+        104
+      ],
+      "sha256": "476342a3f2a4dc21075c171de58c1acedbb3c4586bb8d75384a87629fb097ebb",
+      "clip_points": [
+        116,
+        165,
+        224,
+        179
+      ]
     }
   }
 }

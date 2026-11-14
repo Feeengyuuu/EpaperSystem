@@ -492,6 +492,30 @@ def test_a_missing_picture_keeps_its_song_or_title(monkeypatch):
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])
+def test_media_ranks_are_in_captions_below_the_covers_and_posters(monkeypatch, mode):
+    artwork, captions = [], []
+    original_artwork, original_caption = render._artwork, render._ranked_caption
+
+    def art(canvas, picture, box):
+        artwork.append(box)
+        return original_artwork(canvas, picture, box)
+
+    def caption(canvas, centre, middle, rank, title, size, width):
+        captions.append((centre, middle, rank, size))
+        return original_caption(canvas, centre, middle, rank, title, size, width)
+
+    monkeypatch.setattr(render, "_artwork", art)
+    monkeypatch.setattr(render, "_ranked_caption", caption)
+    page = render.render_page((800, 480), _full_payload(), {"themeMode": mode}, NOW, _images())
+    assert len(captions) == len(artwork) >= 6
+    for (x, y, rank, size), (left, top, right, bottom) in zip(captions, artwork):
+        assert left <= x <= right and y - (size + 2) / 2 >= bottom and 1 <= rank <= 3
+        # The former rank area contains only the cover/placeholder, not a coloured disc.
+        corner = page.crop((round(left) + 4, round(top) + 4, round(left) + 12, round(top) + 12))
+        assert len(set(corner.get_flattened_data())) == 1
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
 def test_a_posters_rating_sits_on_the_picture_without_a_plate(monkeypatch, mode):
     placed = []
     original = render._rating_mark

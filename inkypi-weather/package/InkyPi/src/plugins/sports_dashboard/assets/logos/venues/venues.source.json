@@ -3003,6 +3003,30 @@
         48
       ],
       "processing": "the French Wikipedia infobox logo; cropped to the alpha bounding box, scaled to 48 px high"
+    },
+    "circuit_ricardo_tormo": {
+      "source": "https://www.circuitricardotormo.com/wp-content/uploads/2026/05/Circuit_Ricardo_Tormo-Color_Negativo.svg",
+      "page": "https://www.circuitricardotormo.com/en/",
+      "licence": "Official venue wordmark from its own website, displayed to identify the venue",
+      "source_sha256": "ed93d04cd03834a775f66a80ff904cb3040901da23dc9dccbb1e4e553f114b16",
+      "sha256": "93f8989443121e5209efef34c30ec2c99015f0a0e36cea0ce822f8089494025c",
+      "size": [
+        265,
+        64
+      ],
+      "processing": "Official SVG rasterized; light lettering inked dark for day panels, brand orange preserved; alpha crop and proportional fit within 480x64"
+    },
+    "port_royal_golf_course": {
+      "source": "https://bermudagolf.co/wp-content/uploads/2024/10/port-royal-logo.svg",
+      "page": "https://bermudagolf.co/port-royal/",
+      "licence": "Official venue wordmark from its own website, displayed to identify the venue",
+      "source_sha256": "a48815eebe99e00f8160488fc61d523176e03b10e5d50bd5d5068b5f75886650",
+      "sha256": "e0b2e6308e28cfdcdff88173b6bf88269ce59e2322a6efb158c153bf0ee712a0",
+      "size": [
+        158,
+        64
+      ],
+      "processing": "Official SVG rasterized; light lettering inked dark for day panels, brand orange preserved; alpha crop and proportional fit within 480x64"
     }
   }
 }

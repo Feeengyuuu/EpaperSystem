@@ -92,7 +92,7 @@
       ]
     },
     "tiangong": {
-      "file": "File:\u4e2d\u56fd\u8f7d\u4eba\u822a\u5929\u5de5\u7a0b\u82f1\u6587\u6807\u8bc6.png",
+      "file": "File:中国载人航天工程英文标识.png",
       "page": "https://zh.wikipedia.org/wiki/File:%E4%B8%AD%E5%9B%BD%E8%BD%BD%E4%BA%BA%E8%88%AA%E5%A4%A9%E5%B7%A5%E7%A8%8B%E8%8B%B1%E6%96%87%E6%A0%87%E8%AF%86.png",
       "licence": "China Manned Space's emblem (the programme that runs Tiangong), from Chinese Wikipedia (non-free logo); shown to name the station",
       "source_sha256": "0ce8b575ac33b0d171a7868d9ae583d93f0bc417f3bac8d4485cdf78ac55bf0e",
@@ -139,6 +139,46 @@
         64
       ],
       "sha256": "fddaf5c33375da1b20264477b747be86f3e9bd081772978a76a5c7c44486823b"
+    },
+    "cnn": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b1/CNN.svg/500px-CNN.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:CNN.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "f2591a486628cacc4e3b192477028d392f4edabd38e8723b4c3c37d349937bb0",
+      "size": [
+        134,
+        64
+      ],
+      "sha256": "45bcf06fd41e7cbe21f612b832c14aa3e87bcdd22bea8afcc1cf310114cf45d4",
+      "copied_from": "money_radar/assets/logos/cnn.png",
+      "official_identity_verified": "https://edition.cnn.com/",
+      "processing": "Existing CNN red wordmark copied unchanged; matches official site letterforms, kept red for both page themes"
+    },
+    "espn": {
+      "source": "https://a.espncdn.com/redesign/assets/img/logos/espn-404@2x.png",
+      "page": "https://www.espn.com/",
+      "licence": "The brand's official logo (trademark), used to identify its source",
+      "source_sha256": "36449884007b161eaad8437589da7abceebbe0ece39747f75fd53e3cbf3033ca",
+      "processing": "Existing verified official ESPN logo, copied without modification; source_sha256 identifies that repository asset",
+      "size": [
+        174,
+        45
+      ],
+      "sha256": "36449884007b161eaad8437589da7abceebbe0ece39747f75fd53e3cbf3033ca",
+      "copied_from": "sports_dashboard/assets/logos/sources/espn.png"
+    },
+    "goal": {
+      "source": "https://www.goal.com/en-us",
+      "page": "https://www.goal.com/en-us",
+      "licence": "Official source identification logo (trademark)",
+      "source_sha256": "175936086e127e1b107ea968c823f03fb7e224a864e619401b8497efbf2997c9",
+      "page_sha256": "f64d73bb0d321d98bfa8eb8313aab69de444e1d1423ea7f3160fc3b8ac3cb08e",
+      "processing": "The four original GOAL letter paths in the official animated header, unchanged coordinates; monochrome wordmark rasterized and alpha-cropped",
+      "size": [
+        236,
+        64
+      ],
+      "sha256": "30413059e0f699d5d0a8002b5f51832ff231004b53a03362a2268a0d78848b23"
     }
   }
 }

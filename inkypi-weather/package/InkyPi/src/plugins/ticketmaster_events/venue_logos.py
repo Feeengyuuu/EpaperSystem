@@ -43,17 +43,22 @@ def _index():
         logos = {}
     for key, entry in logos.items():
         for name in entry.get("names") or ():
-            index.setdefault(_key(name), VENUE_DIR / f"{key}.png")
+            index.setdefault(_key(name), (VENUE_DIR / f"{key}.png", bool(entry.get("wordmark"))))
     for key, names in SPORTS_VENUES.items():
         for name in names:
-            index.setdefault(_key(name), SPORTS_VENUE_DIR / f"{key}.png")
+            index.setdefault(_key(name), (SPORTS_VENUE_DIR / f"{key}.png", False))
     return index
 
 
 def venue_logo_path(name):
     """The logo file for a venue called ``name``, or None."""
-    path = _index().get(_key(name))
+    path = _index().get(_key(name), (None, False))[0]
     return path if path is not None and path.is_file() else None
+
+
+def venue_is_wordmark(name):
+    """Whether the available logo spells out the venue's name and can replace that text."""
+    return venue_logo_path(name) is not None and _index()[_key(name)][1]
 
 
 @lru_cache(maxsize=64)

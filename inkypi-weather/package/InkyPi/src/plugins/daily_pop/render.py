@@ -147,7 +147,7 @@ def _logo(file_name, height, night):
     return None
 
 
-def _card(canvas, name, note="", *, title=None, logo=True):
+def _card(canvas, name, note="", *, title=None, logo=True, source=None):
     """The card's frame, its source colour along the top and its title row (the source's official
     logo, then the title; a note at the row's end); returns the content top."""
     left, top, right, bottom = CARDS[name]
@@ -159,8 +159,10 @@ def _card(canvas, name, note="", *, title=None, logo=True):
     middle = top + BAR + 12
     x = left + 10
     file_name, height, logo_title = LOGOS.get(name, (None, 0, None))
+    if source == "itunes":
+        file_name, height, logo_title = "itunes", 17, "热歌"
     art = _logo(file_name, height, sum(canvas.color("paper")) < 200) if logo and file_name else None
-    label = title or (logo_title if art is not None else TITLES[name])
+    label = title or (logo_title if art is not None else "iTunes 热歌" if source == "itunes" else TITLES[name])
     if art is not None:
         canvas.image.paste(art, (x, round(middle - art.height / 2)), art)
         x += art.width + 6
@@ -246,11 +248,9 @@ def _move_badge(canvas, xy, move, *, anchor_right=False, small=False):
     return width
 
 
-def _rank_chip(canvas, xy, rank, fill):
-    """The rank as a translucent chip of the source's colour over the cover."""
-    x, y = xy
-    _glass(canvas, (x, y, x + 20, y + 18), fill, CHIP_ALPHA, 6)
-    canvas.text((x + 10, y + 9), str(rank), 11, (255, 255, 255), anchor="mm")
+def _rank(canvas, xy, rank):
+    """A small number in the cover's outside gutter or the lead's eyebrow."""
+    canvas.text(xy, str(rank), 12, anchor="mm")
 
 
 # --- Bilibili ------------------------------------------------------------------------------------
@@ -269,10 +269,11 @@ def _bilibili(canvas, payload, images):
         return
     lead = videos[0]
     # The cover runs on down behind the title, fading into the page under it.
-    cover_box = (left + 6, top + 2, right - 6, top + 2 + BILI_LEAD_HEIGHT)
+    cover_box = (left + 6, top + 18, right - 6, top + 2 + BILI_LEAD_HEIGHT)
     _paste_fade(canvas, images.get(sources.safe_image_url(lead.get("cover"))), cover_box, fade_from=BILI_LEAD_FADE)
-    _rank_chip(canvas, (cover_box[0] + 6, cover_box[1] + 6), 1, BRANDS["bilibili"])
-    _move_badge(canvas, (cover_box[2] - 6, cover_box[1] + 15), moves.get(lead.get("title")), anchor_right=True)
+    _rank(canvas, (left + 15, top + 8), 1)
+    canvas.text((left + 26, top + 8), "榜首", 10, "muted", anchor="lm", bold=False)
+    _move_badge(canvas, (right - 12, top + 8), moves.get(lead.get("title")), anchor_right=True)
     size, lines = _fitted_title(canvas, lead.get("title"), right - left - 20, 44, largest=18, smallest=13)
     y = cover_box[3] - 4 - len(lines) * (size + 5) + 5
     # The views pill sits on the title, just above its first line.
@@ -297,11 +298,11 @@ def _bilibili(canvas, payload, images):
         # The thumbnail fills the row and fades into the page across its right side; the title
         # starts over the fade, the views line at the row's foot, all clear of the next rule.
         thumb_h = int(row_h - 6)
-        thumb = (left + 8, int(y0 + 1), left + 8 + round(thumb_h * 16 / 9), int(y0 + 1) + thumb_h)
+        thumb = (left + 26, int(y0 + 1), left + 8 + round(thumb_h * 16 / 9), int(y0 + 1) + thumb_h)
         _paste_fade(canvas, images.get(sources.safe_image_url(video.get("cover"))), thumb, fade_from=BILI_THUMB_FADE,
                     across=True, radius=4)
-        _rank_chip(canvas, (thumb[0] + 3, thumb[1] + 3), index, BRANDS["bilibili"])
-        text_x = thumb[0] + round((thumb[2] - thumb[0]) * BILI_THUMB_TITLE)
+        _rank(canvas, (left + 15, y0 + row_h / 2), index)
+        text_x = left + 8 + round(thumb_h * 16 / 9 * BILI_THUMB_TITLE)
         meta_y = y0 + row_h - 19
         # The glyphs of a title's last line reach a fifth of its size below its pitch.
         title_h = meta_y - 7 - y0
@@ -381,15 +382,11 @@ def _bangumi(canvas, payload, images, now):
             canvas.text((cover[2] - 3 - width / 2, cover[1] + 10.5), label, 10, (255, 255, 255), anchor="mm")
         details = every_details.get(str(show.get("id"))) or {}
         rank = details.get("rank") or show.get("rank")
-        if rank and rank <= BANGUMI_TOP_RANK:
-            label = f"#{rank}"
-            width = canvas.width(label, 9) + 8
-            _glass(canvas, (cover[0] + 3, cover[1] + 3, cover[0] + 3 + width, cover[1] + 17), canvas.color("shade"),
-                   CHIP_ALPHA, 6)
-            canvas.text((cover[0] + 3 + width / 2, cover[1] + 10), label, 9, (255, 255, 255), anchor="mm")
         _episodes(canvas, cover, *sources.episode_progress(details, now))
         canvas.text((x0 + 3, cover[3] + 4), show.get("name"), 11, width=cell_w - 6)
         line = f"{count_text(show.get('watching'))}在追"
+        if rank and rank <= BANGUMI_TOP_RANK:
+            line = f"#{rank} · {line}"
         # Its genre follows when the line has room for it whole.
         if details.get("genre") and canvas.width(f"{line} · {details['genre']}", 9, False) <= cell_w - 6:
             line += f" · {details['genre']}"
@@ -626,7 +623,7 @@ def _songs(canvas, payload, images, now=None):
     moves = chart_moves(songs, history.get("previous"), "name") if history.get("previous") else {}
     chart = payload["songs"]["data"].get("chart")
     if chart == "itunes":
-        top = _card(canvas, "songs", "美国 · 热销榜", title="iTunes 热歌", logo=False)
+        top = _card(canvas, "songs", "美国 · 热销榜", source="itunes")
     else:
         top = _card(canvas, "songs", "美国 · 播放最多")
     _doodles(canvas, "songs", top)
@@ -694,22 +691,24 @@ def _puzzle(canvas, payload, images):
         canvas.text((x + label_w + 6, top + 36), answer, 10, "muted", bold=False, width=width - label_w - 6)
 
 
-def _source_key(canvas, left, right):
+def _source_key(canvas, left, right, songs_chart=None):
     """The header's key: each source's official logo, parted by thin rules, as far as there is
     room (its colour square and short name when the logo is missing)."""
     x = left
     night = sum(canvas.color("paper")) < 200
     for index, name in enumerate(("bilibili", "bangumi", "wiki", "epic", "songs", "puzzle")):
         file_name, height = KEY_LOGOS[name]
+        if name == "songs" and songs_chart == "itunes":
+            file_name, height = "itunes", 17
         art = _logo(file_name, height, night)
-        label = SHORT_NAMES[name]
+        label = "iTunes" if name == "songs" and songs_chart == "itunes" else SHORT_NAMES[name]
         width = art.width if art is not None else 14 + canvas.width(label, 11, bold=False)
         if x + width > right:
             break
         if index:
             canvas.rule((x - KEY_GAP / 2, 18, x - KEY_GAP / 2, 34))
         if art is not None:
-            canvas.image.paste(art, (x, round(26 - art.height / 2)), art)
+            canvas.image.paste(art, (round(x), round(26 - art.height / 2)), art)
         else:
             canvas.draw.rounded_rectangle((x, 21, x + 10, 31), radius=2, fill=BRANDS[name])
             canvas.text((x + 14, 26), label, 11, "muted", anchor="lm", bold=False)
@@ -721,7 +720,7 @@ def render_page(dimensions, payload, settings, now, images):
     placed = paste_local_wordmark(canvas.image, ASSETS / "title_wordmark.png", (10, 2, 230, 50), align="left")
     title_right = placed[2] if placed else 14 + canvas.text((14, 26), "今日热榜", 28, anchor="lm")
     date_left = 788 - canvas.text((788, 26), f"{now:%m.%d} 周{WEEKDAYS[now.weekday()]} {now:%H:%M}", 16, anchor="rm")
-    _source_key(canvas, title_right + 16, date_left - 14)
+    _source_key(canvas, title_right + 16, date_left - 14, payload["songs"]["data"].get("chart"))
     canvas.rule((12, 52, 788, 52), "ink", 2)
     _bilibili(canvas, payload, images)
     _bangumi(canvas, payload, images, now)

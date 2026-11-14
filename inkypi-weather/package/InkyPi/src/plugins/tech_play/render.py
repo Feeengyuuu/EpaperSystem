@@ -460,15 +460,15 @@ def _papers(canvas, payload, now, images):
         institution = paper.get("institution") or {}
         mark = images.get(institution.get("logo") or "")
         figure = images.get(paper.get("figure") or "")
-        # Each row: the paper's figure with its rank on the corner (its organisation's logo stands in
+        # Each row: a separate rank column and the figure (its organisation's logo stands in
         # for a paper without one), then its title (two lines) over the organisation behind it, or
         # its authors when the logo already fills the figure's place, and when it came out.
-        _paper_figure(canvas, figure, mark, (left, top, left + PAPER_FIGURE[0], top + PAPER_FIGURE[1]))
+        figure_left = left + 16
+        _paper_figure(canvas, figure, mark, (figure_left, top, figure_left + PAPER_FIGURE[0], top + PAPER_FIGURE[1]))
         if figure is None:
             mark, institution = None, {}
-        canvas.draw.rounded_rectangle((left, top, left + 17, top + 17), radius=3, fill=canvas.color("ink"))
-        canvas.text((left + 8.5, top + 9), str(index + 1), 11, "paper", anchor="mm")
-        x = left + PAPER_FIGURE[0] + 7
+        canvas.text((left + 5, top + PAPER_FIGURE[1] / 2), str(index + 1), 12, "ink", anchor="mm")
+        x = figure_left + PAPER_FIGURE[0] + 7
         for line_index, line in enumerate(canvas.wrap(paper["title"], 13, right - x, 2)):
             canvas.text((x, top + line_index * 16), line, 13, anchor="la")
         middle = top + 44
@@ -747,23 +747,23 @@ def _speedruns(canvas, payload, images, now):
         if index:
             canvas.rule((x - gap / 2, top, x - gap / 2, SPEED_CARD[3] - 8))
         cover = images.get(game.get("cover"))
-        box = (x, top, x + 36, top + 48)
+        cover_left = x + 14
+        box = (cover_left, top, cover_left + 36, top + 48)
         if cover is not None:
-            canvas.image.paste(_cover(cover, (36, 48)), (x, top))
+            canvas.image.paste(_cover(cover, (36, 48)), (cover_left, top))
         else:
             # No box art anywhere (mobile-only games): a lettered tile in the cover slot.
             canvas.draw.rectangle(box, fill=canvas.color("band"))
-            canvas.text((x + 18, top + 20), _initials(game.get("name")), 11, (255, 255, 255), anchor="mm")
-            draw_icon(canvas.draw, "trophy", (x + 12, top + 30), 12, canvas.color("gold"), canvas.color("band"))
+            canvas.text((cover_left + 18, top + 20), _initials(game.get("name")), 11, (255, 255, 255), anchor="mm")
+            draw_icon(canvas.draw, "trophy", (cover_left + 12, top + 30), 12, canvas.color("gold"), canvas.color("band"))
         _round_corners(canvas, box, 6)
-        badge_fill = canvas.color("gold" if index == 0 else "ink")
-        canvas.draw.ellipse((x - 5, top - 5, x + 13, top + 13), fill=badge_fill, outline=canvas.color("paper"))
-        canvas.text((x + 4, top + 4), str(index + 1), 11, (20, 20, 20) if index == 0 else "paper", anchor="mm")
-        for line_index, line in enumerate(canvas.wrap(game.get("name") or "", 12, width - 44, 2)):
-            canvas.text((x + 44, top + 1 + line_index * 15), line, 12, anchor="la")
+        canvas.text((x + 4, top + 24), str(index + 1), 12, "ink", anchor="mm")
+        text_left = cover_left + 44
+        for line_index, line in enumerate(canvas.wrap(game.get("name") or "", 12, width - 58, 2)):
+            canvas.text((text_left, top + 1 + line_index * 15), line, 12, anchor="la")
         meta = " · ".join(part for part in (f"{game.get('week_runs', 0)} 次验证", str(game.get("released") or ""))
                           if part)
-        canvas.text((x + 44, top + 40), meta, 11, "muted", anchor="lm", bold=False, width=width - 44)
+        canvas.text((text_left, top + 40), meta, 11, "muted", anchor="lm", bold=False, width=width - 58)
         for run_index, run in enumerate(game.get("runs", [])[:2]):
             y = top + 58 + run_index * 30
             canvas.draw.ellipse((x, y + 3, x + 8, y + 11), fill=canvas.color("speed_bar"), outline=canvas.color("ink"))

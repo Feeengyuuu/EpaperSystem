@@ -19,7 +19,7 @@ from PIL import Image, ImageDraw, ImageOps
 
 from utils.doodle_backdrop import paint_doodles
 from utils.flat_icons import draw_icon
-from utils.local_wordmark import paste_local_wordmark
+from utils.local_wordmark import load_source_logo, paste_local_wordmark
 from utils.page_canvas import PageCanvas
 
 
@@ -30,6 +30,7 @@ DOODLE_STRENGTH = {"day": 0.18, "night": 0.28}
 # Bambu Lab's green (MakerWorld's brand) for the solid marks: badges, chips, icons.
 BRAND = (0x00, 0xAE, 0x42)
 MARK = ASSETS / "makerworld.png"
+WORDMARK = ASSETS / "makerworld_wordmark.png"
 DAY = {"paper": "#ffffff", "ink": "#121a20", "muted": "#3a454d", "rule": "#b4b4b4", "lead": "#eefaf2",
        "card": "#ffffff", "track": "#eef0f2"}
 NIGHT = {"paper": "#000000", "ink": "#edf1ea", "muted": "#c6d0d5", "rule": "#5a5a5a", "lead": "#07190d",
@@ -48,6 +49,8 @@ ROW_HEIGHT = 52
 SECTION_HEIGHT = 22
 # A right-column row's picture.
 THUMB = (66, 48)
+CLASSIC_RANK_WIDTH = 22
+CARD_RANK_WIDTH = 15
 # The lead's picture block: its cover and, at the cover's right, a column of its next pictures.
 LEAD_PICTURE = (304, 206)
 SUMMARY_LINES = 3
@@ -199,11 +202,6 @@ def _picture(canvas, picture, box, radius=6):
     canvas.image.paste(fitted, (x1, y1), mask)
 
 
-def _badge(canvas, x, y, rank, size=20):
-    canvas.draw.ellipse((x, y, x + size, y + size), fill=BRAND)
-    canvas.text((x + size / 2, y + size / 2), str(rank), max(9, size - 8), (255, 255, 255), anchor="mm")
-
-
 def _nozzle(draw, x, y, size, color):
     """A printer's hot end extruding: the block, its tapered nozzle and a drop of filament (a "make")."""
     s = size
@@ -289,7 +287,11 @@ def _header(canvas, now, totals=""):
     placed = paste_local_wordmark(canvas.image, TITLE, (x1 + 2, y1, x1 + 210, y2), align="left")
     left = (placed[2] if placed else x1 + canvas.text((x1, (y1 + y2) / 2), "打印灵感", 26, anchor="lm")) + 14
     draw_mark(canvas, left, y1 + 9, 20)
-    canvas.text((left + 24, y1 + 19), "MakerWorld", 16, anchor="lm")
+    logo = load_source_logo(WORDMARK, 16, ink=canvas.color("ink") if _night(canvas) else None)
+    if logo is not None:
+        canvas.image.paste(logo, (round(left + 24), round(y1 + 19 - logo.height / 2)), logo)
+    else:
+        canvas.text((left + 24, y1 + 19), "MakerWorld", 16, anchor="lm")
     canvas.text((left, y1 + 40), totals or "MakerWorld 3D 打印模型热门 · 社区点赞与打印数", 10, "muted", anchor="lm",
                 bold=False, width=x2 - 120 - left)
     canvas.text((x2, y1 + 19), f"{now:%m.%d} 周{WEEKDAYS[now.weekday()]}", 18, anchor="rm")
@@ -355,10 +357,11 @@ def _lead(canvas, model, images, chinese, doodle_key):
     paint_doodles(canvas.image, (text_left - 4, y1 + 3, x2 - 3, y2 - 3), DOODLES, BRAND,
                   strength=DOODLE_STRENGTH[doodle_key], grounds=[canvas.color("lead")])
     _lead_pictures(canvas, model, images, (x1 + 6, y1 + 6, x1 + 6 + LEAD_PICTURE[0], y2 - 6))
-    _badge(canvas, x1 + 12, y1 + 12, 1, 24)
     name, summary, translated = shown_name(model, chinese)
     # The top row: the list's own tag and the model's category.
-    chips_x = text_left + _chip(canvas, text_left, y1 + 18, "编辑精选" if model.get("staff_pick") else "当前最热") + 6
+    canvas.text((text_left, y1 + 18), "1", 13, BRAND, anchor="lm")
+    chips_x = text_left + CARD_RANK_WIDTH
+    chips_x += _chip(canvas, chips_x, y1 + 18, "编辑精选" if model.get("staff_pick") else "当前最热") + 6
     if model.get("category"):
         _chip(canvas, chips_x, y1 + 18, canvas.fit(model["category"], 10, right - chips_x - 12),
               fill=canvas.color("ink"), color=canvas.color("paper"))
@@ -442,7 +445,6 @@ def _card(canvas, box, model, rank, images, chinese):
     canvas.draw.rounded_rectangle(box, radius=7, fill=canvas.color("card"), outline=canvas.color("rule"), width=1)
     picture_bottom = y1 + 4 + int((x2 - x1 - 8) * CARD_PICTURE_RATIO)
     _picture(canvas, images.get(model["image"]), (x1 + 4, y1 + 4, x2 - 4, picture_bottom), radius=5)
-    _badge(canvas, x1 + 8, y1 + 8, rank, 18)
     name, _summary, _translated = shown_name(model, chinese)
     # How it prints (else what comes with it) and its counts sit at the foot; the name runs down
     # into the room above them, and its maker (avatar and name) takes the line a short name leaves.
@@ -454,11 +456,12 @@ def _card(canvas, box, model, rank, images, chinese):
     y = picture_bottom + 5
     bottom = (detail_middle - 8) if detail else (stats_middle - 9)
     room = max(1, int((bottom - y) // CARD_TITLE_LINE))
-    lines = canvas.wrap(name, 12, width, room)
+    lines = canvas.wrap(name, 12, width - CARD_RANK_WIDTH, room)
     has_maker = bool(model.get("maker") or images.get(model.get("avatar")))
     maker_line = has_maker and len(lines) < room
+    canvas.text((x1 + 5, y + 6), str(rank), 12, BRAND, anchor="lm")
     for line in lines:
-        canvas.text((x1 + 5, y), line, 12)
+        canvas.text((x1 + 5 + CARD_RANK_WIDTH, y), line, 12)
         y += CARD_TITLE_LINE
     # A line still to spare (a short name) carries its category, else a tag, and its rating.
     if room - len(lines) - (1 if maker_line else 0) >= 1:
@@ -526,16 +529,18 @@ def _year_text(value):
 
 
 def _classic_row(canvas, y, model, images, chinese):
-    """An all-time classic: its picture under its place in the list, then its name, its downloads,
+    """An all-time classic: its place beside the picture, then its name, its downloads,
     likes and prints, and who made it and in which year."""
     x1, _y1, x2, _y2 = RIGHT
     top = y + (ROW_HEIGHT - THUMB[1]) // 2
+    picture_left = x1 + CLASSIC_RANK_WIDTH
     _picture(canvas, images.get(model.get("image_small")) or images.get(model["image"]),
-             (x1, top, x1 + THUMB[0], top + THUMB[1]), radius=5)
+             (picture_left, top, picture_left + THUMB[0], top + THUMB[1]), radius=5)
     if model.get("rank"):
-        _badge(canvas, x1 + 2, top + 2, model["rank"], size=16)
+        canvas.text((x1 + (CLASSIC_RANK_WIDTH - 4) / 2, top + THUMB[1] / 2), str(model["rank"]),
+                    12, BRAND, anchor="mm", width=CLASSIC_RANK_WIDTH - 4)
     name, _summary, _translated = shown_name(model, chinese)
-    left = x1 + THUMB[0] + 8
+    left = picture_left + THUMB[0] + 8
     canvas.text((left, top + 8), name, 12, anchor="lm", width=x2 - left)
     x, middle = left, top + 24
     for kind, value in (("download", count_text(model["downloads"])), ("heart", count_text(model["likes"])),

@@ -168,13 +168,40 @@ def test_the_page_names_makerworld_and_shows_the_leads_details(monkeypatch):
 
     page = render.render_page((800, 480), payload, {}, NOW, gallery)
 
-    assert "MakerWorld" in shown and "霍格沃茨圣诞火车挂饰" in shown
+    assert render.load_source_logo(render.WORDMARK, 16) is not None
+    assert "霍格沃茨圣诞火车挂饰" in shown
     assert {"PLA · 10 g", "40分", "层高 0.2 mm", "2 色 AMS", "Lv30 · 2.0万关注"} <= set(shown)
     assert any(text.startswith("当前热门 7 款") for text in shown)
     strip = page.crop((render.LEAD[0], render.LEAD[1], render.LEAD[0] + render.LEAD_PICTURE[0] + 10, render.LEAD[3]))
     assert (20, 160, 90) in set(strip.convert("RGB").get_flattened_data())
     # The page's solid marks wear MakerWorld's green.
     assert render.BRAND in set(page.convert("RGB").get_flattened_data())
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_ranking_numbers_leave_every_model_picture_unobstructed(monkeypatch, mode):
+    from PIL import ImageChops
+
+    payload = _payload()
+    for index, model in enumerate(payload["classics"]):
+        model.update(rank=22 + index, of=30)
+    picture = Image.new("RGB", (200, 150), (47, 86, 123))
+    images = {model["image"]: picture for group in ("week", "makes", "classics") for model in payload[group]}
+    placed = []
+    original = render._picture
+
+    def record(canvas, art, box, radius=7):
+        original(canvas, art, box, radius)
+        if art is picture:
+            x1, y1, x2, y2 = box
+            interior = (round(x1 + 6), round(y1 + 6), round(x2 - 6), round(y2 - 6))
+            placed.append((interior, canvas.image.crop(interior)))
+
+    monkeypatch.setattr(render, "_picture", record)
+    page = render.render_page((800, 480), payload, {"_inkypi_theme": {"mode": mode}}, NOW, images)
+    assert len(placed) >= 8
+    for box, original_pixels in placed:
+        assert ImageChops.difference(page.crop(box), original_pixels).getbbox() is None
 
 
 def test_the_plugin_keeps_its_lists_and_reads_them_back_offline(monkeypatch, tmp_path):

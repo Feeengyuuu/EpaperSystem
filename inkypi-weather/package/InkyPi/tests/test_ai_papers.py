@@ -203,9 +203,13 @@ def test_the_page_draws_the_lead_cards_and_ranking(mode):
     left, top, _right, bottom = render.LEAD
     lead_figure = page.crop((left + 40, top, left + render.LEAD_FIGURE_WIDTH[0] - 8, bottom + 1)).convert("RGB")
     assert set(lead_figure.get_flattened_data()) == {(40, 120, 200)}
+    # The former rank discs no longer cover the upper-left of either figure.
+    assert set(page.crop((left + 7, top + 7, left + 30, top + 30)).get_flattened_data()) == {(40, 120, 200)}
     grid_left, grid_top = render.GRID[:2]
     card_figure = page.crop((grid_left + 32, grid_top + 8, grid_left + render.CARD_FIGURE_WIDTH - 6, grid_top + 84))
     assert set(card_figure.convert("RGB").get_flattened_data()) == {(40, 120, 200)}
+    assert set(page.crop((grid_left + 6, grid_top + 6, grid_left + 24, grid_top + 24)).get_flattened_data()) == {
+        (40, 120, 200)}
     assert render.shown_text(papers[0], chinese)[:2] == ("首篇论文的中文标题", "一句话说明它做了什么。")
     assert render.shown_text(papers[1], chinese)[0] == papers[1]["title"]
     # The ranking rows carry the organisations' avatars (orange here).
@@ -349,11 +353,33 @@ def test_link_chips_and_the_hub_model_are_drawn_in_their_colours(mode):
 
     page = render.render_page((800, 480), {"papers": papers}, {"themeMode": mode}, NOW, {}).convert("RGB")
 
-    colours = {render._rgb(palette["code"]), render._rgb(palette["project"])}
     for box in (render.LEAD, render.GRID, render.RANKING):
         pixels = page.crop(box).get_flattened_data()
-        assert all(sum(1 for pixel in pixels if pixel == colour) > 40 for colour in colours)
+        assert sum(1 for pixel in pixels if pixel == render._rgb(palette["project"])) > 40
+    # Only the on-picture chips keep a blue plate; ordinary code links use GitHub's mark.
+    assert sum(1 for pixel in page.crop(render.GRID).get_flattened_data() if pixel == render._rgb(palette["code"])) > 40
     # The lead's Hugging Face mark sits on the line above its standing.
     lead_text = page.crop((render.LEAD[0] + render.LEAD_FIGURE_WIDTH[0], render.LEAD[3] - 70,
                            render.LEAD[2], render.LEAD[3] - 40))
     assert any(pixel[0] > 240 and 150 < pixel[1] < 230 and pixel[2] < 90 for pixel in lead_text.get_flattened_data())
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_github_marks_keep_the_star_count_and_link_labels_with_text_fallback(monkeypatch, mode):
+    canvas = render.PageCanvas(render._palette({"themeMode": mode}))
+    paper = dict(_papers(1)[0], stars=24, code=True, project=True)
+    texts = []
+    original = canvas.text
+    monkeypatch.setattr(canvas, "text", lambda xy, text, *a, **k: (
+        texts.append(str(text)), original(xy, text, *a, **k))[1])
+    assert render._logo(canvas, "github", 12) is not None
+    assert render._code_logo(canvas, 11) is not None
+    render._standing(canvas, paper, 12, 500, (20, 40))
+    render._links(canvas, paper, 500, 60)
+    assert {"24", "有代码", "项目页"} <= set(texts)
+    assert not any("GitHub" in text for text in texts)
+    monkeypatch.setattr(render, "load_source_logo", lambda *a, **k: None)
+    texts.clear()
+    render._standing(canvas, paper, 12, 500, (20, 40))
+    render._links(canvas, paper, 500, 60)
+    assert {"24 GitHub 星", "有代码", "项目页"} <= set(texts)
