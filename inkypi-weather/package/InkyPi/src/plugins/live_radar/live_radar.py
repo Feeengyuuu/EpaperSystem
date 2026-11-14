@@ -2132,7 +2132,7 @@ class LiveRadar(BasePlugin):
         text_w = max(20, w - 2 * pad)
         if status == "live" and snapshot_h:
             platform = PLATFORMS.get(card["platform"], {"short": card["platform"][:2].upper()})
-            avatar_size = max(28, min(36, int(text_bottom - text_top - 2)))
+            avatar_size = max(28, min(42, int(text_bottom - text_top)))
             avatar_x = x + pad
             avatar_y = text_bottom - avatar_size
             brand = self._avatar_platform_colour(card)
@@ -2181,9 +2181,11 @@ class LiveRadar(BasePlugin):
             )
             text_w = max(20, star_right - star - 8 - text_x)
         owner_text = self._card_display_name(card)
-        body_font = self._fit_font(draw, owner_text, text_w, 16 if snapshot_h else 22, 10, "bold")
+        body_font = self._fit_font(draw, owner_text, text_w, 18 if snapshot_h else 22, 10, "bold")
         owner = self._fit_text(draw, owner_text, body_font, text_w)
-        draw.text((text_x, text_top), owner, fill=ink, font=body_font)
+        # Grow into the panel's upper breathing room, keeping the title and uptime readable below.
+        owner_y = text_top - max(0, body_font.size - 16) if snapshot_h else text_top
+        draw.text((text_x, owner_y), owner, fill=ink, font=body_font)
 
         meta_text = self._meta_text(card)
         meta_font = self._fit_font(draw, meta_text, text_w, 10 if snapshot_h else 12, 8, "bold")
@@ -2193,7 +2195,7 @@ class LiveRadar(BasePlugin):
         meta = self._fit_text(draw, meta_text, meta_font, text_w)
 
         title = card["title"] or self._offline_title(card)
-        title_y = text_top + self._line_height(body_font) + (2 if snapshot_h else 5) + CARD_DETAIL_Y_NUDGE
+        title_y = owner_y + self._line_height(body_font) + (2 if snapshot_h else 5) + CARD_DETAIL_Y_NUDGE
         title_space = max(0, meta_y - title_y - 2)
         max_lines = 1 if snapshot_h else 2
         title_font, title_lines = self._fit_wrapped_text(
