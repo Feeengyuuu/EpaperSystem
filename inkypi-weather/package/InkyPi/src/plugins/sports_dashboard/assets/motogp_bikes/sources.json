@@ -1,0 +1,399 @@
+{
+  "schema_version": 1,
+  "kind": "generated_livery_schematic",
+  "created": "2026-11-13",
+  "generator": "OpenAI built-in image_gen tool",
+  "user_approved_direction": "Uniform motorcycle side-view schematics based on current team liveries; no rank or bike-number overlays.",
+  "description": "12 livery variants for 11 teams; teammates share a livery illustration. Shapes and colour values are illustrative, not official technical drawings, photographs, logos or exact paint codes.",
+  "historical_note": "Current regular 2026 liveries, including post-June SuperFile Trackhouse. Historical grid replays do not reconstruct the livery used at that event. Special-event schemes are not represented.",
+  "fallback": "neutral.png",
+  "fallback_sha256": "d1c4829e372ba277013ce936b1619ecb3cd71914eac42cd909eb7ad056abab78",
+  "seasons": {
+    "2026": {
+      "teams": {
+        "ducati_lenovo": {
+          "file": "2026_ducati_lenovo.png",
+          "aliases": [
+            "Ducati Lenovo Team"
+          ],
+          "reference_numbers": [
+            63,
+            93
+          ],
+          "description": "Generated current regular team-livery schematic; not an official photo or event-specific replica.",
+          "reference_urls": [
+            "https://www.ducati.com/ww/en/racing/motogp/ducati-lenovo-team-bike-desmosedici-gp"
+          ],
+          "palette": {
+            "deep racing red": "#C50019",
+            "carbon black": "#17191C",
+            "white": "#FFFFFF"
+          },
+          "patterns": [
+            "Broad red fairing and tank with crisp twin white diagonal bands",
+            "Black lower belly and seat; small white panels on upper fairing",
+            "Red front fender and rear tail"
+          ],
+          "generation_prompt": "Use case: precise-object-edit. Project asset: a tiny color e-paper MotoGP side-view sprite for Ducati Lenovo Team. The attached neutral motorcycle illustration is the edit target and strict common STYLE/GEOMETRY reference. Change ONLY the fairing paint into this CURRENT 2026 team-inspired schematic scheme: Deep scarlet red bodywork, twin crisp white racing bands wrapping the nose and crossing the upper side, carbon-black lower belly and black seat; red tail and front fender. No text, numbers or logos. Keep the exact right-facing ORTHOGRAPHIC SIDE PROFILE, bike proportions, wheel positions, wheel diameter, full silhouette, clean restrained flat shading, black tires with pale thin wheel rims, seat and engine structure. One whole motorcycle fully visible, no rider, no stand, no ground shadow, no people. This is expressly a generated team-color schematic, not an official photograph or exact technical replica. Broad paint regions must be recognizable when shrunk to 30x14 pixels. Absolutely no writing, no letters, no numbers, no sponsor logos, no labels, no watermarks. Actual transparent background, preserve clean alpha. Do not rotate, crop, tilt, change viewpoint or turn the vehicle. Keep generous transparent edge padding.",
+          "refinement_prompt": null,
+          "generated_sha256": "e8a722671aef3a49eb9a3d6f5d3a70da0a7e5b774b140bcdf7f75b198b29f682",
+          "sha256": "31048d6f43087995ba663620613837e11ec5f75590226ca2da0dad2b1833ebe1",
+          "preparation": "Preserved generated alpha; cropped transparent padding and downsampled to at most 180x90 using Lanczos."
+        },
+        "aprilia_racing": {
+          "file": "2026_aprilia_racing.png",
+          "aliases": [
+            "Aprilia Racing"
+          ],
+          "reference_numbers": [
+            72,
+            89
+          ],
+          "description": "Generated current regular team-livery schematic; not an official photo or event-specific replica.",
+          "reference_urls": [
+            "https://www.aprilia.com/us_EN/aprilia-racing/moto-gp/the-bike/",
+            "https://api.pulselive.motogp.com/content/motogp/photo/EN/?references=MOTOGP_TEAM%3A11d18b37-baba-400a-80c2-f8ddf040f97e&tagNames=sport-data-image%3Ateam%3Abackground&limit=3&detail=DETAILED",
+            "https://resources.motogp.pulselive.com/motogp/photo/2026/05/29/112cf8d4-2789-4efc-a78d-0179d40b05e4/72-MGP-Marco-Bezzecchi-Bike_DSC03476.png"
+          ],
+          "palette": {
+            "carbon black": "#17191D",
+            "red orange": "#EF3D20",
+            "white": "#F4F3EE"
+          },
+          "patterns": [
+            "Black carbon-fibre-looking body with orange-red upper shoulder/nose panels",
+            "Large clean white angular slashes on side panels",
+            "Mostly black lower belly and tail; slim Italian tricolour optional but not required at icon size"
+          ],
+          "generation_prompt": "Use case: precise-object-edit. Project asset: a tiny color e-paper MotoGP side-view sprite for Aprilia Racing. The attached neutral motorcycle illustration is the edit target and strict common STYLE/GEOMETRY reference. Change ONLY the fairing paint into this CURRENT 2026 team-inspired schematic scheme: Mostly carbon-black racing bodywork, vivid orange-red shoulder and nose panels, bold clean white diagonal geometric side slashes, black belly and tail. No text, numbers or logos. Keep the exact right-facing ORTHOGRAPHIC SIDE PROFILE, bike proportions, wheel positions, wheel diameter, full silhouette, clean restrained flat shading, black tires with pale thin wheel rims, seat and engine structure. One whole motorcycle fully visible, no rider, no stand, no ground shadow, no people. This is expressly a generated team-color schematic, not an official photograph or exact technical replica. Broad paint regions must be recognizable when shrunk to 30x14 pixels. Absolutely no writing, no letters, no numbers, no sponsor logos, no labels, no watermarks. Actual transparent background, preserve clean alpha. Do not rotate, crop, tilt, change viewpoint or turn the vehicle. Keep generous transparent edge padding.",
+          "refinement_prompt": null,
+          "generated_sha256": "fe0d8c0e1ce6cc9a0920e11d5d0c9b2d6349b223a0cb269bb9ece4b0e0eaaba5",
+          "sha256": "a46f82d4b9ac9d4e711ea7d57d17536d221bf5e54efbd6cf30d9b38fbc8469ab",
+          "preparation": "Preserved generated alpha; cropped transparent padding and downsampled to at most 180x90 using Lanczos."
+        },
+        "gresini": {
+          "file": "2026_gresini.png",
+          "aliases": [
+            "BK8 Gresini Racing MotoGP",
+            "Gresini Racing MotoGP"
+          ],
+          "reference_numbers": [
+            54,
+            73
+          ],
+          "description": "Generated current regular team-livery schematic; not an official photo or event-specific replica.",
+          "reference_urls": [
+            "https://www.gresiniracing.com/en/bk8-gresini-racing-motogp-pure-essence/",
+            "https://www.astra-otoparts.com/media/press-release/aspira-and-gresini-racing-officially-unveil-n",
+            "https://api.pulselive.motogp.com/content/motogp/photo/EN/?references=MOTOGP_TEAM%3A11729e67-d2cb-41ad-b3a8-4a0ac5768a5f&tagNames=sport-data-image%3Ateam%3Abackground&limit=3&detail=DETAILED",
+            "https://resources.motogp.pulselive.com/motogp/photo/2026/02/06/a95bff8d-a406-465c-b816-d6724cf04006/73-MGP-Alex-Marquez-Bike-Official-x01-LGZ_4297.png"
+          ],
+          "palette": {
+            "solid pale periwinkle/light blue": "#A7B9E8",
+            "black": "#171A20",
+            "deep cobalt blue": "#17459C",
+            "small yellow highlights": "#F8D326"
+          },
+          "patterns": [
+            "Large solid light blue upper fairing and tail",
+            "Black central/lower side panels; small deep-blue aero fins",
+            "Small yellow highlight near the nose; no broad red field or mirror-chrome finish"
+          ],
+          "generation_prompt": "Use case: precise-object-edit. Project asset: a tiny color e-paper MotoGP side-view sprite for BK8 Gresini Racing MotoGP. The attached neutral motorcycle illustration is the edit target and strict common STYLE/GEOMETRY reference. Change ONLY the fairing paint into this CURRENT 2026 team-inspired schematic scheme: Solid pale periwinkle-light-blue fairing and tail, strong black central and lower side panels, small deep cobalt-blue aero details, a tiny yellow accent near the nose. Clean solid paint, no broad red panels and no mirror-chrome. No text, numbers or logos. Keep the exact right-facing ORTHOGRAPHIC SIDE PROFILE, bike proportions, wheel positions, wheel diameter, full silhouette, clean restrained flat shading, black tires with pale thin wheel rims, seat and engine structure. One whole motorcycle fully visible, no rider, no stand, no ground shadow, no people. This is expressly a generated team-color schematic, not an official photograph or exact technical replica. Broad paint regions must be recognizable when shrunk to 30x14 pixels. Absolutely no writing, no letters, no numbers, no sponsor logos, no labels, no watermarks. Actual transparent background, preserve clean alpha. Do not rotate, crop, tilt, change viewpoint or turn the vehicle. Keep generous transparent edge padding.",
+          "refinement_prompt": null,
+          "generated_sha256": "bd4feeb01e19ac500bee16514df8c25b32b80dafe0c78e8cf7149383beb17642",
+          "sha256": "de07859057c4702b16e81304b0a62d60658deb64dfb228fc233faa0939462ed2",
+          "preparation": "Preserved generated alpha; cropped transparent padding and downsampled to at most 180x90 using Lanczos."
+        },
+        "vr46": {
+          "file": "2026_vr46.png",
+          "aliases": [
+            "Pertamina Enduro VR46 Racing Team"
+          ],
+          "reference_numbers": [
+            21,
+            49
+          ],
+          "description": "Generated current regular team-livery schematic; not an official photo or event-specific replica.",
+          "reference_urls": [
+            "https://vr46racingteam.it/black-and-light-ritorno-alle-origini-per-il-pertamina-enduro-vr46-racing-team/",
+            "https://www.motogp.com/en/news/2026/01/14/blackandlight-new-year-new-colours-for-pertamina-enduro-vr46/825185",
+            "https://api.pulselive.motogp.com/content/motogp/photo/EN/?references=MOTOGP_TEAM%3A4130a48f-fa91-48be-a50c-f8a2e3f863a0&tagNames=sport-data-image%3Ateam%3Abackground&limit=3&detail=DETAILED",
+            "https://resources.motogp.pulselive.com/motogp/photo/2026/02/06/69e75077-a7a7-4fa3-bddf-93fadacbb3a7/Bike_MotoGP_2026-33.png"
+          ],
+          "palette": {
+            "fluorescent yellow": "#E1F500",
+            "black": "#191B1F",
+            "small gold details": "#B89A36",
+            "tiny red panels": "#CF281A"
+          },
+          "patterns": [
+            "Very bright yellow nose, front fender and tail",
+            "Broad black tank and side body, replacing old broad white panels",
+            "Small gold circular/crescent-like side accents, simplified without emblems"
+          ],
+          "generation_prompt": "Use case: precise-object-edit. Project asset: a tiny color e-paper MotoGP side-view sprite for Pertamina Enduro VR46 Racing Team. The attached neutral motorcycle illustration is the edit target and strict common STYLE/GEOMETRY reference. Change ONLY the fairing paint into this CURRENT 2026 team-inspired schematic scheme: Fluorescent yellow front fairing, front fender and tail combined with a broad black tank and black side body. Tiny gold arc accents on the side and minimal small red accent panels. Black-and-yellow 2026 scheme, no broad white body. No text, numbers or logos. Keep the exact right-facing ORTHOGRAPHIC SIDE PROFILE, bike proportions, wheel positions, wheel diameter, full silhouette, clean restrained flat shading, black tires with pale thin wheel rims, seat and engine structure. One whole motorcycle fully visible, no rider, no stand, no ground shadow, no people. This is expressly a generated team-color schematic, not an official photograph or exact technical replica. Broad paint regions must be recognizable when shrunk to 30x14 pixels. Absolutely no writing, no letters, no numbers, no sponsor logos, no labels, no watermarks. Actual transparent background, preserve clean alpha. Do not rotate, crop, tilt, change viewpoint or turn the vehicle. Keep generous transparent edge padding.",
+          "refinement_prompt": null,
+          "generated_sha256": "dd1d826c9d6f4a64f4e744d7be151db39daec4ccc7600474810272aad262eeec",
+          "sha256": "eb7dfed760f1da0646dab3bbfd2584756388463bf65991b78d1fe64c039d97a6",
+          "preparation": "Preserved generated alpha; cropped transparent padding and downsampled to at most 180x90 using Lanczos."
+        },
+        "monster_yamaha": {
+          "file": "2026_monster_yamaha.png",
+          "aliases": [
+            "Monster Energy Yamaha MotoGP",
+            "Monster Energy Yamaha MotoGP Team"
+          ],
+          "reference_numbers": [
+            20,
+            42
+          ],
+          "description": "Generated current regular team-livery schematic; not an official photo or event-specific replica.",
+          "reference_urls": [
+            "https://www.yamaha-motogp.com/team/meym/yamaha-yzr-m1",
+            "https://www.yamaha-motogp.com/team/meym/media/photo/gallery/21-01-2026-2026-yamaha-yzr-m1/20/1",
+            "https://www.yamaha-motogp.com/team/meym/media/photo/gallery/21-01-2026-2026-yamaha-yzr-m1/42/1",
+            "https://global.yamaha-motor.com/race/release/2026/003/"
+          ],
+          "palette": {
+            "deep blue": "#123EAA",
+            "black/dark navy": "#141B28",
+            "white": "#F5F7FC",
+            "small lime green": "#A7DB20"
+          },
+          "patterns": [
+            "Blue tank, nose and tail with broad black central side panel",
+            "Sharp white and blue camouflage-like wedges on the sides",
+            "Small lime-green accent, black lower belly and seat"
+          ],
+          "generation_prompt": "Use case: precise-object-edit. Project asset: a tiny color e-paper MotoGP side-view sprite for Monster Energy Yamaha MotoGP. The attached neutral motorcycle illustration is the edit target and strict common STYLE/GEOMETRY reference. Change ONLY the fairing paint into this CURRENT 2026 team-inspired schematic scheme: Deep Yamaha blue tank, nose and tail; broad black central side fairing with sharp white and blue camouflage-style wedges; a small lime-green accent, black belly and black seat. No text, numbers or logos. Keep the exact right-facing ORTHOGRAPHIC SIDE PROFILE, bike proportions, wheel positions, wheel diameter, full silhouette, clean restrained flat shading, black tires with pale thin wheel rims, seat and engine structure. One whole motorcycle fully visible, no rider, no stand, no ground shadow, no people. This is expressly a generated team-color schematic, not an official photograph or exact technical replica. Broad paint regions must be recognizable when shrunk to 30x14 pixels. Absolutely no writing, no letters, no numbers, no sponsor logos, no labels, no watermarks. Actual transparent background, preserve clean alpha. Do not rotate, crop, tilt, change viewpoint or turn the vehicle. Keep generous transparent edge padding.",
+          "refinement_prompt": null,
+          "generated_sha256": "2fd4762050549bf16ce44a8780a5d1cdc9f628fdf9f5c6f0eef245246d9e76c9",
+          "sha256": "de6b325f2d6924a3c044e93536e1b1f7f3c7b6e744e5b315b61e7a4a77a7c56d",
+          "preparation": "Preserved generated alpha; cropped transparent padding and downsampled to at most 180x90 using Lanczos."
+        },
+        "pramac_yamaha": {
+          "file": "2026_pramac_yamaha.png",
+          "aliases": [
+            "Prima Pramac Yamaha MotoGP"
+          ],
+          "reference_numbers": [
+            7,
+            43
+          ],
+          "description": "Generated current regular team-livery schematic; not an official photo or event-specific replica.",
+          "reference_urls": [
+            "https://www.motogp.com/id/news/2026/01/13/prima-pramac-yamaha-ungkap-livery-2026/825075",
+            "https://api.pulselive.motogp.com/content/motogp/photo/EN/?references=MOTOGP_TEAM%3A598ccfb2-e0f1-4ad7-92b7-00ec9238a72c&tagNames=sport-data-image%3Ateam%3Abackground&limit=3&detail=DETAILED",
+            "https://resources.motogp.pulselive.com/motogp/photo/2026/02/06/f852334f-a26a-435f-8650-545ca258b162/07-MGP-Toprak-Razgatlioglu-Bike-Official-x01-LGZ_3962.png"
+          ],
+          "palette": {
+            "violet purple": "#7850B5",
+            "deep cobalt blue": "#143F9F",
+            "white": "#F5F5F8",
+            "small red blocks": "#E7483C"
+          },
+          "patterns": [
+            "Purple upper body/tank and tail with deep-blue lower/aero sections",
+            "Thin sharp white diagonal separators framing purple panels",
+            "Small red rectangular highlights, black seat and belly"
+          ],
+          "generation_prompt": "Use case: precise-object-edit. Project asset: a tiny color e-paper MotoGP side-view sprite for Prima Pramac Yamaha MotoGP. The attached neutral motorcycle illustration is the edit target and strict common STYLE/GEOMETRY reference. Change ONLY the fairing paint into this CURRENT 2026 team-inspired schematic scheme: Violet-purple upper fairing, tank and tail with deep cobalt-blue lower body and aero parts; thin sharp white diagonal dividing stripes, small red rectangular accent panels, black seat and belly. No text, numbers or logos. Keep the exact right-facing ORTHOGRAPHIC SIDE PROFILE, bike proportions, wheel positions, wheel diameter, full silhouette, clean restrained flat shading, black tires with pale thin wheel rims, seat and engine structure. One whole motorcycle fully visible, no rider, no stand, no ground shadow, no people. This is expressly a generated team-color schematic, not an official photograph or exact technical replica. Broad paint regions must be recognizable when shrunk to 30x14 pixels. Absolutely no writing, no letters, no numbers, no sponsor logos, no labels, no watermarks. Actual transparent background, preserve clean alpha. Do not rotate, crop, tilt, change viewpoint or turn the vehicle. Keep generous transparent edge padding.",
+          "refinement_prompt": null,
+          "generated_sha256": "75dfd27246e8853fedc421ba229700c2b24b58e7473fa77efc9af6a4183d7935",
+          "sha256": "4e0fcc272be90da6fabd3b3e268d3ff0f399868e5ad821fec1696a5cf9bae102",
+          "preparation": "Preserved generated alpha; cropped transparent padding and downsampled to at most 180x90 using Lanczos."
+        },
+        "honda_hrc": {
+          "file": "2026_honda_hrc.png",
+          "aliases": [
+            "Honda HRC Castrol"
+          ],
+          "reference_numbers": [
+            10,
+            36
+          ],
+          "description": "Generated current regular team-livery schematic; not an official photo or event-specific replica.",
+          "reference_urls": [
+            "https://resources.motogp.pulselive.com/motogp/photo/2026/02/06/3310d894-5a92-44ba-af61-d622c88d992e/10-MGP-Luca-Marini-Bike-Official-x01-LGZ_3662.png",
+            "https://www.motogp.com/en/news/2026/02/02/honda-hrc-castrol-zeigt-die-farben-fur-2026/827209"
+          ],
+          "palette": {
+            "red": "#E51C23",
+            "white": "#F1F1EE",
+            "blue": "#102957",
+            "green": "#168757",
+            "black": "#141619"
+          },
+          "patterns": [
+            "Large red front/upper fairing and red front mudguard",
+            "White diagonal bands framing a deep-blue upper nose and side transition",
+            "Green-and-white small lower panel accents; red remains the dominant body color"
+          ],
+          "generation_prompt": "Use case: precise-object-edit. Project asset: a tiny color e-paper MotoGP side-view sprite for Honda HRC Castrol. The attached neutral motorcycle illustration is the edit target and strict common STYLE/GEOMETRY reference. Change ONLY the fairing paint into this CURRENT 2026 team-inspired schematic scheme: 2026 factory Honda HRC inspired side-view schematic: dominant Honda red body and tank, angular white bands and panels, deep-blue upper fairing details, restrained small green lower accents, black carbon belly and wheels; no text or logos. Keep the exact right-facing ORTHOGRAPHIC SIDE PROFILE, bike proportions, wheel positions, wheel diameter, full silhouette, clean restrained flat shading, black tires with pale thin wheel rims, seat and engine structure. One whole motorcycle fully visible, no rider, no stand, no ground shadow, no people. This is expressly a generated team-color schematic, not an official photograph or exact technical replica. Broad paint regions must be recognizable when shrunk to 30x14 pixels. Absolutely no writing, no letters, no numbers, no sponsor logos, no labels, no watermarks. Actual transparent background, preserve clean alpha. Do not rotate, crop, tilt, change viewpoint or turn the vehicle. Keep generous transparent edge padding.",
+          "refinement_prompt": null,
+          "generated_sha256": "7f77c7caacc97994a8c3c77f638e8e5fa860aa091dbd3fced6dde3729f610a14",
+          "sha256": "347b792fde2952a5f11f106ad6c85de7a9f32ab2012f3246beff3f3ff539d3c7",
+          "preparation": "Preserved generated alpha; cropped transparent padding and downsampled to at most 180x90 using Lanczos."
+        },
+        "lcr_castrol": {
+          "file": "2026_lcr_castrol.png",
+          "aliases": [
+            "Castrol Honda LCR"
+          ],
+          "reference_numbers": [
+            5
+          ],
+          "description": "Generated current regular team-livery schematic; not an official photo or event-specific replica.",
+          "reference_urls": [
+            "https://www.motogp.com/en/news/2026/02/01/zarcos-castrol-honda-lcr-moreiras-all-new-pro-honda-lcr-liveries-revealed/827151",
+            "https://resources.motogp.pulselive.com/photo-resources/2026/02/01/93ae40f0-5142-4791-af30-5ab6e41fa17d/Studio-Fotosession-364.jpg?width=1440&height=900",
+            "https://resources.motogp.pulselive.com/motogp/photo/2026/02/09/1991e733-9ef3-4f18-9fe1-e2a5c9f94537/05-MGP-Johann-Zarco-Bike-Official.png"
+          ],
+          "palette": {
+            "white": "#F5F5F2",
+            "green": "#008D53",
+            "red": "#E52328",
+            "navy": "#112B59",
+            "black": "#171A1D"
+          },
+          "patterns": [
+            "Large clean white mid/rear side panel with green front-side block",
+            "Fine green diagonal speed stripes taper rearward over the white panel",
+            "Red tank and nose, red horizontal tail stripe, black lower belly"
+          ],
+          "generation_prompt": "Use case: precise-object-edit. Project asset: a tiny color e-paper MotoGP side-view sprite for Castrol Honda LCR. The attached neutral motorcycle illustration is the edit target and strict common STYLE/GEOMETRY reference. Change ONLY the fairing paint into this CURRENT 2026 team-inspired schematic scheme: 2026 Castrol Honda LCR inspired side-view schematic: predominantly white and emerald green side body, red tank/nose/tail stripe, dark navy upper trim, black belly and wheels, green diagonal speed lines; no text or logos. Keep the exact right-facing ORTHOGRAPHIC SIDE PROFILE, bike proportions, wheel positions, wheel diameter, full silhouette, clean restrained flat shading, black tires with pale thin wheel rims, seat and engine structure. One whole motorcycle fully visible, no rider, no stand, no ground shadow, no people. This is expressly a generated team-color schematic, not an official photograph or exact technical replica. Broad paint regions must be recognizable when shrunk to 30x14 pixels. Absolutely no writing, no letters, no numbers, no sponsor logos, no labels, no watermarks. Actual transparent background, preserve clean alpha. Do not rotate, crop, tilt, change viewpoint or turn the vehicle. Keep generous transparent edge padding.",
+          "refinement_prompt": null,
+          "generated_sha256": "42b5eb0dcc35e306851c398a0bf1f41927fe6333f3a8c96208175771d90249e3",
+          "sha256": "f80bc9d3d4f67a540ac6ec38dc7fc525162ef03066730aa2755cd7e73c1b464c",
+          "preparation": "Preserved generated alpha; cropped transparent padding and downsampled to at most 180x90 using Lanczos."
+        },
+        "lcr_pro_honda": {
+          "file": "2026_lcr_pro_honda.png",
+          "aliases": [
+            "Pro Honda LCR"
+          ],
+          "reference_numbers": [
+            11
+          ],
+          "description": "Generated current regular team-livery schematic; not an official photo or event-specific replica.",
+          "reference_urls": [
+            "https://www.motogp.com/en/news/2026/02/01/zarcos-castrol-honda-lcr-moreiras-all-new-pro-honda-lcr-liveries-revealed/827151",
+            "https://resources.motogp.pulselive.com/photo-resources/2026/02/01/5e18e53c-1f96-46fc-89ed-a3d13609eb66/Moreira-Diogo-Teamshooting-LCR-Lekl-Ronny-31.-Januar-2026-23-40-16-Studio-Fotosession-768.jpg?width=1440&height=900"
+          ],
+          "palette": {
+            "red": "#F0252D",
+            "white": "#F3F3F2",
+            "navy": "#11295B",
+            "black": "#17191E",
+            "tiny_yellow": "#DFF22A"
+          },
+          "patterns": [
+            "Broad red upper side area meeting a white lower side panel",
+            "Angular white/red horizontal speed bands through the lower panel",
+            "Dark navy strip under the tank and seat; black belly pan; no emerald green"
+          ],
+          "generation_prompt": "Use case: precise-object-edit. Project asset: a tiny color e-paper MotoGP side-view sprite for Pro Honda LCR. The attached neutral motorcycle illustration is the edit target and strict common STYLE/GEOMETRY reference. Change ONLY the fairing paint into this CURRENT 2026 team-inspired schematic scheme: 2026 Pro Honda LCR inspired side-view schematic: bright red upper/middle fairing and tank, broad white lower side panel with red angular horizontal speed stripes, dark navy top trim and seat strip, black belly and wheels; no green Castrol panels, no text or logos. Keep the exact right-facing ORTHOGRAPHIC SIDE PROFILE, bike proportions, wheel positions, wheel diameter, full silhouette, clean restrained flat shading, black tires with pale thin wheel rims, seat and engine structure. One whole motorcycle fully visible, no rider, no stand, no ground shadow, no people. This is expressly a generated team-color schematic, not an official photograph or exact technical replica. Broad paint regions must be recognizable when shrunk to 30x14 pixels. Absolutely no writing, no letters, no numbers, no sponsor logos, no labels, no watermarks. Actual transparent background, preserve clean alpha. Do not rotate, crop, tilt, change viewpoint or turn the vehicle. Keep generous transparent edge padding.",
+          "refinement_prompt": null,
+          "generated_sha256": "9ecded658b3a65402eb690215678b2e302af747f4ac6097b88ce5adb13cb8eeb",
+          "sha256": "88ff28ec9bda563268f31927798d3fe6d47a5f30effb34c38b093408f8f3d662",
+          "preparation": "Preserved generated alpha; cropped transparent padding and downsampled to at most 180x90 using Lanczos."
+        },
+        "ktm_factory": {
+          "file": "2026_ktm_factory.png",
+          "aliases": [
+            "Red Bull KTM Factory Racing"
+          ],
+          "reference_numbers": [
+            33,
+            37
+          ],
+          "description": "Generated current regular team-livery schematic; not an official photo or event-specific replica.",
+          "reference_urls": [
+            "https://resources.motogp.pulselive.com/motogp/photo/2026/02/06/a236336a-7e0c-4919-ae97-c932a4bc2952/37-MGP-Pedro-Acosta-Bike-Official-x01-LGZ_4124.png"
+          ],
+          "palette": {
+            "orange": "#FF6500",
+            "navy_black": "#121923",
+            "yellow": "#F4B900",
+            "red": "#ED2428",
+            "turquoise": "#12B7BC"
+          },
+          "patterns": [
+            "Orange angular front-side panels, dark navy/black upper body and belly",
+            "Yellow-gold roundel area with red opposing graphic shapes",
+            "Small turquoise rectangular accents near windscreen distinguish this factory reference"
+          ],
+          "generation_prompt": "Use case: precise-object-edit. Project asset: a tiny color e-paper MotoGP side-view sprite for Red Bull KTM Factory Racing. The attached neutral motorcycle illustration is the edit target and strict common STYLE/GEOMETRY reference. Change ONLY the fairing paint into this CURRENT 2026 team-inspired schematic scheme: 2026 Red Bull KTM factory inspired side-view schematic: KTM orange angular side panels with dark navy-black upper body and belly, yellow-gold roundel with red abstract opposing shapes, tiny turquoise top accents, black wheels; no text or logos. Retain the real near-identical family resemblance to Tech3. Keep the exact right-facing ORTHOGRAPHIC SIDE PROFILE, bike proportions, wheel positions, wheel diameter, full silhouette, clean restrained flat shading, black tires with pale thin wheel rims, seat and engine structure. One whole motorcycle fully visible, no rider, no stand, no ground shadow, no people. This is expressly a generated team-color schematic, not an official photograph or exact technical replica. Broad paint regions must be recognizable when shrunk to 30x14 pixels. Absolutely no writing, no letters, no numbers, no sponsor logos, no labels, no watermarks. Actual transparent background, preserve clean alpha. Do not rotate, crop, tilt, change viewpoint or turn the vehicle. Keep generous transparent edge padding.",
+          "refinement_prompt": "Precise small edit of this generated motorcycle illustration: keep EVERY geometric detail, exact side profile, silhouette, colors, orange panels, wheels, trim and transparency unchanged. Replace ONLY the red animal/bull silhouettes on the yellow roundel in the central fairing with TWO SIMPLE ABSTRACT RED DIAGONAL PARALLELOGRAMS, like uncomplicated racing slashes. There must be NO animals, NO bulls, NO recognizable brand emblem, NO sponsor logo, NO letters and NO numbers anywhere. Keep the yellow roundel and the rest of the motorcycle completely intact. One fully visible right-facing side-view sprite, transparent background.",
+          "generated_sha256": "6aecd90fcdd6746b76187dbe360948ba59341e1a64e76d0ea6d135f76754fed2",
+          "sha256": "ec53cd6c3ea6677f135a1ca614018ffdfc28ff359cbc7f8f3fe07b2956a07657",
+          "preparation": "Preserved generated alpha; cropped transparent padding and downsampled to at most 180x90 using Lanczos."
+        },
+        "ktm_tech3": {
+          "file": "2026_ktm_tech3.png",
+          "aliases": [
+            "Red Bull KTM Tech3"
+          ],
+          "reference_numbers": [
+            12,
+            23
+          ],
+          "description": "Generated current regular team-livery schematic; not an official photo or event-specific replica.",
+          "reference_urls": [
+            "https://resources.motogp.pulselive.com/motogp/photo/2026/02/06/458b4001-cd22-40ea-a3b9-d039d47e194d/12-MGP-Maverick-Vi-ales-Bike-Official-x01-LGZ_3866.png"
+          ],
+          "palette": {
+            "orange": "#FF6500",
+            "navy_black": "#121923",
+            "yellow": "#F4B900",
+            "red": "#ED2428"
+          },
+          "patterns": [
+            "Same orange/dark-navy basic scheme as the KTM factory bikes",
+            "Yellow-gold roundel area with red opposing graphic shapes",
+            "Small red rectangular upper accents, rather than factory turquoise accents"
+          ],
+          "generation_prompt": "Use case: precise-object-edit. Project asset: a tiny color e-paper MotoGP side-view sprite for Red Bull KTM Tech3. The attached neutral motorcycle illustration is the edit target and strict common STYLE/GEOMETRY reference. Change ONLY the fairing paint into this CURRENT 2026 team-inspired schematic scheme: 2026 Red Bull KTM Tech3 inspired side-view schematic: KTM orange angular side panels and dark navy-black body/belly, yellow-gold roundel with red abstract opposing shapes, tiny red upper accent rectangles, black wheels; no text or logos. Do not invent a wholly different dominant color from the KTM factory bike. Keep the exact right-facing ORTHOGRAPHIC SIDE PROFILE, bike proportions, wheel positions, wheel diameter, full silhouette, clean restrained flat shading, black tires with pale thin wheel rims, seat and engine structure. One whole motorcycle fully visible, no rider, no stand, no ground shadow, no people. This is expressly a generated team-color schematic, not an official photograph or exact technical replica. Broad paint regions must be recognizable when shrunk to 30x14 pixels. Absolutely no writing, no letters, no numbers, no sponsor logos, no labels, no watermarks. Actual transparent background, preserve clean alpha. Do not rotate, crop, tilt, change viewpoint or turn the vehicle. Keep generous transparent edge padding.",
+          "refinement_prompt": "Precise small edit of this generated motorcycle illustration: keep EVERY geometric detail, exact side profile, silhouette, colors, orange panels, wheels, trim and transparency unchanged. Replace ONLY the red animal/bull silhouettes on the yellow roundel in the central fairing with TWO SIMPLE ABSTRACT RED DIAGONAL PARALLELOGRAMS, like uncomplicated racing slashes. There must be NO animals, NO bulls, NO recognizable brand emblem, NO sponsor logo, NO letters and NO numbers anywhere. Keep the yellow roundel and the rest of the motorcycle completely intact. One fully visible right-facing side-view sprite, transparent background.",
+          "generated_sha256": "e4f32afd8aacec9cbbc20101af18bca18abd14f3c79543aa1b53ca7acefc30a6",
+          "sha256": "000018a2fa2cead89a0a9932e69446db2939ba9af10e67a27b2316276ba96626",
+          "preparation": "Preserved generated alpha; cropped transparent padding and downsampled to at most 180x90 using Lanczos."
+        },
+        "trackhouse": {
+          "file": "2026_trackhouse.png",
+          "aliases": [
+            "SuperFile Trackhouse MotoGP Team",
+            "Trackhouse MotoGP Team",
+            "Trackhouse Racing"
+          ],
+          "reference_numbers": [
+            25,
+            79
+          ],
+          "description": "Generated current regular team-livery schematic; not an official photo or event-specific replica.",
+          "reference_urls": [
+            "https://resources.motogp.pulselive.com/motogp/photo/2026/06/19/7f9b394c-229d-443c-bf0f-13e4718dc80e/25-MGP-Raul-Fernandez-Bike-Official-x01-LGZ_3765.png",
+            "https://www.trackhouse.com/news/2026/june/05/superfile-trackhouse-motogp-team"
+          ],
+          "palette": {
+            "black": "#0B0E0B",
+            "acid_yellow": "#E6F500",
+            "white": "#F3F5F5",
+            "pale_cyan": "#9BCBDC"
+          },
+          "patterns": [
+            "Predominantly black body with bright acid-yellow diagonal flashes",
+            "Fine branching yellow electric/lightning veins across black panels",
+            "Solid neon-yellow nose edging, front-wing tips and front mudguard band"
+          ],
+          "generation_prompt": "Use case: precise-object-edit. Project asset: a tiny color e-paper MotoGP side-view sprite for SuperFile Trackhouse MotoGP Team. The attached neutral motorcycle illustration is the edit target and strict common STYLE/GEOMETRY reference. Change ONLY the fairing paint into this CURRENT 2026 team-inspired schematic scheme: Current 2026 SuperFile Trackhouse inspired side-view schematic: black carbon body, fluorescent acid-yellow angular flashes and thin branching lightning veins, solid neon-yellow front accents, tiny white/pale-cyan details, black wheels; no text or logos. Use current post-June regular livery, not the January blue-black-yellow launch or occasional Gulf pale-blue/orange scheme. Keep the exact right-facing ORTHOGRAPHIC SIDE PROFILE, bike proportions, wheel positions, wheel diameter, full silhouette, clean restrained flat shading, black tires with pale thin wheel rims, seat and engine structure. One whole motorcycle fully visible, no rider, no stand, no ground shadow, no people. This is expressly a generated team-color schematic, not an official photograph or exact technical replica. Broad paint regions must be recognizable when shrunk to 30x14 pixels. Absolutely no writing, no letters, no numbers, no sponsor logos, no labels, no watermarks. Actual transparent background, preserve clean alpha. Do not rotate, crop, tilt, change viewpoint or turn the vehicle. Keep generous transparent edge padding.",
+          "refinement_prompt": null,
+          "generated_sha256": "cfe7acf16950ea16ccf501d65cfebbcdbac15447e498d301eeed6d2441fd0aa1",
+          "sha256": "32e8f769fa0d103dbd36b2332213dc14139d38202ade508c1ac6db8da35a1b25",
+          "preparation": "Preserved generated alpha; cropped transparent padding and downsampled to at most 180x90 using Lanczos."
+        }
+      }
+    }
+  }
+}
