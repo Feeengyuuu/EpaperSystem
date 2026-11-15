@@ -40,15 +40,14 @@ SOURCE_LOGOS_MAX = 12
 SOURCE_LOGO_SCALES = {"pbs_newshour": 0.68}
 # A vertical red seal reading 头条 marks the lead story.
 SEAL_SIZE = (28, 54)
-# A lead story with a picture (its RSS item's) shows it across the whole band (at most
-# LEAD_PHOTO_SPAN px, short of art at the band's right when there is some), the seal on its
-# corner, rounded and fading into the page from LEAD_PHOTO_FADE of its width; the
-# headline and its dek start right beside the seal, set over the picture in plain ink, with no
-# outline round the letters. So that they read there, the picture is laid at LEAD_PHOTO_STRENGTH,
-# the page showing through the rest of it: a quiet ground for the type.
+# One crop carries the lead's picture down through the news columns. Its strength
+# stays low under the headline, then fades vertically to paper before the markets.
+# The columns add translucent reading surfaces over that continuous backdrop.
 LEAD_PHOTO_SPAN = 780
 LEAD_PHOTO_FADE = 0.7
-LEAD_PHOTO_STRENGTH = 0.44
+LEAD_PHOTO_STRENGTH = 0.32
+NEWS_SURFACE_OPACITY = 0.58
+NEWS_BAND_OPACITY = 0.52
 # The headline's letters start LEAD_HEADLINE_TOP px into the band; over a photo, the seal and they
 # sit LEAD_PHOTO_PAD px in from its left and top edges (the column cards' own bleed).
 LEAD_HEADLINE_TOP = 4
@@ -71,11 +70,11 @@ STORY_FACT_SIZE, STORY_FACT_WEIGHT = 12, 400
 # Each story ends in a topic ring; its text stops short of this right-hand slot.
 STORY_ICON_SLOT = 40
 STORY_ICON_RADIUS = 15
-# A story with its article's picture shows it there instead, on rows at least
-# STORY_PHOTO_MIN_HEIGHT tall (a one-line row keeps its badge): the picture fills the row from top
-# to bottom at the card's right edge, STORY_PHOTO_WIDTH wide, whole over its right
-# STORY_PHOTO_SOLID px and fading out to its left, under the end of the text (printed plain).
-STORY_PHOTO_WIDTH, STORY_PHOTO_SOLID, STORY_PHOTO_MIN_HEIGHT = 104, 44, 30
+# Adjacent stories sharing a photo use a single tall crop. Under the text, its
+# strength never exceeds STORY_PHOTO_TEXT_STRENGTH; full colour starts only in
+# the reserved right-hand image slot, with a small gap after the last glyph.
+STORY_PHOTO_WIDTH, STORY_PHOTO_SOLID, STORY_PHOTO_MIN_HEIGHT = 104, 26, 30
+STORY_PHOTO_TEXT_STRENGTH = 0.12
 # Accents are palette roles (the plugin's page colours fill them); anything unlisted stays in ink.
 SECTION_ACCENTS = {"国内": "red", "A股": "red", "国际": "blue", "美股": "blue"}
 # Each section's label is led by its generated badge (topic_icons/section_*.png) in its colour;
@@ -209,9 +208,21 @@ class NewsPage:
         share = shares["night" if sum(base) < 200 else "day"]
         return tuple(round(low + (high - low) * share) for high, low in zip(tuple(colour)[:3], base))
 
-    def card(self, box, colour):
+    def card(self, box, colour, opacity=1.0):
         """A reading card of ``colour`` behind a column or a market strip."""
-        self.d.rounded_rectangle(box, radius=CARD_RADIUS, fill=self.tint(colour, CARD_TINT))
+        self.reading_surface(box, self.tint(colour, CARD_TINT), CARD_RADIUS, opacity)
+
+    def reading_surface(self, box, colour, radius, opacity):
+        """Blend a local reading surface into the backdrop without tinting its margins."""
+        if opacity >= 1:
+            self.d.rounded_rectangle(box, radius=radius, fill=colour)
+            return
+        left, top, right, bottom = (round(value) for value in box)
+        size = (right - left + 1, bottom - top + 1)
+        mask = Image.new("L", size, 0)
+        ImageDraw.Draw(mask).rounded_rectangle((0, 0, size[0] - 1, size[1] - 1), radius=radius,
+                                               fill=round(255 * opacity))
+        self.img.paste(colour, (left, top, right + 1, bottom + 1), mask)
 
     def section_mark(self, x, middle, size, label, colour):
         """The section's badge ``size`` px from ``x``, centred on ``middle`` (a bar of ``colour`` without
@@ -299,7 +310,8 @@ class NewsPage:
             # stands that far above the headline's letters, and the seal's top is level with them.
             span = min(LEAD_PHOTO_SPAN, art_left - 12 - MARGIN + LEAD_PHOTO_PAD)
             seal_top = top + LEAD_HEADLINE_TOP
-            self.lead_photo(photo, (MARGIN - LEAD_PHOTO_PAD, seal_top - LEAD_PHOTO_PAD, MARGIN + span, bottom - 1))
+            self.lead_photo(photo, (MARGIN - LEAD_PHOTO_PAD, seal_top - LEAD_PHOTO_PAD,
+                                   MARGIN + span, COLUMN_BOTTOM + 1), fade_below=bottom)
         # The generated 头条 badge is 1:2; drawn as a plain seal when the file is missing.
         if not news_art.paste_badge(self.img, "seal", MARGIN + seal_w / 2, seal_top + seal_h / 2, seal_h // 2, seal_h):
             self.d.rounded_rectangle((MARGIN, seal_top, MARGIN + seal_w, seal_top + seal_h), radius=3, fill=c["lead"])
@@ -353,9 +365,9 @@ class NewsPage:
         news_art.draw_topic_art(self.d, (art_left, top + 4, width - MARGIN - 6, bottom - 4), kind,
                                 c["ink"], c["panel"], c["rule"], c["lead"], image=self.img)
 
-    def lead_photo(self, picture, box, radius=6, strength=LEAD_PHOTO_STRENGTH):
+    def lead_photo(self, picture, box, radius=6, strength=LEAD_PHOTO_STRENGTH, fade_below=None):
         """``picture`` filling ``box`` at ``strength`` (the page showing through the rest of it),
-        rounded, fading into the page across its right side."""
+        rounded, fading right and, below ``fade_below``, down to the page colour."""
         x0, y0, x1, y1 = [int(value) for value in box]
         size = (max(1, x1 - x0), max(1, y1 - y0))
         tile = ImageOps.fit(picture.convert("RGB"), size, method=Image.Resampling.LANCZOS, centering=(0.5, 0.4))
@@ -366,7 +378,15 @@ class NewsPage:
         for index in range(start, size[0]):
             t = (index - start) / max(1, size[0] - 1 - start)
             ramp.putpixel((index, 0), round(255 * strength * (1 - t * t * (3 - 2 * t))))
-        self.img.paste(tile, (x0, y0), ImageChops.multiply(mask, ramp.resize(size)))
+        mask = ImageChops.multiply(mask, ramp.resize(size))
+        if fade_below is not None:
+            vertical = Image.new("L", (1, size[1]), 255)
+            start_y = max(0, min(size[1] - 1, round(fade_below - y0)))
+            for row in range(start_y, size[1]):
+                share = (row - start_y) / max(1, size[1] - 1 - start_y)
+                vertical.putpixel((0, row), round(255 * (1 - share * share * (3 - 2 * share))))
+            mask = ImageChops.multiply(mask, vertical.resize(size))
+        self.img.paste(tile, (x0, y0), mask)
 
     def headline_font(self, title, max_width, sizes=LEAD_TITLE_SIZES):
         """(font, size) for the lead's headline: the serif banner face at the largest of ``sizes``
@@ -431,7 +451,8 @@ class NewsPage:
     def column(self, x, width, label, items, *, sources):
         c = self.c
         mark = self.accent(SECTION_ACCENTS.get(label))
-        self.card((x - CARD_BLEED, COLUMN_TOP - 5, x + width + CARD_BLEED, COLUMN_BOTTOM + 1), mark)
+        self.card((x - CARD_BLEED, COLUMN_TOP - 5, x + width + CARD_BLEED, COLUMN_BOTTOM + 1), mark,
+                  opacity=NEWS_SURFACE_OPACITY)
         label_x = self.section_mark(x, COLUMN_TOP + 9, 20, label, mark)
         self.text((label_x, COLUMN_TOP), label, 14, True)
         count_x = label_x + 4 + self.width(label, 14)
@@ -446,17 +467,29 @@ class NewsPage:
             # newspaper justifies one, instead of leaving a band at its foot.
             gap += min(spare // (len(plan) - 1), JUSTIFY_GAP_MAX)
         band = self.tint(mark, BAND_TINT)
+        rows = []
+        photo_runs = []
         for number, (item, title_lines, fact) in enumerate(zip(items, plan, facts), 1):
             # Every other story reads off a band across the card, so the eye keeps its line.
             height = self.item_height(width, item, title_lines, fact)
             row = (x - CARD_BLEED + 2, y - gap // 2 - 1, x + width + CARD_BLEED - 2, y + height + (gap + 1) // 2)
             if number % 2 == 0:
-                self.d.rounded_rectangle(row, radius=4, fill=band)
+                self.reading_surface(row, band, 4, NEWS_BAND_OPACITY)
             if item.get("photo") is not None and height >= STORY_PHOTO_MIN_HEIGHT:
-                # Under the text: the picture from the row's top to its bottom.
-                self.story_photo(item["photo"], (row[2] - STORY_PHOTO_WIDTH, row[1], row[2], row[3] + 1))
-            height = self.item(x, y, width, number, item, title_lines, mark, with_fact=fact)
+                key = item.get("photo_url") or id(item["photo"])
+                box = (row[2] - STORY_PHOTO_WIDTH, row[1], row[2], min(COLUMN_BOTTOM + 1, row[3] + 1))
+                if photo_runs and photo_runs[-1][0] == key and photo_runs[-1][1] == number - 1:
+                    run = photo_runs[-1]
+                    photo_runs[-1] = (key, number, run[2], (*run[3][:3], box[3]))
+                else:
+                    photo_runs.append((key, number, item["photo"], box))
+            rows.append((number, item, title_lines, fact, y))
             y += height + gap
+        # Paint the tall crops once, after every band, then put all text above them.
+        for _key, _last, photo, box in photo_runs:
+            self.story_photo(photo, box)
+        for number, item, title_lines, fact, row_y in rows:
+            self.item(x, row_y, width, number, item, title_lines, mark, with_fact=fact)
         self.text((count_x, COLUMN_TOP + 2), str(len(plan)), 11, True, mark)
         if COLUMN_BOTTOM - y >= GLOBE_MIN_HEIGHT:
             self.globe_filler(x, y, width, COLUMN_BOTTOM, label, sources)
@@ -530,16 +563,22 @@ class NewsPage:
         return height
 
     def story_photo(self, photo, box):
-        """A story's own picture filling ``box`` (a row's right end, top to bottom), whole over its
-        right STORY_PHOTO_SOLID px and fading out smoothly to the left edge; no frame."""
+        """A continuous crop with a quiet text area and full colour beyond the reading edge."""
         left, top, right, bottom = (round(value) for value in box)
         size = (right - left, bottom - top)
         art = ImageOps.fit(photo.convert("RGB"), size, Image.Resampling.LANCZOS, centering=(0.5, 0.4))
-        fade = max(1, size[0] - STORY_PHOTO_SOLID)
+        text_edge = max(1, size[0] - STORY_ICON_SLOT - CARD_BLEED + 2)
+        clear_edge = text_edge + 5
+        solid_edge = max(clear_edge + 1, size[0] - STORY_PHOTO_SOLID)
         ramp = Image.new("L", (size[0], 1), 255)
-        for column in range(fade):
-            share = column / fade
-            ramp.putpixel((column, 0), round(255 * share * share * (3 - 2 * share)))
+        for column in range(size[0]):
+            if column <= clear_edge:
+                share = min(1.0, column / text_edge)
+                strength = STORY_PHOTO_TEXT_STRENGTH * share * share * (3 - 2 * share)
+            else:
+                share = min(1.0, (column - clear_edge) / (solid_edge - clear_edge))
+                strength = STORY_PHOTO_TEXT_STRENGTH + (1 - STORY_PHOTO_TEXT_STRENGTH) * share * share * (3 - 2 * share)
+            ramp.putpixel((column, 0), round(255 * strength))
         self.img.paste(art, (left, top), ramp.resize(size))
 
     def globe_filler(self, x, top, width, bottom, label, sources):
