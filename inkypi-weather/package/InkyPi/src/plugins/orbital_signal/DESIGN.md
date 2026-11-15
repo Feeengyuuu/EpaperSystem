@@ -35,6 +35,22 @@ Avoid: photorealism, detailed space background, planets, stars clutter, glow, ne
 
 Saved plugin asset: `icon.png`
 
+## Launch location identities (2026-11-15)
+
+The owner requested recognizable logos beside the launch site's name. The location
+row now reserves a maximum 48 × 24 px for a verified site or operator mark, with a
+6 px gap before its name and the existing country flag. Its actual width determines
+the available text space, so long names still fit within the launch panel. The
+time row, provider identity in the fact grid, and countdown remain in their slots.
+
+Space Launch Delta 30 and 45 shields identify Vandenberg and Cape Canaveral;
+CSG's official compact mark identifies Kourou. Other covered locations use their
+documented operator (NASA, Rocket Lab, ISRO, JAXA or TsENKI). These are explicitly
+operator identities, not invented independent logos for the launch sites. Matching
+uses only the location and country, never the rocket's provider. Unverified places
+and missing assets retain the location pin, name and flag. All assets are local;
+`assets/sites/source.json` records the official verification pages and image sources.
+
 ## Mission-control redesign (2026-10-23)
 
 The owner picked direction A of three GPT Image 2.5 mockups (mission-control

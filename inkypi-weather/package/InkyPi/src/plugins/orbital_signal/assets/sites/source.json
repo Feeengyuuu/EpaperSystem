@@ -1,0 +1,181 @@
+{
+  "verified_at": "2026-11-15",
+  "purpose": "Identify launch locations through verified range or site-operator marks; these are not rocket-provider marks. Names and country flags remain visible.",
+  "processing": "Original colors retained; edge-connected flat white backgrounds cleared and alpha bounds trimmed. Crops, when present, isolate existing standalone symbols from official lockups; no symbols are redrawn. Assets fit within 192x96. Low-contrast wordmark strokes adapt to the page at render time.",
+  "unverified_locations": [
+    "Jiuquan",
+    "Taiyuan",
+    "Xichang",
+    "Wenchang",
+    "Plesetsk"
+  ],
+  "unverified_behavior": "Keep the existing location pin and text; do not substitute a national agency or rocket company without verified site responsibility.",
+  "marks": {
+    "vandenberg": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/9/90/Space_Launch_Delta_30_emblem.png",
+      "source_sha256": "90bfca915de11d9ab734737d91bfa83f24d31d25d2f233c7d425ba871f9b7863",
+      "size": [
+        72,
+        96
+      ],
+      "file": "vandenberg.png",
+      "sha256": "1cffa222b48eb038ae3320ecd065320c961d2c1b72a9accb529c47e4b73af8ca",
+      "role": "site_operator",
+      "organization": "Space Launch Delta 30",
+      "official_pages": [
+        "https://www.vandenberg.spaceforce.mil/About-Us/History/",
+        "https://www.vandenberg.spaceforce.mil/Units/"
+      ],
+      "asset_page": "https://commons.wikimedia.org/wiki/File:Space_Launch_Delta_30_emblem.png",
+      "license": "Public domain US Space Force work; identifier, no endorsement",
+      "locations": [
+        "Vandenberg Space Force Base"
+      ]
+    },
+    "cape_canaveral": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/6/6f/Space_Launch_Delta_45_emblem.png",
+      "source_sha256": "d7375e88dc21fd0f2aa092fc48e6faf23cd5f9a0b4294bc4b9ff3a28cc9160a4",
+      "size": [
+        72,
+        96
+      ],
+      "file": "cape_canaveral.png",
+      "sha256": "e91d42aaf193760b28126b61d2149e0eb1f9dc6ee86b09f8151b827efee4caad",
+      "role": "site_operator",
+      "organization": "Space Launch Delta 45",
+      "official_pages": [
+        "https://www.patrick.spaceforce.mil/history/"
+      ],
+      "asset_page": "https://commons.wikimedia.org/wiki/File:Space_Launch_Delta_45_emblem.png",
+      "license": "Public domain US Space Force work; identifier, no endorsement",
+      "locations": [
+        "Cape Canaveral Space Force Station"
+      ]
+    },
+    "tsenki": {
+      "url": "https://www.russian.space/assets/img/logo.jpg",
+      "source_sha256": "4a6308e8c5e786f2204eeb9f71f53ee22bd7a87d63c7038d4d58ff9e1d1f132f",
+      "size": [
+        24,
+        23
+      ],
+      "file": "tsenki.png",
+      "sha256": "4d19eff4187755b334f358eae1c1bae070de666193d2a62022d59d269298d485",
+      "role": "site_operator",
+      "organization": "TsENKI",
+      "official_pages": [
+        "https://www.russian.space/kosmodromy/kosmodrom-baykonur/",
+        "https://www.russian.space/kosmodromy/kosmodrom-vostochnyy/"
+      ],
+      "processing": "Cropped the existing standalone symbol from the official header lockup; removed edge-connected flat ground, retained original artwork and colors.",
+      "crop_box": [
+        0,
+        0,
+        25,
+        25
+      ],
+      "locations": [
+        "Baikonur Cosmodrome",
+        "Vostochny Cosmodrome"
+      ]
+    },
+    "rocketlab": {
+      "url": "https://rocketlabcorp.com/_resources/themes/base/production/images/admin_logo.png?m=1747131331",
+      "source_sha256": "872ba808d3fbd91f27748fa67123acd59f4faf2e488545722d2175522ca8bc42",
+      "size": [
+        192,
+        69
+      ],
+      "file": "rocketlab.png",
+      "sha256": "dbeef58a8f26e303b5b405f3d4ca0a6aeb942fae4d4a20ab91e1fc7b3ce505c2",
+      "role": "site_operator",
+      "organization": "Rocket Lab",
+      "official_pages": [
+        "https://rocketlabcorp.com/launch/launch-with-us/"
+      ],
+      "processing": "Cropped the existing standalone symbol from the official header lockup; removed edge-connected flat ground, retained original artwork and colors.",
+      "crop_box": [
+        0,
+        0,
+        600,
+        170
+      ],
+      "locations": [
+        "Rocket Lab Launch Complex 1 / Mahia Peninsula"
+      ]
+    },
+    "nasa": {
+      "url": "https://www.nasa.gov/wp-content/themes/nasa/assets/images/nasa-logo@2x.png",
+      "source_sha256": "f3de7b1ffb783f6e462d03d65ee6be358967632fba1864059e35f5d0ef2642b5",
+      "size": [
+        108,
+        90
+      ],
+      "file": "nasa.png",
+      "sha256": "d8aba1fe51d98d58f2298e5aecc6350cbbe8ebca3824b44ca2a3d67afef290d6",
+      "role": "site_operator",
+      "organization": "NASA",
+      "official_pages": [
+        "https://www.nasa.gov/kennedy/",
+        "https://www.nasa.gov/wallops/about/"
+      ],
+      "locations": [
+        "Kennedy Space Center",
+        "Wallops Flight Facility"
+      ]
+    },
+    "jaxa": {
+      "url": "https://www.jaxa.jp/about/images/jaxa_logo.gif",
+      "source_sha256": "282ab3cddbe95fbd035f984e4f421b33b76a88f1b2f75d3479f5378f9852ad4b",
+      "size": [
+        158,
+        96
+      ],
+      "file": "jaxa.png",
+      "sha256": "b4868d9124da49b7f5156f2d21652e1fe7dd12f1afa62ff83df850b978fe6f56",
+      "role": "site_operator",
+      "organization": "JAXA",
+      "official_pages": [
+        "https://www.jaxa.jp/about/logo_j.html",
+        "https://www.jaxa.jp/about/centers/tnsc/index_j.html",
+        "https://www.jaxa.jp/about/centers/usc/index_j.html"
+      ],
+      "locations": [
+        "Tanegashima Space Center",
+        "Uchinoura Space Center"
+      ]
+    },
+    "isro": {
+      "file": "../providers/31.png",
+      "source_manifest": "../brand_assets.source.json",
+      "role": "site_operator",
+      "organization": "ISRO",
+      "verified_at": "2026-11-15",
+      "official_pages": [
+        "https://www.isro.gov.in/SDSC.html"
+      ],
+      "locations": [
+        "Satish Dhawan Space Centre / Sriharikota"
+      ]
+    },
+    "csg": {
+      "file": "csg.png",
+      "role": "site_identity",
+      "organization": "Centre Spatial Guyanais",
+      "url": "https://centrespatialguyanais.cnes.fr/sites/default/files/favicons_site_CSG_B_32x32px.png",
+      "official_pages": [
+        "https://centrespatialguyanais.cnes.fr/"
+      ],
+      "source_sha256": "6676249f24f642f555a992a04fcf23591fad254d103740c654427a4e15617cf9",
+      "sha256": "2a9e09f3219dbaa9c7a8a78641f7763fb05e8efdab04b19688b568e7960a8ca5",
+      "size": [
+        32,
+        32
+      ],
+      "processing": "Official 32px site favicon, converted to RGBA PNG without recoloring or cropping.",
+      "locations": [
+        "Guiana Space Centre / Kourou"
+      ]
+    }
+  }
+}

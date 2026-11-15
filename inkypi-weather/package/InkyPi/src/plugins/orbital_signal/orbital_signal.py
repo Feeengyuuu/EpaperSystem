@@ -37,6 +37,7 @@ from utils.app_utils import (
 )
 
 from . import launch_photo
+from .launch_sites import MARK_GAP, site_mark
 from .market_style import BRAND_FADE_HEIGHT, market_background_color, market_header_palette, market_palette
 from .sources import (
     _parse_time, _upload_url, _utc, fetch_launches, fetch_market_events, fetch_previous_launches, fetch_space_events,
@@ -1278,7 +1279,7 @@ class OrbitalSignal(BasePlugin):
         return fitted
 
     def _draw_when_and_where(self, image, draw, launch, launch_time, now, left, right, top, palette, family):
-        """Two plain lines: the local day and time (UTC after it), then the launch site with its flag."""
+        """Local/UTC time, then the site's verified mark, readable name and country flag."""
         local = launch_time.astimezone(now.tzinfo) if now.tzinfo else launch_time
         days = (local.date() - (now.astimezone(now.tzinfo) if now.tzinfo else now).date()).days
         day = "TODAY" if days == 0 else "TOMORROW" if days == 1 else f"{local:%a %d %b}".upper()
@@ -1298,13 +1299,18 @@ class OrbitalSignal(BasePlugin):
             return
         place_top = top + 20
         flag = _flag(launch.get("country_code"))
-        room = right - left - 20 - (26 if flag is not None else 0)
+        mark = site_mark(launch, palette)
+        text_left = left + (mark.width + MARK_GAP if mark is not None else 20)
+        room = right - text_left - (26 if flag is not None else 0)
         site_font = self._fit_font(draw, site, room, 13, 10, family)
         shown = self._fit_text(draw, site, site_font, room)
-        self._paste_icon(image, "pin", left, place_top, 15, palette)
-        draw.text((left + 20, place_top - 1), shown, font=site_font, fill=palette["ink"])
+        if mark is not None:
+            image.paste(mark, (round(left), round(place_top + 8 - mark.height / 2)), mark)
+        else:
+            self._paste_icon(image, "pin", left, place_top, 15, palette)
+        draw.text((text_left, place_top - 1), shown, font=site_font, fill=palette["ink"])
         if flag is not None:
-            self._paste_flag(image, draw, flag, left + 20 + draw.textbbox((0, 0), shown, font=site_font)[2] + 8,
+            self._paste_flag(image, draw, flag, text_left + draw.textbbox((0, 0), shown, font=site_font)[2] + 8,
                              place_top + 2, palette)
 
     def _draw_launch(self, image, draw, box, launches, now, palette, family):
