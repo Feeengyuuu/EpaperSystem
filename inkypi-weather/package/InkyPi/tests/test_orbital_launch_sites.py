@@ -24,6 +24,9 @@ KNOWN_SITES = [
     ("Uchinoura Space Center, Japan", "JP", "jaxa"),
     ("Baikonur Cosmodrome, Kazakhstan", "KZ", "tsenki"),
     ("Vostochny Cosmodrome, Russia", "RU", "tsenki"),
+    ("Taiyuan Satellite Launch Center, People's Republic of China", "CN", "pla_asf"),
+    ("Jiuquan Satellite Launch Center, China", "CN", "pla_asf"),
+    ("Xichang Satellite Launch Center, China", "CN", "pla_asf"),
 ]
 
 
@@ -49,6 +52,32 @@ def test_names_accept_missing_country_accents_and_irregular_spacing():
     assert launch_sites.site_mark_key({"location": "Rocket Lab Launch Complex 1", "country_code": "nz"}) == "rocketlab"
 
 
+@pytest.mark.parametrize("location", ["太原", "中国太原卫星发射中心", "酒泉卫星发射中心", "西昌卫星发射中心"])
+def test_chinese_site_names_resolve_without_rocket_provider(location):
+    assert launch_sites.site_mark_key({"location": location, "country_code": "cn"}) == "pla_asf"
+    assert launch_sites.site_mark_key({"location": location, "country_code": "US"}) is None
+
+
+@pytest.mark.parametrize("location", ["Wenchang Space Launch Site, China", "中国文昌航天发射场", "文昌卫星发射中心"])
+@pytest.mark.parametrize("pad", ["101", "201", "301", "LC-101", "Launch Complex 201", "Launch Pad 301"])
+def test_wenchang_state_pads_have_the_verified_operator_mark(location, pad):
+    launch = {"location": location, "country_code": "CN", "pad": pad, "provider": "Unrelated company"}
+    assert launch_sites.site_mark_key(launch) == "pla_asf"
+    assert launch_sites.site_mark(launch, DAY_PALETTE) is not None
+
+
+@pytest.mark.parametrize("pad", [None, "", "Unknown Pad", "Pad TBD", "Commercial LC-1", "Commercial LC-2",
+                                 "Commercial LC-3", "Commercial LC-4", "商业一号工位", "1010", "1", "-101", "---201"])
+def test_wenchang_commercial_and_unknown_pads_never_inherit_the_military_mark(pad):
+    launch = {"location": "Wenchang Space Launch Site, China", "country_code": "CN", "pad": pad}
+    assert launch_sites.site_mark_key(launch) is None
+
+
+@pytest.mark.parametrize("location", ["Wenchang Commercial Space Launch Site", "文昌商业航天发射场"])
+def test_explicit_commercial_location_overrides_a_state_like_pad_number(location):
+    assert launch_sites.site_mark_key({"location": location, "country_code": "CN", "pad": "101"}) is None
+
+
 def test_every_offline_mark_has_verified_provenance_and_matches_recorded_hash():
     manifest = json.loads((launch_sites.ASSET_DIR / "source.json").read_text(encoding="utf-8"))
     assert {record[0] for record in launch_sites.SITE_IDENTITIES} == set(manifest["marks"])
@@ -65,8 +94,8 @@ def test_every_offline_mark_has_verified_provenance_and_matches_recorded_hash():
 
 @pytest.mark.parametrize("palette", [DAY_PALETTE, NIGHT_PALETTE], ids=["day", "night"])
 def test_marks_remain_bounded_visible_and_do_not_mutate_the_cached_original(palette):
-    for location, country, _key in KNOWN_SITES:
-        launch = {"location": location, "country_code": country}
+    for location, country, _key in KNOWN_SITES + [("Wenchang Space Launch Site, China", "CN", "pla_asf")]:
+        launch = {"location": location, "country_code": country, "pad": "201"}
         mark = launch_sites.site_mark(launch, palette)
         assert 0 < mark.width <= 48 and 0 < mark.height <= 24
         canvas = Image.new("RGB", mark.size, palette["paper"])
@@ -94,10 +123,10 @@ class LayoutDraw:
 def test_site_marks_never_cover_name_flag_time_or_facts(monkeypatch, palette):
     plugin = OrbitalSignal({"id": "orbital_signal"})
     now = datetime(2026, 11, 15, tzinfo=timezone.utc)
-    for location, country, _key in KNOWN_SITES:
+    for location, country, _key in KNOWN_SITES + [("Wenchang Space Launch Site, China", "CN", "pla_asf")]:
         canvas = Image.new("RGB", (800, 480), palette["paper"])
         draw = LayoutDraw(canvas)
-        launch = {"location": location, "country_code": country}
+        launch = {"location": location, "country_code": country, "pad": "201"}
         # Capture the actual rectangles pasted by Pillow, including the flag.
         boxes = []
         real_paste = canvas.paste

@@ -1,13 +1,10 @@
 {
   "verified_at": "2026-11-15",
   "purpose": "Identify launch locations through verified range or site-operator marks; these are not rocket-provider marks. Names and country flags remain visible.",
-  "processing": "Original colors retained; edge-connected flat white backgrounds cleared and alpha bounds trimmed. Crops, when present, isolate existing standalone symbols from official lockups; no symbols are redrawn. Assets fit within 192x96. Low-contrast wordmark strokes adapt to the page at render time.",
+  "processing": "Original colors retained; edge-connected flat white backgrounds cleared and alpha bounds trimmed. Crops, when present, isolate existing standalone symbols from official lockups; no symbols are redrawn. Assets fit within 192x96. Low-contrast wordmark strokes adapt to the page at render time. Per-asset processing overrides this general rule: the PLA Aerospace Force flag preserves its complete rectangular image, without background removal or cropping.",
   "unverified_locations": [
-    "Jiuquan",
-    "Taiyuan",
-    "Xichang",
-    "Wenchang",
-    "Plesetsk"
+    "Plesetsk",
+    "Wenchang commercial or unknown launch pads"
   ],
   "unverified_behavior": "Keep the existing location pin and text; do not substitute a national agency or rocket company without verified site responsibility.",
   "marks": {
@@ -176,6 +173,114 @@
       "locations": [
         "Guiana Space Centre / Kourou"
       ]
+    },
+    "pla_asf": {
+      "file": "pla_asf.png",
+      "role": "site_operator",
+      "identity_kind": "shared_operator_service_flag",
+      "organization": "People's Liberation Army Aerospace Force / 中国人民解放军军事航天部队",
+      "is_independent_site_logo": false,
+      "url": "https://mediabluk.cnr.cn/record/img/cnr/CNRCDP/2025/0731/56b0f736d76c4d7683e326b2b0f313bd10.jpg",
+      "asset_page": "https://news.cnr.cn/native/gd/kx/20250731/t20250731_527293661.shtml",
+      "source_sha256": "6280f18b7f4c92723a475bb084b67ba024663463a61a476ed2119b001f02ea90",
+      "sha256": "4ac559f8eda942ff17c84542aebcf7ffd782936df8683b3476ed367497209f6b",
+      "size": [
+        120,
+        96
+      ],
+      "source_size": [
+        1000,
+        800
+      ],
+      "published": "2025-07-31",
+      "effective": "2025-08-01",
+      "processing": "Converted the official flat flag image to RGBA and proportionally downsampled with Pillow LANCZOS from 1000x800 to 120x96. No crop, background removal, added border, recoloring, retouching, or redrawing. Preserve the full flag and its original 5:4 ratio at render time.",
+      "official_pages": [
+        "https://news.cnr.cn/native/gd/kx/20250731/t20250731_527293661.shtml",
+        "https://www.nppa.gov.cn/xxfb/tt/202508/t20250801_925374.html",
+        "https://www.mod.gov.cn/gfbw/qwfb/16399980.html",
+        "https://military.cctv.com/2026/01/01/ARTI7wsKIo5Nrf41kYGaDPgn260101.shtml"
+      ],
+      "publication_note": "CNR republishes CCTV's official flag announcement. NPPA carries the Xinhua announcement and the same service flag. The 2026 armband announcement confirms the service's visual identity, but its partly occluded uniform photograph is NOT the prepared asset.",
+      "locations": [
+        "Taiyuan Satellite Launch Center",
+        "Jiuquan Satellite Launch Center",
+        "Xichang Satellite Launch Center",
+        "Wenchang national Space Launch Site only"
+      ],
+      "excluded_locations": [
+        "Hainan Commercial Space Launch Site",
+        "Hainan International Commercial Aerospace Launch Site",
+        "HICAL",
+        "海南商业航天发射场",
+        "海南国际商业航天发射场"
+      ],
+      "wenchang_guard": "Launch Library combines national and commercial Wenchang pads under one location. Do not select by location alone. Exclude Commercial LC-* and commercial Chinese pad names; apply only to pads positively identified as the national launch site. Unknown or missing pads retain the existing pin unless another verified operator is positively matched.",
+      "attribution_checks": {
+        "taiyuan": {
+          "assessment": "Strong cross-check through the same published unit identity: Jilin University lists 63710 as Taiyuan Satellite Launch Center; the unit's September 2026 CSU recruitment entry describes itself as a PLA Aerospace Force unit. A 2026 Haidian government account separately records an official Aerospace Force visit to the centre.",
+          "sources": [
+            "https://jdjyw.jlu.edu.cn/portal/company/details?id=c5236f0b950149e0a5b013bf39e81d1e",
+            "https://career.csu.edu.cn/largefairs/company/id/1309/sid/60/stype/2",
+            "https://zyk.bjhd.gov.cn/jbdt/auto4504_56863/auto4504_53332/auto4504/auto4504/202603/t20260331_4810235_hd.shtml"
+          ],
+          "aliases": [
+            "Taiyuan Satellite Launch Center",
+            "Taiyuan Satellite Launch Centre",
+            "TSLC",
+            "中国太原卫星发射中心",
+            "太原卫星发射中心"
+          ]
+        },
+        "jiuquan": {
+          "assessment": "Cross-check through published unit identity: QUST's official alumni report identifies 63600 as Jiuquan Satellite Launch Center; HIT's recruitment event lists PLA Aerospace Force unit 63600. SEU's official March 2025 recruiting notice independently links Aerospace Force recruitment to JSLC's recruitment contact. HIT content is present in search indexing but its live HTML is a dynamic shell; do not represent that retrieval as a fully archived organization chart.",
+          "sources": [
+            "https://xxgk.qust.edu.cn/info/1049/2459.htm",
+            "https://career.hit.edu.cn/zhxy-xszyfzpt/zpxx/zczphxq?id=ZWMyY2IzMzEwMmY5NDJhNjlhYjMyZjViZjFhZDMzMmI%3D",
+            "https://ee.seu.edu.cn/2025/0320/c25267a522375/pagem.htm",
+            "https://www.cmse.gov.cn/fxrw/szqhrw/bjzl/200809/t20080924_38129.html"
+          ],
+          "aliases": [
+            "Jiuquan Satellite Launch Center",
+            "Jiuquan Satellite Launch Centre",
+            "JSLC",
+            "中国酒泉卫星发射中心",
+            "酒泉卫星发射中心",
+            "东风航天城"
+          ]
+        },
+        "xichang": {
+          "assessment": "Cross-checked service affiliation rather than a single organization-chart statement: NWPU identifies Xichang as Base 27 / unit 63790; the official Sichuan education-exam notice identifies the Aerospace Force's Base 27 hospital in Xichang; HUST and SEU's 2024-2025 recruitment notices place Xichang/Wenchang-related technical units and XSLC recruitment within the Aerospace Force. The service attribution is a synthesis of these public records, not an independent Xichang logo claim.",
+          "sources": [
+            "https://news.nwpu.edu.cn/info/1002/24746.htm",
+            "https://zs.zycest.edu.cn/info/1167/1341.htm",
+            "https://job.hust.edu.cn/jcjob/2201664.htm",
+            "https://ee.seu.edu.cn/2025/0320/c25267a522375/pagem.htm",
+            "https://www.mod.gov.cn/gfbw/qwfb/16272388.html"
+          ],
+          "aliases": [
+            "Xichang Satellite Launch Center",
+            "Xichang Satellite Launch Centre",
+            "XSLC",
+            "中国西昌卫星发射中心",
+            "西昌卫星发射中心"
+          ]
+        },
+        "wenchang_national": {
+          "assessment": "The Ministry of National Defense explicitly states that Xichang Satellite Launch Center manages and uses the Xichang and Wenchang launch sites. The shared service identity follows Xichang's cross-checked attribution. This does not include the separate Hainan commercial launch site.",
+          "sources": [
+            "https://www.mod.gov.cn/gfbw/qwfb/16272388.html",
+            "https://www.cnsa.gov.cn/n6758823/n6758838/c6840653/content.html"
+          ],
+          "aliases": [
+            "Wenchang Space Launch Site",
+            "Wenchang Spacecraft Launch Site",
+            "中国文昌航天发射场",
+            "文昌航天发射场"
+          ]
+        }
+      },
+      "wenchang_pad_source": "https://lldev.thespacedevs.com/2.3.0/pads/218/?format=api"
     }
   }
 }

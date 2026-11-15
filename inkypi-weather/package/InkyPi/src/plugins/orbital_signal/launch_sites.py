@@ -18,8 +18,8 @@ from utils.safe_image import safe_open_image
 
 ASSET_DIR = Path(__file__).with_name("assets") / "sites"
 MARK_HEIGHT, MARK_MAX_WIDTH, MARK_GAP = 24, 48, 6
-# Match the location supplied by Launch Library, never the rocket provider or
-# a generic pad number. Country codes, when supplied, guard ambiguous names.
+# Match the location supplied by Launch Library, never the rocket provider.
+# Country codes guard ambiguous names; a pad can only narrow a matched location.
 SITE_IDENTITIES = (
     ("vandenberg", ("US",), r"\bvandenberg\b"),
     ("cape_canaveral", ("US",), r"\bcape canaveral\b"),
@@ -30,9 +30,13 @@ SITE_IDENTITIES = (
     ("jaxa", ("JP",), r"\b(?:tanegashima|uchinoura)\b"),
     ("tsenki", ("KZ",), r"\bbaikonur\b"),
     ("tsenki", ("RU",), r"\bvostochn(?:y|yy)\b"),
+    ("pla_asf", ("CN",), r"\b(?:taiyuan|jiuquan|xichang|wenchang)\b|"
+     r"(?:太原|酒泉|西昌|文昌)(?:(?:卫星|航天)?发射(?:中心|场))?(?:[,，\s]|$)"),
 )
 _MATCHERS = tuple((key, countries, re.compile(pattern)) for key, countries, pattern in SITE_IDENTITIES)
 _ADAPTIVE_MARKS = frozenset({"rocketlab", "isro", "jaxa"})
+_WENCHANG = re.compile(r"\bwenchang\b|文昌")
+_WENCHANG_STATE_PAD = re.compile(r"(?:(?:lc|launch\s+(?:complex|pad))[\s-]*)?(?:101|201|301)", re.I)
 
 
 def site_mark_key(launch):
@@ -42,6 +46,13 @@ def site_mark_key(launch):
     country = str(launch.get("country_code") or "").strip().upper()
     for key, countries, pattern in _MATCHERS:
         if (not country or country in countries) and pattern.search(location):
+            # Launch Library groups the separate Hainan commercial launch site
+            # under the same Wenchang location. Only positively identified state
+            # pads may carry the military operator mark; unknown pads keep the pin.
+            if key == "pla_asf" and _WENCHANG.search(location):
+                pad = str(launch.get("pad") or "").strip()
+                if "commercial" in location or "商业" in location or not _WENCHANG_STATE_PAD.fullmatch(pad):
+                    return None
             return key
     return None
 

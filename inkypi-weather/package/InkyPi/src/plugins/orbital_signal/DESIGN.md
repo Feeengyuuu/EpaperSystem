@@ -51,6 +51,15 @@ uses only the location and country, never the rocket's provider. Unverified plac
 and missing assets retain the location pin, name and flag. All assets are local;
 `assets/sites/source.json` records the official verification pages and image sources.
 
+Taiyuan, Jiuquan, Xichang and the state Wenchang site use the shared PLA Aerospace
+Force organizational flag introduced in August 2025. This is their
+operator's identity, not four independently verified site logos. Both English and
+Chinese location names resolve to the same offline asset. Launch Library groups
+Hainan's separate commercial pads under the Wenchang location too, so Wenchang
+requires a known state pad (101, 201 or 301); commercial and unknown pads retain
+the pin. A rocket company or national space agency is never substituted for a
+site's operator.
+
 ## Mission-control redesign (2026-10-23)
 
 The owner picked direction A of three GPT Image 2.5 mockups (mission-control
