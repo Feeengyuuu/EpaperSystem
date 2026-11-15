@@ -208,7 +208,6 @@ STATUS_TOTAL_FILLS = {
     "offline": (196, 196, 196),
     "error": (220, 55, 48),
 }
-STATUS_TOTAL_DARK_OFFLINE_FILL = (88, 88, 88)
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 PLATFORM_ICON_FILES = {
@@ -3609,9 +3608,16 @@ class LiveRadar(BasePlugin):
 
     def _status_total_palette(self, status, theme):
         fill = STATUS_TOTAL_FILLS.get(status, theme["panel"])
-        if status == "offline" and theme.get("mode") == "dark":
-            fill = STATUS_TOTAL_DARK_OFFLINE_FILL
-        needs_light_ink = status in {"error"} or fill == STATUS_TOTAL_DARK_OFFLINE_FILL
+        section = {"live": "LIVE NOW", "replay": "REPLAY", "offline": "OFFLINE"}.get(status)
+        needs_light_ink = status == "error"
+        if section:
+            # The header key uses exactly the same colour as its section title,
+            # including the night palette; black/white type keeps that fill readable.
+            fill = comic_art.section_colour(theme, section, fill)
+            channels = [channel / 255 for channel in fill]
+            luminance = sum((value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4) * weight
+                            for value, weight in zip(channels, (0.2126, 0.7152, 0.0722)))
+            needs_light_ink = luminance < 0.179
         ink = (255, 255, 255) if needs_light_ink else (0, 0, 0)
         return fill, ink, theme["ink"]
 

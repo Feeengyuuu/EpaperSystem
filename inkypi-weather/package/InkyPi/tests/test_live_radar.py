@@ -31,7 +31,6 @@ from plugins.live_radar.live_radar import (
     TITLE_WORDMARK_FILE,
     TITLE_WORDMARK_OFFSET_X,
     TITLE_WORDMARK_SIZE,
-    STATUS_TOTAL_DARK_OFFLINE_FILL,
     STATUS_TOTAL_FILLS,
     TITLE_LOGO_SCALE,
     LiveRadar,
@@ -2392,41 +2391,41 @@ def test_stage_light_falls_only_on_the_bare_page():
     assert len(page.crop((390, 95, 410, 105)).getcolors()) > 1
 
 
-def test_status_total_badges_use_semantic_backgrounds_in_both_themes():
+def test_status_total_badges_match_the_section_colours_in_both_themes():
     plugin = _plugin()
 
     light_theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig(mode="day"))
     dark_theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig(mode="night"))
 
     assert plugin._status_total_palette("live", light_theme) == (
-        LIVE_STATUS_DOT,
+        comic_art.section_colour(light_theme, "LIVE NOW", None),
         (0, 0, 0),
         light_theme["ink"],
     )
     assert plugin._status_total_palette("replay", light_theme) == (
-        STATUS_TOTAL_FILLS["replay"],
-        (0, 0, 0),
+        comic_art.section_colour(light_theme, "REPLAY", None),
+        (255, 255, 255),
         light_theme["ink"],
     )
     assert plugin._status_total_palette("offline", light_theme) == (
-        STATUS_TOTAL_FILLS["offline"],
+        comic_art.section_colour(light_theme, "OFFLINE", None),
         (0, 0, 0),
         light_theme["ink"],
     )
 
     assert plugin._status_total_palette("live", dark_theme) == (
-        LIVE_STATUS_DOT,
+        comic_art.section_colour(dark_theme, "LIVE NOW", None),
         (0, 0, 0),
         dark_theme["ink"],
     )
     assert plugin._status_total_palette("replay", dark_theme) == (
-        STATUS_TOTAL_FILLS["replay"],
-        (0, 0, 0),
+        comic_art.section_colour(dark_theme, "REPLAY", None),
+        (255, 255, 255),
         dark_theme["ink"],
     )
     assert plugin._status_total_palette("offline", dark_theme) == (
-        STATUS_TOTAL_DARK_OFFLINE_FILL,
-        (255, 255, 255),
+        comic_art.section_colour(dark_theme, "OFFLINE", None),
+        (0, 0, 0),
         dark_theme["ink"],
     )
 
