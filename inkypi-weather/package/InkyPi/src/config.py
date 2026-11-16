@@ -162,7 +162,7 @@ _LIVERADAR_DROP_DOUYU_AQ_ROOM = {
     "id": "7718843",
     "isFav": False,
 }
-# The four requested BLG accounts follow the Aq removal. The owned instance was
+# The four requested BLG favourites follow the Aq removal. The owned instance was
 # verified at revision 13 with all four rooms absent on 2026-11-16.
 _LIVERADAR_BILIBILI_BLG_UUID_SHA256_PREFIX = "14c36f0ef259f0b5"
 _LIVERADAR_BILIBILI_BLG_STRUCTURAL_GENERATION = 1
@@ -583,7 +583,7 @@ class Config:
         )
 
     def _migrate_liveradar_bilibili_blg_rooms(self):
-        """Append the requested BLG rooms in order, resuming completed steps."""
+        """Append the requested BLG favourites in order, resuming completed steps."""
 
         for offset, (migration, room_id) in enumerate(_LIVERADAR_BILIBILI_BLG_ROOMS):
             self._change_liveradar_room(
@@ -592,7 +592,7 @@ class Config:
                 structural_generation=_LIVERADAR_BILIBILI_BLG_STRUCTURAL_GENERATION,
                 settings_revision=_LIVERADAR_BILIBILI_BLG_SETTINGS_REVISION + offset,
                 refresh_interval=_LIVERADAR_BILIBILI_BLG_REFRESH_INTERVAL_SECONDS,
-                room={"platform": "bilibili", "id": room_id, "isFav": False},
+                room={"platform": "bilibili", "id": room_id, "isFav": True},
             )
             migrations = self.get_config(_RUNTIME_MIGRATIONS_KEY, default={})
             if not isinstance(migrations, Mapping) or migrations.get(migration) is not True:

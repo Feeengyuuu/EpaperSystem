@@ -1996,7 +1996,7 @@ def _blg_ready_live_radar_config(revision=13):
     return original
 
 
-def test_the_blg_rooms_append_in_order_without_changing_other_settings_once(monkeypatch, tmp_path):
+def test_the_blg_favourites_append_in_order_without_changing_other_settings_once(monkeypatch, tmp_path):
     original = _blg_ready_live_radar_config()
     original_instance = original["playlist_config"]["playlists"][0]["plugins"][0]
     original_instance["plugin_settings"]["customSetting"] = {"keep": [1, 2]}
@@ -2018,12 +2018,12 @@ def test_the_blg_rooms_append_in_order_without_changing_other_settings_once(monk
     room_ids = ["31934797", "26808227", "13914640", "26808302"]
     expected_instance["settings_revision"] = 17
     expected_instance["plugin_settings"]["roomsText"] += "".join(
-        f"\nbilibili|{room_id}" for room_id in room_ids
+        f"\nbilibili|{room_id}|fav" for room_id in room_ids
     )
     expected_instance["plugin_settings"]["roomsJson"] = json.dumps({
         **original_document,
         "rooms": original_document["rooms"] + [
-            {"platform": "bilibili", "id": room_id, "isFav": False} for room_id in room_ids
+            {"platform": "bilibili", "id": room_id, "isFav": True} for room_id in room_ids
         ],
     }, ensure_ascii=False, separators=(",", ":"))
     assert saved["playlist_config"] == expected_playlist
@@ -2053,8 +2053,8 @@ def test_the_blg_group_resumes_after_a_persisted_prefix(monkeypatch, tmp_path, c
     settings = original["playlist_config"]["playlists"][0]["plugins"][0]["plugin_settings"]
     document = json.loads(settings["roomsJson"])
     for room_id in room_ids[:completed]:
-        settings["roomsText"] += f"\nbilibili|{room_id}"
-        document["rooms"].append({"platform": "bilibili", "id": room_id, "isFav": False})
+        settings["roomsText"] += f"\nbilibili|{room_id}|fav"
+        document["rooms"].append({"platform": "bilibili", "id": room_id, "isFav": True})
         original["runtime_migrations"][f"liveradar_bilibili_{room_id}_v1"] = True
     settings["roomsJson"] = json.dumps(document)
     _patch_live_radar_identity(monkeypatch, "_LIVERADAR_BILIBILI_BLG_UUID_SHA256_PREFIX")
@@ -2065,10 +2065,10 @@ def test_the_blg_group_resumes_after_a_persisted_prefix(monkeypatch, tmp_path, c
     instance = saved["playlist_config"]["playlists"][0]["plugins"][0]
     assert instance["settings_revision"] == 17
     assert instance["plugin_settings"]["roomsText"].splitlines() == [
-        "kick|quin3614|fav", "douyin|csgo6657", *[f"bilibili|{room_id}" for room_id in room_ids]
+        "kick|quin3614|fav", "douyin|csgo6657", *[f"bilibili|{room_id}|fav" for room_id in room_ids]
     ]
     assert json.loads(instance["plugin_settings"]["roomsJson"])["rooms"] == document["rooms"][:2] + [
-        {"platform": "bilibili", "id": room_id, "isFav": False} for room_id in room_ids
+        {"platform": "bilibili", "id": room_id, "isFav": True} for room_id in room_ids
     ]
     assert all(saved["runtime_migrations"][f"liveradar_bilibili_{room_id}_v1"] is True for room_id in room_ids)
 
