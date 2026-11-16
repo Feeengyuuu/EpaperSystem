@@ -1984,6 +1984,95 @@ def test_the_douyu_7718843_removal_is_marked_done_when_the_room_is_already_gone(
     assert saved["runtime_migrations"]["liveradar_remove_douyu_7718843_v1"] is True
 
 
+def _blg_ready_live_radar_config(revision=13):
+    original = _machine_ready_live_radar_config(
+        revision,
+        "kick|quin3614|fav\ndouyin|csgo6657",
+        [{"platform": "kick", "id": "quin3614", "isFav": True},
+         {"platform": "douyin", "id": "csgo6657", "isFav": False}],
+    )
+    original["runtime_migrations"]["liveradar_remove_douyu_7718843_v1"] = True
+    original["playlist_config"] = PlaylistManager.from_dict(original["playlist_config"]).to_dict()
+    return original
+
+
+def test_the_blg_rooms_append_in_order_without_changing_other_settings_once(monkeypatch, tmp_path):
+    original = _blg_ready_live_radar_config()
+    original_instance = original["playlist_config"]["playlists"][0]["plugins"][0]
+    original_instance["plugin_settings"]["customSetting"] = {"keep": [1, 2]}
+    original_document = json.loads(original_instance["plugin_settings"]["roomsJson"])
+    original_document["timestamp"] = 1_794_800_000
+    original_instance["plugin_settings"]["roomsJson"] = json.dumps(original_document)
+    original["playlist_config"]["playlists"][0]["plugins"].append({
+        **json.loads(json.dumps(original_instance)),
+        "name": "OtherRadar",
+        "instance_uuid": "6ce0a56e6ddd4feaa1006be9394daf11",
+    })
+    _patch_live_radar_identity(monkeypatch, "_LIVERADAR_BILIBILI_BLG_UUID_SHA256_PREFIX")
+
+    _config, config_path = _device_config(monkeypatch, tmp_path, original)
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    expected_playlist = json.loads(json.dumps(original["playlist_config"]))
+    expected_instance = expected_playlist["playlists"][0]["plugins"][0]
+    room_ids = ["31934797", "26808227", "13914640", "26808302"]
+    expected_instance["settings_revision"] = 17
+    expected_instance["plugin_settings"]["roomsText"] += "".join(
+        f"\nbilibili|{room_id}" for room_id in room_ids
+    )
+    expected_instance["plugin_settings"]["roomsJson"] = json.dumps({
+        **original_document,
+        "rooms": original_document["rooms"] + [
+            {"platform": "bilibili", "id": room_id, "isFav": False} for room_id in room_ids
+        ],
+    }, ensure_ascii=False, separators=(",", ":"))
+    assert saved["playlist_config"] == expected_playlist
+    assert all(saved["runtime_migrations"][f"liveradar_bilibili_{room_id}_v1"] is True for room_id in room_ids)
+
+    Config()
+    assert json.loads(config_path.read_text(encoding="utf-8")) == saved
+
+
+@pytest.mark.parametrize("revision", [14, 15, 16, 17])
+def test_the_blg_group_skips_an_instance_the_owner_edited_since(monkeypatch, tmp_path, revision):
+    original = _blg_ready_live_radar_config(revision)
+    _patch_live_radar_identity(monkeypatch, "_LIVERADAR_BILIBILI_BLG_UUID_SHA256_PREFIX")
+
+    _config, config_path = _device_config(monkeypatch, tmp_path, original)
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["playlist_config"] == original["playlist_config"]
+    for room_id in ["31934797", "26808227", "13914640", "26808302"]:
+        assert f"liveradar_bilibili_{room_id}_v1" not in saved["runtime_migrations"]
+
+
+@pytest.mark.parametrize("completed", [1, 2, 3])
+def test_the_blg_group_resumes_after_a_persisted_prefix(monkeypatch, tmp_path, completed):
+    original = _blg_ready_live_radar_config(13 + completed)
+    room_ids = ["31934797", "26808227", "13914640", "26808302"]
+    settings = original["playlist_config"]["playlists"][0]["plugins"][0]["plugin_settings"]
+    document = json.loads(settings["roomsJson"])
+    for room_id in room_ids[:completed]:
+        settings["roomsText"] += f"\nbilibili|{room_id}"
+        document["rooms"].append({"platform": "bilibili", "id": room_id, "isFav": False})
+        original["runtime_migrations"][f"liveradar_bilibili_{room_id}_v1"] = True
+    settings["roomsJson"] = json.dumps(document)
+    _patch_live_radar_identity(monkeypatch, "_LIVERADAR_BILIBILI_BLG_UUID_SHA256_PREFIX")
+
+    _config, config_path = _device_config(monkeypatch, tmp_path, original)
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    instance = saved["playlist_config"]["playlists"][0]["plugins"][0]
+    assert instance["settings_revision"] == 17
+    assert instance["plugin_settings"]["roomsText"].splitlines() == [
+        "kick|quin3614|fav", "douyin|csgo6657", *[f"bilibili|{room_id}" for room_id in room_ids]
+    ]
+    assert json.loads(instance["plugin_settings"]["roomsJson"])["rooms"] == document["rooms"][:2] + [
+        {"platform": "bilibili", "id": room_id, "isFav": False} for room_id in room_ids
+    ]
+    assert all(saved["runtime_migrations"][f"liveradar_bilibili_{room_id}_v1"] is True for room_id in room_ids)
+
+
 def test_douyin_room_migration_skips_an_instance_the_owner_edited_since(monkeypatch, tmp_path):
     original, _rooms = _zack_ready_live_radar_config()
     original["playlist_config"]["playlists"][0]["plugins"][0]["settings_revision"] = 9

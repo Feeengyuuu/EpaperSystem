@@ -162,6 +162,18 @@ _LIVERADAR_DROP_DOUYU_AQ_ROOM = {
     "id": "7718843",
     "isFav": False,
 }
+# The four requested BLG accounts follow the Aq removal. The owned instance was
+# verified at revision 13 with all four rooms absent on 2026-11-16.
+_LIVERADAR_BILIBILI_BLG_UUID_SHA256_PREFIX = "14c36f0ef259f0b5"
+_LIVERADAR_BILIBILI_BLG_STRUCTURAL_GENERATION = 1
+_LIVERADAR_BILIBILI_BLG_SETTINGS_REVISION = 13
+_LIVERADAR_BILIBILI_BLG_REFRESH_INTERVAL_SECONDS = 5 * 60
+_LIVERADAR_BILIBILI_BLG_ROOMS = (
+    ("liveradar_bilibili_31934797_v1", "31934797"),  # BLGKnight
+    ("liveradar_bilibili_26808227_v1", "26808227"),  # BLGON
+    ("liveradar_bilibili_13914640_v1", "13914640"),  # BLGBin
+    ("liveradar_bilibili_26808302_v1", "26808302"),  # BLGXun
+)
 _NEWSPAPER_REFILL_INTERVAL_SECONDS = 60 * 60
 _VEHICLE_STATUS_LEGACY_REFRESH_INTERVAL_SECONDS = 60 * 60
 _VEHICLE_STATUS_REFRESH_INTERVAL_SECONDS = 3 * 60 * 60
@@ -318,6 +330,7 @@ class Config:
         self._migrate_liveradar_douyin_quin_room()
         self._migrate_liveradar_douyin_machine_room()
         self._migrate_liveradar_drop_douyu_aq_room()
+        self._migrate_liveradar_bilibili_blg_rooms()
         self._migrate_runtime_balance_cadences()
         self._migrate_runtime_balance_soft_threshold(
             cadence_marker_preexisting=cadence_marker_preexisting,
@@ -568,6 +581,24 @@ class Config:
             room=_LIVERADAR_DROP_DOUYU_AQ_ROOM,
             remove=True,
         )
+
+    def _migrate_liveradar_bilibili_blg_rooms(self):
+        """Append the requested BLG rooms in order, resuming completed steps."""
+
+        for offset, (migration, room_id) in enumerate(_LIVERADAR_BILIBILI_BLG_ROOMS):
+            self._change_liveradar_room(
+                migration=migration,
+                uuid_prefix=_LIVERADAR_BILIBILI_BLG_UUID_SHA256_PREFIX,
+                structural_generation=_LIVERADAR_BILIBILI_BLG_STRUCTURAL_GENERATION,
+                settings_revision=_LIVERADAR_BILIBILI_BLG_SETTINGS_REVISION + offset,
+                refresh_interval=_LIVERADAR_BILIBILI_BLG_REFRESH_INTERVAL_SECONDS,
+                room={"platform": "bilibili", "id": room_id, "isFav": False},
+            )
+            migrations = self.get_config(_RUNTIME_MIGRATIONS_KEY, default={})
+            if not isinstance(migrations, Mapping) or migrations.get(migration) is not True:
+                # A later step's revision must not match an unrelated owner edit
+                # when the preceding step did not actually complete.
+                return
 
     def _change_liveradar_room(
         self,
