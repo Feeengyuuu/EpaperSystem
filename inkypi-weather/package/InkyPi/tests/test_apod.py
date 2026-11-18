@@ -2372,6 +2372,14 @@ def test_apod_page_storm_copy_keeps_to_its_cells_on_one_grid(monkeypatch):
         return original_text(draw, xy, text, *args, **kwargs)
 
     monkeypatch.setattr(page.MixedDraw, "text", capture_text)
+    original_icon = page._paste_icon
+    icons = []
+
+    def capture_icon(canvas, name, x, y, size):
+        icons.append((name, x, size))
+        return original_icon(canvas, name, x, y, size)
+
+    monkeypatch.setattr(page, "_paste_icon", capture_icon)
     _render_storm_page(page)
 
     right = page.KP_RECT[2] - page.PANEL_INSET
@@ -2385,15 +2393,28 @@ def test_apod_page_storm_copy_keeps_to_its_cells_on_one_grid(monkeypatch):
             assert bbox[2] <= first_cell_right, text
     by_text = {text: (xy, bbox) for xy, text, bbox, _font in left_calls}
     # The Kp number, the field, the flare odds and the nearest NEO share the second column.
-    for copy in ("8.7", "G4 严重磁暴（估算）", "48 小时最高 Kp 9.0，G5", "磁场 Bt / Bz", "1-3 天耀斑概率", "C",
-                 "距离最近", "(2026 WQ147)"):
+    for copy in ("8.7", "G4 严重磁暴（估算）", "C", "(2026 WQ147)"):
         assert by_text[copy][0][0] == page.SECOND_COLUMN, copy
-    # The class keeps its size; the high's label gives way.
-    assert {"X12.8", "24h 最高", "X28.0"} <= set(by_text) and "24 小时最高" not in by_text
+    # So do their icons: each drawing starts on the column, and the symbols a reading needs follow it.
+    first_icon = {}
+    for name, x, size in icons:
+        first_icon.setdefault(name, (x, size))
+    for name, copy in (("peak", "48h Kp 9.0 | G5"), ("magnet", "Bt / Bz"), ("probability", "1-3d"),
+                       ("closest", None)):
+        x, size = first_icon[name]
+        margin = round(size * page.ICON_MARGIN)
+        assert x + margin == page.SECOND_COLUMN, name
+        if copy:
+            assert by_text[copy][0][0] == page.SECOND_COLUMN + size - 2 * margin + page.LABEL_ICON_GAP, copy
+    # Every reading is named by its icon.
+    assert set(first_icon) >= {"kp", "peak", "geomagnetic_storm", "radio_blackout", "radiation_storm", "solar_wind",
+                               "magnet", "flare", "probability", "neo", "closest", "source", "observed", "fetched"}
+    # The class and its 24-hour high share the first cell.
+    assert {"X12.8", "24h", "X28.0"} <= set(by_text)
     # The odds are measured: the last class ends on the column's right edge.
     assert by_text["75%"][1][2] == right
-    assert by_text["128 颗 < 10 LD"][1][2] == first_cell_right
-    assert by_text["近地天体 30 天"][1][2] + 8 <= by_text["128 颗 < 10 LD"][1][0]
+    assert by_text["128 < 10 LD"][1][2] == first_cell_right
+    assert by_text["30d"][1][2] + 8 <= by_text["128 < 10 LD"][1][0]
 
 
 def test_apod_neo_name_steps_down_to_fit_its_cell():
@@ -2410,7 +2431,9 @@ def test_apod_neo_name_steps_down_to_fit_its_cell():
 
 def test_apod_page_icons_are_transparent_and_drawn_in_pure_white():
     page = _apod_page_module()
-    names = ("solar_wind", "magnet", "compass", "forecast", "alert", "probability", "telescope", "source")
+    names = ("kp", "geomagnetic_storm", "radio_blackout", "radiation_storm", "solar_wind", "magnet", "flare",
+             "probability", "forecast", "neo", "closest", "peak", "observed", "fetched", "alert", "source",
+             "telescope")
 
     for name in names:
         with Image.open(page.ICON_DIR / f"{name}.png") as source:
@@ -2777,8 +2800,9 @@ def test_apod_page_uses_clear_ascii_separators_without_moving_kp_rect(monkeypatc
 
     assert kp_calls == [page.KP_RECT]
     assert not any("·" in text or "•" in text for text in drawn_text)
-    assert "地磁指数" in drawn_text
-    assert "太阳风" in drawn_text
+    # The readings are named by icons; only the symbols a reading needs are written out.
+    assert {"Bz", "Bt", "48h"} <= set(drawn_text)
+    assert not any(word in text for text in drawn_text for word in ("地磁指数", "太阳风", "磁场"))
     assert "CREDIT | NASA / APOD" in drawn_text
     assert "NASA APOD | 2026-07-22" in drawn_text
 
@@ -2935,14 +2959,14 @@ def test_apod_page_left_text_bboxes_stay_inside_the_panel_and_never_use_ellipsis
     for required_copy in (
         "4.7",
         "G2 中等磁暴（估算）",
-        "48 小时最高 Kp 6.3，G2",
+        "48h Kp 6.3 | G2",
         "G2",
         "R1",
         "S0",
         "455",
         "km/s",
-        "磁场 Bz",
-        "磁场强度 Bt",
+        "Bz",
+        "Bt",
         "R1–R2",
         "55%",
         "R3–R5",
@@ -2950,7 +2974,9 @@ def test_apod_page_left_text_bboxes_stay_inside_the_panel_and_never_use_ellipsis
         "S1+",
         "5%",
         "NOAA ALERTS",
-        "NOAA SWPC | 观测 12:00Z | 缓存 12:20Z",
+        "NOAA SWPC",
+        "12:00Z",
+        "12:20Z",
     ):
         assert required_copy in all_copy
 
@@ -3049,10 +3075,11 @@ def test_apod_page_draws_every_required_role_at_approved_true_font_size(
     assert by_text["2026-07-22 12:20Z"].size >= 10
     assert 36 <= by_text["4.7"].size <= 44
     assert 10 <= by_text["G2 中等磁暴（估算）"].size <= 13
-    assert by_text["太阳风"].size >= 10
+    assert by_text["Bz"].size >= 10
     assert 18 <= by_text["455"].size <= page.READING_SIZE
     assert by_text["NOAA WATCH | G2 | Geomagnetic storm watch"].size >= 12
-    assert by_text["NOAA SWPC | 观测 12:00Z | 缓存 12:20Z"].size >= 10
+    assert by_text["NOAA SWPC"].size >= 10
+    assert by_text["12:00Z"].size >= 10
     assert by_text["CREDIT | NASA / APOD"].size >= 10
     assert by_text["NASA APOD | 2026-07-22"].size >= 10
     assert 16 <= by_text["极光"].size <= 20

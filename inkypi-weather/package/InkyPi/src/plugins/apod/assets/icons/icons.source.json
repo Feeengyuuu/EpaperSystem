@@ -1,111 +1,92 @@
 {
-  "source": "GPT Image 2.5 (Creative Claw image/gpt-image-2.5-sunburst), one transparent 2048x1024 sheet, 4x2 grid",
-  "sheet_sha256": "885a142b0966e6f4f9cb73417c6e7b535961639b7f8c0a5ed655e1e030685e40",
-  "generated": "2026-10-24",
-  "icons": {
-    "solar_wind": {
-      "cell": [
-        0,
-        0
-      ],
-      "bbox": [
-        93,
-        136,
-        449,
-        458
-      ],
-      "sha256": "38ebac5c08c55ead595a7dbc03dbf990f1768165bce1e48d71506c779d0b2b83"
-    },
-    "magnet": {
-      "cell": [
-        1,
-        0
-      ],
-      "bbox": [
-        44,
-        167,
-        489,
-        429
-      ],
-      "sha256": "bc874b021fc4ec5093506cab7401fe2e004168903b0f76d9171b2cc5c4bba500"
-    },
-    "compass": {
-      "cell": [
-        2,
-        0
-      ],
-      "bbox": [
-        90,
-        107,
-        436,
-        451
-      ],
-      "sha256": "db43fc84e6a697ce6fa4991934713c90f909e73ae6c36f1226e1c83c497dde1e"
-    },
-    "forecast": {
-      "cell": [
-        3,
-        0
-      ],
-      "bbox": [
-        92,
-        115,
-        426,
-        440
-      ],
-      "sha256": "f9c6105ac32460e3993c54e55e693f6bb5454cdb4561dc217064f68f86128dc4"
-    },
-    "alert": {
-      "cell": [
-        0,
-        1
-      ],
-      "bbox": [
-        78,
-        79,
-        434,
-        396
-      ],
-      "sha256": "2ddcd3eb4df558943dcfbb7e5b3b5beaf7086d8ce78f278a500a15b76e8a8013"
-    },
-    "probability": {
-      "cell": [
-        1,
-        1
-      ],
-      "bbox": [
-        95,
-        54,
-        422,
-        406
-      ],
-      "sha256": "7285d3137adda09a5ffbecf388906993f692fd3eb75bc076f1b1aaa14e75b912"
-    },
-    "telescope": {
-      "cell": [
-        2,
-        1
-      ],
-      "bbox": [
-        72,
-        46,
-        455,
-        401
-      ],
-      "sha256": "5fd4836c8ae3fb3efd21b0fba463d69b8de219b802c1b5ff612ed6e907c5ebfa"
-    },
-    "source": {
-      "cell": [
-        3,
-        1
-      ],
-      "bbox": [
-        67,
-        72,
-        450,
-        395
-      ],
-      "sha256": "ef138d26613fd0b6c4a11bce9eb858bbe0bed1170283bb8c509fd9da8d5e2bcb"
-    }
+ "source": "Tabler Icons 3.52.0 (https://tabler.io/icons), outline set, from https://cdn.jsdelivr.net/npm/@tabler/icons@3.52.0/icons/outline/",
+ "licence": "MIT, TABLER-LICENSE.txt",
+ "rendered": "PyMuPDF, stroke 2.25 on the 24-unit grid, white on transparent, 96 px",
+ "icons": {
+  "kp": {
+   "tabler": "magnetic",
+   "svg_sha256": "09727c2821d88c1bf3d558fea69562866a38345ed7ed535ae85ab35b780683df",
+   "sha256": "5b5430fac8868fcaa0fae77dc7c459869fdc953c62cfa35a616a161ae0cc4bbf"
+  },
+  "geomagnetic_storm": {
+   "tabler": "world-bolt",
+   "svg_sha256": "73d277b68003dc5fc08c32fe5b14856c004a4eddb4cf9210034a3e75b4ba51b9",
+   "sha256": "3bb9867e73a8c3a2e4c890554afd52f135324b4852359ed7ffb5fbf37a3278c1"
+  },
+  "radio_blackout": {
+   "tabler": "broadcast-off",
+   "svg_sha256": "ae6a6b00218c8e4257cab8023dfc6c12a8ddb5be63c4c2c85ee3962771c67d60",
+   "sha256": "68dc29d699d294495dff225134983b2b12123ab739a9cae6bacd95f01520d664"
+  },
+  "radiation_storm": {
+   "tabler": "radioactive",
+   "svg_sha256": "65a78a6c537fc1146053ccffb4cdacb9beccd95941a0c30c897d2dd71f68886d",
+   "sha256": "85e692d2bc35663bf71fa248c03b8e5297ee3a0871995e3dc40ee8a5a92f83db"
+  },
+  "solar_wind": {
+   "tabler": "sun-wind",
+   "svg_sha256": "f92604af9503464629d63df1d6614206ff68655c5f027cc0b0c1b99377cecad1",
+   "sha256": "e10b859b35652a1cfd721bfe0479cdb80cce7902b8b8c3be26caecf6d37f1238"
+  },
+  "magnet": {
+   "tabler": "magnet",
+   "svg_sha256": "36f9fa6a15f646f553f5ca6a8bb993e7f1a311a00aad26bfcaa87a1f74d37b75",
+   "sha256": "aaf63d7f231c94a1865aa6868dcbbc59be5ab15aad5165c6a010667882e518ca"
+  },
+  "flare": {
+   "tabler": "sun-electricity",
+   "svg_sha256": "ae4f9fc3444a658611565ecbd7b96d16e1493bd5c0ebe2b5325e84946b90d0ad",
+   "sha256": "8d11d64458b06d0be0cae5fa7241271bb1e648cc55037b6f31b781e8973f5f52"
+  },
+  "probability": {
+   "tabler": "percentage",
+   "svg_sha256": "9f8d9f3504d918c76157e95168867547506c1dd4759ae8bc0fcbaddc922beddb",
+   "sha256": "087eb374f844e405d6815fbfc7121622c76dc13b684cc6b8d85b3c5a8f4edcfe"
+  },
+  "forecast": {
+   "tabler": "calendar-time",
+   "svg_sha256": "da9fd5f54ea2b47b0e63699243998d60098165d11202c93c011a7f0559a630b6",
+   "sha256": "a038041f8eafbba887caef72f23d6d1e4d4598b34e72562c6009edeef65c602b"
+  },
+  "neo": {
+   "tabler": "meteor",
+   "svg_sha256": "32335b2ae2568b1a566fc9846b83a0b92c845b7c1845e90ef7021ed395da16a1",
+   "sha256": "ab049aa1bb50dccfd95e9359b1489f0a27294be54c430759365f69d97426533c"
+  },
+  "closest": {
+   "tabler": "focus-2",
+   "svg_sha256": "273346ebf838f75b31df81ce9d303ee5ef1e8c2f56f1f85cbcd6ef8d6ef8a482",
+   "sha256": "f9fd692819a0804e1ba00b8afb72e330b4392f04387e38966211a1d6ab3160d7"
+  },
+  "peak": {
+   "tabler": "arrow-bar-to-up",
+   "svg_sha256": "153ff053bd486409a574d880d173229783542d8a255039822242c5397b6f879b",
+   "sha256": "4b56053365c1aebad35241ec08aa8d3576995fa23de8c63ef9a2793827164b3b"
+  },
+  "observed": {
+   "tabler": "eye",
+   "svg_sha256": "d74739aaa5c3e99e9b6519cd70089e550593b9495d39ac586de601c49ceaa9a6",
+   "sha256": "9d393998a080143be8768153fe1973eacc92c89d451494ebaa6c7a6dd6cb3528"
+  },
+  "fetched": {
+   "tabler": "refresh",
+   "svg_sha256": "9fc98696bf2fbdd64e4f258c615aec25462761c673a66ca88e9ce4f0184cab42",
+   "sha256": "ba188e4da9c7104710879ee9c1c76212210bb3a43c6d944862aed2177cc9a429"
+  },
+  "alert": {
+   "tabler": "alert-triangle",
+   "svg_sha256": "92a951d8e90c1b1d986449e74a8b2e1c52982dc3dbe09b141ac11990420408f4",
+   "sha256": "76325d86499af27589450a498f3da6c32f15a0d42c7ac0894a13f83b260c4f3d"
+  },
+  "source": {
+   "tabler": "satellite",
+   "svg_sha256": "c8c90ac8f7bf2b23229edb359b83b1139932d96d0c365fc572b2c7b0645dad8b",
+   "sha256": "294dccf548f65de3e548a4d4e19a560a732eda14c6ff29c87e2e7342d1d350d7"
+  },
+  "telescope": {
+   "tabler": "telescope",
+   "svg_sha256": "23ebec3572f6c8a2edd8428d8e0305ab49f6015fb5de40f526db341b99e0722c",
+   "sha256": "e9528b108c12e5c0a4611b05b5922db797f77b0fe9fd5296ad7b3202e0c00d61"
   }
+ }
 }
