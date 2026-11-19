@@ -51,6 +51,9 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
+      # Resolved for the interpreter the device runs (Raspberry Pi OS 13, Python 3.13), not the
+      # 3.11 the tests use: "311" meant 3.11.0, which the lock no longer admits (soupsieve 4
+      # needs 3.11.5), and no supported image ships a 3.11 that new.
       - name: Resolve the complete hash-locked Raspberry Pi artifact set
         working-directory: inkypi-weather/package/InkyPi
         run: |
@@ -62,8 +65,8 @@ jobs:
             --platform manylinux_2_17_aarch64 \
             --platform manylinux2014_aarch64 \
             --implementation cp \
-            --python-version 311 \
-            --abi cp311 --abi abi3 --abi none \
+            --python-version 3.13 \
+            --abi cp313 --abi abi3 --abi none \
             -r install/requirements.txt
 
   simulated-soak:
