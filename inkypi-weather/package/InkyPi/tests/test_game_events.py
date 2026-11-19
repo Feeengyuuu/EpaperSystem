@@ -401,3 +401,103 @@ def test_new_reschedule_notice_reuses_original_event_identity(tmp_path):
     assert len(events) == 1
     assert events[0]["id"] == original["id"]
     assert events[0]["starts_at"] == "2026-09-04T14:00:00+00:00"
+
+
+def test_an_event_pending_for_half_a_day_keeps_its_mark_but_no_longer_fails_the_refresh(tmp_path):
+    # thegameawards.com answered 403 from 2026-11-16: the show on 12-10 stayed "pending" and with
+    # it the calendar's whole DATA refresh failed every half hour for days, though nothing a
+    # retry could reach had changed.
+    from plugins.simple_calendar.game_events import PENDING_STALE_SECONDS
+
+    web = Web()
+    web.day = 9
+    provider = GameEventProvider(tmp_path, fetch_text=web)
+    provider.refresh(SETTINGS, now=NOW)
+    web.failure = True
+    assert provider.refresh(SETTINGS, now=NOW + timedelta(hours=3)).provenance.value == "stale_cache"
+
+    # The half day runs from the evidence's last confirmation (NOW), not from the first failure.
+    still_young = NOW + timedelta(seconds=PENDING_STALE_SECONDS - 60)
+    assert provider.refresh(SETTINGS, now=still_young).provenance.value == "stale_cache"
+
+    settled = provider.refresh(SETTINGS, now=NOW + timedelta(seconds=PENDING_STALE_SECONDS))
+    assert settled.events[0]["pending_verification"] is True
+    assert settled.provenance.value == "fresh_cache"
+    # A presentation replay after a restart reads the same verdict without writing anything.
+    replayed = GameEventProvider(tmp_path).read(SETTINGS, now=NOW + timedelta(seconds=PENDING_STALE_SECONDS))
+    assert replayed.events[0]["pending_verification"] is True and replayed.provenance.value == "fresh_cache"
+
+
+def test_an_event_that_turns_pending_again_after_recovering_is_stale_again(tmp_path):
+    from plugins.simple_calendar.game_events import PENDING_STALE_SECONDS
+
+    web = Web()
+    web.day = 9
+    provider = GameEventProvider(tmp_path, fetch_text=web)
+    provider.refresh(SETTINGS, now=NOW)
+    web.failure = True
+    long_outage = NOW + timedelta(hours=3) + timedelta(seconds=PENDING_STALE_SECONDS)
+    provider.refresh(SETTINGS, now=NOW + timedelta(hours=3))
+    assert provider.refresh(SETTINGS, now=long_outage).provenance.value == "fresh_cache"
+    web.failure = False
+    recovered = provider.refresh(SETTINGS, now=long_outage + timedelta(hours=3))
+    assert recovered.events[0]["pending_verification"] is False and recovered.provenance.value == "fresh_cache"
+
+    web.failure = True
+    again = provider.refresh(SETTINGS, now=long_outage + timedelta(hours=6))
+    assert again.events[0]["pending_verification"] is True and again.provenance.value == "stale_cache"
+
+
+def test_a_source_that_has_failed_for_half_a_day_is_asked_at_the_full_interval(tmp_path):
+    from plugins.simple_calendar.game_events import PENDING_STALE_SECONDS
+
+    web = Web()
+    web.day = 9
+    provider = GameEventProvider(tmp_path, fetch_text=web)
+    provider.refresh(SETTINGS, now=NOW)
+    web.failure = True
+    young = NOW + timedelta(seconds=PENDING_STALE_SECONDS - 60)
+    assert provider.refresh(SETTINGS, now=young).sources["playstation"]["next_check_at"] == (
+        young + timedelta(minutes=30)).isoformat()
+
+    old = young + timedelta(minutes=30)
+    assert provider.refresh(SETTINGS, now=old).sources["playstation"]["next_check_at"] == (
+        old + timedelta(hours=3)).isoformat()
+    # Its first good answer puts it back on the short leash for the next fault.
+    web.failure = False
+    provider.refresh(SETTINGS, now=old + timedelta(hours=3))
+    web.failure = True
+    relapse = old + timedelta(hours=6)
+    assert provider.refresh(SETTINGS, now=relapse).sources["playstation"]["next_check_at"] == (
+        relapse + timedelta(minutes=30)).isoformat()
+
+
+def test_a_source_that_never_answered_is_asked_at_the_full_interval_after_half_a_day(tmp_path):
+    from plugins.simple_calendar.game_events import PENDING_STALE_SECONDS
+
+    web = Web()
+    web.failure = True
+    provider = GameEventProvider(tmp_path, fetch_text=web)
+    assert provider.refresh(SETTINGS, now=NOW).sources["playstation"]["next_check_at"] == (
+        NOW + timedelta(minutes=30)).isoformat()
+    late = NOW + timedelta(seconds=PENDING_STALE_SECONDS)
+    assert provider.refresh(SETTINGS, now=late).sources["playstation"]["next_check_at"] == (
+        late + timedelta(hours=3)).isoformat()
+
+
+def test_the_device_state_of_2026_11_19_is_healthy_at_once_with_the_show_still_marked(tmp_path):
+    # The state the device carried when this was fixed: TGA last confirmed 2026-11-16, turned
+    # away ever since. No record of when it turned pending exists yet.
+    state = json.loads(DEVICE_STATE.read_text(encoding="utf-8"))
+    for item in state["sources"]["tga"]["items"]:
+        item["checked_at"] = "2026-11-16T05:08:54.316354+00:00"
+    state["sources"]["tga"].update(last_success_at="2026-11-16T05:08:54.316354+00:00",
+                                   last_attempt_at="2026-11-19T18:46:47+00:00",
+                                   next_check_at="2026-11-19T19:16:47+00:00",
+                                   error="thegameawards.com: HTTPError")
+    provider = GameEventProvider(tmp_path)
+    provider.path.write_text(json.dumps(state), encoding="utf-8")
+    result = provider.read(DEVICE_SETTINGS, now=datetime(2026, 11, 19, 19, 0, tzinfo=timezone.utc))
+    event, = [item for item in result.events if item["family"] == "the_game_awards"]
+    assert event["event_date"] == "2026-12-10" and event["pending_verification"] is True
+    assert result.provenance.value == "fresh_cache"

@@ -26,6 +26,11 @@ CHECK_INTERVAL_SECONDS = 3 * 60 * 60
 # A check that failed is tried again this soon: a network fault that passes must not leave the
 # page stale until the next full interval.
 FAILED_CHECK_RETRY_SECONDS = 30 * 60
+# How long an event that turned pending keeps the page stale, and a failing source on the short
+# retry. Past it the event only carries its mark and the source is asked at the full interval: a
+# site that turns the device away for weeks (thegameawards.com answered 403 from 2026-11-16 on)
+# is not a refresh that failed, and no retry reaches it sooner.
+PENDING_STALE_SECONDS = 12 * 60 * 60
 MAX_STATE_BYTES = 2 * 1024 * 1024
 MAX_SOURCE_ITEMS = 256
 _REFRESH_LOCK = threading.RLock()
@@ -113,13 +118,18 @@ class GameEventProvider:
     def _validate_state(self, state):
         if not isinstance(state, dict) or state.get("version") != 1 or not isinstance(state.get("sources"), dict):
             raise ValueError("invalid game state")
+        since = state.get("pending_since", {})
+        if not isinstance(since, dict) or len(since) > MAX_SOURCE_ITEMS or any(
+                not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{24}", key) or _instant(value) is None
+                for key, value in since.items()):
+            raise ValueError("invalid pending record")
         for name, source in state["sources"].items():
             if name not in self.source_families or not isinstance(source, dict):
                 raise ValueError("invalid game source")
             items = source.get("items")
             if not isinstance(items, list) or len(items) > MAX_SOURCE_ITEMS:
                 raise ValueError("invalid game items")
-            for key in ("last_attempt_at", "last_success_at", "next_check_at"):
+            for key in ("last_attempt_at", "last_success_at", "next_check_at", "failing_since"):
                 if source.get(key) is not None and _instant(source[key]) is None:
                     raise ValueError("invalid source timestamp")
             if not isinstance(source.get("error", ""), str):
@@ -212,14 +222,43 @@ class GameEventProvider:
                 self._merge_source(state, source_id, batch.announcements, now)
                 source["error"] = "; ".join(batch.errors)[:500]
                 if batch.errors:
-                    source["next_check_at"] = (now + timedelta(seconds=FAILED_CHECK_RETRY_SECONDS)).isoformat()
+                    # Failing since its last good answer, or since this first try.
+                    failing = _instant(source.get("failing_since")) or _instant(source.get("last_success_at")) or now
+                    source["failing_since"] = failing.isoformat()
+                    wait = (FAILED_CHECK_RETRY_SECONDS if (now - failing).total_seconds() < PENDING_STALE_SECONDS
+                            else CHECK_INTERVAL_SECONDS)
+                    source["next_check_at"] = (now + timedelta(seconds=wait)).isoformat()
                 else:
                     source["last_success_at"] = now.isoformat()
+                    source.pop("failing_since", None)
                 self._save(state)
                 self._log_source_transition(source_id, previous_error, source["error"], batch.details or batch.errors)
                 if not batch.errors:
                     self._log_unconfirmed_evidence(source_id, source["items"], previous_attempt, now)
-            return self._result(state, settings, now)
+            result = self._result(state, settings, now)
+            self._record_pending(state, result.events, now)
+            return result
+
+    def _record_pending(self, state, events, now):
+        """Keep, per pending event, when it turned pending; forget the ones that no longer are."""
+        since = state.get("pending_since") or {}
+        kept = {event["id"]: since.get(event["id"]) or self._pending_started(event, since, now).isoformat()
+                for event in events if event["pending_verification"]}
+        if kept != since:
+            state["pending_since"] = kept
+            self._save(state)
+
+    @staticmethod
+    def _pending_started(event, since, now):
+        """When ``event`` turned pending: as recorded, else its evidence's last confirmation once
+        that is older than one check, else now."""
+        recorded = _instant(since.get(event["id"]))
+        if recorded is not None:
+            return recorded
+        checked = _instant(event.get("checked_at"))
+        if checked is not None and (now - checked).total_seconds() >= CHECK_INTERVAL_SECONDS:
+            return checked
+        return now
 
     def _log_source_transition(self, source_id, previous_error, error, details):
         """Source state is otherwise silent; log only when its error starts, changes or clears."""
@@ -352,7 +391,10 @@ class GameEventProvider:
             if event.get("status") == "confirmed":
                 events.append(event)
         events.sort(key=lambda item: (item["event_date"], item.get("starts_at") or "", item["title"]))
-        stale = any(item["pending_verification"] for item in events)
+        since = state.get("pending_since") or {}
+        stale = any(item["pending_verification"]
+                    and (now - self._pending_started(item, since, now)).total_seconds() < PENDING_STALE_SECONDS
+                    for item in events)
         cold_failure = any(status.get("error") and not status.get("last_success_at") for status in diagnostics.values())
         provenance = SourceProvenance.STALE_CACHE if stale else SourceProvenance.FRESH_CACHE
         if cold_failure and not events:
