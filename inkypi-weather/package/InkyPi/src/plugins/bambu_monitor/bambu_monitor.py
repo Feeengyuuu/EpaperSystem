@@ -640,7 +640,7 @@ class BambuMonitor(BasePlugin):
                     # Switched off when last asked: the redraw keeps saying so (a reading, not a stale one).
                     status.update(source="offline", state="OFFLINE", offline_since=cached["offline_since"])
                     return attach_source_provenance(
-                        self._non_cacheable_image(self._render_status(status, dimensions)),
+                        self._render_status(status, dimensions),
                         SourceProvenance.LIVE,
                     )
                 if self._cache_entry_is_fresh(cached, cache_seconds, now):
@@ -1457,8 +1457,10 @@ class BambuMonitor(BasePlugin):
 
     def _render_switched_off(self, cached, cache_file, exc, settings, host, serial, dimensions, now):
         """A printer that does not answer on the network is switched off: a reading, not a failing
-        source. The page keeps its last job under an OFFLINE state (else an offline card) and stays
-        live; the change is logged once, when the printer goes away."""
+        source. The page keeps its last job under an OFFLINE state (else an offline card), stays
+        live and is kept like any reading: the runtime counts a page it may not keep as a failed
+        refresh, and shows the page from before in its place. The change is logged once, when the
+        printer goes away."""
         cached = dict(cached or {})
         if not cached.get("offline_since"):
             logger.warning(f"Bambu printer went offline (switched off or off the network): {exc}")
@@ -1471,8 +1473,8 @@ class BambuMonitor(BasePlugin):
             image = self._render_status(status, dimensions)
         else:
             image = self._render_error(dimensions, "Printer offline", host=host, serial=serial, settings=settings,
-                                       source="offline")
-        return attach_source_provenance(self._non_cacheable_image(image), SourceProvenance.LIVE)
+                                       source="offline", keep=True)
+        return attach_source_provenance(image, SourceProvenance.LIVE)
 
     @staticmethod
     def _is_printer_switched_off(exc):
@@ -1484,7 +1486,9 @@ class BambuMonitor(BasePlugin):
             return True
         return isinstance(exc, OSError) and exc.errno in PRINTER_OFFLINE_ERRNOS
 
-    def _render_error(self, dimensions, message, host="", serial="", settings=None, source="error"):
+    def _render_error(self, dimensions, message, host="", serial="", settings=None, source="error", keep=False):
+        """A card for a printer that gave no status. An error's card is not to be kept; ``keep``
+        is for the card of a printer that is switched off, which is a reading."""
         status = {
             "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
             "source": source,
@@ -1510,7 +1514,8 @@ class BambuMonitor(BasePlugin):
             host=host,
             serial=serial,
         )
-        return self._non_cacheable_image(self._render_status(status, dimensions))
+        image = self._render_status(status, dimensions)
+        return image if keep else self._non_cacheable_image(image)
 
     @staticmethod
     def _non_cacheable_image(image):

@@ -1345,8 +1345,9 @@ def test_no_cache_error_keeps_known_machine_identity(tmp_path, monkeypatch):
 
     image = plugin.generate_image(settings, _BambuDeviceConfig())
 
-    assert image.info["inkypi_skip_cache"] is True
-    # An unreachable printer is switched off: the page says offline, not error.
+    # An unreachable printer is switched off: the page says offline, not error, and is kept like
+    # any other reading.
+    assert image.info.get("inkypi_skip_cache") is not True
     assert rendered["source"] == "offline" and rendered["state"] == "OFFLINE"
     assert read_source_provenance(image) is SourceProvenance.LIVE
     assert rendered["machine_name"] == "Current Device"
@@ -1355,14 +1356,18 @@ def test_no_cache_error_keeps_known_machine_identity(tmp_path, monkeypatch):
     assert rendered["serial"] == settings["serialNumber"]
 
 
-def test_bambu_connection_failure_image_is_non_cacheable(tmp_path, monkeypatch):
+def test_a_switched_off_printers_page_is_kept_as_the_reading_it_is(tmp_path, monkeypatch):
+    # 2026-11-19: with the page marked "do not cache", the runtime counted every five-minute
+    # read of a printer that was simply off as a failed DATA refresh (315 in 48 hours, /readyz
+    # degraded throughout) and its turn on the panel showed the last page from days before.
     plugin = _plugin(tmp_path)
     monkeypatch.setattr(plugin, "_fetch_report", _raise_no_route)
 
     image = plugin.generate_image(_connected_settings(), _BambuDeviceConfig())
 
     assert image.size == (800, 480)
-    assert image.info["inkypi_skip_cache"] is True
+    assert image.info.get("inkypi_skip_cache") is not True
+    assert read_source_provenance(image) is SourceProvenance.LIVE
 
 
 def test_bambu_connection_failure_preserves_cached_status(tmp_path, monkeypatch):
@@ -1381,8 +1386,8 @@ def test_bambu_connection_failure_preserves_cached_status(tmp_path, monkeypatch)
     image = plugin.generate_image(settings, _BambuDeviceConfig())
 
     # The last job stays on the page under an OFFLINE state; a switched-off printer is a reading,
-    # not a failing source, so the page is live and the readiness check stays clear of it.
-    assert image.info["inkypi_skip_cache"] is True
+    # not a failing source, so the page is live, kept, and the readiness check stays clear of it.
+    assert image.info.get("inkypi_skip_cache") is not True
     assert read_source_provenance(image) is SourceProvenance.LIVE
     assert rendered["source"] == "offline" and rendered["state"] == "OFFLINE"
     assert rendered["file"] == status["file"] and rendered["progress"] == status["progress"]
@@ -1416,6 +1421,8 @@ def test_a_theme_redraw_keeps_a_switched_off_printer_offline(tmp_path, monkeypat
     assert rendered["source"] == "offline" and rendered["state"] == "OFFLINE"
     assert rendered["offline_since"] == 1
     assert read_source_provenance(image) is SourceProvenance.LIVE
+    # A redraw that could not be kept failed every theme change while the printer was off.
+    assert image.info.get("inkypi_skip_cache") is not True
 
 
 def test_an_auth_refusal_is_still_an_error_not_offline(tmp_path, monkeypatch):
