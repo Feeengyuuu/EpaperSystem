@@ -18,9 +18,24 @@ ROUTES = ("I-80", "US-50", "SR-120")
 ROADS_URL = "https://roads.dot.ca.gov/roadscell.php"
 ROADS_BYTES = 128 * 1024
 # QuickMap's chain controls in force, statewide: a placemark each, none when there is none (1 KB).
+# A storm fills it: 328 placemarks were 505 KB on 2026-11-19, about 1.5 KB each.
 CHAINS_URL = "https://quickmap.dot.ca.gov/data/cc.kml"
-CHAINS_BYTES = 256 * 1024
-MAX_PLACEMARKS = 400
+CHAINS_BYTES = 2 * 1024 * 1024
+MAX_PLACEMARKS = 1500
+# A placemark's road is its title ("Westbound Interstate 80", "Eastbound US 50", "Highway 120"),
+# never a road its place names ("Sr 20-E Onr to I-80 E").
+CHAIN_TITLE = re.compile(r'<h2\b[^>]*\biw-title\b[^>]*>\s*(?:(?:north|south|east|west)bound\s+)?'
+                         r'(interstate|us|highway)\s+(\d{1,3})\s*</h2>', re.IGNORECASE)
+CHAIN_ROUTES = {("interstate", "80"): "I-80", ("us", "50"): "US-50", ("highway", "120"): "SR-120"}
+CHAIN_LEVEL = re.compile(r"chain control level\s+([a-z0-9-]+)", re.IGNORECASE)
+# What a level asks of a car. HT holds all traffic at the checkpoint; MIN, MAX and TTA (truck
+# chains, trailers turned around) ask nothing of one.
+CHAIN_LEVELS = {"R-1": "r1", "R-2": "r2", "R-3": "r3", "HT": "closed"}
+TRUCK_LEVELS = frozenset({"MIN", "MAX", "TTA"})
+CHAIN_POINT = re.compile(r"<coordinates>\s*(-?\d+(?:\.\d+)?)\s*,", re.IGNORECASE)
+# SR-120 is controlled on both sides of the crest; the drive from the Bay ends at Tioga Pass
+# (119.26 W). East of it is Mono County's side (Lee Vining 119.12 W, Benton 118.5 W).
+CHAIN_WEST_OF = {"SR-120": -119.3}
 # Palisades Tahoe's own status feed (Alterra's mtnpowder; 12 KB on the wire, 180 KB of JSON, of
 # which a dozen numbers are kept).
 RESORT_URL = "https://mtnpowder.com/feed"
@@ -164,32 +179,44 @@ def fetch_road_conditions(context):
 
 
 def parse_chain_controls(text):
-    """QuickMap's chain-control file as {count, closures, routes}: how many controls are in force
-    statewide, how many of them close the road, and for the page's routes the level a placemark
-    names ("R-2") or "closed"."""
+    """QuickMap's chain-control file as {count, closures, routes, chained}: how many controls are
+    in force statewide, how many of them close the road, and for the page's routes the worst a
+    car meets on the way from the Bay: the level a placemark names ("R-2"), "closed" for a
+    closure or held traffic, "chains" for a level the file does not grade. ``chained`` is the
+    same without the closures: what is asked of a car below a gate that is shut."""
     text = str(text or "")
     if "<kml" not in text[:4096].lower():
         raise ValueError("Caltrans returned no chain control file")
     marks = re.findall(r"<Placemark\b.*?</Placemark>", text, re.DOTALL | re.IGNORECASE)[:MAX_PLACEMARKS]
-    closures, routes = 0, {}
+    closures, routes, chained = 0, {}, {}
     for mark in marks:
         closed = bool(re.search(r"<styleUrl>\s*#?full-closure\s*</styleUrl>", mark, re.IGNORECASE))
         closures += closed
-        words = " ".join(html.unescape(re.sub(r"<!\[CDATA\[|\]\]>|<[^>]+>", " ", mark)).split())
-        graded = re.search(r"\bR-?\s?([123])\b", words)
-        level = "closed" if closed else f"r{graded.group(1)}" if graded else "chains"
-        for route in ROUTES:
-            prefix, number = route.split("-")
-            if (re.search(rf"\b{prefix}[- ]?{number}\b", words, re.IGNORECASE)
-                    and RANK[level] > RANK.get(routes.get(route), 0)):
-                routes[route] = level
-    return {"count": len(marks), "closures": closures, "routes": routes}
+        title = CHAIN_TITLE.search(mark)
+        route = CHAIN_ROUTES.get((title.group(1).lower(), title.group(2))) if title else None
+        if route is None:
+            continue
+        point = CHAIN_POINT.search(mark)
+        if route in CHAIN_WEST_OF and point and float(point.group(1)) > CHAIN_WEST_OF[route]:
+            continue
+        graded = CHAIN_LEVEL.search(mark)
+        code = graded.group(1).upper() if graded else ""
+        if not closed and code in TRUCK_LEVELS:
+            continue
+        level = "closed" if closed else CHAIN_LEVELS.get(code, "chains")
+        if RANK[level] > RANK.get(routes.get(route), 0):
+            routes[route] = level
+        if level != "closed" and RANK[level] > RANK.get(chained.get(route), 0):
+            chained[route] = level
+    return {"count": len(marks), "closures": closures, "routes": routes, "chained": chained}
 
 
 def valid_chains(data):
     return (isinstance(data, dict) and type(data.get("count")) is int and 0 <= data["count"] <= MAX_PLACEMARKS
             and type(data.get("closures")) is int and isinstance(data.get("routes"), dict)
-            and all(route in ROUTES and level in RANK for route, level in data["routes"].items()))
+            and isinstance(data.get("chained", {}), dict)
+            and all(route in ROUTES and level in RANK
+                    for levels in (data["routes"], data.get("chained", {})) for route, level in levels.items()))
 
 
 def fetch_chain_controls(context):
@@ -320,10 +347,15 @@ def summary(roads, chains, resort, now):
     on one of the routes. None when there is nothing worth a line: no reading, or nothing
     restricted out of the snow season with the lifts shut and no opening day announced."""
     conditions = _kept(roads, "sierra_roads", now)
-    raised = (_kept(chains, "sierra_chains", now) or {}).get("routes") or {}
+    controls = _kept(chains, "sierra_chains", now) or {}
+    raised, chained = controls.get("routes") or {}, controls.get("chained") or {}
     routes = []
     for row in (conditions or {}).get("routes") or []:
         level = raised.get(row["route"])
+        if level == "closed" and row["level"] == "seasonal":
+            # The winter gate keeps its own closure placemark all season; the road text already
+            # knows that closure for what it is. Chains below the gate still count.
+            level = chained.get(row["route"])
         # A control in force that the road text has not caught up with.
         routes.append({"route": row["route"], "level": level, "from": "", "to": ""}
                       if level in RANK and RANK[level] > RANK[row["level"]] else dict(row))

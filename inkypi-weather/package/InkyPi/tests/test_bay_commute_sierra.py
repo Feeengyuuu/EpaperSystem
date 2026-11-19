@@ -144,21 +144,67 @@ CHAINS_EMPTY = """<?xml version="1.0" encoding="UTF-8"?>
         </Style>
     </Document>
 </kml>"""
-# With controls in force the file was never seen: these placemarks are an assumption (the two
-# styles the real file declares, a route and an R level in the text).
-CHAINS_ACTIVE = CHAINS_EMPTY.replace("    </Document>", """        <Placemark>
-            <name>I-80 Kingvale</name>
-            <description><![CDATA[<b>R-2</b>: Chains are required on all vehicles except 4-wheel-drive]]></description>
-            <styleUrl>#notclosed</styleUrl>
-            <Point><coordinates>-120.4337,39.3181,0</coordinates></Point>
+# A placemark as the file carried 328 of them in the storm of 2026-11-19 (505 KB): the road in
+# the title, the level in its own paragraph (none on a closure), the place, then Caltrans' text.
+CHAIN_TEXTS = {
+    "R-1": "Chains are required on all vehicles except passenger vehicles and light-duty trucks under 6,000 pounds "
+           "gross weight and equipped with snow tires on at least two drive wheels.",
+    "R-2": "Chains are required on all vehicles except four-wheel-drive vehicles with snow tires on all four wheels.",
+    "MIN": "Truck chain requirements are minimum for all trucks.",
+    "MAX": "Truck chain requirements are maximum for all trucks.",
+    "TTA": "All truck trailer combinations are being turned around at the chain control camper due to traction "
+           "problems over Donner Summit.",
+    "HT": "All traffic is being held at the chain control check point due to incidents or weather related conditions.",
+}
+
+
+def chain_placemark(title, level, place, lon, lat):
+    closed = level is None
+    graded = "" if closed else f'<p class="iw-text"><strong>Chain Control level {level}</strong></p>'
+    return f"""        <Placemark>
+            <name></name>
+            <description><![CDATA[<link rel="stylesheet" type="text/css" href="https://quickmap.dot.ca.gov/css/gm-infowindow.css?v=9" />
+<div class="infowindow-content">
+    <div class="iw-header">
+        <div class="iw-header-left">
+            <img class="iw-icon" src="https://quickmap.dot.ca.gov/img/{'full-closure-32x32' if closed else 'cc32x32'}.png" />
+            {'Road Closed' if closed else 'Chain Control'}
+        </div>
+    </div>
+
+    <div class="iw-body">
+        <h2 class="iw-title">{title}</h2>
+
+        {graded}
+        <p class="iw-text"><strong>Location: </strong>{place}</p>
+        <p class="iw-text">{'Closed to traffic.' if closed else CHAIN_TEXTS.get(level, 'Chain control in effect.')}</p>
+        <p class="iw-text"><strong>Effective from: </strong>11/19/2026 09:30</p>
+        <div font-size:xx-small;'>District: 3 Message ID: 9062</div>
+
+        <p class="iw-attribution">
+            Information courtesy of <strong>Caltrans</strong>
+        </p>
+    </div>
+
+    <div class="iw-footer">
+        <span class="iw-timestamp">Last updated: <strong>11/19/2026</strong> 11:34am</span>
+    </div>
+</div>]]></description>
+            <styleUrl>#{'full-closure' if closed else 'notclosed'}</styleUrl>
+            <Point>
+                <coordinates>{lon},{lat}</coordinates>
+            </Point>
         </Placemark>
-        <Placemark>
-            <name>SR-88 Carson Spur</name>
-            <description><![CDATA[Closed due to avalanche control]]></description>
-            <styleUrl>#full-closure</styleUrl>
-            <Point><coordinates>-120.0891,38.7012,0</coordinates></Point>
-        </Placemark>
-    </Document>""")
+"""
+
+
+def chain_file(*placemarks):
+    return CHAINS_EMPTY.replace("    </Document>", "".join(placemarks) + "    </Document>")
+
+
+CHAINS_ACTIVE = chain_file(
+    chain_placemark("Westbound Interstate 80", "R-2", "Kingvale", -120.4337, 39.3181),
+    chain_placemark("Westbound Highway 88", None, "KIRKWOOD - CARSON SPUR", -120.0891, 38.7012))
 
 # mtnpowder.com/feed?resortId=61 on 2026-11-11, cut down to the fields the page reads (the whole
 # feed is 177 KB).
@@ -211,10 +257,63 @@ def test_chain_controls_count_what_is_in_force_and_name_its_routes():
     quiet = sierra.parse_chain_controls(CHAINS_EMPTY)
     active = sierra.parse_chain_controls(CHAINS_ACTIVE)
 
-    assert quiet == {"count": 0, "closures": 0, "routes": {}} and sierra.valid_chains(quiet)
-    assert active == {"count": 2, "closures": 1, "routes": {"I-80": "r2"}} and sierra.valid_chains(active)
+    assert quiet == {"count": 0, "closures": 0, "routes": {}, "chained": {}} and sierra.valid_chains(quiet)
+    assert active == {"count": 2, "closures": 1, "routes": {"I-80": "r2"}, "chained": {"I-80": "r2"}} and sierra.valid_chains(active)
+    # A reading kept from before the chained levels were told apart is still a reading.
+    assert sierra.valid_chains({"count": 2, "closures": 1, "routes": {"I-80": "r2"}})
     with pytest.raises(ValueError):
         sierra.parse_chain_controls("<html>maintenance</html>")
+
+
+def test_a_chain_control_belongs_to_the_road_in_its_title_at_the_level_a_car_meets():
+    """The storm of 2026-11-19 as the file told it: truck rules beside every car rule, a ramp on
+    another highway naming I-80 as its place, and SR-120 controlled on both sides of the crest."""
+    storm = sierra.parse_chain_controls(chain_file(
+        chain_placemark("Westbound Interstate 80", "MAX", "Alta", -120.8113, 39.2071),
+        chain_placemark("Westbound Interstate 80", "R-1", "Alta", -120.8113, 39.2071),
+        chain_placemark("Eastbound Highway 20", "R-2", "Sr 20-E Onr to I-80 E (20/80 Jct) (FOR I-80 CC)", -120.60245, 39.323061),
+        chain_placemark("Westbound US 50", "MIN", "Meyers", -120.02548, 38.84954),
+        chain_placemark("Eastbound US 50", "R-2", "Twin Bridges", -120.1241, 38.8102),
+        chain_placemark("Northbound Highway 89", "TTA", "Sattley (Jct. 89/49)", -120.43529, 39.62414),
+        chain_placemark("Westbound Highway 120", "R-2", "Old Benton Hot Springs / Yellow Jacket Rd.", -118.531462, 37.800186),
+        chain_placemark("Eastbound Highway 120", "R-1", "CHERRY VALLEY RD", -120.0106, 37.8248)))
+
+    levels = {"I-80": "r1", "US-50": "r2", "SR-120": "r1"}
+    assert storm == {"count": 8, "closures": 0, "routes": levels, "chained": levels}
+
+
+def test_a_truck_rule_alone_restricts_no_car():
+    trucks = sierra.parse_chain_controls(chain_file(
+        chain_placemark("Westbound Interstate 80", "MAX", "Alta", -120.8113, 39.2071),
+        chain_placemark("Westbound US 50", "MIN", "Meyers", -120.02548, 38.84954),
+        chain_placemark("Eastbound Interstate 80", "TTA", "Applegate", -120.9947, 39.0006)))
+
+    assert trucks == {"count": 3, "closures": 0, "routes": {}, "chained": {}}
+
+
+def test_held_traffic_and_a_closure_shut_the_road_and_an_ungraded_control_still_counts():
+    held = sierra.parse_chain_controls(chain_file(
+        chain_placemark("Eastbound Interstate 80", "HT", "Applegate", -120.9947, 39.0006),
+        chain_placemark("Westbound US 50", None, "Echo Summit", -120.0301, 38.8121),
+        chain_placemark("Eastbound Highway 120", "R-9", "CHERRY VALLEY RD", -120.0106, 37.8248)))
+
+    assert held == {"count": 3, "closures": 1, "routes": {"I-80": "closed", "US-50": "closed", "SR-120": "chains"},
+                    "chained": {"SR-120": "chains"}}
+
+
+def test_a_statewide_storm_fits_the_chain_control_read(monkeypatch):
+    """328 placemarks were 505 KB on 2026-11-19, over the 256 KiB the read first allowed: every
+    hourly read failed while the passes were under control."""
+    controls = [chain_placemark("Northbound Highway 89", "R-1", f"Milepost {index}", -120.4, 39.6) for index in range(449)]
+    file = chain_file(*controls, chain_placemark("Westbound Interstate 80", "R-2", "Kingvale", -120.4337, 39.3181))
+    payload = file.encode("utf-8")
+    assert len(payload) > 600 * 1024
+    session = FakeSession([FakeResponse(200, payload)])
+    monkeypatch.setattr(sierra, "get_http_client", lambda: HttpClient(session=session))
+
+    read = sierra.fetch_chain_controls(context())
+
+    assert read == {"count": 450, "closures": 0, "routes": {"I-80": "r2"}, "chained": {"I-80": "r2"}} and sierra.valid_chains(read)
 
 
 def test_resort_feed_gives_status_lifts_base_temperature_and_the_announced_opening_day():
@@ -379,6 +478,15 @@ def test_the_summary_is_quiet_out_of_season_and_loud_for_chains_or_a_closed_pass
     assert sierra.summary(reading(tioga), {"state": "unavailable"}, {"state": "unavailable"}, NOW)["alert"] is False
     raised = sierra.summary(clear, reading(sierra.parse_chain_controls(CHAINS_ACTIVE)), resort, NOW)
     assert raised["alert"] is True and raised["routes"][0] == {"route": "I-80", "level": "r2", "from": "", "to": ""}
+    # The winter gate has its own closure placemark all season: the road text already calls it the
+    # winter closure, so it stays one; chains below the gate are still an alert.
+    gate = chain_placemark("Eastbound Highway 120", None, "CRANE FLAT RD (closure gate in park, not chain sign)",
+                           -119.803511, 37.747246)
+    shut = sierra.summary(reading(tioga), reading(sierra.parse_chain_controls(chain_file(gate))), resort, NOW)
+    assert shut["alert"] is False and shut["routes"][0]["level"] == "seasonal"
+    below = chain_placemark("Eastbound Highway 120", "R-2", "CHERRY VALLEY RD", -120.0106, 37.8248)
+    chained = sierra.summary(reading(tioga), reading(sierra.parse_chain_controls(chain_file(gate, below))), resort, NOW)
+    assert chained["alert"] is True and chained["routes"][0]["level"] == "r2"
     old = sierra.summary(reading(storm, NOW - timedelta(hours=13)), {"state": "unavailable"}, resort, NOW)
     assert old["routes"] == [] and old["alert"] is False
 
