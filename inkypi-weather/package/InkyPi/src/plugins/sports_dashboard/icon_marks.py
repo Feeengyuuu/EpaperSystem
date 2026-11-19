@@ -132,8 +132,11 @@ class IconMarksMixin:
         if failed is not None and time.monotonic() - failed < FLAG_RETRY_SECONDS:
             return None
         flag = None
+        path = None
         try:
             path = SportsDashboard._team_logo_disk_cache_path(self._team_logo_disk_cache_dir(), f"flag:{url}")
+            if SportsDashboard._team_logo_known_missing(path):
+                return None
             data = SportsDashboard._read_team_logo_disk_cache(path, validate_image=False)
             if data is None:
                 data = SportsDashboard._fetch_remote_image_bytes(url, 4)
@@ -145,6 +148,7 @@ class IconMarksMixin:
                 source.close()
         except Exception as exc:  # noqa: BLE001 - a missing flag leaves its country code instead.
             logger.warning("Flag icon unavailable %s: %s", url, type(exc).__name__)
+            SportsDashboard._remember_team_logo_missing(path, exc)
             if len(_flag_failures) >= FLAG_FAILURES_KEPT:
                 _flag_failures.pop(next(iter(_flag_failures)))
             _flag_failures[key] = time.monotonic()

@@ -228,6 +228,11 @@ TEAM_LOGO_DISK_CACHE_BUDGET = CacheBudget(
     256,
     50 * 1024 * 1024,
 )
+# How long a host's 404 for a logo, headshot or flag is believed before it is asked again. The
+# note is a file beside the disk cache: every region is drawn by a fresh worker process, which
+# starts without the in-memory notes of the last one.
+TEAM_LOGO_MISSING_SECONDS = 24 * 60 * 60
+TEAM_LOGO_MISSING_STATUSES = frozenset({404, 410})
 DEFAULT_WORLD_CUP_SCOREBOARD_URL = f"{ESPN_SITE_API_BASE_URL}/sports/soccer/fifa.world/scoreboard"
 # Authoritative ESPN group table (key-free): cumulative PTS/W-D-L for all 12 groups,
 # correct on every matchday regardless of the scoreboard date window. Note: apis/v2
@@ -4479,8 +4484,13 @@ class SportsDashboardCommonMixin:
             cached = TEAM_LOGO_CACHE[cache_key]
             record_asset_metric("memory_hits" if cached is not None else "negative_hits")
             return cached
+        disk_path = None
         try:
             disk_path = SportsDashboard._team_logo_disk_cache_path(cache_dir, logo_url)
+            if SportsDashboard._team_logo_known_missing(disk_path):
+                record_asset_metric("negative_hits")
+                TEAM_LOGO_CACHE[cache_key] = None
+                return None
             data = SportsDashboard._read_team_logo_disk_cache(disk_path, validate_image=False)
             logo = None
             if data is not None:
@@ -4511,6 +4521,7 @@ class SportsDashboardCommonMixin:
         except Exception as exc:
             record_asset_metric("load_failures")
             logger.warning("Failed to load team logo %s: %s", logo_url, _safe_exception_text(exc))
+            SportsDashboard._remember_team_logo_missing(disk_path, exc)
             TEAM_LOGO_CACHE[cache_key] = None
             return None
 
@@ -4562,6 +4573,30 @@ class SportsDashboardCommonMixin:
             suffix = ".img"
         digest = hashlib.sha1(str(logo_url).encode("utf-8")).hexdigest()
         return namespace.path(digest, suffix)
+
+    @staticmethod
+    def _team_logo_known_missing(path):
+        """True while the host's 404 for the file cached at ``path`` is less than a day old."""
+        if path is None:
+            return False
+        try:
+            age = time.time() - path.with_suffix(".missing").stat().st_mtime
+        except OSError:
+            return False
+        return 0 <= age < TEAM_LOGO_MISSING_SECONDS
+
+    @staticmethod
+    def _remember_team_logo_missing(path, exc):
+        """Note on disk that the host has no such file (404/410). A timeout, a rate limit or a
+        server error says nothing about the file, so those stay in this process's memory only."""
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if path is None or status not in TEAM_LOGO_MISSING_STATUSES:
+            return
+        try:
+            namespace = cache_namespace_for_directory(path.parent, TEAM_LOGO_DISK_CACHE_BUDGET)
+            namespace.put_bytes(path.stem, str(status).encode("ascii"), suffix=".missing")
+        except (OSError, CacheError) as error:
+            logger.warning("Failed to note a missing team logo in the disk cache %s: %s", path, error)
 
     @staticmethod
     def _read_team_logo_disk_cache(path, *, validate_image=True):
