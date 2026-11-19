@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import os
 import time
@@ -12,6 +13,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from utils.http_client import get_http_session
+
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_TOKEN_PATH = "/var/lib/inkypi/secrets/robinhood_mcp.json"
@@ -453,11 +456,16 @@ class RobinhoodMCPClient:
                 if len(points) >= 2:
                     histories[symbol] = points
         missing = [symbol for symbol in symbols if symbol not in histories]
-        if missing:
+        if missing and len(missing) == len(symbols):
+            # Not one holding with two closes: the feed is at fault, not a new listing.
             raise RobinhoodMCPError(
                 "Robinhood MCP is missing official price history for held symbol(s): "
                 + ", ".join(missing)
             )
+        if missing:
+            # A holding in its first day or two of trading has no window yet. It keeps its quote;
+            # refusing the whole snapshot for it left the page a day behind without it.
+            logger.warning("Robinhood has no price history yet for held symbol(s): %s", ", ".join(missing))
         return histories
 
     def fetch_snapshot(self, account_hash, period="1mo", *, now=None):

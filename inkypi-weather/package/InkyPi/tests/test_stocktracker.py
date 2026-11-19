@@ -2040,3 +2040,78 @@ def test_berkshires_mark_is_recorded_and_takes_the_night_ink_whole():
             assert all(blue > 2 * red for red, _green, blue in solid)  # Berkshire's own navy by day
         else:
             assert solid == {colors["ink"][:3]}
+
+
+def _new_listing_snapshot():
+    """Two holdings with a month behind them and one first listed today (a single daily bar, which
+    the Robinhood client leaves out of the histories)."""
+    return {
+        "positions": [
+            {"symbol": "ANT", "quantity": 3.0},
+            {"symbol": "SPCX", "quantity": 2.0},
+            {"symbol": "AAPL", "quantity": 1.0},
+        ],
+        "quotes": {
+            "ANT": {"price": 48.5, "previous_close": 40.0, "timestamp": "2026-11-19T21:00:02Z", "extended_hours": False},
+            "SPCX": {"price": 170.0, "previous_close": 155.0, "timestamp": "2026-11-19T21:00:01Z", "extended_hours": False},
+            "AAPL": {"price": 220.0, "previous_close": 210.0, "timestamp": "2026-11-19T21:00:03Z", "extended_hours": False},
+        },
+        "histories": {
+            "SPCX": [("2026-11-17T00:00:00Z", 150.0), ("2026-11-18T00:00:00Z", 155.0)],
+            "AAPL": [("2026-11-17T00:00:00Z", 200.0), ("2026-11-18T00:00:00Z", 210.0)],
+        },
+        "portfolio_meta": {"account_value": 730.5, "cash_balance": 25.0, "buying_power": 25.0, "currency": "USD"},
+    }
+
+
+def _fetch_new_listing(monkeypatch):
+    plugin = StockTracker({"id": "stocktracker"})
+
+    class FakeClient:
+        def __init__(self, token_path=None):
+            pass
+
+        def fetch_snapshot(self, account_hash, period="1mo"):
+            return _new_listing_snapshot()
+
+    monkeypatch.setattr(stocktracker_module, "RobinhoodMCPClient", FakeClient)
+    stock_data, portfolio_meta = plugin._fetch_robinhood_mcp_data({"robinhood_account_hash": "b76f3558212e", "period": "1mo"})
+    return plugin, stock_data, portfolio_meta
+
+
+def test_a_holding_too_new_for_a_window_is_listed_with_its_day_and_no_window(monkeypatch):
+    # 2026-11-19: ANT, with one daily bar, failed the whole page ("Missing official Robinhood
+    # history"), so the day after it was bought the page still showed the portfolio without it.
+    plugin, stock_data, _meta = _fetch_new_listing(monkeypatch)
+
+    assert [row["symbol"] for row in stock_data] == ["ANT", "SPCX", "AAPL"]
+    new = plugin._holding_metrics(stock_data[0], 705.5)
+    assert new["value"] == 145.5 and round(new["day_percent"], 2) == 21.25 and new["day_pl"] == 25.5
+    # No window of its own yet: the table prints "-" there, as it does for cash.
+    assert new["window_percent"] is None
+    # The saved page data survives its round trip, so a theme redraw has the row too.
+    restored = StockTracker._rehydrated_stock_data(StockTracker._serialized_stock_data(stock_data))
+    assert [row["symbol"] for row in restored] == ["ANT", "SPCX", "AAPL"]
+
+
+def test_a_holding_listed_inside_the_window_is_carried_at_its_first_price_before_it(monkeypatch):
+    plugin, stock_data, portfolio_meta = _fetch_new_listing(monkeypatch)
+
+    # The month curve back-projects today's holdings: ANT did not trade on the first two days,
+    # so it is carried there at the first price it has (3 x 48.5), not dropped with its dates.
+    assert plugin._portfolio_values(stock_data) == [645.5, 665.5, 705.5]
+    assert plugin._portfolio_values(stock_data, account_value_override=portfolio_meta["account_value"]) == [
+        645.5, 665.5, 730.5]
+
+
+def test_a_holding_in_its_first_days_does_not_shorten_the_curve_to_its_own_days():
+    plugin = StockTracker({"id": "stocktracker"})
+    stock_data = [
+        {**_stock("ANT", [48.5, 52.0, 55.0], 3.0), "history": stocktracker_module._SimpleHistory([
+            ("2026-11-19", 48.5), ("2026-11-20", 52.0), ("current", 55.0)])},
+        {**_stock("SPCX", [150.0, 155.0, 160.0, 165.0, 170.0], 2.0), "history": stocktracker_module._SimpleHistory([
+            ("2026-11-17", 150.0), ("2026-11-18", 155.0), ("2026-11-19", 160.0), ("2026-11-20", 165.0), ("current", 170.0)])},
+    ]
+
+    # Before its first day ANT stands at that day's close; from then on at its own closes.
+    assert plugin._portfolio_values(stock_data) == [445.5, 455.5, 465.5, 486.0, 505.0]

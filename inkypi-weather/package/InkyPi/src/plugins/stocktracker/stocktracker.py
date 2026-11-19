@@ -930,7 +930,9 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			change_percent = (change / previous_close) * 100 if previous_close else 0.0
 			history_points = histories.get(symbol)
 			if not isinstance(history_points, list) or len(history_points) < 2:
-				raise RuntimeError(f"Missing official Robinhood history for {symbol}")
+				# Too new for a window (the client has said which). The row keeps its quote and
+				# its day; its window reads "-" and the curve carries it at this price.
+				history_points = []
 			history = _SimpleHistory(
 				[(str(timestamp), float(close)) for timestamp, close in history_points]
 				+ [(current_history_key, current_price)]
@@ -1371,25 +1373,36 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		return _SimpleHistory([(f"{today}-start", 1.0), (today, 1.0)])
 
 	def _portfolio_series(self, stock_data, account_value_override=None):
-		histories = [
-			data.get("history")
+		"""Today's holdings back-projected over the window: one total per date every holding has.
+
+		A date missing from a holding that was already trading is left out for all of them. A
+		holding first listed inside the window has no earlier dates to miss: before its first one
+		it is carried at that day's close, as cash is carried at its balance. Left to the common
+		dates alone, a holding in its first days cut the whole curve down to those days."""
+		held = [
+			data
 			for data in stock_data
 			if not getattr(data.get("history"), "empty", True)
 		]
-		if not histories:
+		if not held:
 			return []
-		common_dates = set(histories[0].index)
-		for history in histories[1:]:
-			common_dates.intersection_update(history.index)
-		dates = [date for date in histories[0].index if date in common_dates]
+		# The longest history sets the dates (the first of them when several are as long).
+		reference = max((data["history"] for data in held), key=lambda history: len(history.index))
+		position = {date: index for index, date in enumerate(reference.index)}
 		series = []
-		for date in dates:
+		for index, date in enumerate(reference.index):
 			total = 0
-			for data in stock_data:
-				history = data.get("history")
-				if history is not None and date in history.index:
-					total += float(history.loc[date, "Close"]) * data["shares"]
-			series.append((str(date), total))
+			for data in held:
+				history = data["history"]
+				if date in history.index:
+					close = history.loc[date, "Close"]
+				elif index < position.get(history.index[0], -1):
+					close = history.loc[history.index[0], "Close"]
+				else:
+					break
+				total += float(close) * data["shares"]
+			else:
+				series.append((str(date), total))
 		if account_value_override is not None and series:
 			series[-1] = (series[-1][0], account_value_override)
 		return series

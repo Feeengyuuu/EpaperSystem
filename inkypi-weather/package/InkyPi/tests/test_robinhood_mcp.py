@@ -338,3 +338,49 @@ def test_robinhood_mcp_second_401_fails_closed_without_damaging_credentials(tmp_
     ]
     assert saved["token"]["access_token"] == "new-access"
     assert saved["token"]["refresh_token"] == "refresh-123"
+
+
+def test_robinhood_snapshot_keeps_a_holding_too_new_to_have_a_price_history(caplog):
+    # 2026-11-19: ANT was held on a day it had a single daily bar. The whole snapshot was refused
+    # for it, the stock page stayed on the day before, and its refresh failed every few minutes.
+    account_number = "fake-account-new-listing"
+    client = FakeRobinhoodClient(
+        {
+            "get_accounts": {"data": [{"account_number": account_number}]},
+            "get_equity_positions": {
+                "data": {"results": [{"symbol": "SPCX", "quantity": "2"}, {"symbol": "ANT", "quantity": "3"}]}
+            },
+            "get_equity_quotes": {
+                "data": {
+                    "results": [
+                        {"symbol": "SPCX", "last_trade_price": "136.00",
+                         "venue_last_trade_time": "2026-11-19T21:00:00Z", "previous_close": "130.00"},
+                        {"symbol": "ANT", "last_trade_price": "48.50",
+                         "venue_last_trade_time": "2026-11-19T21:00:00Z", "previous_close": "40.00"},
+                    ]
+                }
+            },
+            "get_equity_historicals": {
+                "data": {
+                    "results": [
+                        {"symbol": "SPCX", "bars": [
+                            {"begins_at": "2026-11-18T00:00:00Z", "close_price": "130.00"},
+                            {"begins_at": "2026-11-19T00:00:00Z", "close_price": "136.00"},
+                        ]},
+                        {"symbol": "ANT", "bars": [{"begins_at": "2026-11-19T00:00:00Z", "close_price": "48.50"}]},
+                    ]
+                }
+            },
+            "get_portfolio": {"data": {"total_value": "500", "cash": "10", "buying_power": {"buying_power": "10"}}},
+        }
+    )
+
+    with caplog.at_level("WARNING"):
+        snapshot = client.fetch_snapshot(_account_hash(account_number), period="1mo")
+
+    assert [position["symbol"] for position in snapshot["positions"]] == ["SPCX", "ANT"]
+    assert snapshot["quotes"]["ANT"]["price"] == 48.5
+    # A window needs two closes: the holding without them has no history here, and says so once.
+    assert set(snapshot["histories"]) == {"SPCX"}
+    assert [record.getMessage() for record in caplog.records if "ANT" in record.getMessage()] == [
+        "Robinhood has no price history yet for held symbol(s): ANT"]
