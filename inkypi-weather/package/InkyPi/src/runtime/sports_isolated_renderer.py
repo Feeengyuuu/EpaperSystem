@@ -128,7 +128,11 @@ def _get_executor():
                 max_workers=1,
                 max_queue=0,
                 poll_interval_seconds=0.05,
-                terminate_grace_seconds=0.25,
+                # After SIGTERM, after SIGKILL and for the group to be gone: three waits of this
+                # length, together inside CHILD_CLEANUP_TIMEOUT_SECONDS. A killed worker frees its
+                # memory before it can be reaped, slowly when the guard has just tripped; at 0.25 s
+                # one in thirteen was called leaked and took the service down with it.
+                terminate_grace_seconds=1.5,
                 register_global=True,
             )
         return _EXECUTOR

@@ -709,3 +709,26 @@ def test_worker_memory_is_read_from_the_process_table(tmp_path):
         "worker_pid: 61337 | worker_rss_mb: 131.4 | worker_peak_mb: 133.0 | worker_swap_mb: 2.1")
     assert summary((), proc_root=tmp_path) == "worker_pid: none"
     assert summary((999,), proc_root=tmp_path) == "worker_pid: 999 | worker_memory: unreadable"
+
+
+def test_a_stopped_worker_is_given_time_to_die_before_it_is_called_leaked(monkeypatch):
+    # 2026-11-19 06:23: a worker stopped at the guard with 47 MB left on the device was not gone
+    # 0.25 s after SIGKILL, was reported as leaked, and the service restarted itself.
+    created = {}
+
+    class Recorder:
+        closed = False
+
+        def __init__(self, _tasks, **options):
+            created.update(options)
+
+    monkeypatch.setattr(sports_isolated_renderer, "LongTaskExecutor", Recorder)
+    monkeypatch.setattr(sports_isolated_renderer, "_EXECUTOR", None)
+
+    sports_isolated_renderer._get_executor()
+
+    grace = created["terminate_grace_seconds"]
+    assert grace >= 1.0
+    # The wait after SIGTERM, the wait after SIGKILL and the wait for the group to be gone all
+    # have to fit inside the time the parent allows the cleanup.
+    assert 3 * grace < sports_isolated_renderer.CHILD_CLEANUP_TIMEOUT_SECONDS
