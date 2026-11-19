@@ -196,7 +196,7 @@ check_prerequisites() {
     args+=(--waveshare "$WS_TYPE")
   fi
   if ! command -v python3 >/dev/null 2>&1; then
-    say "Python 3 is missing. Run this on Raspberry Pi OS with Python 3.11 or newer." "缺少 Python 3。请在带有 Python 3.11 或更新版本的 Raspberry Pi OS 上运行。" >&2
+    say "Python 3 is missing. Run this on Raspberry Pi OS with Python 3.11.5 or newer." "缺少 Python 3。请在带有 Python 3.11.5 或更新版本的 Raspberry Pi OS 上运行。" >&2
     return 1
   fi
   python3 "$SCRIPT_DIR/check_install.py" "${args[@]}"

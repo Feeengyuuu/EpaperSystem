@@ -13,6 +13,7 @@ import sys
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 GIB = 1024**3
+MINIMUM_PYTHON = (3, 11, 5)
 
 
 def check_install(
@@ -28,7 +29,7 @@ def check_install(
     """Return (success, English, Chinese) checks without changing the host."""
     checks = []
     system = platform.system() if system is None else system
-    version = sys.version_info[:2] if version is None else version
+    version = tuple(sys.version_info[:3] if version is None else version)
     checks.append(
         (
             system == "Linux",
@@ -36,7 +37,17 @@ def check_install(
             "请先 SSH 登录 Raspberry Pi OS（Linux）再安装。",
         )
     )
-    checks.append((version >= (3, 11), "Python 3.11 or newer is required.", "需要 Python 3.11 或更新版本。"))
+    # The locked packages set the floor (soupsieve 4 needs 3.11.5). Checked here, to the patch
+    # level, so an older image is told so instead of failing inside pip on a package name.
+    checks.append(
+        (
+            version >= MINIMUM_PYTHON,
+            "Python 3.11.5 or newer is required: use the current Raspberry Pi OS (13 \"trixie\", Python 3.13); "
+            "the older \"bookworm\" image has 3.11.2.",
+            "需要 Python 3.11.5 或更新版本：请用当前的 Raspberry Pi OS（13 “trixie”，自带 Python 3.13）；"
+            "旧的 “bookworm” 镜像是 3.11.2。",
+        )
+    )
     models = (root / "proc/device-tree/model", root / "sys/firmware/devicetree/base/model")
     is_pi = any(path.is_file() and "Raspberry Pi" in path.read_text(errors="replace") for path in models)
     checks.append(

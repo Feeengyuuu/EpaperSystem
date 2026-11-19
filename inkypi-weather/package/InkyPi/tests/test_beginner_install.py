@@ -52,7 +52,7 @@ def prerequisites(tmp_path, **overrides):
     arguments = dict(
         root=tmp_path,
         system="Linux",
-        version=(3, 11),
+        version=(3, 13, 5),
         which=lambda name: f"/usr/bin/{name}",
         disk_usage=lambda path: SimpleNamespace(free=4 * preflight.GIB),
         waveshare="epd7in3e",
@@ -79,6 +79,16 @@ def test_fresh_pi_prerequisites_do_not_require_provider_credentials(tmp_path):
 )
 def test_unsupported_prerequisites_fail_before_installation(tmp_path, overrides):
     assert not all(row[0] for row in prerequisites(tmp_path, **overrides))
+
+
+@pytest.mark.parametrize("version,accepted", [((3, 11, 2), False), ((3, 11, 5), True), ((3, 12, 0), True)])
+def test_the_python_the_locked_packages_need_is_checked_to_the_patch_level(tmp_path, version, accepted):
+    # soupsieve 4 needs Python 3.11.5: the bookworm image's 3.11.2 passed a "3.11 or newer" check
+    # and then failed inside pip, on a package name that tells a first-time installer nothing.
+    checks = prerequisites(tmp_path, version=version)
+    assert all(row[0] for row in checks) is accepted
+    if not accepted:
+        assert ["Python 3.11.5" in row[1] and "3.11.5" in row[2] for row in checks if not row[0]] == [True]
 
 
 def test_non_pi_and_missing_systemd_are_reported(tmp_path):
