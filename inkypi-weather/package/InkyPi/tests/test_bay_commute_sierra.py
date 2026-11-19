@@ -640,3 +640,40 @@ def test_the_signs_routes_are_named_by_their_own_markers(monkeypatch):
     summary["routes"][0]["route"] = "SR-88"
     _image, written = draw(monkeypatch, page_payload(summary), at=BOARD_HOUR)
     assert "SR-88" in written and "US-50" not in written
+
+
+def test_a_source_that_keeps_failing_does_not_take_the_others_turns(plugin, offline_page, monkeypatch):
+    """2026-11-18/19: the chain controls failed every hour for a day. Being the furthest past its
+    rest it was the one read at every refresh; the roads were never read again, their last
+    reading aged out, and the page said nothing of I-80 being shut."""
+    calls = offline_page
+    for minutes in (0, 10, 20):
+        plugin._payload(SETTINGS, NOW + timedelta(minutes=minutes), allow_network=True, context=context())
+    assert calls == ["roads", "chains", "resort"]
+
+    def too_large(*args):
+        calls.append("chains-failed")
+        raise OSError("too large")
+
+    monkeypatch.setattr(sierra, "fetch_chain_controls", too_large)
+    for hours in (2, 3, 4, 5, 6):
+        page = plugin._payload(SETTINGS, NOW + timedelta(hours=hours, minutes=5), allow_network=True, context=context())
+
+    # A failed read rests like a read: the controls are tried again each time they fall due, and
+    # between its tries the others are read as they fall due.
+    assert calls[3:] == ["chains-failed", "roads", "chains-failed", "resort", "chains-failed"]
+    assert page["sierra"]["routes"][0]["route"] == "I-80"
+
+
+def test_a_source_that_never_answered_does_not_take_the_others_turns(plugin, offline_page, monkeypatch):
+    calls = offline_page
+
+    def refused(*args):
+        calls.append("chains-failed")
+        raise OSError("refused")
+
+    monkeypatch.setattr(sierra, "fetch_chain_controls", refused)
+    for minutes in (0, 10, 20):
+        plugin._payload(SETTINGS, NOW + timedelta(minutes=minutes), allow_network=True, context=context())
+
+    assert calls == ["roads", "chains-failed", "resort"]

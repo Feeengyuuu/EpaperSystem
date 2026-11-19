@@ -35,6 +35,8 @@ EXTRA_FRESH = {"bart_status": (600, 2 * 3600), "signs": (600, 45 * 60), "water":
                # read per refresh, see _sierra), shown for as long as sierra.KEEP allows.
                **{name: (rests[0], sierra.KEEP[name]) for name, rests in sierra.REST.items()}}
 DEFAULT_FONT = "Microsoft YaHei"
+# The cache entry that keeps when each Sierra source was last tried without success.
+SIERRA_ATTEMPTS = {"sierra": "attempts"}
 
 
 def _checkpoint(context):
@@ -98,6 +100,8 @@ class BayCommute(BasePlugin):
             return sierra.valid_chains(data)
         if name == "sierra_resort":
             return sierra.valid_resort(data)
+        if name == "sierra_attempts":
+            return all(source in sierra.REST and sources.parse_time(when) for source, when in data.items())
         if name == "roads":
             rows = data.get("items")
             return (isinstance(rows, list) and len(rows) <= sources.MAX_CACHED_ROADS
@@ -212,16 +216,31 @@ class BayCommute(BasePlugin):
         readers = {"sierra_roads": ({"routes": list(sierra.ROUTES)}, lambda: sierra.fetch_road_conditions(child)),
                    "sierra_chains": ({"feed": "cc"}, lambda: sierra.fetch_chain_controls(child)),
                    "sierra_resort": ({"resort": sierra.RESORT_ID}, lambda: sierra.fetch_resort(now, child))}
-        turn = None
+        turn, tried = None, {}
         if allow_network:
             kept = {name: self._read_cache(name, identity) for name, (identity, _fetch) in readers.items()}
-            ages = {name: (now - sources.parse_time(cache["fetched_at"])).total_seconds() if cache else None
-                    for name, cache in kept.items()}
+            # A read that failed rests like one that succeeded. Aged by its last good reading
+            # alone, a source that keeps failing is always the furthest past its rest and takes
+            # every turn: the chain controls did for a day from 2026-11-18, and the roads' last
+            # reading aged out unread while I-80 was shut.
+            tried = (self._read_cache("sierra_attempts", SIERRA_ATTEMPTS) or {}).get("data") or {}
+            ages = {}
+            for name, cache in kept.items():
+                moments = [moment for moment in (sources.parse_time((cache or {}).get("fetched_at")),
+                                                 sources.parse_time(tried.get(name))) if moment is not None]
+                ages[name] = (now - max(moments)).total_seconds() if moments else None
             turn = sierra.due_source(ages, now, sierra.watching(
                 *((kept[name] or {}).get("data") for name in ("sierra_roads", "sierra_chains"))))
         read = {name: self._source(name, identity, now, allow_network=name == turn, force=False, context=context,
                                    fetcher=fetch)
                 for name, (identity, fetch) in readers.items()}
+        if turn and read[turn].get("fetched_at") != now.isoformat():
+            try:
+                self._write_cache("sierra_attempts", SIERRA_ATTEMPTS, {
+                    "schema": CACHE_SCHEMA, "identity": SIERRA_ATTEMPTS, "fetched_at": now.isoformat(),
+                    "data": {**tried, turn: now.isoformat()}})
+            except (OSError, ValueError) as exc:
+                logger.warning("Bay Commute could not note a failed %s read (%s)", turn, type(exc).__name__)
         return sierra.summary(read["sierra_roads"], read["sierra_chains"], read["sierra_resort"], now)
 
     def _payload(self, settings, now, *, allow_network, context):
