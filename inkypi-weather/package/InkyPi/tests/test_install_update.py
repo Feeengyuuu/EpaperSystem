@@ -648,6 +648,10 @@ def test_activation_skips_the_systemd_reload_when_no_managed_file_changed(tmp_pa
     launcher_target.parent.mkdir(parents=True)
     unit_target.write_text("same-unit", encoding="utf-8")
     launcher_target.write_text("launcher-new", encoding="utf-8")
+    # "Already in place" is bytes and mode: a file just written has the umask's mode, which on a
+    # POSIX host is not the launcher's 0755 (the test failed on CI's Linux from its first day).
+    unit_target.chmod(0o644)
+    launcher_target.chmod(0o755)
     copies = []
     links = FakeLinks(old)
     links.new_target = new

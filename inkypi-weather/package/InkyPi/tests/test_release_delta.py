@@ -68,6 +68,10 @@ def round_repo(tmp_path):
     repo = tmp_path / "repo"
     package = repo / release_build.PACKAGE
     write_files(package, BASE_FILES)
+    # Executable on disk as well as in the index: on a POSIX host git reads the mode from the
+    # file, and the second commit's "add --all" would otherwise record tool.sh as 0644 again, a
+    # mode-only change the build rightly refuses to call a delta (CI's Linux, from the first day).
+    (package / "install/tool.sh").chmod(0o755)
     (package / "install/lib").mkdir(parents=True)
     shutil.copyfile(PACKAGE_ROOT / "install/lib/release_archive.py", package / "install/lib/release_archive.py")
     (repo / ".gitignore").write_text("outputs/\n.tmp/\n", encoding="utf-8")

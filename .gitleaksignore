@@ -11,3 +11,5 @@ be855a9618d58d0151fe5d0f16467439d0551491:inkypi-weather/package/InkyPi/tests/tes
 f94c2b1064494ec4f0fc4bf47aaa09e19d099332:inkypi-weather/package/InkyPi/tests/test_daily_word_poem.py:generic-api-key:576
 # A schema field-name set, not an authentication value.
 82275ae8273b6d96ff6ca5c2e0e8e5c370ee0b84:inkypi-weather/package/InkyPi/src/plugins/vehicle_status/vehicle_status.py:generic-api-key:132
+# A MotoGP rider's public profile id in a standings fixture, not an authentication value.
+ff09ce8e939a8b85dc6c1575dbf4544719e50eb2:inkypi-weather/package/InkyPi/tests/test_sports_extra_feeds.py:generic-api-key:210
