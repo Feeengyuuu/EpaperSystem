@@ -13,7 +13,26 @@ import logging
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
-PROC_SELF = Path("/proc/self")
+PROC_ROOT = Path("/proc")
+PROC_SELF = PROC_ROOT / "self"
+_STATUS_FIELDS = {"VmRSS:": "rss", "VmHWM:": "peak", "VmSwap:": "swap"}
+
+
+def process_memory_mb(pid="self", proc_root=PROC_ROOT) -> dict | None:
+    """A process's resident, peak resident and swapped memory in MB as {rss, peak, swap}, read
+    from its status file; None where there is no such file to read (another platform, a process
+    that has gone)."""
+    found = {}
+    try:
+        with (Path(proc_root) / str(pid) / "status").open(encoding="ascii", errors="replace") as handle:
+            for line in handle:
+                fields = line.split()
+                name = _STATUS_FIELDS.get(fields[0]) if fields else None
+                if name:
+                    found[name] = int(fields[1]) / 1024
+    except (OSError, ValueError, IndexError):
+        return None
+    return found if len(found) == len(_STATUS_FIELDS) else None
 
 
 class CommandPeakMeter:

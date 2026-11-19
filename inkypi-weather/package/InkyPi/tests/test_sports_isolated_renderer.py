@@ -647,3 +647,65 @@ def test_each_region_learns_when_this_page_was_last_on_the_panel(monkeypatch, tm
 
     settings = [submission[1]["settings"] for submission in executor.submissions]
     assert settings and all(item[display_history.RECENT_DISPLAYS_SETTING] == [shown] for item in settings)
+
+
+def test_the_resource_guard_says_what_the_worker_itself_held(caplog):
+    # 2026-11-19: the lower region's worker took the device from 185 MB available to 47 in twenty
+    # seconds, fourteen times in two days, and nothing in the journal said how big the worker was.
+    handle = _BlockingHandle()
+    asked = []
+
+    def worker_memory():
+        asked.append(handle.canceled)
+        return "worker_pid: 61337 | worker_rss_mb: 131.4 | worker_peak_mb: 133.0 | worker_swap_mb: 2.1"
+
+    with pytest.raises(sports_isolated_renderer.SportsIsolatedResourcePressure):
+        sports_isolated_renderer._wait_for_result(
+            handle,
+            context=_context(),
+            resource_sampler=lambda: SimpleNamespace(available_mb=47.2, swap_percent=25.2),
+            abort_min_available_mb=70,
+            abort_max_swap_percent=75,
+            poll_seconds=0.01,
+            region="lower",
+            worker_memory=worker_memory,
+        )
+
+    # Read while the worker is still alive: its numbers are gone once it is stopped.
+    assert asked == [False] and handle.canceled is True
+    assert "region: lower" in caplog.text and "available_mb: 47.2" in caplog.text
+    assert "worker_pid: 61337 | worker_rss_mb: 131.4 | worker_peak_mb: 133.0 | worker_swap_mb: 2.1" in caplog.text
+
+
+def test_a_worker_whose_memory_cannot_be_read_does_not_stop_the_guard(caplog):
+    handle = _BlockingHandle()
+
+    def worker_memory():
+        raise OSError("no process table")
+
+    with pytest.raises(sports_isolated_renderer.SportsIsolatedResourcePressure):
+        sports_isolated_renderer._wait_for_result(
+            handle,
+            context=_context(),
+            resource_sampler=lambda: SimpleNamespace(available_mb=47.2, swap_percent=25.2),
+            abort_min_available_mb=70,
+            abort_max_swap_percent=75,
+            poll_seconds=0.01,
+            worker_memory=worker_memory,
+        )
+
+    assert handle.canceled is True and "worker_pid: unknown" in caplog.text
+
+
+def test_worker_memory_is_read_from_the_process_table(tmp_path):
+    (tmp_path / "61337").mkdir()
+    (tmp_path / "61337" / "status").write_text(
+        "Name:\tpython\nVmPeak:\t 2387200 kB\nVmHWM:\t  136192 kB\nVmRSS:\t  134553 kB\nVmSwap:\t    2150 kB\n",
+        encoding="ascii")
+
+    summary = sports_isolated_renderer._worker_memory_summary
+
+    assert summary((61337,), proc_root=tmp_path) == (
+        "worker_pid: 61337 | worker_rss_mb: 131.4 | worker_peak_mb: 133.0 | worker_swap_mb: 2.1")
+    assert summary((), proc_root=tmp_path) == "worker_pid: none"
+    assert summary((999,), proc_root=tmp_path) == "worker_pid: 999 | worker_memory: unreadable"

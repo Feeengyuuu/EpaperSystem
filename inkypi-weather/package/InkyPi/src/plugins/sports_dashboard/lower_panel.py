@@ -22,6 +22,7 @@ have no wall row, so one of them live keeps its own panel when it outranks the
 best live game.
 """
 
+from runtime.command_memory import process_memory_mb
 from runtime.refresh_contracts import TaskCancelled
 
 from .common import *
@@ -45,11 +46,21 @@ _EXTRA_LEAGUES = (
 )
 
 
+def _lower_step_finished(step):
+    """One journal line per finished step of the lower region, with the process's peak memory so
+    far. The region is drawn in a worker the parent stops when the device runs short: the last of
+    these lines then names the load that finished before the one that grew."""
+    memory = process_memory_mb()
+    logger.info("Sports lower region step finished. | step: %s | peak_rss_mb: %s",
+                step, "unknown" if memory is None else f"{memory['peak']:.1f}")
+
+
 class LowerPanelMixin:
     def _draw_lower_sports_region(self, image, draw, settings, device_config, timezone_info, now, box):
         settings = settings or {}
         nba_events, nba_source_state = self._load_nba_events(settings, timezone_info)
         nba_selected = self._select_nba_events(nba_events, now)
+        _lower_step_finished("nba")
         hub_selected, hub_source_state = None, ""
         if SportsDashboard._lower_hub_wanted(settings):
             try:
@@ -58,7 +69,9 @@ class LowerPanelMixin:
                 raise
             except Exception as exc:
                 logger.warning("Lower panel hub load failed: %s", _safe_exception_text(exc))
+        _lower_step_finished("hub")
         f1_selected, f1_source_state = self._load_lower_f1(settings, timezone_info, now)
+        _lower_step_finished("f1")
         extras, extra_states = self._load_lower_extras(settings, now)
         choice = SportsDashboard._choose_lower_panel(
             settings, nba_selected, hub_selected, hub_source_state, f1_selected, now,
@@ -71,6 +84,7 @@ class LowerPanelMixin:
         if f1_selected is not None:
             self._write_f1_live_state(f1_selected, now, f1_source_state)
         kind = choice.get("kind")
+        _lower_step_finished(f"chosen:{kind}/{choice.get('key') or kind}")
         self._record_region_choice("lower", now, [choice.get("key") or kind])
         try:
             if kind == "wall":
@@ -136,6 +150,8 @@ class LowerPanelMixin:
             except Exception as exc:
                 logger.warning("Lower panel %s load failed: %s", key, _safe_exception_text(exc))
                 continue
+            finally:
+                _lower_step_finished(key)
             states[key] = state
             if found is not None:
                 candidates.append(found)

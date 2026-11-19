@@ -15,6 +15,7 @@ from plugins.base_plugin.render_provenance import (
     SourceProvenance,
     attach_source_provenance,
 )
+from runtime.command_memory import PROC_ROOT, process_memory_mb
 from runtime.long_task_executor import LongTaskExecutor
 from runtime.sports_asset_metrics import asset_metric_summary
 from runtime.refresh_contracts import TaskCancelled, thaw_payload
@@ -277,6 +278,20 @@ def _require_child_cleanup(result):
     return result
 
 
+def _worker_memory_summary(pids, proc_root=PROC_ROOT):
+    """What each running worker holds, for the guard's journal line."""
+    if not pids:
+        return "worker_pid: none"
+    parts = []
+    for pid in pids:
+        memory = process_memory_mb(pid, proc_root)
+        parts.append(f"worker_pid: {pid} | " + (
+            "worker_memory: unreadable" if memory is None else
+            f"worker_rss_mb: {memory['rss']:.1f} | worker_peak_mb: {memory['peak']:.1f} | "
+            f"worker_swap_mb: {memory['swap']:.1f}"))
+    return " | ".join(parts)
+
+
 def _cancel_and_confirm_child_cleanup(handle):
     handle.cancel()
     try:
@@ -297,6 +312,7 @@ def _wait_for_result(
     abort_max_swap_percent,
     poll_seconds,
     region="unknown",
+    worker_memory=None,
 ):
     while True:
         try:
@@ -319,15 +335,21 @@ def _wait_for_result(
         ):
             available_mb = _finite_metric(getattr(sample, "available_mb", None))
             swap_percent = _finite_metric(getattr(sample, "swap_percent", None))
+            # Read before the worker is stopped: whether it is the worker that grew, and how far.
+            try:
+                held = worker_memory() if worker_memory is not None else "worker_pid: unknown"
+            except Exception:
+                held = "worker_pid: unknown"
             logger.warning(
                 "Sports Dashboard isolated resource guard tripped. | "
                 "region: %s | available_mb: %s | swap_percent: %s | minimum_available_mb: %s "
-                "| maximum_swap_percent: %s",
+                "| maximum_swap_percent: %s | %s",
                 region,
                 "unknown" if available_mb is None else f"{available_mb:.1f}",
                 "unknown" if swap_percent is None else f"{swap_percent:.1f}",
                 abort_min_available_mb,
                 abort_max_swap_percent,
+                held,
             )
             _cancel_and_confirm_child_cleanup(handle)
             raise SportsIsolatedResourcePressure(
@@ -464,6 +486,7 @@ def render_sports_dashboard_isolated(
             abort_max_swap_percent=abort_max_swap_percent,
             poll_seconds=DEFAULT_RESOURCE_POLL_SECONDS,
             region=region,
+            worker_memory=lambda: _worker_memory_summary(executor.active_processes),
         )
         if result.status != "succeeded":
             raise RuntimeError(
