@@ -5,6 +5,7 @@ from plugins.base_plugin.render_provenance import (
 )
 
 from PIL import Image, ImageDraw, ImageOps
+from utils.cache_manager import CacheError, cache_namespace_for_directory
 from utils.content_fonts import content_font
 from utils.doodle_backdrop import paint_doodles
 from utils.image_utils import text_width
@@ -12,6 +13,7 @@ from utils.safe_image import ImageLimits, safe_open_image
 from utils.theme_utils import contrast_ratio, relative_luminance
 from datetime import datetime, timedelta
 from contextvars import ContextVar
+from pathlib import Path
 from functools import lru_cache
 import colorsys
 import errno
@@ -556,6 +558,9 @@ class BambuMonitor(BasePlugin):
             )
 
         cache_file = self._cache_file(host, serial)
+        # Before the read: where reads update a file's access time, the read itself would pass
+        # for the use and leave the modification time the device's noatime disk goes by untouched.
+        self._mark_in_use(cache_file, self._camera_file(host, serial))
         cached = self._read_cache(cache_file)
         now = time.time()
         force_refresh = any(
@@ -1473,7 +1478,7 @@ class BambuMonitor(BasePlugin):
             image = self._render_status(status, dimensions)
         else:
             image = self._render_error(dimensions, "Printer offline", host=host, serial=serial, settings=settings,
-                                       source="offline", keep=True)
+                                       source="offline", switched_off_since=cached["offline_since"])
         return attach_source_provenance(image, SourceProvenance.LIVE)
 
     @staticmethod
@@ -1486,9 +1491,11 @@ class BambuMonitor(BasePlugin):
             return True
         return isinstance(exc, OSError) and exc.errno in PRINTER_OFFLINE_ERRNOS
 
-    def _render_error(self, dimensions, message, host="", serial="", settings=None, source="error", keep=False):
-        """A card for a printer that gave no status. An error's card is not to be kept; ``keep``
-        is for the card of a printer that is switched off, which is a reading."""
+    def _render_error(self, dimensions, message, host="", serial="", settings=None, source="error",
+                      switched_off_since=None):
+        """A card for a printer that gave no status. An error's card is not to be kept. With
+        ``switched_off_since`` it is the card of a printer that is simply off, a reading: kept,
+        and worded like the offline page (switched off, since when) instead of as an error."""
         status = {
             "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
             "source": source,
@@ -1508,6 +1515,8 @@ class BambuMonitor(BasePlugin):
             "error": 1,
             "ams": [],
         }
+        if switched_off_since:
+            status.update(stage="", error=0, offline_since=switched_off_since)
         self._apply_machine_identity(
             status,
             settings,
@@ -1515,7 +1524,7 @@ class BambuMonitor(BasePlugin):
             serial=serial,
         )
         image = self._render_status(status, dimensions)
-        return image if keep else self._non_cacheable_image(image)
+        return image if switched_off_since else self._non_cacheable_image(image)
 
     @staticmethod
     def _non_cacheable_image(image):
@@ -1546,6 +1555,20 @@ class BambuMonitor(BasePlugin):
 
     def _camera_waiting_file(self):
         return os.path.join(os.path.dirname(__file__), "camera_waiting.png")
+
+    @staticmethod
+    def _mark_in_use(*paths):
+        """Count the printer's last status and frame as just used. They are the only record of the
+        last job while the printer is off, and the cache drops its least recently used files
+        first: read straight from disk they were never seen in use, and two days after the
+        printer was switched off (2026-11-19) the status was dropped and the page lost the job."""
+        for path in paths:
+            target = Path(path)
+            try:
+                if target.is_file() and not target.is_symlink():
+                    cache_namespace_for_directory(target.parent).get_path(target.name)
+            except (OSError, CacheError, ValueError):
+                continue
 
     def _read_cache(self, path):
         try:

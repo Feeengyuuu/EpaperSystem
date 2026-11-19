@@ -1,5 +1,7 @@
 import logging
+import os
 import sys
+import time
 from io import BytesIO
 from pathlib import Path
 
@@ -1469,3 +1471,53 @@ def test_force_refresh_aliases_bypass_fresh_bambu_cache(tmp_path, monkeypatch):
         assert read_source_provenance(image) is SourceProvenance.LIVE
 
     assert len(fetch_calls) == 2
+
+
+def test_a_switched_off_printers_last_status_counts_as_in_use(tmp_path, monkeypatch):
+    """The status file is the only record of the last job while the printer is off. Read straight
+    from disk it was never seen in use: on 2026-11-19, two days after the printer was switched
+    off, the cache dropped it as one of its oldest files and the page lost the job."""
+    plugin = _plugin(tmp_path)
+    settings = _connected_settings()
+    cache_file = plugin._cache_file(settings["host"], settings["serialNumber"])
+    plugin._write_cache(cache_file, {"fetched_at": 0, "status": _cached_status(), "offline_since": 1})
+    camera_file = plugin._camera_file(settings["host"], settings["serialNumber"])
+    Image.new("RGB", (64, 48), (40, 40, 40)).save(camera_file, format="JPEG")
+    two_days_ago = time.time() - 2 * 24 * 3600
+    for path in (cache_file, camera_file):
+        os.utime(path, (two_days_ago, two_days_ago))
+    monkeypatch.setattr(plugin, "_fetch_report", _raise_no_route)
+
+    plugin.generate_image(settings, _BambuDeviceConfig())
+
+    for path in (cache_file, camera_file):
+        assert os.path.getmtime(path) > time.time() - 3600, path
+    assert plugin._read_cache(cache_file)["status"]["file"] == _cached_status()["file"]
+
+
+def test_a_theme_redraw_leaves_the_status_file_untouched(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    settings = _connected_settings()
+    cache_file = plugin._cache_file(settings["host"], settings["serialNumber"])
+    plugin._write_cache(cache_file, {"fetched_at": 0, "status": _cached_status(), "offline_since": 1})
+    two_days_ago = time.time() - 2 * 24 * 3600
+    os.utime(cache_file, (two_days_ago, two_days_ago))
+
+    plugin.generate_image({**settings, "_theme_render_only": True}, _BambuDeviceConfig())
+
+    assert abs(os.path.getmtime(cache_file) - two_days_ago) < 2
+
+
+def test_a_switched_off_printer_without_a_last_job_says_switched_off_since_when(tmp_path, monkeypatch):
+    # The card of a printer that is off read "Unable to read printer", the wording of an error.
+    plugin = _plugin(tmp_path)
+    rendered = {}
+    monkeypatch.setattr(plugin, "_fetch_report", _raise_no_route)
+    monkeypatch.setattr(plugin, "_render_status",
+                        lambda status, dimensions: rendered.update(status) or Image.new("RGB", dimensions))
+
+    plugin.generate_image(_connected_settings(), _BambuDeviceConfig())
+
+    notes = BambuMonitor._resting_notes(rendered)
+    assert rendered["state"] == "OFFLINE" and rendered["source"] == "offline"
+    assert notes[0] == "Switched off" and notes[1].startswith("SINCE ") and "ERR" not in notes[1]
