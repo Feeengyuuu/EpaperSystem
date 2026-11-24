@@ -64,22 +64,46 @@ def movie_identity(value):
     return canonical, title, match[2]
 
 
-def title_key(value):
+_ARTICLES = frozenset({"a", "an", "the"})
+
+
+def _title_words(value):
     value = unicodedata.normalize("NFKD", str(value or "")).casefold()
-    words = re.findall(r"[a-z0-9]+", value)
+    return re.findall(r"[a-z0-9]+", value)
+
+
+def title_key(value):
+    words = _title_words(value)
     # The Numbers puts a leading article at the end of some URL slugs.
-    if words and words[-1] in {"a", "an", "the"}:
+    if words and words[-1] in _ARTICLES:
         words = [words[-1], *words[:-1]]
     return " ".join(words)
+
+
+def slug_title_keys(title):
+    """Every title the words of a slug can stand for, as ``title_key`` writes a title.
+
+    The Numbers files a film under its title without the leading article and puts the article
+    after it: at the end of the slug (Cat-in-the-Hat-The), or before the subtitle when the title
+    has one (Hunger-Games-The-Sunrise-on-the-Reaping). A slug does not mark where a subtitle
+    starts and its last word may be the title's own (Plan-A), so the words as written and each
+    later article moved to the front are all accepted."""
+    words = _title_words(title)
+    keys = {" ".join(words)}
+    for index in range(1, len(words)):
+        if words[index] in _ARTICLES:
+            keys.add(" ".join([words[index], *words[:index], *words[index + 1:]]))
+    keys.discard("")
+    return keys
 
 
 def matches_tmdb(movie, item):
     identity = movie_identity(movie.chart_url)
     if not identity or str(item.get("release_date") or "")[:4] != identity[2]:
         return False
-    return title_key(identity[1]) in {
+    return bool(slug_title_keys(identity[1]) & {
         title_key(item.get("title")), title_key(item.get("original_title")),
-    }
+    })
 
 
 def official_poster_url(value, canonical):
@@ -156,15 +180,15 @@ def page_poster(html_text, requested_url, response_url):
             continue
         if canonical_movie_url(urljoin(identity[0], url)) != identity[0]:
             return None
-    expected_heading = title_key(identity[1] + " " + identity[2])
-    if not parser.headings or title_key(_ORIGINAL_TITLE.sub("", parser.headings[0])) != expected_heading:
+    titles = slug_title_keys(identity[1])
+    headings = {f"{title} {identity[2]}" for title in titles}
+    if not parser.headings or title_key(_ORIGINAL_TITLE.sub("", parser.headings[0])) not in headings:
         return None
     for source, alt in parser.images:
         source = urljoin(identity[0], source)
         # The publisher's alt text reads "<title> poster".
         alt_key = re.sub(r" poster$", "", title_key(_ORIGINAL_TITLE.sub("", alt)))
-        if (official_poster_url(source, identity[0])
-                and alt_key in {title_key(identity[1]), expected_heading}):
+        if official_poster_url(source, identity[0]) and alt_key in titles | headings:
             return source
     return None
 

@@ -12,7 +12,7 @@ from plugins.box_office_top_movies.china_source import ChinaFetchBudget
 import plugins.china_box_office_top_movies.china_box_office_top_movies as plugin_module
 from plugins.china_box_office_top_movies.china_box_office_top_movies import ChinaBoxOfficeTopMovies
 from plugins.china_box_office_top_movies.north_america_media import (
-    POSTER_LIMITS, canonical_movie_url, movie_identity, page_poster, reuse_posters,
+    POSTER_LIMITS, canonical_movie_url, matches_tmdb, movie_identity, page_poster, reuse_posters,
 )
 from runtime.refresh_contracts import TaskCancelled, TaskContext
 from tests.test_china_box_office_top_movies import DummyDeviceConfig, canonical_theme
@@ -60,6 +60,39 @@ def test_official_poster_matches_a_heading_that_carries_the_original_title():
     assert page_poster(FOREIGN_PAGE, FOREIGN_MOVIE, FOREIGN_MOVIE) == FOREIGN_POSTER
     assert page_poster(FOREIGN_PAGE.replace("Godzilla Minus Zero (", "Another Monster ("),
                        FOREIGN_MOVIE, FOREIGN_MOVIE) is None
+
+
+# The publisher files a film under its title without the leading article and puts the article
+# after it: before the subtitle when the title has one, otherwise at the end of the slug.
+ARTICLE_SLUGS = [
+    ("Hunger-Games-The-Sunrise-on-the-Reaping-(2026)", "The Hunger Games: Sunrise on the Reaping"),
+    ("Cat-in-the-Hat-The-(2026)", "The Cat in the Hat"),
+    ("Plan-A-(2026)", "Plan A"),
+]
+
+
+@pytest.mark.parametrize("slug, title", ARTICLE_SLUGS)
+def test_official_poster_matches_a_slug_whose_article_follows_the_title(slug, title):
+    url = "https://www.the-numbers.com/movie/" + slug
+    poster = f"https://media.the-numbers.com/images/movie-posters/{slug}.jpg"
+    page = f"""<meta property="og:url" content="https://www.the-numbers.com/">
+<h1>{title} (2026)</h1>
+<img src='{poster}' alt='{title} poster'>"""
+
+    assert page_poster(page, url, url) == poster
+    assert page_poster(page.replace(f"<h1>{title}", "<h1>Another Movie"), url, url) is None
+    assert page_poster(page.replace(f"alt='{title}", "alt='Another Movie"), url, url) is None
+
+
+@pytest.mark.parametrize("slug, title", ARTICLE_SLUGS)
+def test_tmdb_match_reads_a_slug_whose_article_follows_the_title(slug, title):
+    movie = SimpleNamespace(chart_url="https://www.the-numbers.com/movie/" + slug)
+    film = {"id": 1, "title": title, "original_title": title, "release_date": "2026-11-20"}
+
+    assert matches_tmdb(movie, film)
+    assert not matches_tmdb(movie, {**film, "release_date": "2025-11-20"})
+    for other in ("The Hunger Games", "Sunrise on the Reaping", "The Cat in a Hat", "Plan B", ""):
+        assert not matches_tmdb(movie, {**film, "title": other, "original_title": other})
 
 
 def test_publishers_full_size_poster_files_fit_the_download_limit():
