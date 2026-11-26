@@ -158,7 +158,13 @@ def for_card(grid, weekend, sessions):
     return grid
 
 
-def fetch(client, deadline, identity, now=None):
+def fetch(client, deadline, identity, now=None, judged=None):
+    """The grid of ``identity``'s race. ``judged`` is the document the last reading was made
+    from ({"sha256", "rows"}): the same bytes are not parsed again. Parsing loads the PDF library
+    in the worker that draws the lower region, and the grid is asked for every five minutes. On
+    2026-11-22, from the race's end to midnight UTC, each of those refreshes left the worker 78-105
+    MB above where the step began and the device's memory guard stopped it 43 times.
+    """
     payload = client.request_json("GET", API,
                                   params={"season": identity["season"], "shortname": identity["short"], "category": "MotoGP"},
                                   timeout=extra_feeds.remaining(deadline), max_bytes=JSON_MAX_BYTES).data
@@ -167,11 +173,15 @@ def fetch(client, deadline, identity, now=None):
         return {"identity": identity, "grid": {}}
     content = client.request_bytes("GET", identity["source_url"], timeout=extra_feeds.remaining(deadline),
                                    max_bytes=PDF_MAX_BYTES).data
-    grid = verified_grid(payload, parse_document(content), identity)
+    digest = hashlib.sha256(content).hexdigest()
+    if isinstance(judged, dict) and judged.get("sha256") == digest and isinstance(judged.get("rows"), list):
+        rows = judged["rows"]
+    else:
+        rows = parse_document(content)
+    grid = verified_grid(payload, rows, identity)
     if grid:
-        grid.update(verified_at=(now or datetime.now(timezone.utc)).isoformat(),
-                    source_sha256=hashlib.sha256(content).hexdigest())
-    return {"identity": identity, "grid": grid}
+        grid.update(verified_at=(now or datetime.now(timezone.utc)).isoformat(), source_sha256=digest)
+    return {"identity": identity, "grid": grid, "document": {"sha256": digest, "rows": rows}}
 
 
 def load(plugin, settings, data, now):
@@ -180,8 +190,11 @@ def load(plugin, settings, data, now):
     if not identity:
         return {}, ""
     version = f"{VERSION}:{identity['season']}:{identity['event_id']}:{identity['session_id']}"
+    cache = plugin._read_json_file(plugin._sports_dashboard_cache_dir() / "extra_motogp_grid.json")
+    kept = cache.get("data") if isinstance(cache, dict) and cache.get("version") == version else None
+    judged = kept.get("document") if isinstance(kept, dict) else None
     loaded, state = extra_feeds.load(plugin, settings, "motogp_grid", version,
-                                    lambda client, deadline: fetch(client, deadline, identity, now),
+                                    lambda client, deadline: fetch(client, deadline, identity, now, judged),
                                     TTL_SECONDS, now, label="MOTOGP GRID")
     weekend = data.get("current") or data.get("next") or {}
     grid = for_card(loaded.get("grid"), weekend, data.get("sessions") or [])

@@ -245,6 +245,33 @@ def test_same_event_error_keeps_stale_grid_but_event_switch_never_leaks_it(tmp_p
         grid.load(plugin, {"force": True}, DATA, NOW)
 
 
+def test_an_unchanged_document_is_judged_once(tmp_path, monkeypatch):
+    """The grid is asked for every five minutes, and each time the same PDF was parsed again, which
+    loads the PDF library in the worker that draws the lower region. On 2026-11-22, from the end
+    of the race to midnight UTC, each refresh left that worker 78-105 MB above where the step
+    began and the device's memory guard stopped it 43 times."""
+    plugin, client = _Plugin(tmp_path), _Client()
+    monkeypatch.setattr(extra_feeds, "create_single_attempt_http_client", lambda: contextlib.nullcontext(client))
+    parsed = []
+    original = grid.parse_document
+    monkeypatch.setattr(grid, "parse_document", lambda content: parsed.append(len(content)) or original(content))
+
+    first, state = grid.load(plugin, {}, DATA, NOW)
+    again, again_state = grid.load(plugin, {}, DATA, NOW + timedelta(minutes=6))
+
+    assert first["complete"] and state == again_state == "MOTOGP GRID LIVE"
+    assert again["rows"] == first["rows"] and again["source_sha256"] == first["source_sha256"]
+    assert len(client.calls) == 4 and len(parsed) == 1
+    # A revised document is read; so is the one that follows a document without a grid.
+    client.content = _pdf(extra="6 Unknown Rider\nUnparsed layout")
+    assert grid.load(plugin, {}, DATA, NOW + timedelta(minutes=12))[0] == {}
+    assert grid.load(plugin, {}, DATA, NOW + timedelta(minutes=18))[0] == {}
+    assert len(parsed) == 2
+    client.content = _pdf()
+    assert grid.load(plugin, {}, DATA, NOW + timedelta(minutes=24))[0]["complete"]
+    assert len(parsed) == 3
+
+
 def test_new_invalid_document_clears_older_grid_instead_of_preserving_it(tmp_path, monkeypatch):
     plugin, client = _Plugin(tmp_path), _Client()
     monkeypatch.setattr(extra_feeds, "create_single_attempt_http_client", lambda: contextlib.nullcontext(client))
