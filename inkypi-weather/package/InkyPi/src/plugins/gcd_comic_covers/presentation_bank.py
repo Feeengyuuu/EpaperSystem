@@ -855,7 +855,7 @@ def validate_state_shape(payload):
                 record_keys = selection.get("record_keys")
                 if not (
                     isinstance(record_keys, list)
-                    and 0 < len(record_keys) <= 3
+                    and 0 < len(record_keys) <= MAX_SELECTION_KEYS
                     and all(_valid_hash(key) for key in record_keys)
                 ):
                     raise RuntimeError("GCD cover selection capacity exceeds the limit")

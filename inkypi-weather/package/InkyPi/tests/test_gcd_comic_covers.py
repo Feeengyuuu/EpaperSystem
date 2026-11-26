@@ -1757,6 +1757,42 @@ def test_gcd_triptych_with_a_wide_cover_carries_regular_covers_for_its_empty_top
     assert set(selected[3:]) == {"exact_day:4", "exact_day:5"}
 
 
+def test_a_selection_carrying_gap_fillers_can_be_kept(tmp_path, monkeypatch):
+    """A wide cover lets the selection carry two more covers (MAX_SELECTION_KEYS), but the check on
+    the saved state still allowed three: preparing the page failed for as long as the day's pick
+    held a wide cover, 77 times on 2026-11-21 and 49 on 2026-11-23 ("GCD cover selection capacity
+    exceeds the limit")."""
+    records = [
+        (_priority_candidate(1, "comicvine_recent"), (220, 360)),
+        (_priority_candidate(2, "comicvine_recent"), (220, 360)),
+        (_priority_candidate(3, "exact_day"), (500, 240)),
+        (_priority_candidate(4, "exact_day"), (220, 360)),
+        (_priority_candidate(5, "exact_day"), (220, 360)),
+    ]
+    bank, document, profile = _priority_bank(tmp_path, monkeypatch, records)
+    # The two spare regular covers were shown before, so the day's three hold the wide one.
+    document["date_buckets"]["07-12"] = {
+        "seen_issue_ids": ["exact_day:4", "exact_day:5"],
+        "last_issue_id": "exact_day:5",
+        "last_selection_issue_ids": ["exact_day:4"],
+        "last_displayed_at": "2026-07-12T10:00:00+00:00",
+    }
+    selection = bank.choose_selection(document, profile, bank.ready_records(profile, prune=False), "triptych")
+    assert len(selection["record_keys"]) == MAX_SELECTION_KEYS
+    request = SimpleNamespace(request_id="a" * 32, origin_display_commit_id="b" * 32,
+                              requested_at="2026-07-12T10:05:00+00:00")
+
+    pending = bank.set_pending(document, profile, request, selection)
+
+    assert pending["record_keys"] == selection["record_keys"]
+    _document, kept = bank.load_warm()
+    assert kept["pending_selection"]["record_keys"] == selection["record_keys"]
+    # One more than the page can place is still refused.
+    profile["pending_selection"]["record_keys"].append(selection["record_keys"][0])
+    with pytest.raises(RuntimeError, match="selection capacity"):
+        bank.save(document)
+
+
 def test_gcd_stateless_preview_leaves_entire_provider_cache_tree_unchanged(tmp_path, monkeypatch):
     plugin = make_plugin(tmp_path, monkeypatch)
     monkeypatch.setattr(plugin, "_current_date", lambda _device: date(2026, 7, 12))
