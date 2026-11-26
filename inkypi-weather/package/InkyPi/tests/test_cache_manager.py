@@ -468,6 +468,106 @@ def test_global_budget_evicts_oldest_across_namespaces(tmp_path):
     assert manager.status().bytes <= 10
 
 
+def _rewrite_on_disk(path, payload, when):
+    """A plugin's own atomic rewrite, which the manager is not told about."""
+    staged = path.with_name(path.name + ".tmp")
+    staged.write_bytes(payload)
+    os.replace(staged, path)
+    os.utime(path, (when, when))
+
+
+def test_a_file_rewritten_outside_the_manager_is_evicted_by_its_own_time(tmp_path):
+    """Some plugins rewrite a state file straight on disk. The index kept the time of its last
+    scan (start-up, or the daily rebuild), so a snapshot rewritten every day looked a day older
+    than it was and went first when the cache filled: on 2026-11-25 the stock page lost its
+    snapshot that way and stayed off screen for eleven hours."""
+    clock = Clock()
+    root = tmp_path / "managed"
+    snapshot = root / "stocktracker" / "source" / "snapshot.json"
+    snapshot.parent.mkdir(parents=True)
+    snapshot.write_bytes(b"old!")
+    os.utime(snapshot, (clock(), clock()))
+    manager = CacheManager(root, global_max_bytes=12, clock=clock)
+    images = manager.namespace("images", CacheBudget(3600, 10, 100))
+    clock.advance(60)
+    images.put_bytes("first", b"1111")
+    clock.advance(600)
+    _rewrite_on_disk(snapshot, b"new!", clock())
+    clock.advance(60)
+
+    images.put_bytes("second", b"22222222")
+
+    assert snapshot.read_bytes() == b"new!"
+    assert images.get_bytes("first") is None
+    assert images.get_bytes("second") == b"22222222"
+    assert manager.status().bytes <= 12
+
+
+def test_a_rewritten_file_that_grew_is_counted_at_its_new_size(tmp_path):
+    clock = Clock()
+    root = tmp_path / "managed"
+    snapshot = root / "stocktracker" / "source" / "snapshot.json"
+    snapshot.parent.mkdir(parents=True)
+    snapshot.write_bytes(b"old!")
+    os.utime(snapshot, (clock(), clock()))
+    manager = CacheManager(root, global_max_bytes=16, clock=clock)
+    images = manager.namespace("images", CacheBudget(3600, 10, 100))
+    clock.advance(60)
+    images.put_bytes("first", b"1111")
+    clock.advance(60)
+    images.put_bytes("second", b"2222")
+    clock.advance(600)
+    _rewrite_on_disk(snapshot, b"new!new!", clock())
+    clock.advance(60)
+
+    images.put_bytes("third", b"333333")
+
+    assert snapshot.read_bytes() == b"new!new!"
+    assert images.get_bytes("first") is None
+    assert images.get_bytes("second") is None
+    assert images.get_bytes("third") == b"333333"
+    assert manager.status().bytes == 14
+
+
+def test_namespace_limits_go_by_a_rewritten_files_own_time(tmp_path):
+    clock = Clock()
+    namespace = CacheManager(tmp_path / "managed", clock=clock).namespace(
+        "state",
+        CacheBudget(3600, 2, 100),
+    )
+    namespace.put_bytes("status", b"old!")
+    clock.advance(60)
+    namespace.put_bytes("first", b"1111")
+    clock.advance(600)
+    _rewrite_on_disk(namespace.path("status"), b"new!", clock())
+    clock.advance(60)
+
+    namespace.put_bytes("second", b"2222")
+
+    assert namespace.path("status").read_bytes() == b"new!"
+    assert namespace.get_bytes("first") is None
+    assert namespace.status().files == 2
+
+
+def test_age_budget_keeps_a_file_rewritten_outside_the_manager(tmp_path):
+    clock = Clock()
+    namespace = CacheManager(tmp_path / "managed", clock=clock).namespace(
+        "aged",
+        CacheBudget(10, 10, 1000),
+    )
+    namespace.put_bytes("status", b"old!")
+    namespace.put_bytes("stale", b"gone")
+    clock.advance(9)
+    _rewrite_on_disk(namespace.path("status"), b"new!", clock())
+    clock.advance(2)
+
+    namespace.maintenance()
+
+    assert namespace.path("status").read_bytes() == b"new!"
+    assert not namespace.path("stale").exists()
+    assert namespace.status().files == 1
+
+
 def test_runtime_paths_root_and_health_publisher_are_supported(tmp_path):
     publisher = Publisher()
     runtime_paths = SimpleNamespace(cache_dir=tmp_path / "runtime-cache")

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import OrderedDict
 from collections.abc import Iterator, MutableMapping
 from dataclasses import dataclass
+import heapq
 import itertools
 import logging
 import math
@@ -373,24 +374,57 @@ class CacheManager:
             self._rejected_total += 1
             raise CacheObjectTooLarge("cache object exceeds the global disk budget")
         records = [item for item in self._records.values() if item.path != target]
-        total = sum(item.size for item in records)
-        for record in sorted(records, key=lambda item: (item.last_used, str(item.path))):
-            if total + incoming <= self.global_max_bytes:
-                break
-            if self._unlink_locked(record.path):
-                total -= record.size
+        _count, total = self._evict_until_locked(
+            records,
+            lambda _count, total: total + incoming <= self.global_max_bytes,
+        )
         if total + incoming > self.global_max_bytes:
             self._rejected_total += 1
             raise CacheObjectTooLarge("global cache budget could not accept the object")
 
     def _enforce_global_locked(self) -> None:
-        records = tuple(self._records.values())
+        self._evict_until_locked(
+            tuple(self._records.values()),
+            lambda _count, total: total <= self.global_max_bytes,
+        )
+
+    def _reread_if_rewritten_locked(self, record: _FileRecord) -> _FileRecord | None:
+        """The file's record read again when the file is newer on disk than the index says, else
+        None. A plugin that rewrites a file straight on disk does not tell the manager, so the
+        index keeps the time of its last scan (start-up or the daily rebuild) and the file looks
+        up to a day older than it is."""
+
+        try:
+            info = record.path.stat(follow_symlinks=False)
+        except OSError:
+            return None
+        if max(float(info.st_atime), float(info.st_mtime)) <= record.last_used:
+            return None
+        return self._remember_path_locked(record.path)
+
+    def _evict_until_locked(self, records, within_budget) -> tuple[int, int]:
+        """Remove the least recently used of ``records`` until ``within_budget(files, bytes)``
+        holds, and return the files and bytes left. Each candidate is checked against the file
+        itself first: one rewritten outside the manager takes its place by its own time and
+        size instead of going first."""
+
+        count = len(records)
         total = sum(item.size for item in records)
-        for record in sorted(records, key=lambda item: (item.last_used, str(item.path))):
-            if total <= self.global_max_bytes:
-                break
+        if within_budget(count, total):
+            return count, total
+        queue = [(item.last_used, str(item.path), item) for item in records]
+        heapq.heapify(queue)
+        while queue and not within_budget(count, total):
+            _last_used, _name, record = heapq.heappop(queue)
+            current = self._reread_if_rewritten_locked(record)
+            if current is not None:
+                total += current.size - record.size
+                heapq.heappush(queue, (current.last_used, str(current.path), current))
+                continue
             if self._unlink_locked(record.path):
+                count -= 1
                 total -= record.size
+        return count, total
 
     def _unlink_locked(self, path: Path) -> bool:
         try:
@@ -683,35 +717,34 @@ class CacheNamespace:
                     self.manager._unlink_locked(record.path)
         records = tuple(self._records.values())
         for record in records:
-            if now - record.last_used > self.budget.max_age_seconds:
+            if (
+                now - record.last_used > self.budget.max_age_seconds
+                and self.manager._reread_if_rewritten_locked(record) is None
+            ):
                 self.manager._unlink_locked(record.path)
         self._enforce_limits_locked()
 
     def _prune_for_incoming_locked(self, target: Path, incoming: int) -> None:
         self._maintenance_locked()
         records = [item for item in self._records.values() if item.path != target]
-        total = sum(item.size for item in records)
-        count = len(records)
-        for record in sorted(records, key=lambda item: (item.last_used, str(item.path))):
-            if count + 1 <= self.budget.max_files and total + incoming <= self.budget.max_bytes:
-                break
-            if self.manager._unlink_locked(record.path):
-                count -= 1
-                total -= record.size
+        count, total = self.manager._evict_until_locked(
+            records,
+            lambda count, total: (
+                count + 1 <= self.budget.max_files
+                and total + incoming <= self.budget.max_bytes
+            ),
+        )
         if count + 1 > self.budget.max_files or total + incoming > self.budget.max_bytes:
             self.manager._rejected_total += 1
             raise CacheObjectTooLarge("namespace cache budget could not accept the object")
 
     def _enforce_limits_locked(self) -> None:
-        records = tuple(self._records.values())
-        total = sum(item.size for item in records)
-        count = len(records)
-        for record in sorted(records, key=lambda item: (item.last_used, str(item.path))):
-            if count <= self.budget.max_files and total <= self.budget.max_bytes:
-                break
-            if self.manager._unlink_locked(record.path):
-                count -= 1
-                total -= record.size
+        self.manager._evict_until_locked(
+            tuple(self._records.values()),
+            lambda count, total: (
+                count <= self.budget.max_files and total <= self.budget.max_bytes
+            ),
+        )
 
     def _status_locked(self) -> CacheStatus:
         records = tuple(self._records.values())
