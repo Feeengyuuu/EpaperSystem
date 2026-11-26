@@ -35,6 +35,8 @@ PHOTO_MAX_BYTES = 8 * 1024 * 1024
 # The kept face: a square of the figure's head and shoulders, FACE_SHARE of its height tall.
 FACE_SIZE = 72
 FACE_SHARE = 0.2
+# A picture is shrunk a band at a time: this many rows of the result from each band.
+BAND_ROWS = 64
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _COLOUR = re.compile(r"#[0-9a-fA-F]{6}")
 _PARTICLES = {"di", "da", "de", "del", "della", "van", "von", "der", "dos", "le", "la"}
@@ -56,13 +58,30 @@ def _current_step(profile):
     return next((step for step in career if step.get("current")), career[0] if career else {})
 
 
+def shrunk(picture, factor):
+    """``picture`` at 1/``factor`` of its size as RGBA, made a band of rows at a time. The official
+    cut-outs are 1920x2884 RGBA, 22 MB once decoded: converting and reducing one whole held two more
+    full-size copies (67 MB at the peak, which tripped the lower region's memory guard on
+    2026-11-21, 24 and 25); a band adds about 3 MB to the decoded picture."""
+    width, height = picture.size
+    small = Image.new("RGBA", (-(-width // factor), -(-height // factor)), (0, 0, 0, 0))
+    step = factor * BAND_ROWS
+    for top in range(0, height, step):
+        band = picture.crop((0, top, width, min(height, top + step)))
+        if band.mode != "RGBA":
+            band = band.convert("RGBA")
+        small.paste(band.reduce(factor), (0, top // factor))
+    return small
+
+
 def head_and_shoulders(picture, size=FACE_SIZE):
     """The figure's head and shoulders from a full-length cut-out, as a ``size`` square RGBA image;
     None when the picture has no figure."""
-    figure = picture.convert("RGBA")
     # Work on a quarter-size copy: the cut is the same, the arithmetic far lighter.
-    if figure.height > 4 * size * 3:
-        figure = figure.reduce(max(1, figure.height // (size * 12)))
+    if picture.height > 4 * size * 3:
+        figure = shrunk(picture, max(1, picture.height // (size * 12)))
+    else:
+        figure = picture.convert("RGBA")
     alpha = figure.getchannel("A").point(lambda value: 255 if value >= 96 else 0)
     box = alpha.getbbox()
     if not box:
@@ -123,7 +142,6 @@ def rider_profiles(plugin, settings, rows, now):
     uuids = list(dict.fromkeys(str(row.get("uuid") or "") for row in rows if _UUID.fullmatch(str(row.get("uuid") or ""))))
     wanted = [uuid for uuid in uuids if not (isinstance(kept.get(uuid), dict) and current(kept[uuid]))]
     if wanted and not plugin._provider_cache_only(settings):
-        changed = False
         try:
             with extra_feeds.create_single_attempt_http_client() as client:
                 deadline = time.monotonic() + DEADLINE_SECONDS
@@ -138,16 +156,16 @@ def rider_profiles(plugin, settings, rows, now):
                             break
                         continue
                     kept[uuid] = {**entry, "at": now.isoformat()}
-                    changed = True
+                    # Kept at once: a refresh stopped part-way (the memory guard stops the whole
+                    # worker) would otherwise fetch and cut the same pictures again next time.
+                    try:
+                        plugin._write_json_file(path, {"version": VERSION, "riders": kept})
+                    except OSError as exc:
+                        logger.warning("Failed to keep the MotoGP riders: %s", exc)
         except TaskCancelled:
             raise
         except Exception as exc:  # noqa: BLE001 - the panel keeps its names and marks alone.
             logger.info("MotoGP rider lookups unavailable: %s", type(exc).__name__)
-        if changed:
-            try:
-                plugin._write_json_file(path, {"version": VERSION, "riders": kept})
-            except OSError as exc:
-                logger.warning("Failed to keep the MotoGP riders: %s", exc)
     profiles = {}
     for uuid in uuids:
         entry = kept.get(uuid)

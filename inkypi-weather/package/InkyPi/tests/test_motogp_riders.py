@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from plugins.sports_dashboard import extra_feeds, motogp, motogp_render, motogp_riders, score_fonts  # noqa: E402
 from plugins.sports_dashboard.common import _ACTIVE_COLORS, DAY_COLORS, DEEP_NIGHT_COLORS  # noqa: E402
 from plugins.sports_dashboard.sports_dashboard import SportsDashboard  # noqa: E402
+from runtime.refresh_contracts import TaskCancelled  # noqa: E402
 from tests import test_sports_extra_feeds as feeds  # noqa: E402
 
 MARQUEZ = "23e50438-a657-4fb0-a190-3262b5472f29"
@@ -74,6 +75,60 @@ def test_the_face_is_the_figures_head_and_shoulders():
     assert greens and abs((greens[0] + greens[-1]) / 2 - face.width / 2) <= 4
     assert face.getpixel((face.width // 2, face.height - 2))[:3] == (200, 0, 0)
     assert motogp_riders.head_and_shoulders(Image.new("RGBA", (40, 80), (0, 0, 0, 0))) is None
+
+
+def test_the_official_cut_out_is_shrunk_a_band_at_a_time(monkeypatch):
+    """The official pictures are 1920x2884 RGBA cut-outs. Converting and reducing one whole held
+    two more full-size copies beside the decoded one: 67 MB in the worker that draws the lower
+    region, enough to trip its memory guard (2026-11-21, 24 and 25)."""
+    picture = Image.new("RGBA", (1100, 1801), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(picture)
+    draw.ellipse((420, 80, 640, 330), fill=GREEN)
+    draw.rectangle((280, 330, 800, 1760), fill=(200, 0, 0, 255))
+    factor = picture.height // (motogp_riders.FACE_SIZE * 12)
+    assert factor == 2
+    whole = picture.reduce(factor)
+    handled = []
+    for name in ("reduce", "convert", "copy"):
+        original = getattr(Image.Image, name)
+        monkeypatch.setattr(Image.Image, name, lambda self, *args, _original=original, **kwargs: (
+            handled.append(self.size) or _original(self, *args, **kwargs)))
+
+    shrunk = motogp_riders.shrunk(picture, factor)
+    face = motogp_riders.head_and_shoulders(picture)
+
+    assert shrunk.size == whole.size and shrunk.tobytes() == whole.tobytes()
+    assert face.size == (motogp_riders.FACE_SIZE, motogp_riders.FACE_SIZE)
+    assert face.getpixel((face.width // 2, face.height - 2))[:3] == (200, 0, 0)
+    assert handled and max(width * height for width, height in handled) <= picture.width * picture.height // 4
+
+
+def test_a_rider_found_before_the_refresh_is_stopped_is_kept(tmp_path, monkeypatch):
+    """The answers were written once, after the last lookup. A refresh stopped part-way (the memory
+    guard stops the whole worker) lost the riders it had found and fetched their pictures again
+    on the next refresh."""
+    uuids = [f"00000000-0000-0000-0000-{index:012d}" for index in range(3)]
+
+    class _Stopped(_Client):
+        def request_json(self, method, url, **kwargs):
+            if url.endswith(uuids[1]):
+                raise TaskCancelled("stopped")
+            return super().request_json(method, url, **kwargs)
+
+    client = _Stopped()
+    monkeypatch.setattr(extra_feeds, "create_single_attempt_http_client", lambda: contextlib.nullcontext(client))
+    plugin = feeds._Plugin(tmp_path)
+    rows = [{"uuid": uuid} for uuid in uuids]
+
+    try:
+        motogp_riders.rider_profiles(plugin, {}, rows, feeds.NOW)
+    except TaskCancelled:
+        pass
+    else:
+        raise AssertionError("the stop must reach the caller")
+
+    kept = motogp_riders.rider_profiles(plugin, {"_theme_render_only": True}, rows, feeds.NOW)
+    assert set(kept) == {uuids[0]} and kept[uuids[0]]["photo"]
 
 
 def test_profiles_are_looked_up_once_and_read_from_the_cache_after(tmp_path, monkeypatch):
