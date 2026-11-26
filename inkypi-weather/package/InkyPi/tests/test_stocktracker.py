@@ -1566,6 +1566,82 @@ def test_stock_display_turn_redraws_from_the_source_cache_with_the_running_code(
     assert provider_calls == []
 
 
+class _CacheClock:
+    def __init__(self, value):
+        self.value = float(value)
+
+    def __call__(self):
+        return self.value
+
+    def advance(self, seconds):
+        self.value += float(seconds)
+
+
+def _stock_page_with_a_running_cache(monkeypatch, tmp_path):
+    """The page with its snapshot on disk and the service's cache manager started after it, as
+    after a restart: the manager's index holds the snapshot at the time it was written."""
+    import time
+
+    from utils import cache_manager
+
+    runtime_root = tmp_path / "cache"
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(runtime_root))
+    monkeypatch.setenv("INKYPI_DATA_DIR", str(tmp_path / "data"))
+    clock = _CacheClock(time.time())
+    manager = cache_manager.CacheManager(SimpleNamespace(cache_dir=runtime_root), clock=clock)
+    monkeypatch.setattr(cache_manager, "_GLOBAL_MANAGER", manager)
+    plugin = StockTracker({"id": "stocktracker"})
+    settings = {"tickers": "AAPL,NVDA", "shares": "2,3", "period": "1mo", "data_provider": "yfinance",
+                "ticker_theme": "auto", "_inkypi_theme": _canonical_theme("day")}
+    monkeypatch.setattr(plugin, "_fetch_stock_data",
+                        lambda ticker, shares, period, **_kwargs: _stock(ticker, [100.0, 110.0], shares))
+    monkeypatch.setattr(plugin, "_massive_client", lambda *_args: None)
+    monkeypatch.setattr(plugin, "_record_portfolio_snapshot", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(plugin, "_attach_fundamentals", lambda *_args, **_kwargs: None)
+    plugin.generate_image(settings, FakeDeviceConfig())
+    (snapshot,) = (runtime_root / "plugins" / "stocktracker" / "source").glob("*.json")
+    manager.maintenance(force=True)
+    # Room for the snapshot and one photo, not two: the second photo pushes the oldest file out.
+    manager.global_max_bytes = snapshot.stat().st_size + 1500
+    photos = manager.namespace("apod/nasa_media", cache_manager.CacheBudget(max_files=8, max_bytes=1 << 20))
+    return plugin, settings, snapshot, photos, clock
+
+
+def test_the_source_snapshot_counts_as_used_when_the_page_goes_on_screen(monkeypatch, tmp_path):
+    """The snapshot is written once a day and read on every display turn. Read straight from disk
+    it was never seen in use, so the cache dropped it among its oldest files when it filled: on
+    2026-11-25 every display turn from 01:52 until the next refresh at 13:27 failed with "Theme-only
+    redraw requires a matching StockTracker source cache"."""
+    plugin, settings, snapshot, photos, clock = _stock_page_with_a_running_cache(monkeypatch, tmp_path)
+    clock.advance(3600)
+    photos.put_bytes("yesterday", b"y" * 1000, suffix=".jpg")
+    clock.advance(3600)
+    plugin.render_cached_display(settings, FakeDeviceConfig(), resolved_theme_context=_canonical_theme("day"))
+    clock.advance(60)
+
+    photos.put_bytes("today", b"t" * 1000, suffix=".jpg")
+
+    assert snapshot.is_file()
+    assert photos.get_path("yesterday", suffix=".jpg") is None
+    image = plugin.render_cached_display(settings, FakeDeviceConfig(),
+                                         resolved_theme_context=_canonical_theme("night"))
+    assert image.info["inkypi_theme_mode"] == "night"
+
+
+def test_the_source_snapshot_counts_as_used_when_the_daily_refresh_rewrites_it(monkeypatch, tmp_path):
+    plugin, settings, snapshot, photos, clock = _stock_page_with_a_running_cache(monkeypatch, tmp_path)
+    clock.advance(3600)
+    photos.put_bytes("yesterday", b"y" * 1000, suffix=".jpg")
+    clock.advance(3600)
+    plugin.generate_image(settings, FakeDeviceConfig())
+    clock.advance(60)
+
+    photos.put_bytes("today", b"t" * 1000, suffix=".jpg")
+
+    assert snapshot.is_file()
+    assert photos.get_path("yesterday", suffix=".jpg") is None
+
+
 def test_stock_theme_only_cold_or_incompatible_cache_fails_closed_without_provider(
     monkeypatch,
     tmp_path,

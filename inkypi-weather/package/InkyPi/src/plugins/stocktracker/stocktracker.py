@@ -81,6 +81,7 @@ from utils.local_wordmark import load_source_logo, paste_header_logo_row
 from utils.doodle_backdrop import paint_doodles
 from utils.fonts import load_font
 from utils.app_utils import get_base_ui_font, get_font
+from utils.cache_manager import CacheError, cache_namespace_for_directory
 from utils.image_utils import text_width
 from utils.massive_market_data import (
 	MassiveMarketData,
@@ -713,6 +714,18 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		return self.cache_dir(leaf=SOURCE_CACHE_LEAF, create=create) / f"{source_key}.json"
 
 	@staticmethod
+	def _source_cache_in_use(path):
+		"""Count the snapshot as used now. It is written once a day and read on every display turn,
+		and the cache drops its least recently used files first: read and written straight on disk
+		it was never seen in use, and on 2026-11-25 it was dropped when the cache filled, so every
+		display turn failed until the next day's refresh wrote it again."""
+		try:
+			if path.is_file() and not path.is_symlink():
+				cache_namespace_for_directory(path.parent).get_path(path.name)
+		except (OSError, CacheError, ValueError):
+			pass
+
+	@staticmethod
 	def _serialized_history(history):
 		if history is None or getattr(history, "empty", True):
 			return []
@@ -802,6 +815,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				encoding="utf-8",
 			)
 			os.replace(temp, path)
+			self._source_cache_in_use(path)
 		except Exception as e:
 			logging.warning(f"Could not write StockTracker source cache: {type(e).__name__}: {e}")
 			try:
@@ -835,6 +849,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			generated_at = datetime.fromisoformat(str(payload.get("generated_at") or ""))
 		except ValueError:
 			return None
+		self._source_cache_in_use(path)
 		return {
 			"stock_data": stock_data,
 			"history_points": history_points,
