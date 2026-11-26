@@ -75,6 +75,41 @@ def test_the_earth_image_of_the_day_takes_a_size_near_the_slot_not_the_original(
     assert sources.parse_earth_photo(stranger) == {}
 
 
+def test_the_earth_image_is_asked_of_the_image_of_the_day_series(monkeypatch):
+    """The first query filtered on "science_org", a name the posts endpoint does not know, so the
+    filter did nothing and the page read the newest post of all science.nasa.gov: a Hubble or
+    crop-research picture under "Earth", and an empty answer (the source failed 5 to 14 times a day)
+    whenever the newest post was one the list hides. The taxonomy is "science-org"; term 22453 is
+    Earth Observatory's Image of the Day."""
+    calls = []
+
+    class Client:
+        def request_json(self, method, url, **kwargs):
+            calls.append((method, url, kwargs))
+            return SimpleNamespace(data=EARTH_OBSERVATORY)
+
+    monkeypatch.setattr(sources, "get_http_client", lambda: Client())
+
+    photo = sources.fetch_earth_photo(_context())
+
+    ((method, url, call),) = calls
+    assert (method, url) == ("GET", "https://science.nasa.gov/wp-json/wp/v2/posts")
+    assert call["params"]["science-org"] == "22453" and call["params"]["per_page"] == "1"
+    assert "science_org" not in call["params"]
+    assert call["max_bytes"] <= 128 * 1024
+    assert photo["title"] == "Water Surges Into Navajo Reservoir"
+
+
+def test_a_post_from_another_part_of_the_site_is_not_the_earth_image():
+    elsewhere = json.loads(json.dumps(EARTH_OBSERVATORY))
+    elsewhere[0]["link"] = "https://science.nasa.gov/directorates/smd/nasa-eyes-crop-candidates-for-future-menus/"
+    assert sources.parse_earth_photo(elsewhere) == {}
+    for link in ("https://example.com/earth/earth-observatory/a/", "http://science.nasa.gov/earth/earth-observatory/a/",
+                 "https://science.nasa.gov/earth/earth-observatory-blog/a/", ""):
+        elsewhere[0]["link"] = link
+        assert sources.parse_earth_photo(elsewhere) == {}, link
+
+
 @pytest.mark.parametrize("mode", ["day", "night"])
 def test_the_earth_image_takes_the_photo_slot_with_its_title(monkeypatch, mode):
     world = {"earth_photo": {"data": sources.parse_earth_photo(EARTH_OBSERVATORY)}}

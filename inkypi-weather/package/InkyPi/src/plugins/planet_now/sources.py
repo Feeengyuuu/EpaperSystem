@@ -116,9 +116,12 @@ EXOPLANET_URL = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync"
 EXOPLANET_QUERY = "select count(*) from ps where default_flag=1"
 EXOPLANET_FLOOR = 5000
 # NASA Earth Observatory's image of the day, as science.nasa.gov's posts list gives it: the newest
-# post with its picture's sizes (14 KB against the 650 KB feed).
+# post of that series with its picture's sizes (13 KB against the 650 KB feed). The series is term
+# 22453 ("Image of the Day", under "Earth Observatory") of the taxonomy the endpoint calls
+# "science-org". The first query named "science_org", which the endpoint ignores: it answered with
+# the newest post of the whole site, or with nothing when that post is one the list hides.
 EARTH_PHOTO_URL = "https://science.nasa.gov/wp-json/wp/v2/posts"
-EARTH_PHOTO_PARAMS = {"science_org": "19791", "per_page": "1", "_embed": "wp:featuredmedia",
+EARTH_PHOTO_PARAMS = {"science-org": "22453", "per_page": "1", "_embed": "wp:featuredmedia",
                       "_fields": "date,link,title,excerpt,_links.wp:featuredmedia,_embedded"}
 # The photo slot on the page; a listed size must cover it to be asked for.
 PHOTO_SLOT = (112, 164)
@@ -958,8 +961,14 @@ def pick_photo_size(media, slot=PHOTO_SLOT):
 
 
 def parse_earth_photo(payload):
-    """{title, date, image} of the newest Earth Observatory post; {} without a title or a picture."""
+    """{title, date, image} of the newest Earth Observatory post; {} without a title or a picture,
+    and for a post from another part of the site (a filter the endpoint stopped honouring must
+    not put some other picture under "Earth")."""
     post = payload[0] if isinstance(payload, list) and payload and isinstance(payload[0], dict) else {}
+    link = urlsplit(str(post.get("link") or ""))
+    if (link.scheme != "https" or link.hostname != "science.nasa.gov"
+            or not link.path.startswith("/earth/earth-observatory/")):
+        return {}
     title = post.get("title") if isinstance(post.get("title"), dict) else {}
     title = " ".join(re.sub(r"<[^>]+>", "", unescape(str(title.get("rendered") or ""))).split())
     embedded = post.get("_embedded") if isinstance(post.get("_embedded"), dict) else {}
