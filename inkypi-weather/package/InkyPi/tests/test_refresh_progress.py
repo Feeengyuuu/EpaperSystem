@@ -136,6 +136,74 @@ def test_overdue_data_in_backoff_is_stalled_but_daily_data_not_due_is_healthy():
     ).isoformat()
 
 
+def _busy_lane(late_state, *, others=11, other_success_seconds=60):
+    """One five-minute instance 20 minutes past its due time among ``others`` that the lane keeps
+    serving: the device's 40 pages ask for about 80 refreshes an hour and get about 50."""
+    late = instance("late")
+    rest = [instance(f"other-{index}", interval=3600) for index in range(others)]
+    states = {late.instance_uuid: InstanceRuntimeState(data=late_state)}
+    for index, other in enumerate(rest):
+        states[other.instance_uuid] = InstanceRuntimeState(data=RefreshLaneState(
+            last_success_at=(NOW - timedelta(seconds=other_success_seconds + 30 * index)).isoformat(),
+        ))
+    return [late, *rest], states
+
+
+def test_an_instance_waiting_its_turn_in_a_moving_lane_is_overdue_not_stalled():
+    """Due refreshes are served in the order they fell due. With more work than the device can do,
+    every instance waits about as long, and a five-minute page passed the fixed 15-minute floor
+    several times a day though nothing was wrong: 41 degraded spells, 372 minutes, in the 48 hours
+    to 2026-11-26 while the lane ran 24 to 76 refreshes an hour."""
+    instances, states = _busy_lane(RefreshLaneState(last_success_at=(NOW - timedelta(seconds=1500)).isoformat()))
+
+    result = observe(RefreshProgressTracker(clock=Clock()), instances, states, cache=states)
+
+    assert result["data_overdue_count"] == 1
+    assert result["oldest_data_overdue_seconds"] == 1200.0
+    assert result["data_stalled_count"] == 0
+
+
+@pytest.mark.parametrize("late_state", [
+    # It was tried after it fell due, and failed.
+    RefreshLaneState(last_success_at=(NOW - timedelta(seconds=1500)).isoformat(),
+                     last_attempt_at=(NOW - timedelta(seconds=300)).isoformat(),
+                     last_failure_at=(NOW - timedelta(seconds=290)).isoformat(), last_error="down"),
+    # It is waiting out a retry.
+    RefreshLaneState(last_success_at=(NOW - timedelta(seconds=1500)).isoformat(),
+                     next_retry_at=(NOW + timedelta(seconds=300)).isoformat()),
+    # Every other instance has had a turn (12 instances, one rotation of 300 s each).
+    RefreshLaneState(last_success_at=(NOW - timedelta(seconds=300 + 12 * 300)).isoformat()),
+])
+def test_a_failing_or_passed_over_instance_is_stalled_even_in_a_moving_lane(late_state):
+    instances, states = _busy_lane(late_state)
+
+    result = observe(RefreshProgressTracker(clock=Clock()), instances, states, cache=states)
+
+    assert result["data_stalled_count"] == 1
+
+
+def test_a_late_instance_is_stalled_when_the_lane_itself_has_stopped():
+    instances, states = _busy_lane(
+        RefreshLaneState(last_success_at=(NOW - timedelta(seconds=1500)).isoformat()),
+        other_success_seconds=901,
+    )
+
+    result = observe(RefreshProgressTracker(clock=Clock()), instances, states, cache=states)
+
+    assert result["data_stalled_count"] == 1
+
+
+def test_an_instance_that_failed_before_its_last_success_is_only_waiting():
+    instances, states = _busy_lane(RefreshLaneState(
+        last_failure_at=(NOW - timedelta(seconds=4000)).isoformat(), last_error="down",
+        last_success_at=(NOW - timedelta(seconds=1500)).isoformat(),
+    ))
+
+    result = observe(RefreshProgressTracker(clock=Clock()), instances, states, cache=states)
+
+    assert result["data_overdue_count"] == 1 and result["data_stalled_count"] == 0
+
+
 def test_never_successful_bootstrap_accumulates_monotonic_age_until_success():
     clock = Clock()
     tracker = RefreshProgressTracker(clock=clock)

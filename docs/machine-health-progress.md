@@ -15,7 +15,7 @@ cache IO, provider calls, or rendering. Observation is bounded by active instanc
 | Condition | Interpretation |
 | --- | --- |
 | DATA overdue | The configured interval or scheduled occurrence is due, even during retry backoff. |
-| DATA stalled | Overdue for at least `max(900 seconds, 2 * refresh interval)`; scheduled-only feeds use 900 seconds after the due occurrence. |
+| DATA stalled | Overdue for at least `max(900 seconds, 2 * refresh interval)` (scheduled-only feeds use 900 seconds after the due occurrence), unless the instance is only waiting its turn: no failure since it fell due, no retry backoff, another instance's DATA succeeded within the last 900 seconds, and it has waited less than `max(900 seconds, active instance count * rotation interval)`. Due refreshes are served in the order they fell due, so a busy lane makes every instance late by about the same time. |
 | Never-successful/missing-cache work | A monotonic observation period prevents instant false alarms and prevents bootstrap age from resetting on every scan. |
 | Presentation pending | Same revision, presentation enabled, and no matching commit receipt, including an old-theme prepared result. |
 | Presentation stalled | Pending for `max(900 seconds, 2 * active instance count * rotation interval)`, allowing two full rotations. |

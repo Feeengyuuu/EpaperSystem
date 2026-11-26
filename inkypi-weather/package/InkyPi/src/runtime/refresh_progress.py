@@ -94,6 +94,20 @@ class RefreshProgressTracker:
         presentation_ages = []
         monotonic_now = float(self._clock())
         first_due = {}
+        # Due refreshes are served in the order they fell due, so with more due than the device
+        # can run every instance waits about as long. One that waits while the lane keeps
+        # succeeding elsewhere is late, not stalled, until every instance could have had a turn
+        # (one refresh per rotation). The fixed floor alone called a five-minute page stalled
+        # several times a day: 41 degraded spells in the 48 hours to 2026-11-26.
+        newest_success = None
+        for instance in active:
+            lane = runtime_instances.get(instance.instance_uuid, InstanceRuntimeState()).data
+            succeeded = _timestamp(lane.last_success_at, now)
+            if succeeded is not None and _elapsed(now, succeeded) >= 0 and (
+                    newest_success is None or _elapsed(succeeded, newest_success) > 0):
+                newest_success = succeeded
+        lane_moving = newest_success is not None and _elapsed(now, newest_success) < 900.0
+        queue_grace = max(900.0, len(active) * cycle)
         for instance in active:
             state = runtime_instances.get(instance.instance_uuid, InstanceRuntimeState())
             pending = state.presentation_request
@@ -149,6 +163,12 @@ class RefreshProgressTracker:
                 success = None
             if success is None:
                 result["never_succeeded_count"] += 1
+            bootstrapping = success is None or evaluation.candidate.reason is DueReason.BOOTSTRAP_MISSING
+            failure = _timestamp(state.data.last_failure_at, now)
+            failed_since_due = (
+                failure is not None
+                and _elapsed(now, failure) <= _elapsed(now, evaluation.candidate.due_since)
+            )
             if success is None or evaluation.candidate.reason is DueReason.BOOTSTRAP_MISSING:
                 key = (
                     instance.instance_uuid,
@@ -161,10 +181,15 @@ class RefreshProgressTracker:
             result["data_overdue_count"] += 1
             data_ages.append(age)
             retry = _timestamp(state.data.next_retry_at, now)
-            if retry is not None and _elapsed(now, retry) < 0:
+            backing_off = retry is not None and _elapsed(now, retry) < 0
+            if backing_off:
                 result["data_backoff_count"] += 1
             interval = _positive_seconds(instance.refresh.get("interval")) or 0.0
-            if age >= max(900.0, 2 * interval):
+            waiting_its_turn = (
+                lane_moving and not bootstrapping and not backing_off and not failed_since_due
+                and age < queue_grace
+            )
+            if age >= max(900.0, 2 * interval) and not waiting_its_turn:
                 result["data_stalled_count"] += 1
         result["oldest_data_overdue_seconds"] = max(data_ages, default=None)
         result["oldest_presentation_pending_seconds"] = max(presentation_ages, default=None)
