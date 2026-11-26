@@ -54,10 +54,12 @@ AIR_RSS = """<?xml version="1.0" encoding="utf-8" ?>
 </channel></rss>"""
 
 
-FLU = {"result": 1, "epidata": [
-    {"release_date": "2026-11-06", "region": "ca", "issue": 202643, "epiweek": week, "lag": 202643 - week,
-     "num_ili": ili, "num_patients": patients, "wili": None, "ili": round(100 * ili / patients, 5)}
-    for week, ili, patients in ((202641, 8880, 272225), (202643, 11459, 272493), (202642, 10662, 274951))]}
+# California's weekly readings as the Epidata snapshot lists them: one CSV row per week, named by
+# the Saturday it ends on (weeks 2026-41, 43 and 42 here).
+FLU = "reference_time,report_time,value" + chr(10) + "".join(
+    f"{saturday},2026-11-06T16:18:57Z,{round(100 * ili / patients, 5)}" + chr(10)
+    for saturday, ili, patients in (("2026-10-17", 8880, 272225), ("2026-10-31", 11459, 272493),
+                                    ("2026-10-24", 10662, 274951)))
 
 
 @pytest.fixture(autouse=True)
@@ -808,7 +810,38 @@ def test_californias_flu_activity_is_the_latest_weeks_share_of_visits():
 
     assert flu == {"week": 202643, "ili": 4.2, "previous": 3.9, "series": [3.3, 3.9, 4.2], "released": "2026-11-06"}
     assert sources.valid_flu(flu) and not sources.valid_flu({})
-    assert sources.normalize_flu({"result": -2, "message": "no results"}) == {}
+    assert sources.normalize_flu("reference_time,report_time,value" + chr(10)) == {}
+    assert sources.normalize_flu("reference_time,report_time,value" + chr(10) + "2026-10-31,,n/a" + chr(10)) == {}
+    assert sources.normalize_flu({"result": -3, "epidata": []}) == {}
+
+
+def test_the_flu_reading_is_asked_of_the_endpoint_that_still_publishes_it(monkeypatch):
+    """The FluView endpoint the page first read answers "no longer provides data with time values
+    after 2026-09-22" for any range past that date, which is every range this page asks for: from
+    2026-11-22 each refresh failed. Its successor serves the same ILINet readings."""
+    import time
+
+    from runtime.refresh_contracts import TaskContext
+
+    calls = []
+
+    class Client:
+        def request_text(self, method, url, **kwargs):
+            calls.append((method, url, kwargs))
+            return type("Response", (), {"data": FLU})()
+
+    monkeypatch.undo()
+    monkeypatch.setattr(sources, "get_http_client", lambda: Client())
+    context = TaskContext.never_cancelled(deadline_monotonic=time.monotonic() + 30)
+
+    flu = sources.fetch_flu(datetime(2026, 11, 26, 14, 0, tzinfo=sources.PACIFIC), context)
+
+    ((method, url, call),) = calls
+    assert (method, url) == ("GET", "https://delphi.cmu.edu/epidata/v5/snapshot/")
+    assert call["params"] == {"source": "fluview_ilinet", "signal": "ili", "geo_type": "state", "geo_value": "ca",
+                              "reference_times": "2026-10-01:", "columns": "reference_time,report_time,value"}
+    assert call["max_bytes"] <= 64 * 1024
+    assert flu["week"] == 202643 and flu["ili"] == 4.2 and flu["released"] == "2026-11-06"
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])

@@ -568,9 +568,12 @@ def air_today(data, now):
     return {**today, "tomorrow_alert": bool(tomorrow and tomorrow.get("alert"))}
 
 
-# --- California's flu activity (CDC ILINet through CMU Delphi's keyless FluView API) -----------
+# --- California's flu activity (CDC ILINet through CMU Delphi's keyless Epidata API) -----------
 
-FLU_URL = "https://api.delphi.cmu.edu/epidata/fluview/"
+# The V5 snapshot endpoint: CSV, one row per week. The FluView endpoint the page first read
+# answers "no longer provides data with time values after 2026-09-22" for any range past that
+# date, which is every range asked here: from 2026-11-22 each refresh failed there.
+FLU_URL = "https://delphi.cmu.edu/epidata/v5/snapshot/"
 FLU_WEEKS = 8
 
 
@@ -592,18 +595,17 @@ def mmwr_week(day):
 
 def normalize_flu(payload):
     """The latest week's share of outpatient visits for influenza-like illness in California (%),
-    the week before and the last weeks' series; {} without readings."""
-    rows = payload.get("epidata") if isinstance(payload, dict) else None
+    the week before and the last weeks' series, from the snapshot's CSV rows (a week is named by
+    the Saturday it ends on); {} without readings."""
     weeks = {}
-    for row in rows if isinstance(rows, list) else []:
-        if not isinstance(row, dict) or not isinstance(row.get("epiweek"), int):
-            continue
+    for row in csv.DictReader(io.StringIO(payload if isinstance(payload, str) else "")):
         try:
-            ili = float(row.get("ili"))
+            saturday = datetime.strptime(str(row.get("reference_time") or "")[:10], "%Y-%m-%d").date()
+            ili = float(row.get("value"))
         except (TypeError, ValueError):
             continue
         if 0 <= ili <= 100:
-            weeks[row["epiweek"]] = (ili, str(row.get("release_date") or "")[:10])
+            weeks[mmwr_week(saturday)] = (ili, str(row.get("report_time") or "")[:10])
     if not weeks:
         return {}
     ordered = sorted(weeks)
@@ -613,8 +615,15 @@ def normalize_flu(payload):
 
 
 def fetch_flu(now, context):
-    weeks = f"{mmwr_week((now - timedelta(weeks=FLU_WEEKS)).date())}-{mmwr_week(now.date())}"
-    return normalize_flu(_get_json(FLU_URL, {"regions": "ca", "epiweeks": weeks}, context, 64 * 1024))
+    params = {"source": "fluview_ilinet", "signal": "ili", "geo_type": "state", "geo_value": "ca",
+              "reference_times": f"{(now - timedelta(weeks=FLU_WEEKS)).date().isoformat()}:",
+              "columns": "reference_time,report_time,value"}
+    context.raise_if_cancelled()
+    response = get_http_client().request_text("GET", FLU_URL, context=context, timeout=REQUEST_TIMEOUT,
+                                              max_bytes=16 * 1024, params=params,
+                                              headers={"User-Agent": USER_AGENT})
+    context.raise_if_cancelled()
+    return normalize_flu(response.data)
 
 
 def valid_flu(data):
