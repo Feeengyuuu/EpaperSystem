@@ -2,6 +2,7 @@
 how it is kept, how it stands on the page, and how the page draws it."""
 
 import json
+import logging
 import sys
 import threading
 import time
@@ -50,8 +51,10 @@ ALLOWED_HOSTS = {"t3.gstatic.com", "github.com", "avatars.githubusercontent.com"
 # A maker without a mark in the package: OpenRouter's own page for it, the icon that page shows, and
 # the Hub organisation OpenRouter names for its model.
 NEX_PAGE, NEX_ICON = "https://openrouter.ai/nex-agi", "https://openrouter.ai/images/icons/NexAGI.svg"
+# Since late 2026 OpenRouter keeps a maker's icon in a folder and names it with the file's version.
+UPSTAGE_ICON = "https://openrouter.ai/images/icons/brands/upstage.svg"
 NEX_HUB_ORG = "https://huggingface.co/api/organizations/nex-agi/avatar"
-NEX_HUB = "https://cdn-avatars.huggingface.co/v1/production/uploads/65435cad/a_O9jT.png"
+NEX_HUB ="https://cdn-avatars.huggingface.co/v1/production/uploads/65435cad/a_O9jT.png"
 SVG_MARK = (b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">'
             b'<rect x="2" y="2" width="6" height="6" fill="#102030"/></svg>')
 SITE_FAVICON = ("https://t0.gstatic.com/faviconV2?client=SOCIAL&amp;type=FAVICON&amp;fallback_opts=TYPE,SIZE,URL"
@@ -126,13 +129,19 @@ def _load(tmp_path, web, wants=WANTS, *, now=NOW, cached_only=False, context=Non
                            context=context or _context(), cached_only=cached_only, user_agent=AGENT, now=now)
 
 
-def _author_page(author, src, *, before=""):
+def _author_page(author, src, *, before="", icon=None):
     """An OpenRouter author page as it is served: the author's icon in the card at its head, named
     for the author's id; other icons (a provider's, named by its display name) may stand around it."""
-    icon = (f'<img width="256" height="256" alt="Favicon for {author}" class="h-full w-full object-cover" '
-            f'src="{src}" loading="lazy" decoding="async"/>')
+    icon = icon or (f'<img width="256" height="256" alt="Favicon for {author}" class="h-full w-full object-cover" '
+                    f'src="{src}" loading="lazy" decoding="async"/>')
     return (f'<!DOCTYPE html><html><body><main>{before}<div class="size-6 rounded-full"><picture>{icon}</picture>'
             f"</div><h1>A maker</h1></main></body></html>")
+
+
+def _painted_icon(author, src):
+    """A one-colour icon as OpenRouter's page draws it: an element painted through the picture."""
+    return (f'<span role="img" aria-label="Favicon for {author}" class="block size-full bg-foreground '
+            f'brand-icon-mask overflow-hidden rounded-full" style="--brand-icon-mask:url(&quot;{src}&quot;)"></span>')
 
 
 MAKER_WANTS = [Wanted("maker:nex-agi", "", ("openrouter", "nex-agi")), Wanted("hub:nex-agi", "", ("hub", "nex-agi"))]
@@ -186,7 +195,7 @@ def test_an_owner_or_author_always_has_a_key_but_is_only_asked_when_its_name_is_
     assert wants == [Wanted("hub:sp ace"), Wanted("github:we_ird!")]
 
 
-@pytest.mark.parametrize("url", [ANTHROPIC, MORLUTO, ACME, NEX_ICON,
+@pytest.mark.parametrize("url", [ANTHROPIC, MORLUTO, ACME, NEX_ICON, UPSTAGE_ICON,
                                  "https://openrouter.ai/images/icons/XingChen-Shield.png"])
 def test_the_modules_own_addresses_are_safe(url):
     assert item_icons.safe_icon_url(url) == url
@@ -205,8 +214,12 @@ def test_the_modules_own_addresses_are_safe(url):
     "https://example.com/favicon.ico",
     "https://openrouter.ai/nex-agi",
     "https://openrouter.ai/images/NexAGI.svg",
-    "https://openrouter.ai/images/icons/nested/NexAGI.svg",
+    "https://openrouter.ai/images/icons/a/b/c/NexAGI.svg",
+    "https://openrouter.ai/images/icons/brands/../NexAGI.svg",
+    "https://openrouter.ai/images/icons/.brands/NexAGI.svg",
     "https://openrouter.ai/images/icons/NexAGI.svg?next=https://evil.example",
+    # The module asks for a kept icon's file itself, without the version a page names it with.
+    UPSTAGE_ICON + "?v=63b73dcd",
     "https://openrouter.ai/images/icons/NexAGI.gif",
     "https://openrouter.ai.evil.example/images/icons/NexAGI.svg",
     "http://openrouter.ai/images/icons/NexAGI.svg",
@@ -222,6 +235,9 @@ def test_any_other_address_is_refused(url):
     ("/images/icons/NexAGI.svg", NEX_ICON),
     ("/images/icons/XingChen-Shield.png", "https://openrouter.ai/images/icons/XingChen-Shield.png"),
     ("https://openrouter.ai/images/icons/Perplexity.png", "https://openrouter.ai/images/icons/Perplexity.png"),
+    # One in a folder of its own, named with its file's version: asked for the file itself.
+    ("/images/icons/brands/upstage.svg?v=63b73dcd", UPSTAGE_ICON),
+    ("https://openrouter.ai/images/icons/brands/upstage.svg?v=63b73dcd", UPSTAGE_ICON),
     # The maker's own site by Google's favicon service: asked for that site at this module's host.
     (SITE_FAVICON.format(site="https://www.upstage.ai/"), item_icons.FAVICON_URL.format(host="www.upstage.ai")),
     (SITE_FAVICON.format(site="https://elorian.ai/assets/favicon.svg"), item_icons.FAVICON_URL.format(host="elorian.ai")),
@@ -245,8 +261,14 @@ def test_a_makers_icon_is_the_one_its_openrouter_page_shows(src, address):
     "https://evil.example/images/icons/NexAGI.svg",
     "//evil.example/images/icons/NexAGI.svg",
     "/images/icons/../../api/v1/key.svg",
-    "/images/icons/nested/NexAGI.svg",
+    "/images/icons/a/b/c/NexAGI.svg",
+    "/images/icons/.brands/NexAGI.svg",
     "/images/icons/NexAGI.svg?next=https://evil.example",
+    "/images/icons/brands/upstage.svg?v=63b73dcd&amp;next=https://evil.example",
+    "/images/icons/brands/upstage.svg?v=63b73dcd#next",
+    # The Hub's own icon as OpenRouter keeps it, which a community author's page shows.
+    "/images/icons/brands/huggingface.svg?v=31597acc",
+    "/images/icons/brands/GitHub.svg",
     "/images/icons/NexAGI.gif",
     "/images/other/NexAGI.svg",
     "data:image/svg+xml;base64,AAAA",
@@ -254,6 +276,35 @@ def test_a_makers_icon_is_the_one_its_openrouter_page_shows(src, address):
 ])
 def test_an_icon_that_is_not_the_makers_own_or_not_from_a_known_place_is_not_used(src):
     assert item_icons.maker_icon(_author_page("nex-agi", src), "nex-agi") == ""
+
+
+def test_an_icon_painted_through_its_picture_is_read_from_the_elements_style():
+    src = "/images/icons/brands/nex-agi.svg?v=45062bb2"
+    page = _author_page("nex-agi", "", icon=_painted_icon("nex-agi", src))
+
+    assert item_icons.maker_icon(page, "nex-agi") == "https://openrouter.ai/images/icons/brands/nex-agi.svg"
+    # Another author's, a picture from elsewhere and a style without a picture give none.
+    assert item_icons.maker_icon(page, "nex") == ""
+    for other in ("https://evil.example/images/icons/brands/nex-agi.svg", "/images/other/nex-agi.svg"):
+        assert item_icons.maker_icon(_author_page("nex-agi", "", icon=_painted_icon("nex-agi", other)), "nex-agi") == ""
+    bare = '<span role="img" aria-label="Favicon for nex-agi" style="color:red"></span>'
+    assert item_icons.maker_icon(_author_page("nex-agi", "", icon=bare), "nex-agi") == ""
+
+
+def test_an_icon_with_a_light_and_a_dark_drawing_is_the_light_pages_one():
+    both = ('<span class="dark:hidden"><img alt="Favicon for kt" src="/images/icons/brands/kt.svg?v=bee824d5"/></span>'
+            '<span class="hidden dark:block"><img alt="Favicon for kt" src="/images/icons/brands/kt-dark.svg?v=a29e870f"/>'
+            "</span>")
+
+    # The page sets a dark mark for its own ground (item_icons.mark_within), so one drawing is enough.
+    assert item_icons.maker_icon(_author_page("kt", "", icon=both), "kt") == "https://openrouter.ai/images/icons/brands/kt.svg"
+
+
+def test_an_attribute_of_another_name_is_not_the_icons_label_or_picture():
+    lookalike = ('<img data-alt="Favicon for nex-agi" src="/images/icons/Other.png"/>'
+                 '<img alt="Favicon for nex-agi" data-src="/images/icons/Lazy.png" srcset="/images/icons/Set.png 2x"/>')
+
+    assert item_icons.maker_icon(_author_page("nex-agi", "", icon=lookalike), "nex-agi") == ""
 
 
 def test_only_the_icon_named_for_the_author_counts():
@@ -457,6 +508,54 @@ def test_a_page_that_shows_only_the_hubs_icon_is_remembered_as_having_none(tmp_p
     later = _Web({})
     _load(tmp_path, later, wants, now=NOW + item_icons.NO_AVATAR + timedelta(minutes=1))
     assert later.urls == ["https://openrouter.ai/sao10k"]
+
+
+@pytest.mark.parametrize("icon, said", [
+    # The author's own icon, and a shared site's (the page's way of showing none): both are read.
+    ('<img alt="Favicon for upstage" src="/images/icons/brands/upstage.svg?v=63b73dcd"/>', False),
+    ('<img alt="Favicon for upstage" src="/images/icons/brands/huggingface.svg?v=31597acc"/>', False),
+    # An icon at an address of no known kind, or no icon named for the author at all: the page has
+    # changed, and the log says so (the card keeps its chip meanwhile).
+    ('<img alt="Favicon for upstage" src="https://cdn.example/brands/upstage.svg"/>', True),
+    ('<svg aria-label="Favicon for upstage"><path d="M0 0h8v8z"/></svg>', True),
+    ('<img alt="Upstage" src="/images/icons/brands/upstage.svg"/>', True),
+])
+def test_a_page_whose_icon_cannot_be_read_says_so_in_the_log(tmp_path, caplog, icon, said):
+    wants = [Wanted("maker:upstage", "", ("openrouter", "upstage"))]
+    web = _Web({"https://openrouter.ai/upstage": _author_page("upstage", "", icon=icon), UPSTAGE_ICON: SVG_MARK})
+
+    with caplog.at_level(logging.WARNING, logger=item_icons.__name__):
+        _load(tmp_path, web, wants)
+
+    assert any("upstage" in record.getMessage() for record in caplog.records) == said
+    # Either way the page answered: it is not asked again every refresh.
+    assert "openrouter:upstage" in _kept_addresses(tmp_path)
+
+
+def test_a_page_that_can_no_longer_be_read_takes_no_makers_icon_away(tmp_path, caplog):
+    _load(tmp_path, _maker_web(), MAKER_WANTS[:1])
+    changed = '<svg aria-label="Favicon for nex-agi"><path d="M0 0h8v8z"/></svg>'
+    later = NOW + item_icons.KEPT + timedelta(days=1)
+
+    # The kept address is due to be asked again, and the page has changed its form meanwhile.
+    web = _maker_web(**{NEX_PAGE: _author_page("nex-agi", "", icon=changed)})
+    with caplog.at_level(logging.WARNING, logger=item_icons.__name__):
+        icons = _load(tmp_path, web, MAKER_WANTS[:1], now=later)
+
+    # The maker keeps the icon it had, from the address known before; the log names the page.
+    assert icons["maker:nex-agi"].getpixel((32, 32)) == (16, 32, 48, 255)
+    assert _kept_addresses(tmp_path)["openrouter:nex-agi"]["url"] == NEX_ICON
+    assert any("nex-agi" in record.getMessage() for record in caplog.records)
+    # The page rests as one without an icon does, then is asked again; read again, its answer counts.
+    resting = _maker_web(**{NEX_PAGE: _author_page("nex-agi", "", icon=changed)})
+    assert set(_load(tmp_path, resting, MAKER_WANTS[:1], now=later + timedelta(hours=1))) == {"maker:nex-agi"}
+    assert NEX_PAGE not in resting.urls
+    moved = "https://openrouter.ai/images/icons/brands/nex-agi.svg"
+    back = _maker_web(**{NEX_PAGE: _author_page("nex-agi", "/images/icons/brands/nex-agi.svg?v=45062bb2"), moved: SVG_MARK})
+    icons = _load(tmp_path, back, MAKER_WANTS[:1], now=later + item_icons.NO_AVATAR + timedelta(minutes=1))
+    assert back.urls == [NEX_PAGE, moved] and set(icons) == {"maker:nex-agi"}
+    assert _kept_addresses(tmp_path)["openrouter:nex-agi"] == {
+        "url": moved, "at": (later + item_icons.NO_AVATAR + timedelta(minutes=1)).isoformat()}
 
 
 @pytest.mark.parametrize("answer, remembered", [

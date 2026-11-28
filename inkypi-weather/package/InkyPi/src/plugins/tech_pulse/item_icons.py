@@ -9,7 +9,10 @@
   icon OpenRouter's own page for that author shows (one OpenRouter keeps itself, or the maker's
   site's by the favicon service), which names the right company by construction; and the avatar
   of the Hub organisation OpenRouter names for the model, for a maker whose page shows none of its
-  own. With neither at hand the card keeps the chip with the maker's name.
+  own. With neither at hand the card keeps the chip with the maker's name. The page shows an icon
+  for every author (a shared site's for one with none of its own), so a page whose icon cannot be
+  read has changed its form: the log says so, which is how a change there is noticed, and a maker
+  keeps the icon it had until the page can be read again.
 
 Only the hosts named here are ever asked. Icons are downloaded during a data refresh, inside the
 time the page gives them, and kept on disk within ICON_BUDGET; a redraw reads what is kept. An
@@ -33,7 +36,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from html import unescape
 from pathlib import Path
-from urllib.parse import parse_qs, quote, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit, urlunsplit
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
@@ -58,10 +61,13 @@ HUB_AVATAR_APIS = ("https://huggingface.co/api/organizations/{name}/avatar",
 HUB_AVATAR_HOST = "cdn-avatars.huggingface.co"
 HN_HOST = "news.ycombinator.com"
 # OpenRouter's page for a model's author shows the author's icon in the card at its head, well
-# inside the page's first MAKER_PAGE_BYTES (about 90 KB in; a large maker's page runs to megabytes).
+# inside the page's first MAKER_PAGE_BYTES (about 50 KB in; a large maker's page runs to megabytes).
 MAKER_HOST = "openrouter.ai"
 MAKER_PAGE = "https://" + MAKER_HOST + "/{author}"
 MAKER_PAGE_BYTES = 256 * 1024
+# The icons OpenRouter keeps for sites many authors share, by file name: on an author's page one of
+# them names the site (a community author's page shows the Hub's), not the maker.
+SHARED_ICONS = frozenset({"huggingface", "github", "gitlab", "openrouter"})
 # The favicon service's hosts as pages name them (this module asks FAVICON_HOST itself).
 FAVICON_HOSTS = frozenset(f"t{shard}.gstatic.com" for shard in range(4))
 # Sites many authors share: such a site's icon on an author's page names the site, not the maker.
@@ -85,9 +91,17 @@ _HUB_NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,94}[A-Za-z0-9])?")
 _GITHUB_PICTURE = re.compile(r"/u/(\d{1,12})")
 _HUB_PICTURE = re.compile(r"/v1/production/uploads/[\w./-]{1,200}\.(?:png|jpe?g|webp|gif)")
 _MAKER_NAME = re.compile(r"[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?")
-_MAKER_PICTURE = re.compile(r"/images/icons/[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.(?:svg|png|jpe?g|webp)")
-_IMG = re.compile(r"<img\b[^<>]{0,2000}>", re.IGNORECASE)
-_IMG_ATTRIBUTE = re.compile(r'\b(alt|src)\s*=\s*"([^"]{0,1000})"', re.IGNORECASE)
+# An icon OpenRouter keeps: a file under /images/icons, since late 2026 in a folder there
+# ("brands/upstage.svg"). A page names it with the file's version ("?v=63b73dcd"), which this module
+# leaves off: it asks for the file itself.
+_MAKER_PICTURE = re.compile(r"/images/icons/(?:[A-Za-z0-9][A-Za-z0-9_-]{0,40}/){0,2}"
+                            r"([A-Za-z0-9][A-Za-z0-9._-]{0,80})\.(?:svg|png|jpe?g|webp)")
+_MAKER_VERSION = re.compile(r"v=[A-Za-z0-9._-]{1,64}")
+# The element a page labels as an author's icon, whatever it is (a picture, or an element painted
+# through one), and what it says of itself.
+_TAG = re.compile(r"<[A-Za-z][^<>]{0,2000}>")
+_TAG_ATTRIBUTE = re.compile(r'(?<![\w-])(alt|aria-label|src|style)\s*=\s*"([^"]{0,1000})"', re.IGNORECASE)
+_STYLE_PICTURE = re.compile(r"""url\(\s*["']?([^"'()\s]{1,1000})["']?\s*\)""", re.IGNORECASE)
 # Sites that give each author a host of their own: the author's label names the story's source.
 _SHARED_SITES = ("github.io", "substack.com", "medium.com", "blogspot.com", "wordpress.com", "netlify.app",
                  "vercel.app", "pages.dev", "bearblog.dev", "neocities.org", "tumblr.com")
@@ -205,7 +219,8 @@ def maker_picture(url):
 
 
 def _maker_address(src):
-    """Where this module asks for the icon an author's page shows at ``src``, or ""."""
+    """Where this module asks for the icon an author's page shows at ``src``: "" for a shared
+    site's icon (it names the site, not the maker), None for an address of no kind known here."""
     src = str(src or "")
     try:
         parts = urlsplit(src)
@@ -213,24 +228,56 @@ def _maker_address(src):
             # The maker's site by the favicon service: asked for that site, unless many share it.
             host = (urlsplit(next(iter(parse_qs(parts.query).get("url", [])), "")).hostname or "").lower().rstrip(".")
             site = host[4:] if host.startswith("www.") else host
-            return "" if site in SHARED_HOSTS else favicon_url(host)
+            return "" if site in SHARED_HOSTS else favicon_url(host) or None
+        if parts.fragment or (parts.query and not _MAKER_VERSION.fullmatch(parts.query)):
+            return None
         if not parts.scheme and not parts.netloc:
-            return maker_picture(f"https://{MAKER_HOST}{src}")
-        return maker_picture(src)
+            parts = parts._replace(scheme="https", netloc=MAKER_HOST)
+        address = maker_picture(urlunsplit(parts._replace(query="")))
     except ValueError:
         # An address the page mangled (a bad bracketed host) is no address at all.
-        return ""
+        return None
+    if not address:
+        return None
+    name = _MAKER_PICTURE.fullmatch(urlsplit(address).path).group(1)
+    return "" if name.lower() in SHARED_ICONS else address
+
+
+def _shown(page, author):
+    """The pictures OpenRouter's page for ``author`` draws the author's icon from, in the page's
+    order: of each element labelled "Favicon for <author>" (another icon there is a provider's,
+    labelled by its display name), the picture it shows, then any its style paints it through."""
+    named = f"Favicon for {author}"
+    page = str(page or "")
+    if named not in page:
+        return
+    for tag in _TAG.findall(page):
+        if named not in tag:
+            continue
+        attributes = {name.lower(): unescape(value) for name, value in _TAG_ATTRIBUTE.findall(tag)}
+        if named not in (attributes.get("alt"), attributes.get("aria-label")):
+            continue
+        if attributes.get("src"):
+            yield attributes["src"]
+        yield from _STYLE_PICTURE.findall(attributes.get("style") or "")
+
+
+def _maker_icon(page, author):
+    """(address, read): the address of ``author``'s own icon as OpenRouter's page for it shows it
+    ("" without one), and whether the page's icon for the author could be read at all: its own or
+    a shared site's. One that could not is at an address, or in a form, this module does not know."""
+    read = False
+    for src in _shown(page, author):
+        address = _maker_address(src)
+        if address:
+            return address, True
+        read = read or address is not None
+    return "", read
 
 
 def maker_icon(page, author):
-    """The address of ``author``'s own icon as OpenRouter's page for it shows it ("Favicon for
-    <author>"; another icon there is a provider's, named by its display name), "" without one."""
-    named = f"Favicon for {author}"
-    for tag in _IMG.findall(str(page or "")):
-        attributes = {name.lower(): unescape(value) for name, value in _IMG_ATTRIBUTE.findall(tag)}
-        if attributes.get("alt") == named:
-            return _maker_address(attributes.get("src"))
-    return ""
+    """The address of ``author``'s own icon as OpenRouter's page for it shows it, "" without one."""
+    return _maker_icon(page, author)[0]
 
 
 def github_avatar(url):
@@ -313,17 +360,19 @@ def _fresh(stamp, now, span):
 
 
 def _kept_address(kept, lookup, now):
-    """(address, whether the answer still stands) for an owner or author asked before."""
+    """(address, whether the answer still stands) for an owner or author asked before. An address
+    kept through an answer that could not be read ("unread") stands only as long as "has none"."""
     entry = kept["addresses"].get(":".join(lookup))
     if not isinstance(entry, dict):
         return "", False
     address = safe_icon_url(entry.get("url")) or ""
-    return address, _fresh(entry.get("at"), now, KEPT if address else NO_AVATAR)
+    return address, _fresh(entry.get("at"), now, KEPT if address and not entry.get("unread") else NO_AVATAR)
 
 
 def _look_up(lookup, http, context, user_agent):
     """(address, answered): the avatar's or icon's address ("" when the owner, author or maker has
-    none), and whether the source answered at all (a failure is asked again next refresh)."""
+    none; None when the source's answer could not be read, which takes nothing away from what was
+    known), and whether the source answered at all (a failure is asked again next refresh)."""
     kind, name = lookup
     headers = {"User-Agent": user_agent}
     try:
@@ -335,7 +384,13 @@ def _look_up(lookup, http, context, user_agent):
             except HttpStatusError as error:
                 # No such page, moved or refused: that is its answer. Only OpenRouter being down is not.
                 return "", error.status < 500
-            return maker_icon(page.data, name), True
+            address, read = _maker_icon(page.data, name)
+            if not read:
+                # The page shows every author an icon, so it has changed its form. Until this module
+                # knows the new one a maker keeps the icon it had, and a new maker its chip.
+                logger.warning("Tech Pulse could not read the icon OpenRouter's page shows for %s", name)
+                return None, True
+            return address, True
         if kind == "github":
             result = http.request_bytes("GET", GITHUB_OWNER_PICTURE.format(owner=quote(name, safe="")),
                                         context=context, timeout=LOOKUP_SECONDS, max_bytes=LOOKUP_BYTES, headers=headers)
@@ -375,8 +430,11 @@ def load(wants, directory, lookups, *, http, context, cached_only, user_agent, n
                 if not stands and not cached_only and context.remaining_seconds() >= LOOKUP_SECONDS:
                     found, answered = _look_up(want.lookup, http, context, user_agent)
                     if answered:
-                        url = found
-                        kept["addresses"][":".join(want.lookup)] = {"url": found, "at": now.isoformat()}
+                        # An answer that could not be read (None) leaves the address known before.
+                        unread = found is None
+                        url = url if unread else found
+                        kept["addresses"][":".join(want.lookup)] = {"url": url, "at": now.isoformat(),
+                                                                    **({"unread": True} if unread else {})}
                         changed = True
             if url and (cached_only or not _fresh(kept["missed"].get(url), now, RESTED)):
                 addresses[want.key] = url
