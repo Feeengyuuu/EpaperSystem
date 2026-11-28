@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from datetime import datetime, timedelta, timezone
 from html import unescape
@@ -9,12 +10,13 @@ from utils.http_client import get_http_session
 
 
 SKILLS_URL = "https://www.skills.sh/trending"
-# Only the fields the boards read (about 3.5 KB for three models, against 8 KB with full=true and its
-# file lists): the metrics, each model's parameter count (safetensors) and the inference providers
-# serving it.
+# Only the fields the boards read (against full=true and its file lists): the metrics, each model's
+# parameter count (safetensors) and the inference providers serving it. Twice the HF_MODELS_SHOWN the
+# boards show are asked for (about 2 KB), so a row that cannot be used leaves no gap on a board.
 HF_MODEL_FIELDS = ("trendingScore", "likes", "downloads", "pipeline_tag", "safetensors", "inferenceProviderMapping",
                    "author", "createdAt", "lastModified", "gated")
-HF_MODELS_URL = "https://huggingface.co/api/models?sort=trendingScore&limit=3" + "".join(
+HF_MODELS_SHOWN, HF_MODELS_ASKED = 3, 6
+HF_MODELS_URL = f"https://huggingface.co/api/models?sort=trendingScore&limit={HF_MODELS_ASKED}" + "".join(
     f"&expand%5B%5D={field}" for field in HF_MODEL_FIELDS)
 # The trending Spaces (the apps people run on the Hub), with their cards' titles and descriptions; a
 # dozen, as some are left out (about 5 KB).
@@ -56,6 +58,14 @@ def _required_integer(value):
     else:
         return None
     return parsed if parsed >= 0 else None
+
+
+def _required_score(value):
+    """A score the Hub works out (its trending score), which may be fractional (1249.5): the whole
+    number nearest it, None when it is no finite number of zero or more."""
+    if isinstance(value, float):
+        return int(math.floor(value + 0.5)) if math.isfinite(value) and value >= 0 else None
+    return _required_integer(value)
 
 
 def compact_count_to_int(value):
@@ -101,7 +111,8 @@ def normalize_hf_models(payload, limit=3):
         model_id = str(raw.get("id") or "").strip()
         if not model_id:
             continue
-        metrics = [_required_integer(raw.get(key)) for key in ("trendingScore", "likes", "downloads")]
+        metrics = [_required_score(raw.get("trendingScore")), _required_integer(raw.get("likes")),
+                   _required_integer(raw.get("downloads"))]
         if any(value is None for value in metrics):
             continue
         author = raw.get("author")
@@ -221,7 +232,7 @@ def normalize_hf_spaces(payload, limit=3):
             "title": title,
             "description": description,
             "likes": likes,
-            "trending_score": _required_integer(raw.get("trendingScore")) or 0,
+            "trending_score": _required_score(raw.get("trendingScore")) or 0,
             "url": f"https://huggingface.co/spaces/{space_id}",
         })
         if len(rows) >= int(limit):
@@ -351,7 +362,7 @@ def fetch_huggingface(session=None):
     session = session or get_http_session()
     response = session.get(HF_MODELS_URL, timeout=REQUEST_TIMEOUT, headers={"User-Agent": USER_AGENT})
     response.raise_for_status()
-    return normalize_hf_models(response.json(), limit=3)
+    return normalize_hf_models(response.json(), limit=HF_MODELS_SHOWN)
 
 
 def fetch_spaces(session=None):

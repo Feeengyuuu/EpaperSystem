@@ -6,6 +6,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from PIL import Image, ImageDraw
@@ -33,6 +34,7 @@ from plugins.base_plugin.render_provenance import (  # noqa: E402
     read_source_provenance,
 )
 from plugins.ai_ecosystem_pulse import ai_ecosystem_pulse as pulse_module  # noqa: E402
+from plugins.ai_ecosystem_pulse import sources  # noqa: E402
 from plugins.ai_ecosystem_pulse.sources import (  # noqa: E402
     HF_MODELS_URL,
     fetch_github,
@@ -210,6 +212,57 @@ def test_hugging_face_normalizer_raises_when_every_remote_row_is_unusable():
                 {"id": "bad/model", "trendingScore": 1, "likes": "bad", "downloads": 3},
             ]
         )
+
+
+def test_hugging_face_normalizer_keeps_a_model_whose_trending_score_is_fractional():
+    # As the Hub answered on 2026-11-27: its leading model's score was 1249.5, and the board lost it.
+    models = normalize_hf_models([
+        {"id": "thinkingmachines/Inkling-2-Mini", "trendingScore": 1249.5, "likes": 6467, "downloads": 155741},
+        {"id": "unsloth/Inkling-2-Mini-GGUF", "trendingScore": 1119, "likes": 1613, "downloads": 3302340},
+        {"id": "SulphurAI/Sulphur-3", "trendingScore": 569.25, "likes": 1369, "downloads": 539421},
+    ])
+
+    assert [(model["id"], model["trending_score"]) for model in models] == [
+        ("thinkingmachines/Inkling-2-Mini", 1250), ("unsloth/Inkling-2-Mini-GGUF", 1119), ("SulphurAI/Sulphur-3", 569)]
+    assert all(type(model["trending_score"]) is int for model in models)
+
+
+def test_hugging_face_normalizer_still_refuses_a_score_that_is_no_number_and_a_count_that_is_not_whole():
+    rows = [{"id": f"bad/score-{index}", "trendingScore": score, "likes": 2, "downloads": 3}
+            for index, score in enumerate((float("nan"), float("inf"), -1.5, True, None, "12.5", [3]))]
+    rows += [{"id": "bad/likes", "trendingScore": 3, "likes": 2.5, "downloads": 3},
+             {"id": "bad/downloads", "trendingScore": 3, "likes": 2, "downloads": 3.0},
+             {"id": "valid/model", "trendingScore": 0.4, "likes": 2, "downloads": 3}]
+
+    models = normalize_hf_models(rows)
+
+    assert [(model["id"], model["trending_score"]) for model in models] == [("valid/model", 0)]
+
+
+def test_hugging_face_is_asked_for_spare_models_so_an_unusable_row_leaves_no_gap():
+    asked = []
+
+    class _Session:
+        def get(self, url, **kwargs):
+            asked.append(url)
+            usable = [{"id": f"maker/model-{index}", "trendingScore": 100 - index, "likes": 5, "downloads": 9}
+                      for index in range(4)]
+            return SimpleNamespace(raise_for_status=lambda: None,
+                                   json=lambda: [{"id": "maker/no-downloads", "trendingScore": 500, "likes": 5}, *usable])
+
+    models = sources.fetch_huggingface(_Session())
+
+    # More are asked for than the three the boards show, and the first three usable ones are kept.
+    assert asked == [HF_MODELS_URL] and "limit=3&" not in HF_MODELS_URL
+    assert int(parse_qs(urlsplit(HF_MODELS_URL).query)["limit"][0]) >= 6
+    assert [model["id"] for model in models] == ["maker/model-0", "maker/model-1", "maker/model-2"]
+
+
+def test_a_trending_spaces_fractional_score_is_kept():
+    rows = normalize_hf_spaces([{"id": "a/space", "likes": 5, "trendingScore": 164.5, "cardData": {"title": "A"}},
+                                {"id": "b/space", "likes": 5, "trendingScore": "x", "cardData": {"title": "B"}}])
+
+    assert [(row["id"], row["trending_score"]) for row in rows] == [("a/space", 165), ("b/space", 0)]
 
 
 def test_github_candidates_deduplicate_and_keep_richer_row():
