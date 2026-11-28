@@ -138,14 +138,16 @@ PROVIDER_LOGOS = {
     "nvidia": "provider-nvidia", "microsoft": "provider-microsoft", "cohere": "provider-cohere",
     "inception": "provider-inception", "ricursiveai": "provider-ricursiveai", "recursive": "provider-recursive",
     "particle-ai": "provider-particle-ai", "xiaomi": "provider-xiaomi", "stepfun": "provider-stepfun", "liquid": "provider-liquid", "meituan": "provider-meituan",
-    "thinkingmachines": "provider-thinkingmachines",
+    "thinkingmachines": "provider-thinkingmachines", "upstage": "provider-upstage",
 }
 PROVIDER_MARK_HEIGHT, PROVIDER_MARK_WIDTH = 16, 46
-# A maker whose official mark is its name set in two lines (Thinking Machines Lab's) is drawn this
-# tall, so each line reads at the size of the card's small type, and may be this wide. It hangs from
-# PROVIDER_WORDMARK_TOP px under the card's top edge, clear of the card's second line.
-PROVIDER_WORDMARKS = frozenset({"provider-thinkingmachines"})
-PROVIDER_WORDMARK_HEIGHT, PROVIDER_WORDMARK_WIDTH, PROVIDER_WORDMARK_TOP = 21, 56, 1
+# A mark that needs more than the line's height is drawn this tall and may be this wide: a name set
+# in two lines (Thinking Machines Lab's), so each line reads at the size of the card's small type;
+# and Upstage's symbol of eleven bars, which run into one grey shape 16 px tall and at this height
+# have a row each, with a row between two. It hangs from PROVIDER_TALL_TOP px under the card's top
+# edge, clear of the card's second line.
+PROVIDER_TALL_MARKS = frozenset({"provider-thinkingmachines", "provider-upstage"})
+PROVIDER_TALL_HEIGHT, PROVIDER_TALL_WIDTH, PROVIDER_TALL_TOP = 21, 56, 1
 # A mark on its own ground (Kimi's, Z.ai's, Meituan's squares) fills at least this share of its box,
 # some of it near white or coloured: it keeps its printed colours at night, where other marks'
 # near-black parts take the page's ink.
@@ -1360,8 +1362,8 @@ class TechPulse(BasePlugin):
                 mark = self._maker_mark(author, model, palette, icons or {})
             if mark is not None:
                 # The maker's mark names it; the chip with its name is for a maker with none at hand.
-                # A two-line wordmark, taller than the line, stays inside the card.
-                mark_top = max(card[1] + PROVIDER_WORDMARK_TOP, top - mark.height / 2)
+                # One taller than the line (PROVIDER_TALL_MARKS) stays inside the card.
+                mark_top = max(card[1] + PROVIDER_TALL_TOP, top - mark.height / 2)
                 image.paste(mark.convert("RGB"), (int(card[0] + 10), int(mark_top)), mark.getchannel("A"))
                 chip_w = mark.width
             else:
@@ -1449,7 +1451,7 @@ class TechPulse(BasePlugin):
 
     def _provider_mark(self, provider, palette):
         """The official mark of a model's maker (PROVIDER_LOGOS) PROVIDER_MARK_HEIGHT tall and at most
-        PROVIDER_MARK_WIDTH wide (a two-line wordmark, PROVIDER_WORDMARKS, its own larger box), None
+        PROVIDER_MARK_WIDTH wide (one that needs more, PROVIDER_TALL_MARKS, its own larger box), None
         without one. On a dark page its near-black parts take the page's ink (xAI's X, Amazon's a,
         its smile still orange); a mark on its own ground stays as printed."""
         key = provider_logo_key(provider)
@@ -1457,7 +1459,7 @@ class TechPulse(BasePlugin):
             return None
         path = ASSET_DIR / "logos" / f"{key}.png"
         ink = palette["ink"] if sum(palette["background"]) < 240 and not _provider_badge(str(path)) else None
-        height, width = ((PROVIDER_WORDMARK_HEIGHT, PROVIDER_WORDMARK_WIDTH) if key in PROVIDER_WORDMARKS
+        height, width = ((PROVIDER_TALL_HEIGHT, PROVIDER_TALL_WIDTH) if key in PROVIDER_TALL_MARKS
                          else (PROVIDER_MARK_HEIGHT, PROVIDER_MARK_WIDTH))
         mark = load_source_logo(path, height, ink)
         if mark is not None and mark.width > width:

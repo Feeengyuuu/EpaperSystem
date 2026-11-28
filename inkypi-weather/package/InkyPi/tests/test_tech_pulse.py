@@ -1110,6 +1110,7 @@ def test_openrouter_authors_map_to_their_makers_official_marks():
     assert key("bytedance-seed/seed-2-1-turbo") == key("bytedance/ui-tars-1.5-7b") == "provider-bytedance"
     assert key("meta/muse-spark-open") == key("meta-llama/llama-guard-4-12b") == "provider-meta-llama"
     assert key("thinkingmachines/inkling-2-small") == "provider-thinkingmachines"
+    assert key("upstage/solar-mini-4-5") == "provider-upstage"
     # An alias's "~" and the id's case do not hide its maker.
     assert key("~openai/gpt-astra-latest") == key("OpenAI") == "provider-openai"
     for unknown in ("stealth/crouton-alpha", "aion-labs/aion-3.5-mini", "perplexity/sonar-pro-search", "", None):
@@ -1137,15 +1138,15 @@ def test_maker_marks_fit_the_card_slot_and_unknown_makers_have_none(tmp_path):
         for author, key in tech_pulse_module.PROVIDER_LOGOS.items():
             mark = plugin._provider_mark(author, palette)
             assert mark is not None, author
-            # A symbol fits the line's slot; a name set in two lines has a taller box of its own.
-            wordmark = key in tech_pulse_module.PROVIDER_WORDMARKS
-            assert mark.height <= (tech_pulse_module.PROVIDER_WORDMARK_HEIGHT if wordmark
+            # A symbol fits the line's slot; a mark that needs more height has a taller box of its own.
+            tall = key in tech_pulse_module.PROVIDER_TALL_MARKS
+            assert mark.height <= (tech_pulse_module.PROVIDER_TALL_HEIGHT if tall
                                    else tech_pulse_module.PROVIDER_MARK_HEIGHT), author
-            assert mark.width <= (tech_pulse_module.PROVIDER_WORDMARK_WIDTH if wordmark
+            assert mark.width <= (tech_pulse_module.PROVIDER_TALL_WIDTH if tall
                                   else tech_pulse_module.PROVIDER_MARK_WIDTH), author
             assert mark.getchannel("A").getbbox() is not None, author
         assert plugin._provider_mark("stealth", palette) is None
-        assert tech_pulse_module.PROVIDER_WORDMARKS <= set(tech_pulse_module.PROVIDER_LOGOS.values())
+        assert tech_pulse_module.PROVIDER_TALL_MARKS <= set(tech_pulse_module.PROVIDER_LOGOS.values())
 
 
 def _mark_pixels(mark):
@@ -1169,6 +1170,9 @@ def test_maker_marks_keep_their_colours_and_black_parts_take_the_night_ink(tmp_p
     # xAI's black mark is drawn in the night page's ink.
     x_day, x_night = (_mark_pixels(plugin._provider_mark("x-ai", palette)) for palette in (day, night))
     assert dark(x_day) > 0.8 * len(x_day) and light(x_night) > 0.8 * len(x_night)
+    # So is Upstage's symbol, which its own site prints white on its dark header.
+    up_day, up_night = (_mark_pixels(plugin._provider_mark("upstage", palette)) for palette in (day, night))
+    assert dark(up_day) > 0.8 * len(up_day) and light(up_night) > 0.8 * len(up_night)
     # Amazon's black "a" takes the ink while its smile stays orange.
     amazon_day, amazon_night = (_mark_pixels(plugin._provider_mark("amazon", palette)) for palette in (day, night))
     assert dark(amazon_day) > 0 and dark(amazon_night) == 0 and light(amazon_night) > 0
@@ -1229,6 +1233,23 @@ def test_the_thinking_machines_wordmark_is_lettering_the_page_can_ink():
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])
+def test_upstages_striped_symbol_is_drawn_tall_enough_for_its_bars_to_part(tmp_path, mode):
+    plugin = _plugin(tmp_path)
+    palette = plugin._palette({"_inkypi_theme": canonical_theme(mode)})
+
+    mark = plugin._provider_mark("upstage", palette)
+
+    # Eleven bars: in the line's 16 px they run into one grey shape, which the panel dithers to
+    # noise; in the taller box each bar and each gap between two has a row of its own.
+    assert mark.height == tech_pulse_module.PROVIDER_TALL_HEIGHT and mark.width <= tech_pulse_module.PROVIDER_MARK_WIDTH
+    alpha = mark.getchannel("A")
+    rows = [sum(alpha.crop((0, y, mark.width, y + 1)).get_flattened_data()) for y in range(mark.height)]
+    assert len(rows[0::2]) == 11
+    assert all(rows[bar] > 1.8 * rows[gap] for bar in range(0, mark.height, 2) for gap in (bar - 1, bar + 1)
+               if 0 <= gap < mark.height)
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
 def test_a_maker_named_by_a_two_line_wordmark_keeps_it_inside_its_card(tmp_path, monkeypatch, mode):
     plugin = _plugin(tmp_path)
     palette = plugin._palette({"_inkypi_theme": canonical_theme(mode)})
@@ -1249,7 +1270,7 @@ def test_a_maker_named_by_a_two_line_wordmark_keeps_it_inside_its_card(tmp_path,
 
     module = tech_pulse_module
     mark = plugin._provider_mark("thinkingmachines", palette)
-    assert mark.height == module.PROVIDER_WORDMARK_HEIGHT and mark.width <= module.PROVIDER_WORDMARK_WIDTH
+    assert mark.height == module.PROVIDER_TALL_HEIGHT and mark.width <= module.PROVIDER_TALL_WIDTH
     # The wordmark names the maker: no chip with its name is lettered.
     assert not {"Thinking Machines", "Thinkingmachines"} & {text for text, _bbox in drawn}
     # It is drawn in the page's ink: dark by day, light on the night page.
@@ -1261,7 +1282,7 @@ def test_a_maker_named_by_a_two_line_wordmark_keeps_it_inside_its_card(tmp_path,
     # name starts after it.
     x0, y0, _x1, y1 = module.OPENROUTER_BOX
     left, card_top = x0 + 148 + 10, y0 + 6
-    mark_top = card_top + module.PROVIDER_WORDMARK_TOP
+    mark_top = card_top + module.PROVIDER_TALL_TOP
     box = image.crop((left, mark_top, left + mark.width, mark_top + mark.height))
     ink = palette["ink"]
     assert sum(1 for pixel in box.get_flattened_data() if max(abs(a - b) for a, b in zip(pixel, ink)) < 60) > 60

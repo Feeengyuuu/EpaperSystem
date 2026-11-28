@@ -328,6 +328,17 @@
         51
       ],
       "sha256": "8f1c69f694b8862c355655b725049864b6279635bd0e8426e548e743c83f19fd"
+    },
+    "provider-upstage": {
+      "source": "https://cdn.prod.website-files.com/6743d5190bb2b52f38e99e37/6743f49549daa3311a34cabb_Symbol_Black.avif",
+      "page": "https://www.upstage.ai/resources/brand-resource-center",
+      "licence": "Upstage's symbol (the black one) from its own brand resource page, shown to name the model's maker",
+      "source_sha256": "f3e8bf0772bc2bcb95ec0fb2fc4751a93d367d296d265fcd22e16b854cbe7eec",
+      "size": [
+        54,
+        64
+      ],
+      "sha256": "87fde346285616ff7a2ce33cd0161827149d3191e0366c433e55d6c6e96c4298"
     }
   }
 }

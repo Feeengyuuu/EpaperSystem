@@ -63,7 +63,8 @@
   their makers' marks: Commons where it has one (a lockup cut to the mark before its name: Tencent's
   Hy, ByteDance's, Microsoft's, Cohere's, StepFun's, Liquid AI's, Meituan's, MiniMax's and NVIDIA's),
   else the maker's own site icon (Inception's, Ricursive Intelligence's, Recursive's, Particle's) or
-  its verified Hugging Face organisation's avatar (Baidu's paw). Perplexity's mark is drawn in hairlines
+  its verified Hugging Face organisation's avatar (Baidu's paw); Upstage's striped symbol is the black one
+  its own brand resource page offers (an AVIF, which Pillow reads). Perplexity's mark is drawn in hairlines
   that dither away 16 px tall, so its models keep the name chip. Thinking Machines Lab has no symbol:
   its mark is its name in two lines (Commons, public domain), printed in a pale grey that would dither
   to dots on the panel, so it is kept as near-black lettering for the page to ink.
@@ -417,7 +418,12 @@ LOGOS = {
     "provider-thinkingmachines": (("https://upload.wikimedia.org/wikipedia/commons/d/d9/Thinking_Machines_Lab_logo.jpg",
                                    COMMONS_FILE.format(name="Thinking_Machines_Lab_logo.jpg"), PUBLIC_DOMAIN),
                                   [TECH_LOGOS], "tone_lettering"),
-    "openrouter_icon": ((COMMONS.format(path="f/f8/OpenRouter_icon.svg", name="OpenRouter_icon.svg"),
+    "provider-upstage": (("https://cdn.prod.website-files.com/6743d5190bb2b52f38e99e37/"
+                          "6743f49549daa3311a34cabb_Symbol_Black.avif",
+                          "https://www.upstage.ai/resources/brand-resource-center",
+                          "Upstage's symbol (the black one) from its own brand resource page, shown to name the "
+                          "model's maker"), [TECH_LOGOS], 1.0),
+    "openrouter_icon":((COMMONS.format(path="f/f8/OpenRouter_icon.svg", name="OpenRouter_icon.svg"),
                          COMMONS_FILE.format(name="OpenRouter_icon.svg"), PUBLIC_DOMAIN),
                         [PLUGINS / "tech_pulse" / "assets" / "logos"], 1.0),
     "openrouter": ((COMMONS.format(path="c/ca/OpenRouter_Logo.svg", name="OpenRouter_Logo.svg"),
